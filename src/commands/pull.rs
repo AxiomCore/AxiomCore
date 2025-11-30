@@ -46,9 +46,10 @@ pub async fn handle_pull_path(path: &str) -> Result<()> {
 
     install_runtime::install_runtime(&project_root, &ir, &runtime_bytes)?;
 
-    generate_from_fbs::generate_from_fbs(&project_root, &frontend_cfg, &fbs_bytes).await?;
-
     ensure_deps::ensure_deps(&project_root)?;
+
+    generate_from_fbs::generate_from_fbs(&project_root, &frontend_cfg, &fbs_bytes, &axiom_dst_path)
+        .await?;
 
     println!("✅ axiom pull (path) finished successfully.");
     Ok(())

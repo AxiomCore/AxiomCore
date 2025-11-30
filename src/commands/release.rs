@@ -1,4 +1,4 @@
-use crate::api::upload_artifact;
+use axiom_cloud::CloudClient;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::path::Path;
 
@@ -16,7 +16,9 @@ pub async fn handle_release(file_path: &str) -> anyhow::Result<()> {
     );
     pb.set_message(format!("Uploading '{}' to Axiom Cloud...", file_path));
 
-    upload_artifact(file_path).await?;
+    CloudClient::new("dummy_token".to_string())
+        .release_artifact(Path::new(file_path))
+        .await?;
 
     pb.finish_with_message(format!("🚀 Successfully released '{}'!", file_path));
     Ok(())

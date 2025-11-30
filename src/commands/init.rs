@@ -1,6 +1,5 @@
-use crate::config;
-use crate::error::AxiomError;
 use anyhow::Context;
+use axiom_lib::config::default_config;
 use std::path::Path;
 
 pub async fn handle_init() -> anyhow::Result<()> {
@@ -10,7 +9,7 @@ pub async fn handle_init() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let default_config = config::default_config();
+    let default_config = default_config();
     let yaml_string =
         serde_yaml::to_string(&default_config).context("Failed to serialize default config.")?;
 

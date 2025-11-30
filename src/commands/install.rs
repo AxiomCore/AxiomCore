@@ -1,4 +1,3 @@
-// This code is mostly the same, but imports are local to the crate
 use anyhow::{Context, Result};
 use axiom_cloud::CloudClient;
 use indicatif::ProgressBar;

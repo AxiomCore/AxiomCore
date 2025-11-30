@@ -1,6 +1,19 @@
-[workspace]
-resolver = "2"
-members = [
-    "crates/axiom-cli",
-    "crates/axiom-lib",
-]
+[package]
+name = "axiom-cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axiom-lib = { path = "../axiom-lib" }
+axiom-cloud = { path = "../axiom-cloud" }
+axiom-client = { path = "../axiom-client" }
+axiom-extractor = { path = "../axiom-extractor" }
+axiom-build = { path = "../axiom-build" }
+clap = { version = "4.4", features = ["derive"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+anyhow = "1.0"
+console = "0.15"
+indicatif = "0.17"
+serde_yaml = "0.9"
+serde = { version = "1.0", features = ["derive"] }
+dirs = "5.0"

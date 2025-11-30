@@ -1,0 +1,12 @@
+[package]
+name = "axiom-cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axiom-lib = { path = "../axiom-lib" }
+axiom-cloud = { path = "../../../axiom-cloud" }
+clap = { version = "4.4", features = ["derive"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+anyhow = "1.0"
+console = "0.15"

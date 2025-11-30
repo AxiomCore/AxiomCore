@@ -1,0 +1,25 @@
+[package]
+name = "axiom-lib"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axiom-cloud = { path = "../../../axiom-cloud" }
+axiom-extractor = { path = "../../../axiom-extractor" }
+axiom-client = { path = "../../../axiom-client" }
+axiom-build = { path = "../../../axiom-build" }
+anyhow = "1.0"
+thiserror = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml = "0.9"
+serde_json = "1.0"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.11", features = ["json", "multipart"] }
+indicatif = "0.17"
+console = "0.15"
+dirs = "5.0" # Use a slightly older version for broader compatibility if needed
+tempfile = "3.8"
+target-lexicon = "0.12"
+zip = "0.6"
+heck = "0.4"
+bincode = "1.3"

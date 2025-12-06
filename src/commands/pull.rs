@@ -41,13 +41,16 @@ pub async fn handle_pull_path(path: &str) -> Result<()> {
         );
     }
 
-    // Decode the .axiom file
-    let (ir, runtime_bytes, fbs_bytes) = unpack_axiom_file(&axiom_dst_path).await?;
+    // Decode the .axiom file → IR + runtime(s) + fbs
+    let (ir, runtime_blobs, fbs_bytes) = unpack_axiom_file(&axiom_dst_path).await?;
 
-    install_runtime::install_runtime(&project_root, &ir, &runtime_bytes)?;
+    // Install runtime(s) (iOS: write libs + xcodebuild -create-xcframework)
+    install_runtime::install_runtime(&project_root, &ir, &runtime_blobs).await?;
 
+    // Ensure Flutter deps (axiom_flutter, flat_buffers, generator)
     ensure_deps::ensure_deps(&project_root)?;
 
+    // Generate Dart flatbuffers + axiom_sdk.dart
     generate_from_fbs::generate_from_fbs(&project_root, &frontend_cfg, &fbs_bytes, &axiom_dst_path)
         .await?;
 

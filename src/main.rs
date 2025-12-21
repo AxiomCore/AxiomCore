@@ -1,4 +1,5 @@
 pub mod commands;
+use axiom_build::core::build::handle_build;
 use axiom_cloud::CloudClient;
 use clap::{Parser, Subcommand};
 use console::style;
@@ -30,11 +31,11 @@ enum Commands {
     /// Build the .axiom artifact from local source
     Build {
         #[arg(long)]
-        variant: String,
+        variant: Option<String>,
         #[arg(long)]
-        entrypoint: String,
+        entrypoint: Option<String>,
         #[arg(long)]
-        target: String,
+        target: Option<String>,
     },
     /// Releases a built .axiom artifact to Axiom Cloud.
     Release { file_path: PathBuf },
@@ -47,6 +48,10 @@ enum Commands {
         /// The package name to pull (e.g., 'stripe/official').
         #[arg(required_unless_present = "path")]
         package: Option<String>,
+
+        /// Override the runtime source (URL or local file path).
+        #[arg(long)]
+        runtime: Option<String>,
     },
 }
 
@@ -72,14 +77,28 @@ async fn main() {
             variant,
             entrypoint,
             target,
-        } => commands::build::build(variant, entrypoint, target).await,
+        } => {
+            let variant_val = variant.clone().unwrap_or_else(|| "mobile".to_string());
+            let entrypoint_val = entrypoint.clone().unwrap_or_default();
+            let target_val = target.clone().unwrap_or_default();
+
+            handle_build(&variant_val, &entrypoint_val, &target_val).await
+        }
         Commands::Release { file_path } => {
             commands::release::handle_release(file_path.to_str().unwrap()).await
         }
-        Commands::Pull { path, package } => {
+        Commands::Pull {
+            path,
+            package,
+            runtime,
+        } => {
             if let Some(file_path) = path {
                 // Assuming commands::pull module exists and has handle_pull_path
-                commands::pull::handle_pull_path(file_path.to_str().unwrap()).await
+                commands::pull::handle_pull_path(
+                    file_path.to_str().unwrap(),
+                    runtime.as_deref(), // Pass the Option<&str>
+                )
+                .await
             } else if let Some(pkg_name) = package {
                 // TODO: Implement logic for `axiom pull stripe/official`
                 println!("Pulling package '{}'...", pkg_name);

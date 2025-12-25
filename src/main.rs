@@ -53,6 +53,16 @@ enum Commands {
         #[arg(long)]
         runtime: Option<String>,
     },
+    /// Watch an .axiom file and automatically run 'pull' on changes.
+    Watch {
+        /// Path to the .axiom contract file to watch.
+        #[arg(long)]
+        path: PathBuf,
+
+        /// Optional override for the runtime source (URL or local file path).
+        #[arg(long)]
+        runtime: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -86,6 +96,10 @@ async fn main() {
         }
         Commands::Release { file_path } => {
             commands::release::handle_release(file_path.to_str().unwrap()).await
+        }
+        Commands::Watch { path, runtime } => {
+            // NEW: Call the new watch handler
+            commands::watch::handle_watch(path, runtime.as_deref()).await
         }
         Commands::Pull {
             path,

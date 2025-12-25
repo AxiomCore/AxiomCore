@@ -10,7 +10,8 @@ axiom-client = { path = "../axiom-client" }
 axiom-extractor = { path = "../axiom-extractor" }
 axiom-build = { path = "../axiom-build" }
 clap = { version = "4.4", features = ["derive"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["full"] }
+notify = "6.1"
 anyhow = "1.0"
 console = "0.15"
 indicatif = "0.17"

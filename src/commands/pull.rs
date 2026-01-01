@@ -66,10 +66,12 @@ pub async fn handle_pull_path(path: &str, runtime_source: Option<&str>) -> Resul
     // 8. Generate Client Code
     println!("⚙️  Generating SDK code...");
 
+    let fbs_bytes = contract.schema_fbs.as_deref().unwrap_or(&[]);
+
     generate_from_fbs::generate_from_fbs(
         &project_root,
         &frontend_config,
-        &contract.schema_fbs,
+        fbs_bytes,
         path,
     )
     .await?;

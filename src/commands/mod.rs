@@ -1,3 +1,4 @@
+pub mod cache;
 pub mod init;
 pub mod install;
 pub mod pull;

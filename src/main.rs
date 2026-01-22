@@ -18,6 +18,11 @@ enum Commands {
     Init,
     /// Authenticates with Axiom Cloud.
     Login,
+    /// Inspect or clear the Axiom runtime cache.
+    Cache {
+        #[command(subcommand)]
+        action: CacheAction,
+    },
     /// Install an extractor plugin or a remote axiom package
     Install {
         /// Install a language extractor (e.g., 'fastapi', 'spring')
@@ -62,6 +67,27 @@ enum Commands {
         /// Optional override for the runtime source (URL or local file path).
         #[arg(long)]
         runtime: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum CacheAction {
+    /// List all keys in a given cache database.
+    Ls {
+        #[arg(long)]
+        db_path: PathBuf,
+    },
+    /// Show the value for a specific cache key.
+    Get {
+        #[arg(long)]
+        db_path: PathBuf,
+        #[arg(long)] // <-- ADD THIS for consistency
+        key: String,
+    },
+    /// Clear the entire cache database.
+    Clear {
+        #[arg(long)]
+        db_path: PathBuf,
     },
 }
 
@@ -121,6 +147,11 @@ async fn main() {
                 unreachable!(); // Should not happen due to required_unless_present
             }
         }
+        Commands::Cache { action } => match action {
+            CacheAction::Ls { db_path } => commands::cache::handle_ls(db_path).await,
+            CacheAction::Get { db_path, key } => commands::cache::handle_get(db_path, key).await,
+            CacheAction::Clear { db_path } => commands::cache::handle_clear(db_path).await,
+        },
     };
 
     if let Err(e) = result {

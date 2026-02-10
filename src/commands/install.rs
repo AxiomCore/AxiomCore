@@ -6,7 +6,15 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 
 pub async fn handle_install(extractor_name: &str) -> Result<()> {
-    let client = CloudClient::new("dummy_token".to_string());
+    // Install might not need valid token for public releases, but struct requires it.
+    let base_url =
+        std::env::var("AXIOM_CLOUD_URL").unwrap_or_else(|_| "http://localhost:8080".to_string());
+    // Try load token, fallback to empty string
+    let token = crate::auth_store::load_auth_data()
+        .map(|d| d.access_token)
+        .unwrap_or_default();
+
+    let client = CloudClient::new(base_url, token);
     let home = dirs::home_dir().context("Could not determine home directory.")?;
     let plugins_dir = home.join(".axiom/plugins");
     fs::create_dir_all(&plugins_dir)?;

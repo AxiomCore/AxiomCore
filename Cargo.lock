@@ -148,6 +148,7 @@ dependencies = [
  "chrono",
  "clap",
  "console 0.15.11",
+ "dialoguer",
  "dirs",
  "ed25519-dalek",
  "indicatif",
@@ -176,6 +177,7 @@ dependencies = [
  "anyhow",
  "reqwest",
  "serde",
+ "serde_json",
  "thiserror",
  "tokio",
 ]

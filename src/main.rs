@@ -4,7 +4,6 @@ use axiom_build::core::build::handle_build;
 use axiom_cloud::CloudClient;
 use axiom_extractor::evaluate_acore_config;
 use clap::{Parser, Subcommand};
-use console::style;
 use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
@@ -314,7 +313,7 @@ async fn main() -> anyhow::Result<()> {
                     pkg.clone()
                 } else {
                     // Check linked project
-                    let mut auth_data = auth_store::load_auth_data()?;
+                    let auth_data = auth_store::load_auth_data()?;
                     let current_dir = std::env::current_dir()?;
                     let abs_path =
                         std::fs::canonicalize(&current_dir).unwrap_or(current_dir.clone());
@@ -336,7 +335,7 @@ async fn main() -> anyhow::Result<()> {
                             let projects = client.list_projects().await?;
                             use dialoguer::{theme::ColorfulTheme, Select};
                             // Select from list
-                            let mut items = projects
+                            let items = projects
                                 .iter()
                                 .map(|p| format!("{} ({})", p.name, p.id))
                                 .collect::<Vec<_>>();

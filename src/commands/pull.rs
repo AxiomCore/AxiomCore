@@ -133,7 +133,7 @@ async fn post_pull_steps(
     axiom_path: &Path, // path to .axiom file
     contract: &axiom_lib::contract::AxiomFile,
     runtime_source: Option<&str>,
-    signature: Option<&str>,
+    _signature: Option<&str>,
 ) -> Result<()> {
     // 5. Validate Client Configuration (axiom.yaml)
     let config = load_config()?;

@@ -4,7 +4,6 @@ use axiom_cloud::CloudClient;
 use console::style;
 use dialoguer::{theme::ColorfulTheme, Input, Select};
 use std::env;
-use std::path::PathBuf;
 
 pub async fn handle_project_list() -> Result<()> {
     let base_url =
@@ -42,7 +41,7 @@ pub async fn handle_project_create(name: Option<String>, desc: Option<String>) -
             .interact_text()?,
     };
 
-    let project_desc = match desc {
+    let _project_desc = match desc {
         Some(d) => Some(d),
         None => {
             let d: String = Input::with_theme(&ColorfulTheme::default())

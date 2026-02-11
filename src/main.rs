@@ -62,21 +62,12 @@ enum Commands {
         /// Specific version to pull (e.g., 'v1.0.0'). Defaults to latest.
         #[arg(long)]
         version: Option<String>,
-
-        /// Override the runtime source (URL or local file path).
-        #[arg(long)]
-        runtime: Option<String>,
     },
-    /// Watch an .axiom file and automatically run 'pull' on changes.
     /// Watch an .axiom file and automatically run 'pull' on changes.
     Watch {
         /// Path to the .axiom contract file to watch.
         #[arg(long)]
         path: PathBuf,
-
-        /// Optional override for the runtime source (URL or local file path).
-        #[arg(long)]
-        runtime: Option<String>,
     },
     /// Manage your Axiom projects.
     Project {
@@ -291,22 +282,17 @@ async fn main() -> anyhow::Result<()> {
         Commands::Release { file_path } => {
             commands::release::handle_release(file_path.to_str().unwrap()).await
         }
-        Commands::Watch { path, runtime } => {
+        Commands::Watch { path } => {
             // NEW: Call the new watch handler
-            commands::watch::handle_watch(path, runtime.as_deref()).await
+            commands::watch::handle_watch(path).await
         }
         Commands::Pull {
             path,
             package,
             version,
-            runtime,
         } => {
             if let Some(file_path) = path {
-                commands::pull::handle_pull_path(
-                    file_path.to_str().unwrap(),
-                    runtime.as_deref(), // Pass the Option<&str>
-                )
-                .await
+                commands::pull::handle_pull_path(file_path.to_str().unwrap()).await
             } else {
                 // Determine project ID (package or linked or interactive)
                 let project_id = if let Some(pkg) = package {
@@ -355,12 +341,7 @@ async fn main() -> anyhow::Result<()> {
                     }
                 };
 
-                commands::pull::handle_pull_package(
-                    &project_id,
-                    version.as_deref(),
-                    runtime.as_deref(),
-                )
-                .await
+                commands::pull::handle_pull_package(&project_id, version.as_deref()).await
             }
         }
         Commands::Project { action } => match action {

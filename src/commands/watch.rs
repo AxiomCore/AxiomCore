@@ -7,7 +7,7 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 /// Handles the `axiom watch` command.
-pub async fn handle_watch(axiom_path: &Path, runtime_source: Option<&str>) -> Result<()> {
+pub async fn handle_watch(axiom_path: &Path) -> Result<()> {
     // Convert path to an absolute path to avoid ambiguity
     let absolute_axiom_path = axiom_path
         .canonicalize()
@@ -20,7 +20,7 @@ pub async fn handle_watch(axiom_path: &Path, runtime_source: Option<&str>) -> Re
 
     // --- Perform an initial pull ---
     println!("\nPerforming initial pull...");
-    if let Err(e) = handle_pull_path(absolute_axiom_path.to_str().unwrap(), runtime_source).await {
+    if let Err(e) = handle_pull_path(absolute_axiom_path.to_str().unwrap()).await {
         eprintln!("Initial pull failed: {:?}", e);
     } else {
         println!("✅ Initial pull successful.");
@@ -58,8 +58,7 @@ pub async fn handle_watch(axiom_path: &Path, runtime_source: Option<&str>) -> Re
                         sleep(Duration::from_millis(500)).await;
 
                         if let Err(e) =
-                            handle_pull_path(absolute_axiom_path.to_str().unwrap(), runtime_source)
-                                .await
+                            handle_pull_path(absolute_axiom_path.to_str().unwrap()).await
                         {
                             eprintln!("Pull failed after change: {:?}", e);
                         } else {

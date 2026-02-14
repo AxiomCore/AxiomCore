@@ -1,17 +1,20 @@
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
+use crossterm::event::KeyCode;
 use serde::{Deserialize, Serialize};
 use sled::Db;
 use std::path::Path;
 use std::time::SystemTime;
 
+use crate::components::cache_explorer::render_cache_explorer;
+
 // These structs must match the ones in `axiom-runtime/src/cache/sled_store.rs`
 #[derive(Serialize, Deserialize, Debug)]
-struct CacheEntry {
-    payload: Vec<u8>,
-    headers: Vec<(String, String)>,
-    created_at: SystemTime,
-    ttl_secs: u64,
+pub struct CacheEntry {
+    pub payload: Vec<u8>,                  // Add pub
+    pub headers: Vec<(String, String)>,    // Add pub
+    pub created_at: std::time::SystemTime, // Add pub
+    pub ttl_secs: u64,                     // Add pub
 }
 
 fn open_db(db_path: &Path) -> Result<Db> {
@@ -21,55 +24,55 @@ fn open_db(db_path: &Path) -> Result<Db> {
 
 pub async fn handle_ls(db_path: &Path) -> Result<()> {
     let db = open_db(db_path)?;
-    println!("Inspecting cache at: {}\n", db_path.display());
+    let mut entries = Vec::new();
 
-    if db.is_empty() {
+    for item in db.iter() {
+        if let Ok((key_bytes, value_bytes)) = item {
+            let key = String::from_utf8_lossy(&key_bytes).to_string();
+            if let Ok(entry) = bincode::deserialize::<CacheEntry>(&value_bytes) {
+                entries.push((key, entry));
+            }
+        }
+    }
+
+    if entries.is_empty() {
         println!("Cache is empty.");
         return Ok(());
     }
 
-    println!("{:<64} {:<10} {:<25}", "Key", "Status", "Expires At");
-    println!("{:-<105}", ""); // Divider line
+    let mut tui = crate::tui::Tui::new().map_err(|e| anyhow::anyhow!(e))?;
+    tui.enter().map_err(|e| anyhow::anyhow!(e))?;
+    let mut selected = 0;
 
-    for item in db.iter() {
-        if let Ok((key_bytes, value_bytes)) = item {
-            let key = String::from_utf8_lossy(&key_bytes);
-
-            // Deserialize to get metadata
-            if let Ok(entry) = bincode::deserialize::<CacheEntry>(&value_bytes) {
-                let now = SystemTime::now();
-                let created_dt: DateTime<Utc> = entry.created_at.into();
-                let expires_at = created_dt + std::time::Duration::from_secs(entry.ttl_secs);
-
-                let is_stale =
-                    now > entry.created_at + std::time::Duration::from_secs(entry.ttl_secs);
-                let status = if is_stale { "STALE" } else { "FRESH" };
-
-                // Attempt to show a snippet of the payload if it's JSON
-                let payload_summary = if let Ok(json_val) =
-                    serde_json::from_slice::<serde_json::Value>(&entry.payload)
-                {
-                    serde_json::to_string(&json_val)?
-                        .chars()
-                        .take(80)
-                        .collect::<String>()
-                } else {
-                    format!("[{} bytes of binary data]", entry.payload.len())
-                };
-
-                println!(
-                    "{:<64} {:<10} {:<25}",
-                    &key[..12],
-                    status,
-                    expires_at.to_rfc2822()
-                );
-                println!("  └─ Payload: {}...", payload_summary);
-            } else {
-                println!("{:<64} (corrupted entry)", key);
+    loop {
+        tui.draw(|f| render_cache_explorer(f, f.size(), &entries, selected))?;
+        if let Some(event) = tui.event_rx.recv().await {
+            match event {
+                crate::tui::Event::Key(key) => match key.code {
+                    KeyCode::Char('q') | KeyCode::Esc => break,
+                    KeyCode::Up | KeyCode::Char('k') => selected = selected.saturating_sub(1),
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        selected = selected.saturating_add(1).min(entries.len() - 1)
+                    }
+                    KeyCode::Char('x') => {
+                        // Logic to delete the key from Sled
+                        let (key_to_del, _) = &entries[selected];
+                        db.remove(key_to_del)?;
+                        entries.remove(selected);
+                        if selected >= entries.len() && !entries.is_empty() {
+                            selected = entries.len() - 1;
+                        }
+                        if entries.is_empty() {
+                            break;
+                        }
+                    }
+                    _ => {}
+                },
+                _ => {}
             }
         }
     }
-    Ok(())
+    tui.exit().map_err(|e| anyhow::anyhow!(e))
 }
 
 pub async fn handle_get(db_path: &Path, key: &str) -> Result<()> {

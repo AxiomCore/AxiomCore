@@ -1,17 +1,18 @@
 use crate::auth_store;
+use crate::components::fuzzy_finder::{render_fuzzy_finder, ProjectItem};
 use anyhow::Result;
 use axiom_cloud::CloudClient;
 use console::style;
-use dialoguer::{theme::ColorfulTheme, Input, Select};
+use crossterm::event::KeyCode;
+use dialoguer::{theme::ColorfulTheme, Input};
+use fuzzy_matcher::skim::SkimMatcherV2;
+use fuzzy_matcher::FuzzyMatcher;
 use std::env;
+use tui_input::backend::crossterm::EventHandler;
 
 pub async fn handle_project_list() -> Result<()> {
-    let base_url =
-        env::var("AXIOM_CLOUD_URL").unwrap_or_else(|_| "http://localhost:8080".to_string());
-
-    // Load tokens (TODO: Implement refresh logic wrapper)
     let auth_data = auth_store::load_auth_data()?;
-    let client = CloudClient::new(base_url, auth_data.access_token);
+    let client = CloudClient::new(auth_data.access_token);
 
     let projects = client.list_projects().await?;
 
@@ -29,10 +30,8 @@ pub async fn handle_project_list() -> Result<()> {
 }
 
 pub async fn handle_project_create(name: Option<String>, desc: Option<String>) -> Result<()> {
-    let base_url =
-        env::var("AXIOM_CLOUD_URL").unwrap_or_else(|_| "http://localhost:8080".to_string());
     let auth_data = auth_store::load_auth_data()?;
-    let client = CloudClient::new(base_url, auth_data.access_token);
+    let client = CloudClient::new(auth_data.access_token);
 
     let project_name = match name {
         Some(n) => n,
@@ -72,41 +71,66 @@ pub async fn handle_project_create(name: Option<String>, desc: Option<String>) -
 
 pub async fn handle_project_link(project_id: Option<String>) -> Result<()> {
     let current_dir = env::current_dir()?;
-
     let pid = match project_id {
         Some(id) => id,
         None => {
-            // Interactive selection
-            let base_url =
-                env::var("AXIOM_CLOUD_URL").unwrap_or_else(|_| "http://localhost:8080".to_string());
             let auth_data = auth_store::load_auth_data()?;
-            let client = CloudClient::new(base_url, auth_data.access_token);
-
+            let client = CloudClient::new(auth_data.access_token);
             let projects = client.list_projects().await?;
-            if projects.is_empty() {
-                anyhow::bail!("No projects found. Create one with 'axiom project create'.");
+            let items: Vec<ProjectItem> = projects
+                .into_iter()
+                .map(|p| ProjectItem {
+                    id: p.id,
+                    name: p.name,
+                })
+                .collect();
+
+            // Launch TUI Fuzzy Finder
+            let mut tui = crate::tui::Tui::new().map_err(|e| anyhow::anyhow!(e))?;
+            tui.enter().map_err(|e| anyhow::anyhow!(e))?;
+            let mut input = tui_input::Input::default();
+            let mut selected = 0;
+            let mut result_id = None;
+
+            loop {
+                tui.draw(|f| render_fuzzy_finder(f, f.size(), &input, &items, selected))?;
+
+                if let Some(event) = tui.event_rx.recv().await {
+                    match event {
+                        crate::tui::Event::Key(key) => match key.code {
+                            KeyCode::Enter => {
+                                // Logic to get the actual filtered ID
+                                let matcher = SkimMatcherV2::default();
+                                let filtered: Vec<&ProjectItem> = items
+                                    .iter()
+                                    .filter(|p| {
+                                        input.value().is_empty()
+                                            || matcher.fuzzy_match(&p.name, input.value()).is_some()
+                                    })
+                                    .collect();
+                                if let Some(p) = filtered.get(selected) {
+                                    result_id = Some(p.id.clone());
+                                }
+                                break;
+                            }
+                            KeyCode::Esc => break,
+                            KeyCode::Up => selected = selected.saturating_sub(1),
+                            KeyCode::Down => selected = selected.saturating_add(1),
+                            _ => {
+                                input.handle_event(&crossterm::event::Event::Key(key));
+                                selected = 0;
+                            }
+                        },
+                        _ => {}
+                    }
+                }
             }
-
-            let selection = Select::with_theme(&ColorfulTheme::default())
-                .with_prompt("Select a project to link")
-                .default(0)
-                .items(
-                    &projects
-                        .iter()
-                        .map(|p| format!("{} ({})", p.name, p.id))
-                        .collect::<Vec<_>>(),
-                )
-                .interact()?;
-
-            projects[selection].id.clone()
+            let _ = tui.exit().map_err(|e| anyhow::anyhow!(e));
+            result_id.ok_or_else(|| anyhow::anyhow!("No project selected"))?
         }
     };
 
     auth_store::link_project(&current_dir, &pid)?;
-    println!(
-        "🔗 Linked project {} to {}",
-        style(pid).cyan(),
-        style(current_dir.display()).dim()
-    );
+    println!("🔗 Linked project {} successfully.", style(pid).cyan());
     Ok(())
 }

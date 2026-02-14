@@ -18,8 +18,6 @@ pub async fn handle_release(file_path: &str) -> anyhow::Result<()> {
 
     let auth_data = crate::auth_store::load_auth_data()?;
     let token = auth_data.access_token;
-    let base_url =
-        std::env::var("AXIOM_CLOUD_URL").unwrap_or_else(|_| "http://localhost:8080".to_string());
 
     // We need project_id and version.
     // BUT release_artifact (which was in old lib.rs) is GONE.
@@ -37,7 +35,7 @@ pub async fn handle_release(file_path: &str) -> anyhow::Result<()> {
     let project_id = contract.project.project_id;
     let version = contract.project.version;
 
-    let client = CloudClient::new(base_url, token);
+    let client = CloudClient::new(token);
     client
         .upload_contract(&project_id, &version, Path::new(file_path))
         .await?;

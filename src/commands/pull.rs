@@ -5,75 +5,87 @@ use axiom_lib::config::{load_config, AxiomConfig};
 use crossterm::event::KeyCode;
 use std::path::{Path, PathBuf};
 
+// Import ensure_deps from the build crate
+use axiom_build::core::client_sdk::flutter::ensure_deps::ensure_deps;
+
 pub async fn handle_pull_auto(path_arg: Option<PathBuf>) -> Result<()> {
-    // 1. Check if configured
+    let mut wizard_local_path: Option<String> = None;
+
+    // 1. Check if configured. If not, run wizard and capture local path if provided.
     if !Path::new("axiom.yaml").exists() {
-        run_setup_wizard().await?;
+        wizard_local_path = run_setup_wizard().await?;
     }
 
-    // 2. Load Config
+    // 2. Load Config (created by wizard or already existing)
     let config = load_config()?;
     let project_root = std::env::current_dir()?;
 
-    // 3. Determine Source
+    // 3. Determine Source and get Bytes
     let contract_bytes = if let Some(proj) = config.project {
-        // Remote Pull
         println!("⬇️  Pulling from Axiom Cloud (Project: {})...", proj.id);
         let auth = crate::auth_store::load_auth_data()?;
         let client = CloudClient::new(auth.access_token);
         client.pull_contract_content(&proj.id, "latest").await?
     } else {
-        // Local File Copy
-        // We look for a .axiom file in the root if no path provided
-        let local_path = path_arg.unwrap_or_else(|| PathBuf::from("project.axiom"));
+        // Use path from: 1. command line arg, 2. wizard input, or 3. default project.axiom
+        let raw_path = path_arg
+            .map(|p| p.to_string_lossy().into_owned())
+            .or(wizard_local_path)
+            .unwrap_or_else(|| "project.axiom".to_string());
+
+        let local_path = PathBuf::from(raw_path);
         if !local_path.exists() {
             anyhow::bail!("Local contract file not found at: {}", local_path.display());
         }
+        println!("📂 Copying local contract from {}...", local_path.display());
         std::fs::read(&local_path)?
     };
 
-    // 4. Save Artifact
-    let artifact_path = project_root.join("project.axiom");
+    // 4. Save Artifact to local root (Always named .axiom for internal consistency)
+    let axiom_filename = ".axiom";
+    let artifact_path = project_root.join(axiom_filename);
     std::fs::write(&artifact_path, &contract_bytes)?;
 
-    // 5. Run Generator
+    // 5. Post-Pull Steps
     let contract = axiom_build::core::unpackager::unpack_axiom_bytes(&contract_bytes)?;
 
     if let Some(fe) = config.frontend {
-        println!("⚙️  Generating {} SDK...", fe.framework);
-        // Note: You might need to expose generate_from_fbs logic publicly from axiom-build
-        axiom_build::core::client_sdk::flutter::generate_from_fbs::generate_from_fbs(
-            &project_root,
-            &fe,
-            contract.schema_fbs.as_deref().unwrap_or(&[]),
-            artifact_path.to_str().unwrap(),
-        )
-        .await?;
+        if fe.framework == "flutter" {
+            println!("📦 Ensuring Flutter dependencies and assets...");
+            ensure_deps(&project_root, axiom_filename)?;
+
+            println!("⚙️  Generating Flutter SDK code...");
+            axiom_build::core::client_sdk::flutter::generate_from_fbs::generate_from_fbs(
+                &project_root,
+                &fe,
+                contract.schema_fbs.as_deref().unwrap_or(&[]),
+                artifact_path.to_str().unwrap(),
+            )
+            .await?;
+        } else {
+            println!("⚙️  Codegen for {} is coming soon!", fe.framework);
+        }
     }
 
-    println!("✅ Pull complete.");
+    println!("✅ axiom pull finished successfully.");
     Ok(())
 }
 
-async fn run_setup_wizard() -> Result<()> {
+async fn run_setup_wizard() -> Result<Option<String>> {
     let mut tui = crate::tui::Tui::new().map_err(|e| anyhow::anyhow!(e))?;
     let mut state = State::new();
 
-    // Pre-load projects if logged in
-    let auth = crate::auth_store::load_auth_data().ok();
-    let projects = if let Some(a) = auth {
-        let client = CloudClient::new(a.access_token);
-        client
+    // Pre-load projects
+    if let Ok(auth) = crate::auth_store::load_auth_data() {
+        let client = CloudClient::new(auth.access_token);
+        state.pull_context.available_projects = client
             .list_projects()
             .await
             .unwrap_or_default()
             .into_iter()
             .map(|p| (p.id, p.name))
-            .collect()
-    } else {
-        vec![]
-    };
-    state.pull_context.available_projects = projects;
+            .collect();
+    }
 
     tui.enter().map_err(|e| anyhow::anyhow!(e))?;
 
@@ -101,83 +113,81 @@ async fn run_setup_wizard() -> Result<()> {
                     }
                     _ => {}
                 },
-                KeyCode::Down => {
-                    match state.pull_context.step {
-                        PullStep::SourceSelection => {
-                            state.pull_context.source_mode =
-                                (state.pull_context.source_mode + 1).min(1)
-                        }
-                        PullStep::ProjectLink => {
-                            state.pull_context.selected_project_idx =
-                                (state.pull_context.selected_project_idx + 1).min(
-                                    state
-                                        .pull_context
-                                        .available_projects
-                                        .len()
-                                        .saturating_sub(1),
-                                )
-                        }
-                        PullStep::FrontendSelection => {
-                            state.pull_context.selected_framework =
-                                (state.pull_context.selected_framework + 1).min(0)
-                        } // Only Flutter enabled
-                        _ => {}
+                KeyCode::Down => match state.pull_context.step {
+                    PullStep::SourceSelection => {
+                        state.pull_context.source_mode = (state.pull_context.source_mode + 1).min(1)
+                    }
+                    PullStep::ProjectLink => {
+                        state.pull_context.selected_project_idx =
+                            (state.pull_context.selected_project_idx + 1).min(
+                                state
+                                    .pull_context
+                                    .available_projects
+                                    .len()
+                                    .saturating_sub(1),
+                            )
+                    }
+                    PullStep::FrontendSelection => {
+                        state.pull_context.selected_framework =
+                            (state.pull_context.selected_framework + 1).min(0)
+                    }
+                    _ => {}
+                },
+                KeyCode::Char(c) => match state.pull_context.step {
+                    PullStep::LocalPathInput => state.pull_context.local_file_path.push(c),
+                    PullStep::Success if c == 'q' => break,
+                    _ => {}
+                },
+                KeyCode::Backspace => {
+                    if state.pull_context.step == PullStep::LocalPathInput {
+                        state.pull_context.local_file_path.pop();
                     }
                 }
-                KeyCode::Char(c) if state.pull_context.step == PullStep::LocalPathInput => {
-                    state.pull_context.local_file_path.push(c);
-                }
-                KeyCode::Backspace if state.pull_context.step == PullStep::LocalPathInput => {
-                    state.pull_context.local_file_path.pop();
-                }
-                KeyCode::Enter => {
-                    match state.pull_context.step {
-                        PullStep::SourceSelection => {
-                            if state.pull_context.source_mode == 0 {
-                                // Remote
+                KeyCode::Enter => match state.pull_context.step {
+                    PullStep::SourceSelection => {
+                        if state.pull_context.source_mode == 0 {
+                            state.pull_context.step =
                                 if state.pull_context.available_projects.is_empty() {
-                                    // Todo: handle login prompt
-                                    state.pull_context.step = PullStep::FrontendSelection;
+                                    PullStep::FrontendSelection
                                 } else {
-                                    state.pull_context.step = PullStep::ProjectLink;
-                                }
-                            } else {
-                                state.pull_context.step = PullStep::LocalPathInput;
-                            }
+                                    PullStep::ProjectLink
+                                };
+                        } else {
+                            state.pull_context.step = PullStep::LocalPathInput;
                         }
-                        PullStep::ProjectLink => {
-                            state.pull_context.step = PullStep::FrontendSelection
-                        }
-                        PullStep::LocalPathInput => {
-                            state.pull_context.step = PullStep::FrontendSelection
-                        }
-                        PullStep::FrontendSelection => {
-                            // Generate config
-                            create_axiom_yaml(&state)?;
-                            state.pull_context.step = PullStep::Success;
-                        }
-                        PullStep::Success => break,
-                        _ => {}
                     }
-                }
-                _ => {}
+                    PullStep::ProjectLink | PullStep::LocalPathInput => {
+                        state.pull_context.step = PullStep::FrontendSelection
+                    }
+                    PullStep::FrontendSelection => {
+                        create_axiom_yaml(&state)?;
+                        state.pull_context.step = PullStep::Success;
+                    }
+                    PullStep::Success => break,
+                    _ => {}
+                },
+                _ => {} // Catch-all prevents crashes from unhandled keys
             }
         }
     }
+
+    let path = if state.pull_context.source_mode == 1 {
+        Some(state.pull_context.local_file_path.clone())
+    } else {
+        None
+    };
     tui.exit().map_err(|e| anyhow::anyhow!(e))?;
-    Ok(())
+    Ok(path)
 }
 
 fn create_axiom_yaml(state: &State) -> Result<()> {
     let mut config = AxiomConfig::default();
 
-    // Set Frontend
     config.frontend = Some(axiom_lib::config::FrontendConfig {
         framework: "flutter".to_string(),
         output_dir: Some("lib/axiom_generated".to_string()),
     });
 
-    // Set Project if Remote
     if state.pull_context.source_mode == 0 && !state.pull_context.available_projects.is_empty() {
         let (pid, _) =
             &state.pull_context.available_projects[state.pull_context.selected_project_idx];
@@ -185,10 +195,7 @@ fn create_axiom_yaml(state: &State) -> Result<()> {
             id: pid.clone(),
             version: "latest".to_string(),
         });
-
-        // Also link locally
-        let current = std::env::current_dir()?;
-        crate::auth_store::link_project(&current, pid)?;
+        crate::auth_store::link_project(&std::env::current_dir()?, pid)?;
     }
 
     let content = serde_yaml::to_string(&config)?;

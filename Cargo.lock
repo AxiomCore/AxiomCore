@@ -160,7 +160,7 @@ dependencies = [
 
 [[package]]
 name = "axiom-cli"
-version = "0.0.10"
+version = "0.0.59"
 dependencies = [
  "anyhow",
  "axiom-build",

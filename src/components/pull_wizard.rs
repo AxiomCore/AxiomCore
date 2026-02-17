@@ -63,9 +63,27 @@ pub fn render_pull_wizard(f: &mut Frame, area: Rect, state: &State) {
             }
         }
         PullStep::LocalPathInput => {
-            let p = Paragraph::new(format!("> {}_", state.pull_context.local_file_path))
-                .block(Block::default().borders(Borders::ALL).title(" File Path "));
-            f.render_widget(p, centered_rect(90, 20, chunks[1]));
+            let input_layout = Layout::vertical([
+                Constraint::Fill(1),
+                Constraint::Length(3),
+                Constraint::Fill(1),
+            ])
+            .split(chunks[1]);
+
+            let p = Paragraph::new(format!(" {}", state.pull_context.local_file_path)).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Paste .axiom file path ")
+                    .border_style(Style::default().fg(Color::Yellow)),
+            );
+
+            f.render_widget(p, input_layout[1]);
+
+            // FIX: Correct method name and set position relative to widget
+            f.set_cursor(
+                input_layout[1].x + state.pull_context.local_file_path.len() as u16 + 2,
+                input_layout[1].y + 1,
+            );
         }
         PullStep::FrontendSelection => {
             let frameworks = vec![

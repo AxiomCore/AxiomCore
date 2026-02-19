@@ -1,23 +1,31 @@
+// src/main.rs
+pub mod access_config;
 pub mod auth_store;
 pub mod commands;
 pub mod components;
 pub mod error_reporter;
 pub mod state;
+pub mod telemetry;
 pub mod tui;
 
+use crate::access_config::AccessConfig;
 use crate::components::build_dashboard::render_build_dashboard;
 use crate::components::inspect::endpoint_detail::render_endpoint_detail;
 use crate::components::inspect::endpoint_list::render_endpoint_list;
 use crate::components::inspect::model_browser::render_model_browser;
 use crate::components::login_screen::render_login_screen;
 use crate::state::InspectTab;
-use axiom_cloud::CloudClient;
-use axiom_lib::action::Action; // Correct path
+use crate::telemetry::Telemetry;
+use axiom_cloud::{CliApi, CloudClient};
+use axiom_lib::action::Action;
 use clap::{Parser, Subcommand};
+use console::style;
 use crossterm::event::KeyCode;
+use dialoguer::{theme::ColorfulTheme, Input};
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 #[derive(Parser)]
 #[command(name = "axiom", author, version, about)]
@@ -30,6 +38,10 @@ struct Cli {
 enum Commands {
     Init,
     Login,
+    /// Join the waitlist if you don't have a referral code
+    Join {
+        email: String,
+    },
     Cache {
         #[command(subcommand)]
         action: CacheAction,
@@ -93,7 +105,7 @@ enum ProjectAction {
 
 #[derive(Subcommand)]
 enum CacheAction {
-    Ls, // Removed db_path argument for simplicity - use default
+    Ls,
     Get {
         #[arg(long)]
         key: String,
@@ -103,65 +115,169 @@ enum CacheAction {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // 1. Setup Error Hooks
     let (panic_hook, eyre_hook) = color_eyre::config::HookBuilder::default().into_hooks();
     eyre_hook.install()?;
     std::panic::set_hook(Box::new(move |panic_info| {
-        // If we panic, try to disable raw mode so the terminal isn't broken
         let _ = crossterm::terminal::disable_raw_mode();
         let _ = crossterm::execute!(std::io::stdout(), crossterm::terminal::LeaveAlternateScreen);
         eprintln!("{}", panic_hook.panic_report(panic_info));
     }));
 
     let cli = Cli::parse();
+    let start_time = Instant::now();
 
-    match &cli.command {
-        Commands::Init => commands::init::handle_init().await?,
-        Commands::Login => handle_login_tui().await?,
+    // 2. GATEKEEPER LOGIC (Private Alpha Check)
+    // -------------------------------------------------------------------------
+
+    // Allow 'join' command to pass through without a referral code
+    if let Commands::Join { email } = &cli.command {
+        return commands::join::handle_join(email.clone()).await;
+    }
+
+    // Load Access Config
+    let mut access_config = AccessConfig::load().await?;
+
+    // If no config exists, force registration
+    if access_config.is_none() {
+        println!(
+            "{}",
+            style("🔒 Axiom CLI is currently in Private Alpha.")
+                .bold()
+                .yellow()
+        );
+        println!("To proceed, you need a valid referral code.\n");
+        println!(
+            "If you don't have one, run: {}",
+            style("axiom join <EMAIL>").cyan()
+        );
+        println!("");
+
+        let code: String = Input::with_theme(&ColorfulTheme::default())
+            .with_prompt("Enter Referral Code")
+            .interact_text()?;
+
+        // Create temp config to generate machine ID
+        let temp_config = AccessConfig::save(&code).await?;
+
+        println!("{}", style("Verifying code...").dim());
+
+        // Register with Server
+        match CliApi::register(&temp_config.referral_code, &temp_config.machine_id).await {
+            Ok(_) => {
+                println!(
+                    "✅ {}",
+                    style("Access Granted. Welcome to Axiom.").green().bold()
+                );
+                println!("");
+                access_config = Some(temp_config);
+            }
+            Err(e) => {
+                // Registration failed, wipe local config so they try again next time
+                let _ = AccessConfig::wipe().await;
+                println!(
+                    "\n❌ {}",
+                    style(format!("Authorization Failed: {}", e)).red()
+                );
+                std::process::exit(1);
+            }
+        }
+    }
+
+    let active_config = access_config.unwrap();
+
+    // 3. EXECUTE COMMAND
+    // -------------------------------------------------------------------------
+    let result = execute_command(&cli.command).await;
+
+    // 4. TELEMETRY
+    // -------------------------------------------------------------------------
+    let duration = start_time.elapsed();
+    let (success, error_msg) = match &result {
+        Ok(_) => (true, None),
+        Err(e) => (false, Some(e.to_string())),
+    };
+
+    // Extract command name for logging
+    let cmd_name = match &cli.command {
+        Commands::Init => "init",
+        Commands::Login => "login",
+        Commands::Join { .. } => "join",
+        Commands::Cache { .. } => "cache",
+        Commands::Install { .. } => "install",
+        Commands::Build { .. } => "build",
+        Commands::Inspect { .. } => "inspect",
+        Commands::Release { .. } => "release",
+        Commands::Pull { .. } => "pull",
+        Commands::Watch { .. } => "watch",
+        Commands::Project { .. } => "project",
+    };
+
+    // Send Telemetry (This internally handles the "Kill Switch" / Access Revocation)
+    Telemetry::track(
+        &active_config,
+        cmd_name,
+        std::env::args().collect(),
+        duration,
+        success,
+        error_msg,
+    )
+    .await;
+
+    result
+}
+
+// Helper to route commands (Refactored from original main)
+async fn execute_command(command: &Commands) -> anyhow::Result<()> {
+    match command {
+        Commands::Init => commands::init::handle_init().await,
+        Commands::Login => handle_login_tui().await,
+        Commands::Join { .. } => Ok(()), // Handled in main, but needed here for match exhaustiveness
         Commands::Cache { action } => {
             let db_path = dirs::home_dir().unwrap().join(".axiom/cache");
             match action {
-                CacheAction::Ls => commands::cache::handle_ls(&db_path).await?,
-                CacheAction::Get { key } => commands::cache::handle_get(&db_path, key).await?,
-                CacheAction::Clear => commands::cache::handle_clear(&db_path).await?,
+                CacheAction::Ls => commands::cache::handle_ls(&db_path).await,
+                CacheAction::Get { key } => commands::cache::handle_get(&db_path, key).await,
+                CacheAction::Clear => commands::cache::handle_clear(&db_path).await,
             }
         }
         Commands::Install { extractor, package } => {
             if let Some(e) = extractor {
-                commands::install::handle_install(e).await?;
+                commands::install::handle_install(e).await
+            } else {
+                Ok(())
             }
         }
         Commands::Build { variant, local } => {
-            handle_build_command(variant.clone().unwrap_or("default".to_string())).await?;
+            handle_build_command(variant.clone().unwrap_or("default".to_string())).await
         }
-        Commands::Inspect { path } => {
-            handle_inspect(path).await?;
-        }
+        Commands::Inspect { path } => handle_inspect(path).await,
         Commands::Project { action } => match action {
-            ProjectAction::List => commands::project::handle_project_list().await?,
+            ProjectAction::List => commands::project::handle_project_list().await,
             ProjectAction::Create { name, description } => {
-                commands::project::handle_project_create(name.clone(), description.clone()).await?
+                commands::project::handle_project_create(name.clone(), description.clone()).await
             }
             ProjectAction::Link { project_id } => {
-                commands::project::handle_project_link(project_id.clone()).await?
+                commands::project::handle_project_link(project_id.clone()).await
             }
         },
-        Commands::Pull { path, .. } => {
-            commands::pull::handle_pull_auto(path.clone()).await?;
-        }
+        Commands::Pull { path, .. } => commands::pull::handle_pull_auto(path.clone()).await,
         Commands::Watch { build } => {
             if *build {
-                // Backend Mode (Producer)
-                commands::watch::handle_watch_dynamic(true).await?;
+                commands::watch::handle_watch_dynamic(true).await
             } else {
-                // Frontend Mode (Consumer)
-                commands::watch::handle_watch_consumer().await?;
+                commands::watch::handle_watch_consumer().await
             }
         }
-        _ => {}
+        Commands::Release { file_path } => {
+            commands::release::handle_release(file_path.to_str().unwrap()).await
+        }
     }
-
-    Ok(())
 }
+
+// =========================================================================================
+//  EXISTING HELPERS (Kept exactly as original to ensure full file correctness)
+// =========================================================================================
 
 async fn handle_login_tui() -> anyhow::Result<()> {
     let mut state = crate::state::State::new();
@@ -169,7 +285,7 @@ async fn handle_login_tui() -> anyhow::Result<()> {
     tui.enter().map_err(|e| anyhow::anyhow!(e))?;
 
     // STEP 1: Get the code (Library is now silent!)
-    let auth_info = axiom_cloud::CloudClient::start_login().await?;
+    let auth_info = CloudClient::start_login().await?;
 
     // STEP 2: Put the data into the TUI State
     state.login_context.status = crate::state::LoginStatus::WaitingForUser {
@@ -183,7 +299,7 @@ async fn handle_login_tui() -> anyhow::Result<()> {
 
     // STEP 3: Start polling in background
     let login_task = tokio::spawn(async move {
-        let result = axiom_cloud::CloudClient::wait_for_login(&d_code, d_interval).await;
+        let result = CloudClient::wait_for_login(&d_code, d_interval).await;
         let _ = tx.send(result);
     });
 

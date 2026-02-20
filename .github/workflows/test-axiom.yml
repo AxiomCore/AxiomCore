@@ -1,0 +1,28 @@
+name: Test Axiom Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  test-macos:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Axiom CLI
+        run: |
+          curl -sSL https://axiomcore.dev/install | bash
+
+      - name: Verify installation
+        run: |
+          which axiom
+          axiom --version
+
+      - name: Run axiom build in example
+        working-directory: examples/simple-backend
+        run: |
+          axiom build

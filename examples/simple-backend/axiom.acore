@@ -1,0 +1,52 @@
+amends "axiom-python:./main.py:app"
+
+project {
+  id = "python-example"
+  version = "v0.1.4"
+}
+
+local UserM = Models.User
+
+variants {
+  ["default"] {
+    include = new { "*" }
+  }
+}
+
+models {
+  [UserM._model] {
+    fields {
+      [UserM.email] {
+        validate {
+          type = "string"
+          email = true
+        }
+      }
+
+      [UserM.role] {
+        validate {
+          type = "union"
+          options {
+            new {
+              type = "enum"
+              values = new { "admin"; "user" }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+endpoints {
+  [Routes.get_user] {
+    cache {
+      strategy = "network_only"
+      ttlSeconds = 300
+    }
+    retry = new {
+      maxAttempts = 5
+      backoff = new ExponentialBackoff { initialDelay = "500ms" }
+    }
+  }
+}

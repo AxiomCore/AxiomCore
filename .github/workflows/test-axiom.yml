@@ -24,5 +24,7 @@ jobs:
 
       - name: Run axiom build in example
         working-directory: examples/simple-backend
+        env:
+          AXIOM_REFERRAL_CODE: ${{ secrets.AXIOM_REFERRAL }}
         run: |
           axiom build

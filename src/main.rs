@@ -147,15 +147,28 @@ async fn main() -> anyhow::Result<()> {
                 .yellow()
         );
         println!("To proceed, you need a valid referral code.\n");
-        println!(
-            "If you don't have one, run: {}",
-            style("axiom join <EMAIL>").cyan()
-        );
-        println!("");
+        let referral_from_env = std::env::var("AXIOM_REFERRAL_CODE").ok();
 
-        let code: String = Input::with_theme(&ColorfulTheme::default())
-            .with_prompt("Enter Referral Code")
-            .interact_text()?;
+        let code = if let Some(env_code) = referral_from_env {
+            println!("Using referral code from environment variable.");
+            env_code
+        } else {
+            // If running in CI and no referral provided, fail cleanly
+            if std::env::var("CI").is_ok() {
+                eprintln!("❌ No AXIOM_REFERRAL_CODE provided in CI environment.");
+                std::process::exit(1);
+            }
+
+            println!(
+                "If you don't have one, run: {}",
+                style("axiom join <EMAIL>").cyan()
+            );
+            println!("");
+
+            Input::with_theme(&ColorfulTheme::default())
+                .with_prompt("Enter Referral Code")
+                .interact_text()?
+        };
 
         // Create temp config to generate machine ID
         let temp_config = AccessConfig::save(&code).await?;
@@ -249,7 +262,23 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             }
         }
         Commands::Build { variant, local } => {
-            handle_build_command(variant.clone().unwrap_or("default".to_string())).await
+            let variant = variant.clone().unwrap_or("default".to_string());
+
+            if std::env::var("CI").is_ok() {
+                // 👇 Non-TUI build mode
+                match axiom_build::core::build::handle_build(&variant, "", "", None).await {
+                    Ok(_) => {
+                        println!("✅ Build Succeeded!");
+                        Ok(())
+                    }
+                    Err(e) => {
+                        eprintln!("❌ Build failed: {}", e);
+                        Err(e.into())
+                    }
+                }
+            } else {
+                handle_build_command(variant).await
+            }
         }
         Commands::Inspect { path } => handle_inspect(path).await,
         Commands::Project { action } => match action {

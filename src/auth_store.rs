@@ -37,33 +37,22 @@ pub fn save_tokens(access_token: &str, refresh_token: &str) -> Result<()> {
 
 pub fn load_auth_data() -> Result<AuthData> {
     let path = get_auth_file_path()?;
-    println!("DEBUG: Loading auth data from: {}", path.display());
 
-    if !path.exists() {
-        // Fallback: Check for old "auth_token" file and migrate
-        let mut old_path = get_config_dir()?;
-        old_path.push("auth_token");
-        println!("DEBUG: Checking for migration at: {}", old_path.display());
-
-        if old_path.exists() {
-            println!("Migrating legacy auth token...");
-            let token = fs::read_to_string(&old_path).context("Failed to read old auth token")?;
-            // Create new structure with just access token (user will need to re-login eventually for refresh)
-            let data = AuthData {
-                access_token: token.trim().to_string(),
-                refresh_token: String::new(),
-                projects: HashMap::new(),
-            };
-            write_auth_data(&data)?;
-            fs::remove_file(old_path).ok(); // Clean up old file
-            return Ok(data);
+    for _ in 0..3 {
+        match fs::read_to_string(&path) {
+            Ok(content) => {
+                let data: AuthData = serde_json::from_str(&content)?;
+                return Ok(data);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                continue;
+            }
+            Err(e) => return Err(e.into()),
         }
-        anyhow::bail!("No auth data found. Please run 'axiom login'.");
     }
 
-    let content = fs::read_to_string(&path).context("Failed to read auth file")?;
-    let data: AuthData = serde_json::from_str(&content).context("Failed to parse auth file")?;
-    Ok(data)
+    anyhow::bail!("Failed to read auth file after retries");
 }
 
 fn write_auth_data(data: &AuthData) -> Result<()> {

@@ -30,7 +30,7 @@ pub async fn handle_release(file_path: &str) -> anyhow::Result<()> {
     // `axiom_build::core::unpackager::unpack_axiom_bytes` can read it.
 
     let file_bytes = std::fs::read(Path::new(file_path))?;
-    let contract = axiom_build::core::unpackager::unpack_axiom_bytes(&file_bytes)?;
+    let contract = axiom_lib::unpackager::unpack_axiom_bytes(&file_bytes)?;
 
     let project_id = contract.project.project_id;
     let version = contract.project.version;

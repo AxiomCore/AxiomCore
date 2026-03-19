@@ -47,7 +47,7 @@ pub async fn handle_pull_auto(path_arg: Option<PathBuf>) -> Result<()> {
     std::fs::write(&artifact_path, &contract_bytes)?;
 
     // 5. Post-Pull Steps
-    let contract = axiom_build::core::unpackager::unpack_axiom_bytes(&contract_bytes)?;
+    let contract = axiom_lib::unpackager::unpack_axiom_bytes(&contract_bytes)?;
 
     if let Some(fe) = config.frontend {
         if fe.framework == "flutter" {

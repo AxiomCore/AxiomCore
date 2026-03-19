@@ -101,7 +101,7 @@ pub async fn handle_watch_consumer() -> anyhow::Result<()> {
 
     // Load initial state for diffing
     if let Ok(bytes) = std::fs::read("project.axiom") {
-        if let Ok(file) = axiom_build::core::unpackager::unpack_axiom_bytes(&bytes) {
+        if let Ok(file) = axiom_lib::unpackager::unpack_axiom_bytes(&bytes) {
             state.previous_ir = Some(file.ir);
             state.last_schema_hash = file.project.schema_hash;
         }
@@ -138,7 +138,7 @@ pub async fn handle_watch_consumer() -> anyhow::Result<()> {
 
                     // Reload and Diff
                     if let Ok(bytes) = std::fs::read("project.axiom") {
-                        if let Ok(file) = axiom_build::core::unpackager::unpack_axiom_bytes(&bytes) {
+                        if let Ok(file) = axiom_lib::unpackager::unpack_axiom_bytes(&bytes) {
                             state.watch_diff = IRDiff::from_irs(&state.previous_ir, &file.ir);
                             state.previous_ir = Some(file.ir);
                             state.last_schema_hash = file.project.schema_hash;

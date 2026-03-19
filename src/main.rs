@@ -13,7 +13,6 @@ use crate::components::build_dashboard::render_build_dashboard;
 use crate::components::inspect::endpoint_detail::render_endpoint_detail;
 use crate::components::inspect::endpoint_list::render_endpoint_list;
 use crate::components::inspect::model_browser::render_model_browser;
-use crate::components::login_screen::render_login_screen;
 use crate::state::InspectTab;
 use crate::telemetry::Telemetry;
 use axiom_cloud::{CliApi, CloudClient};
@@ -459,7 +458,7 @@ async fn handle_build_command(variant: String) -> anyhow::Result<()> {
 }
 
 pub async fn handle_inspect(file_path: &Path) -> anyhow::Result<()> {
-    let contract = axiom_build::core::unpackager::unpack_axiom_file(file_path)?;
+    let contract = axiom_lib::unpackager::unpack_axiom_file(file_path)?;
 
     let mut state = crate::state::State::new();
     state.inspect_context.contract = Some(contract);

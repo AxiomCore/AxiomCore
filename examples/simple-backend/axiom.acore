@@ -41,7 +41,7 @@ models {
 endpoints {
   [Routes.get_user] {
     cache {
-      strategy = "network_only"
+      strategy = "stale_while_revalidate"
       ttlSeconds = 300
     }
     retry = new {

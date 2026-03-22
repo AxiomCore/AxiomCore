@@ -1,4 +1,5 @@
-from fastapi import FastAPI, HTTPException
+import asyncio
+from fastapi import FastAPI
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
@@ -8,7 +9,7 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"http://localhost:\d+",
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -24,20 +25,14 @@ class User(BaseModel):
     role: Optional[UserRole] = None
     email: str
 
-class Message(BaseModel):
-    message: str
-
 @app.get("/users/{user_id}", response_model=User)
-def get_user(user_id: int):
+async def get_user(user_id: int):
     """Gets a single user by ID."""
-    return {"id": user_id, "name": "John Doe", "role": UserRole.admin, "email": 'test@gmail.com'}
+    await asyncio.sleep(1.5) # ⏳ ARTIFICIAL DELAY TO PROVE RUST CACHING!
+    return {"id": user_id, "name": "John Doe", "role": UserRole.admin, "email": 'john@axiom.dev'}
 
-@app.get("/users", response_model=List[User])
-def list_users(limit: int = 10):
-    """Lists all users."""
-    return [{"id": 1, "name": "John Doe", "role": UserRole.admin, "email": 'test@gmail.com'}, {"id": 2, "name": "Jane Doe", "role": UserRole.user, "email": 'test@gmail.com'}]
-
-@app.get("/_internal", include_in_schema=False)
-def internal_route():
-    """This route should not be included in the schema."""
-    return {"status": "ok"}
+@app.post("/users", response_model=User)
+async def create_user(user: User):
+    """Creates a user (Target for our ax-mutate test)"""
+    await asyncio.sleep(1) # Simulate DB write
+    return user

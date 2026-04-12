@@ -94,7 +94,7 @@ pub async fn handle_watch_dynamic(build_flag: bool) -> anyhow::Result<()> {
 
 pub async fn handle_watch_consumer() -> anyhow::Result<()> {
     // 1. Ensure config exists (Run pull once)
-    handle_pull_auto(None).await?;
+    handle_pull_auto(None, None).await?;
 
     let mut tui = crate::tui::Tui::new().map_err(|e| anyhow::anyhow!(e))?;
     let mut state = State::new();

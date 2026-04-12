@@ -69,11 +69,9 @@ enum Commands {
     },
     Pull {
         #[arg(long)]
-        path: Option<PathBuf>,
+        contract: Option<PathBuf>,
         #[arg(long)]
-        package: Option<String>,
-        #[arg(long)]
-        version: Option<String>,
+        contract_config: Option<PathBuf>,
     },
     /// Watch for changes and rebuild/pull automatically
     Watch {
@@ -289,7 +287,10 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                 commands::project::handle_project_link(project_id.clone()).await
             }
         },
-        Commands::Pull { path, .. } => commands::pull::handle_pull_auto(path.clone()).await,
+        Commands::Pull {
+            contract,
+            contract_config,
+        } => commands::pull::handle_pull_auto(contract.clone(), contract_config.clone()).await,
         Commands::Watch { build } => {
             if *build {
                 commands::watch::handle_watch_dynamic(true).await

@@ -1,0 +1,9 @@
+axiom: ''
+project: null
+backend: null
+frontend:
+  framework: flutter
+  outputDir: lib/axiom_generated
+observability: null
+variants: {}
+policies: null

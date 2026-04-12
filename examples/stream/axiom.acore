@@ -1,0 +1,54 @@
+amends "axiom-python:/Users/yashmakan/AxiomCore/_axiom/AxiomCore/examples/stream/test_server.py:app"
+
+local Routes = module.Routes
+
+project {
+  id = "streaming-test"
+  version = "1.0.0"
+}
+
+variants {
+  ["default"] {
+    include = List("*")
+  }
+}
+
+endpoints {
+
+  // Define the WebSocket message schema (Since Python @app.websocket is opaque)
+  [Routes.websocket_endpoint] {
+    streaming = new WebSocketDef {
+      direction = "bidirectional"
+      reconnect = "auto"
+
+      serverMessages = new Listing {
+        new WsMessageDef {
+          type = "chat"
+          model = new TypeRefNamed { value = "ChatMessage" }
+        }
+      }
+
+      clientMessages = new Listing {
+        new WsMessageDef {
+          type = "raw"
+          model = new TypeRefPrimitive { kind = "string" }
+        }
+      }
+    }
+  }
+
+  // SSE and Chunks are auto-inferred by the extractor as HttpStream/SSE,
+  // but we ensure they map to our ChatMessage model for the SDK.
+  [Routes.stream_chunks] {
+    streaming = new HttpStreamDef {
+      responseType = new TypeRefNamed { value = "ChatMessage" }
+      encoding = "json"
+    }
+  }
+
+  [Routes.stream_sse] {
+    streaming = new SseStreamDef {
+      responseType = new TypeRefNamed { value = "ChatMessage" }
+    }
+  }
+}

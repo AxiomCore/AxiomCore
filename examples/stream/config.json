@@ -1,0 +1,8 @@
+{
+  "contracts": {
+    "streamTest": {
+      "file": "/Users/yashmakan/AxiomCore/_axiom/AxiomCore/examples/stream/.axiom",
+      "baseUrl": "http://localhost:8000"
+    }
+  }
+}

@@ -1,0 +1,88 @@
+amends "axiom-python:/Users/yashmakan/AxiomCore/AxiomCore/examples/observability-and-auth/test_server.py:app"
+
+local Routes = module.Routes
+
+project {
+  id = "auth-obs-test"
+  version = "1.0.0"
+}
+
+variants {
+  ["default"] { // Changed from "mobile"
+    include = List("*")
+  }
+}
+
+// === PHASE 1: OBSERVABILITY ===
+observability {
+  enabled = true
+  // Example Jaeger local OTLP collector
+  telemetryUrl = "http://localhost:4318/v1/traces"
+  sampleRate = 1.0
+}
+
+// === PHASE 2: AUTHENTICATION RULES ===
+endpoints {
+
+  // 1. JWT with Scopes
+  [Routes.protected_jwt] {
+    auth = new EndpointAuth {
+      required = true
+      scopes = new Listing { "items:read" }
+      methods = new Listing {
+        new AuthMethodDef {
+          type = "bearer";
+          name = "Authorization";
+          scheme = "Bearer";
+          location = "header";
+          // VALIDATED LOCALLY IN RUST!
+          validation = new AuthValidationDef {
+            strategy = "jwt";
+            secret = "my_super_secret_key";
+            alg = "HS256"
+          }
+        }
+      }
+    }
+  }
+
+  // 2. API Key Header
+  [Routes.protected_api_key_header] {
+    auth = new EndpointAuth {
+      required = true
+      methods = new Listing {
+        new AuthMethodDef {
+          type = "api_key";
+          name = "x-api-key";
+          location = "header"
+        }
+      }
+    }
+  }
+
+  // 3. API Key Query
+  [Routes.protected_api_key_query] {
+    auth = new EndpointAuth {
+      required = true
+      methods = new Listing {
+        new AuthMethodDef {
+          type = "api_key";
+          name = "api_key";
+          location = "query"
+        }
+      }
+    }
+  }
+
+  // 4. Multi Auth (OR Condition)
+  [Routes.protected_multi] {
+    auth = new EndpointAuth {
+      required = true
+      condition = "or" // Only needs ONE of these to pass
+      methods = new Listing {
+        new AuthMethodDef { type = "bearer"; name = "Authorization"; location = "header" };
+        new AuthMethodDef { type = "api_key"; name = "x-api-key"; location = "header" }
+      }
+    }
+  }
+}

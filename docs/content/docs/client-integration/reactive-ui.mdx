@@ -1,0 +1,51 @@
+---
+title: Reactive UI Components
+description: Building performance-optimized UIs with AxiomBuilder.
+---
+
+Axiom provides specialized Flutter widgets to handle the stream-based state transitions (Loading -> Success -> Error) automatically.
+
+### Using `AxiomBuilder`
+
+`AxiomBuilder` is the most efficient way to bind your UI to an API endpoint. It supports **Selectors** to prevent unnecessary rebuilds if only specific parts of the data change.
+
+```dart
+AxiomBuilder<models.User, models.User>(
+  query: sdk.getUser(userId: 1),
+  // Only rebuild if name or email changes
+  selector: (user) => [user.name, user.email],
+  loading: (context) => const CircularProgressIndicator(),
+  error: (context, error) => Text('Error: ${error.message}'),
+  builder: (context, state, user) {
+    return Column(
+      children: [
+        Text(user.name),
+        if (state.isFetching) const Text("Syncing with server..."),
+        Text("Source: ${state.source.name}"), // 'cache' or 'network'
+      ],
+    );
+  },
+)
+```
+
+### State Metadata
+
+The `AxiomState` object provided to your builder contains critical metadata about the request's origin:
+
+*   **`state.source`**: Tells you if the data is from `AxiomSource.cache` or `AxiomSource.network`.
+*   **`state.isFetching`**: A boolean indicating if a background refresh is currently in progress (even if you already have cached data).
+*   **`state.status`**: Current status (`loading`, `success`, `error`).
+
+### Data Transformation
+
+You can transform the data before it reaches the builder to keep your widgets clean:
+
+```dart
+AxiomBuilder(
+  query: sdk.getUser(userId: 1),
+  transform: (user) => (user.id, user.role), // Transform User model to a Tuple
+  builder: (context, state, result) {
+    return Text("ID: ${result.$1} Role: ${result.$2}");
+  },
+)
+```

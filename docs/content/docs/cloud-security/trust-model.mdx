@@ -1,0 +1,64 @@
+---
+title: The Trust Model
+description: How clients verify API integrity and backend identity.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Axiom Core operates on a **Public-Key Infrastructure (PKI)** model to maintain absolute trust between the backend and the frontend. This ensures that the behavioral contract you define in your backend is the exact same one executed by your users' devices, without any middle-man interference.
+
+### The Cryptographic Key Pair
+
+Every Axiom Project is assigned a unique **Ed25519** key pair—a modern, high-speed signature scheme optimized for mobile performance and high security.
+
+*   **Private Key:** Stored securely within Axiom Cloud. It is used exclusively to sign your `.axiom` artifacts during the `release` process. It never leaves the cloud environment.
+*   **Public Key:** Distributed to your client applications. It is used by the native runtime to verify that the incoming `.axiom` file was indeed signed by your authorized project.
+
+---
+
+### Verification Artifacts
+
+When a frontend developer runs `axiom pull`, the CLI synchronizes two critical security artifacts into the project assets:
+
+1.  **`.axiom`**: The binary contract containing your routes, models, and behavioral policies.
+2.  **`trust-axiom.json`**: A metadata file containing your Project ID and the **Public Key** required for verification.
+
+---
+
+### The Native Verification Pipeline
+
+Security enforcement happens at the lowest level of the application—inside the native Rust runtime. When your app calls `AxiomSdk.create()`, the runtime executes the following safety check:
+
+1.  **Binary Loading:** The `.axiom` contract is loaded into memory.
+2.  **Signature Extraction:** The runtime extracts the cryptographic signature attached to the end of the contract.
+3.  **Verification:** Using the Public Key from `trust-axiom.json`, the runtime validates the signature against the binary content of the contract.
+4.  **Bootstrapping:** 
+    *   **Success:** If the signature is valid, the runtime initializes the internal state and the query manager.
+    *   **Failure:** If the signature is invalid, missing, or tampered with, the runtime **halts initialization** and throws a `SecurityException`. No network calls are permitted.
+
+```dart
+// The initialization will fail here if the contract is tampered with.
+final api = await AxiomSdk.create(
+  baseUrl: "https://api.myapp.com",
+);
+```
+
+---
+
+### Local Development vs. Production
+
+Axiom Core allows for flexibility during development while maintaining strict enforcement for production.
+
+#### Local Development (Unsigned)
+When you build locally using `axiom build` (without `--release`), the contract is **unsigned**. 
+*   **Behavior:** The Rust runtime will still load the contract to allow you to iterate quickly.
+*   **Indication:** The console logs will output a prominent warning: `⚠️ RUNNING WITH AN UNSIGNED CONTRACT`. This mode is intended for internal development and testing only.
+
+#### Production (Signed)
+When you build with `axiom build --release`, the contract is signed by Axiom Cloud.
+*   **Behavior:** The runtime enforces the signature. If a signed contract is modified by even a single byte (e.g., changing a retry count or a validation rule), the verification will fail.
+*   **Requirement:** Always use signed contracts for production releases to guarantee that your app only communicates with verified API definitions.
+
+<Callout type="warn">
+Using unsigned contracts in production exposes your app to "Contract Injection" attacks, where a malicious actor could modify your API behavior or data validation rules. Always ensure your CI/CD pipeline uses `axiom release`.
+</Callout>

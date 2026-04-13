@@ -1,0 +1,62 @@
+---
+title: Behavioral Policies
+description: Configuring Caching, Retries, and Validations.
+---
+
+Policies are the "Behavioral" half of the Axiom contract. They tell the Rust runtime exactly how to handle network requests.
+
+### Caching Strategies
+
+Axiom supports four deterministic caching strategies:
+
+| Strategy | Description |
+| :--- | :--- |
+| `network_only` | Standard request, no caching. |
+| `cache_first` | Serve from local `sled` DB; if missing, hit network. |
+| `network_first` | Hit network first; if it fails/timeouts, fallback to cache. |
+| `stale_while_revalidate` | Serve cached data immediately, then update cache in background. |
+
+```pkl
+cache {
+  strategy = "stale_while_revalidate"
+  ttlSeconds = 3600
+}
+```
+
+### Retry & Backoff
+
+Axiom handles retries at the native layer, preventing UI hangs in the frontend.
+
+```pkl
+retry = new {
+  maxAttempts = 5
+  retryOnCodes = new { 502; 503; 504 }
+  retryOnTimeout = true
+  
+  // Backoff options: FixedBackoff, LinearBackoff, ExponentialBackoff
+  backoff = new ExponentialBackoff {
+    initialDelay = "500ms"
+    maxDelay = "10s"
+    multiplier = 2.0
+    useJitter = true
+  }
+}
+```
+
+### Custom Validations
+
+You can enforce extra rules on top of your Pydantic models:
+
+```pkl
+models {
+  [Models.User._model] {
+    fields {
+      [Models.User.age] {
+        validate {
+          type = "number"
+          minimum = 18
+        }
+      }
+    }
+  }
+}

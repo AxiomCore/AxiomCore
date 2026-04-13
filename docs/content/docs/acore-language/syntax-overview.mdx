@@ -1,0 +1,45 @@
+---
+title: Syntax Overview
+description: Understanding the PKL foundations of Acore.
+---
+
+Acore is a configuration language built on top of [Apple's PKL](https://github.com/apple/pkl). Unlike static formats like JSON or YAML, Acore is **programmable, typed, and validated**.
+
+### Key Characteristics
+
+*   **Declarative:** You describe *what* you want (e.g., "Retry 3 times"), not *how* to implement it.
+*   **Statically Typed:** Your editor (via the upcoming VS Code extension) knows exactly which fields are available from your backend.
+*   **Object-Oriented:** Leverage PKL's inheritance to share caching or retry logic across multiple endpoints without duplication.
+
+### File Structure
+
+An `axiom.acore` file typically follows a specific order to maintain clarity and ensure proper object resolution:
+
+1.  **The Bridge:** Importing your backend structure via the `amends` keyword.
+2.  **Metadata:** Defining project-specific information like IDs and versioning.
+3.  **Variants:** Defining different API surfaces for different clients (e.g., Mobile vs. Web).
+4.  **Global Policies:** Setting default behaviors for all routes.
+5.  **Overrides:** Specific behavioral rules for individual models or routes.
+
+### Example Anatomy
+
+```pkl
+// 1. The Bridge: Connects to your FastAPI app
+amends "axiom-python:./main.py:app"
+
+// 2. Metadata: Project identifiers
+project {
+  id = "billing-service"
+  version = "1.2.0"
+}
+
+// 3. Logic & Behavior
+variants { 
+  ["mobile"] { include = new { "*" } }
+}
+
+endpoints { 
+  [Routes.get_invoice] {
+    cache { strategy = "cache_first"; ttlSeconds = 3600 }
+  }
+}

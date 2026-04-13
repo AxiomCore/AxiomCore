@@ -1,0 +1,22 @@
+---
+title: Signed Contracts
+description: Ensuring contract integrity and security.
+---
+
+In a standard REST environment, the "Contract" (documentation) is often disconnected from the "Execution." Axiom Core fixes this by treating the contract as a **Signed Binary Artifact**.
+
+### How Signing Works
+
+1.  **Local Build:** When you run `axiom build`, the CLI generates the contract IR (Intermediate Representation).
+2.  **Cloud Upload:** If your project is linked and you are logged in, the IR is sent to the Axiom Hub.
+3.  **Signature Generation:** The Hub signs the contract using a **Private Key** stored securely in our backend. 
+4.  **Artifact Creation:** A `.axiom` file is produced, containing the IR and the cryptographic signature.
+
+### The Value of Signing
+
+<Callout type="warn" title="Preventing Man-in-the-Middle Attacks">
+If an attacker intercepts your `.axiom` file and tries to add a malicious endpoint or modify a model's validation rules, the signature will become invalid. The client-side runtime will detect this and refuse to load the contract.
+</Callout>
+
+*   **Immutable Deployments:** Once a contract is signed and released, you have a guarantee that the mobile app is behaving *exactly* as intended at the moment of the build.
+*   **Version Enforcement:** You can ensure that old versions of your app only communicate with contracts that match their specific version signatures.

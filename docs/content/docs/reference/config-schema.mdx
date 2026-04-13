@@ -1,0 +1,38 @@
+---
+title: Acore Configuration Reference
+description: API Reference for the axiom.acore language.
+---
+
+### `ProjectConfig`
+Metadata identifying the service.
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `id` | `String` | Unique project identifier. |
+| `version` | `String` | Semantic version of the contract. |
+
+### `RetryPolicy`
+Defines how the Rust runtime handles failures.
+| Field | Type | Default |
+| :--- | :--- | :--- |
+| `maxAttempts` | `Int` | `3` |
+| `retryOnCodes` | `Listing<Int>` | `502, 503, 504` |
+| `retryOnTimeout` | `Boolean` | `true` |
+| `backoff` | `Backoff` | `ExponentialBackoff` |
+
+#### Backoff Types
+*   **`FixedBackoff`**: `initialDelay: String`
+*   **`LinearBackoff`**: `initialDelay: String`, `step: String`
+*   **`ExponentialBackoff`**: `initialDelay: String`, `multiplier: Float`
+
+### `CachePolicy`
+Defines the client-side persistence strategy.
+| Field | Type | Options |
+| :--- | :--- | :--- |
+| `strategy` | `String` | `network_only`, `cache_first`, `network_first`, `stale_while_revalidate` |
+| `ttlSeconds` | `Int` | Time in seconds data remains valid in `sled`. |
+
+### `VariantConfig`
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `include` | `Listing<String>` | Glob patterns of routes to include (default `*`). |
+| `exclude` | `Listing<String>` | Glob patterns of routes to remove from the contract. |

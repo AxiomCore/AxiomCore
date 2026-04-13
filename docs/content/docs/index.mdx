@@ -1,0 +1,82 @@
+---
+title: Introduction
+description: Deterministic API Contracts. Signed. Typed. Runtime-Enforced.
+---
+
+import { Card, Cards } from 'fumadocs-ui/components/card';
+import { Rocket, ShieldCheck, Cpu, Repeat } from 'lucide-react';
+
+# Axiom Core
+
+Axiom Core is a **deterministic behavioral layer** for API consumption. It provides an enforced contract between your backend and client-side applications, ensuring that API behavior—caching, retries, validation, and error handling—is defined once in a signed contract and executed by a high-performance native runtime.
+
+### The Axiom Workflow
+
+Axiom Core sits between your code and the network. It introspects your backend directly, allows you to define behavior in a typed configuration language (**Acore**), and generates a **Thin SDK** that communicates with a native Rust-powered runtime inside your app.
+
+<Cards>
+  <Card
+    icon={<Cpu />}
+    title="Deterministic Engine"
+    description="Move logic out of the app layer. Replace fragile, handwritten network code with a predictable native execution pipeline."
+  />
+  <Card
+    icon={<ShieldCheck />}
+    title="Signed Contracts"
+    description="Cryptographically signed artifacts ensure your frontend only interacts with verified, untampered API definitions."
+  />
+  <Card
+    icon={<Rocket />}
+    title="Ghost Introspection"
+    description="Extract schemas from your backend without needing a full production environment or heavy dependencies."
+  />
+  <Card
+    icon={<Repeat />}
+    title="Multi-Variant Support"
+    description="Manage different API surfaces for Mobile, Web, or Partners from a single source of truth."
+  />
+</Cards>
+
+---
+
+## Current Status
+
+Axiom Core is currently in **Alpha**. We are actively expanding the ecosystem to support more backend frameworks and client platforms.
+
+| Layer | Supported Tech | Status |
+| :--- | :--- | :--- |
+| **Backend** | Python (FastAPI) | Alpha |
+| **Contract** | Acore Language | Alpha |
+| **Runtime** | Native Rust Core | Alpha |
+| **Frontend** | Flutter (iOS & macOS) | Alpha |
+
+### Coming Soon
+
+*   **Mobile:** Android support for Flutter is imminent and currently in internal testing.
+*   **Desktop:** Windows support for Flutter.
+*   **Backend Extractors:** Development is ongoing for **Flask**, **Django**, and the **Go (Chi)** framework.
+*   **Web:** React/TypeScript SDK powered by WebAssembly (WASM).
+
+---
+
+## Get Started
+
+Ready to eliminate API glue code? Follow our guides to integrate Axiom Core into your stack.
+
+<Cards>
+  <Card
+    title="Installation"
+    href="/getting-started/installation"
+    description="Get the Axiom CLI and Acore engine on your machine."
+  />
+  <Card
+    title="Backend Setup"
+    href="/getting-started/backend-setup"
+    description="Link your FastAPI app and build your first contract."
+  />
+  <Card
+    title="Frontend Setup"
+    href="/getting-started/frontend-setup"
+    description="Generate a thin SDK and start making reactive calls."
+  />
+</Cards>

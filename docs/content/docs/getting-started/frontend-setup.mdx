@@ -1,0 +1,63 @@
+---
+title: Frontend Setup
+description: Pulling the contract and initializing the runtime.
+---
+
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+Axiom Core eliminates the need for manual data classes, serialization logic, and network boilerplate in your Flutter app.
+
+### 1. Pull the Contract
+
+The `pull` command fetches the contract and generates a **Thin SDK Layer**.
+
+<Tabs items={['Cloud Pull (Recommended)', 'Local Path Pull']}>
+  <Tab value="Cloud Pull (Recommended)">
+    If your project is linked and you are logged in, simply run:
+    ```bash
+    axiom pull
+    ```
+    **The Trust Model:** Axiom pulls the `.axiom` contract and a `trust-axiom.json` file. This file contains the cryptographic signature and public key used by the Rust runtime to ensure the API has not been tampered with.
+  </Tab>
+  <Tab value="Local Path Pull">
+    Useful for quick testing against a local backend:
+    ```bash
+    axiom pull --path ../backend-repo/.axiom
+    ```
+    <Callout type="warn">
+      If the source `.axiom` file was built locally (unsigned), the Flutter logs will show a warning: `Running with an unsigned contract`. Verification is bypassed in this mode.
+    </Callout>
+  </Tab>
+</Tabs>
+
+### 2. Implementation in Flutter
+
+Axiom generates code in `lib/axiom_generated/`. It includes the SDK and the typed models.
+
+```dart
+import 'package:my_app/axiom_generated/axiom_sdk.dart';
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  final dbDir = await getApplicationSupportDirectory();
+  final sdk = await AxiomSdk.create(
+    baseUrl: "BASE_URL",
+    dbPath: dbDir.path,
+  );
+
+  runApp(MyApp(sdk: sdk));
+}
+```
+
+### 3. Benefits of the Axiom SDK
+
+Unlike traditional code generators that produce "Fat" boilerplate (thousands of lines of Dart), Axiom produces a **Thin Layer**:
+
+*   **Low Maintenance:** You don't maintain the generated code; it is a direct reflection of the backend contract.
+*   **Performance:** All heavy lifting (Retry logic, Caching, JSON Validation) happens in the pre-compiled Rust runtime.
+*   **Deterministic:** The behavior is enforced by the `.axiom` file. If the contract says "Retry 3 times," the runtime will do exactly that, regardless of platform.
+
+<Callout type="info">
+**Pro Tip:** Run `axiom watch` in your frontend project. It will automatically re-pull the contract and update your Dart models whenever the backend team publishes a new build to the Hub.
+</Callout>

@@ -1,0 +1,31 @@
+---
+title: Metadata
+description: Defining project identity and versioning in Acore.
+---
+
+The `project` block in your `axiom.acore` file defines the identity of your service. This metadata is used by the Axiom Hub for signing, versioning, and client-side verification.
+
+### The Project Block
+
+Every Acore configuration must include a project metadata block.
+
+```pkl
+project {
+  id = "payment-gateway"
+  version = "1.4.2"
+}
+```
+
+### Configuration Fields
+
+| Field | Type | Requirement | Description |
+| :--- | :--- | :--- | :--- |
+| **`id`** | `String` | **Required** | A unique identifier for your project. This must match the Project ID in the Axiom Hub to enable signed contracts. |
+| **`version`** | `String` | **Required** | The semantic version of the contract. The client runtime uses this to ensure it is running the correct iteration of the API behavior. |
+
+### Relationship with the Hub
+
+When you run `axiom project link`, the CLI ensures that the `id` in your metadata matches the linked project in the cloud. During the `axiom release` process:
+1.  The Hub reads the `id` and `version`.
+2.  It signs the build and tags it with this version.
+3.  The frontend developer can then pull specific versions using `axiom pull --version 1.4.2`.

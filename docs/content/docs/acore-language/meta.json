@@ -1,0 +1,12 @@
+{
+    "title": "The Acore Language",
+    "pages": [
+        "syntax-overview",
+        "amends",
+        "metadata",
+        "backend-objects",
+        "variants",
+        "policies",
+        "validation"
+    ]
+}

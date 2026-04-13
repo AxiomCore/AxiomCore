@@ -1,0 +1,84 @@
+---
+title: CLI Command Reference
+description: Detailed documentation for every Axiom CLI command.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+The Axiom CLI is a unified binary used to manage the entire contract lifecycle—from backend introspection to frontend code generation. You can access the built-in help at any time by running `axiom --help`.
+
+---
+
+### Project Lifecycle
+
+#### `axiom login`
+Authenticates your CLI with **Axiom Cloud** using a secure browser-based OAuth flow. Authentication is required to link projects, release signed contracts, and pull from the cloud.
+
+#### `axiom project`
+Manages the association between your local development environment and your cloud namespace.
+
+*   **`list`**: Displays all projects in your organization.
+*   **`create`**: Launches an interactive prompt to create a new project in Axiom Cloud.
+*   **`link`**: Interactively links the current directory to a specific Cloud Project ID. This link is stored locally and is required for releasing signed contracts.
+
+#### `axiom init`
+Scans the current directory for supported frameworks (currently FastAPI) and initializes the Axiom environment.
+*   **Action**: Generates a default `axiom.acore` file pre-populated with your detected app entry point and project metadata.
+
+---
+
+### Build & Release
+
+#### `axiom build`
+The core engine command. It compiles your Python backend structure and your `Acore` configuration into a binary `.axiom` artifact.
+
+*   **Flags**:
+    *   `--variant <name>`: Builds a specific variant (e.g., `mobile`, `web`) defined in your config.
+    *   `--local`: Forces a local build only, bypassing cloud checks.
+    *   `--release`: **(Shortcut)** Builds the contract and immediately triggers a release/signing process in Axiom Cloud.
+
+#### `axiom release`
+Uploads your locally built `.axiom` file to Axiom Cloud to be cryptographically signed and versioned.
+*   **Action**: Once released, the contract is locked, signed, and made available for frontend developers to fetch.
+
+#### `axiom inspect [path]`
+Launches an interactive Terminal User Interface (TUI) to explore the compiled contract.
+*   **Arguments**: `path` (Defaults to `.axiom` in the current directory).
+*   **Action**: Browse all discovered Routes and Models. Use this to verify your Caching, Retry, and Validation policies before deployment.
+
+---
+
+### Consumption (Frontend)
+
+#### `axiom pull`
+The primary command for frontend developers. It fetches the latest contract and prepares the development environment.
+
+*   **Flags**:
+    *   `--path <path>`: Pulls from a local `.axiom` file (useful for unsigned/offline development).
+    *   `--version <semver>`: Pulls a specific signed version from Axiom Cloud.
+*   **Action**: 
+    1. Downloads the `.axiom` file and `trust-axiom.json` to the project root.
+    2. Syncs `pubspec.yaml` with the `axiom_flutter` runtime dependency.
+    3. Triggers the **Thin SDK** generation in `lib/axiom_generated/`.
+
+#### `axiom watch`
+Automates the Axiom workflow by watching for file changes.
+
+*   **Flags**:
+    *   `--build`: **(Backend mode)** Automatically rebuilds the `.axiom` file whenever Python or Acore files change.
+    *   **(Default)**: **(Frontend mode)** Watches for new contract releases on Axiom Cloud and automatically pulls/regenerates the SDK.
+
+---
+
+### Utilities
+
+#### `axiom cache`
+Interacts with the local **Sled** database used by the runtime for persistence.
+
+*   **Subcommands**:
+    *   `ls`: Lists all currently cached keys, methods, and paths.
+    *   `clear`: Safely wipes the local cache database.
+    *   `get --key <key>`: Inspects the raw value and metadata stored under a specific cache key.
+
+#### `axiom --version`
+Displays the current version of the Axiom CLI and the underlying `acore` engine.

@@ -1,4 +1,4 @@
-amends "axiom-python:/Users/yashmakan/AxiomCore/AxiomCore/examples/observability-and-auth/test_server.py:app"
+amends "axiom-python:/Users/yashmakan/AxiomCore/_axiom/AxiomCore/examples/observability-and-auth/test_server.py:app"
 
 local Routes = module.Routes
 

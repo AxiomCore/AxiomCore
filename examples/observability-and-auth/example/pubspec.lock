@@ -28,14 +28,14 @@ packages:
   axiom_flutter:
     dependency: "direct main"
     description:
-      path: "/Users/yashmakan/AxiomCore/axiom-sdk/flutter/axiom_flutter"
+      path: "/Users/yashmakan/AxiomCore/_axiom/axiom-sdk/flutter/axiom_flutter"
       relative: false
     source: path
     version: "0.0.8"
   axiom_flutter_generator:
     dependency: "direct dev"
     description:
-      path: "/Users/yashmakan/AxiomCore/axiom-sdk/flutter/axiom_flutter_generator"
+      path: "/Users/yashmakan/AxiomCore/_axiom/axiom-sdk/flutter/axiom_flutter_generator"
       relative: false
     source: path
     version: "0.0.3"

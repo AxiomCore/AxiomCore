@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:example/clear.dart';
 import 'package:flutter/material.dart';
 import 'package:axiom_flutter/axiom_flutter.dart';
 import 'axiom_generated/axiom_sdk.dart';
@@ -7,7 +8,7 @@ late final AxiomSdk sdk;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
+  clearStaleAxiomAuthTokens();
   // 1. Create using the auto-generated config!
   // You can optionally pass `config: AxiomDefaultConfig.config.copyWith(...)` if you want to override something.
   sdk = await AxiomSdk.create();

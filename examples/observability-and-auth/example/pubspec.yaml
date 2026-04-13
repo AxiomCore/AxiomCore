@@ -43,7 +43,7 @@ dependencies:
 
 dev_dependencies:
   axiom_flutter_generator:
-    path: /Users/yashmakan/AxiomCore/axiom-sdk/flutter/axiom_flutter_generator
+    path: /Users/yashmakan/AxiomCore/_axiom/axiom-sdk/flutter/axiom_flutter_generator
   flutter_test:
     sdk: flutter
 
@@ -60,7 +60,7 @@ dev_dependencies:
 # The following section is specific to Flutter packages.
 flutter:
   assets:
-    - /Users/yashmakan/AxiomCore/AxiomCore/examples/observability-and-auth/.axiom
+    - /Users/yashmakan/AxiomCore/_axiom/AxiomCore/examples/observability-and-auth/.axiom
 
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in

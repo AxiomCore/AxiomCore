@@ -14,7 +14,7 @@ class AxiomDefaultConfig {
     contracts: {
       'authObsTest': AxiomContractConfig(
         baseUrl: 'http://localhost:8000',
-        assetPath: '/Users/yashmakan/AxiomCore/AxiomCore/examples/observability-and-auth/.axiom',
+        assetPath: '/Users/yashmakan/AxiomCore/_axiom/AxiomCore/examples/observability-and-auth/.axiom',
       ),
     },
   );

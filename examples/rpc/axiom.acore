@@ -1,0 +1,32 @@
+amends "axiom-python:/Users/yashmakan/AxiomCore/_axiom/AxiomCore/examples/rpc/test_server.py:app"
+
+local Models = module.Models
+local Routes = module.Routes
+
+project {
+  id = "rpc-obs-test"
+  version = "1.0.0"
+}
+
+models {
+  [Models.Person._model] {
+    rpcs {
+      get_contacts {
+        endpoint = Routes.create_collection
+
+        arguments {
+          limit { kind = "int32" }
+        }
+
+        resolver {
+          body {
+            // Map the RPC argument
+            max_results = "$args.limit"
+            // Map the current model's property!
+            person_id = "$this.id"
+          }
+        }
+      }
+    }
+  }
+}

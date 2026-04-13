@@ -1,0 +1,83 @@
+---
+title: Axiom Cloud
+description: The central management plane for secure API contracts.
+---
+
+import { Card, Cards } from 'fumadocs-ui/components/card';
+import { Shield, History, Users, Cloud } from 'lucide-react';
+
+Axiom Cloud is the hosted management plane for your API contracts. While Axiom Core can operate entirely offline for local development, the Cloud provides the infrastructure required for **Cryptographic Signing**, **Contract Versioning**, and **Cross-Team Collaboration**.
+
+### Why use Axiom Cloud?
+
+<Cards>
+  <Card
+    icon={<Shield />}
+    title="Secure Signing"
+    description="Only Axiom Cloud can sign your contracts with your project's private key, ensuring frontend integrity."
+  />
+  <Card
+    icon={<History />}
+    title="Audit & Versioning"
+    description="Track exactly when a contract was built, what changed, and revert to previous versions if needed."
+  />
+  <Card
+    icon={<Users />}
+    title="Team Handoff"
+    description="Frontend teams pull verified contracts directly from the cloud without needing access to backend source code."
+  />
+  <Card
+    icon={<Cloud />}
+    title="Zero-Config CI/CD (Coming soon)"
+    description="Automatically push and sign contracts as part of your deployment pipeline."
+  />
+</Cards>
+
+---
+
+### Authentication
+
+To interact with Axiom Cloud, you must authenticate your CLI. Axiom uses a secure, browser-based OAuth flow that stores your session tokens locally.
+
+```bash
+axiom login
+```
+*This command will open your default browser to complete the login process.*
+
+---
+
+### Project Management
+
+Axiom Cloud organizes contracts into **Projects**. A project acts as a namespace that holds your contract history and your cryptographic public keys.
+
+#### 1. Creating a Project
+You can create a new project directly from your terminal:
+
+```bash
+axiom project create --name "Netflix-Dispatch" --description "API for the dispatch service"
+```
+
+#### 2. Listing Projects
+To see all projects you have access to, along with their unique IDs:
+
+```bash
+axiom project list
+```
+
+#### 3. Linking your Directory
+Axiom needs to know which cloud project your local backend code belongs to. Use the `link` command to create this association:
+
+```bash
+axiom project link
+```
+*The CLI will display an interactive list of your projects. Selecting one will link the current directory, allowing future builds to be automatically pushed and signed.*
+
+---
+
+### The Cloud Workflow
+
+1.  **Backend Developer** links the folder and runs `axiom build --release`. The CLI sends the contract IR to Axiom Cloud.
+2.  **Axiom Cloud** verifies the developer's identity, signs the IR with the project's private key, and stores the artifact.
+3.  **Frontend Developer** runs `axiom pull`. The CLI fetches the latest signed `.axiom` file and the corresponding `trust-axiom.json` (containing the public key) to the client project.
+
+This workflow ensures that even if your backend infrastructure is compromised, your client applications will only trust contracts that have been explicitly signed by your authorized team members through Axiom Cloud.

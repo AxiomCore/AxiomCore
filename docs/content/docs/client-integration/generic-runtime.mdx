@@ -1,0 +1,52 @@
+---
+title: The Generic Runtime
+description: Understanding the deterministic Rust engine powering your API.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+The **Generic Runtime** is the core execution engine of Axiom Core. While the generated SDK provides the typed interface you interact with in your IDE, the Runtime is what actually handles the network transport, data persistence, and policy enforcement.
+
+### Native Rust Core
+
+The runtime is written entirely in **Rust**. By using a native, low-level language, Axiom ensures that API behavior is identical across all platforms (Flutter, Kotlin, Swift, or React) without the performance overhead or behavioral inconsistencies of high-level garbage-collected languages.
+
+### The Execution Pipeline
+
+When a request is initiated through the Axiom SDK, the runtime processes it through a deterministic, linear pipeline:
+
+#### 1. Contract Verification
+Before any logic executes, the runtime loads the `.axiom` contract and verifies its signature using the public key in `trust-axiom.json`. If the contract is unsigned or the signature is invalid, the runtime enters a "Locked" state to prevent insecure communication.
+
+#### 2. Pre-flight Validation
+The engine uses the embedded **Rod-rs** validator to check your request parameters against the schema defined in your backend. If you attempt to send a string where an integer is expected, the runtime fails early, saving unnecessary network bandwidth.
+
+#### 3. Behavioral Layer (Cache & Retry)
+The runtime looks up the policies defined in your `Acore` configuration:
+*   **Caching:** If the strategy is `cache_first` or `stale_while_revalidate`, the runtime queries its local **Sled** database—a high-performance embedded key-value store.
+*   **Retries:** If the network is unstable, the runtime executes its native retry loop with the exact backoff and jitter strategies you configured.
+
+#### 4. Transport & Encoding
+Axiom manages its own HTTP/2 connection pool. It handles the serialization of your data (JSON or binary) and executes the transport. Because this happens in Rust, it is highly optimized for mobile battery life and throughput.
+
+#### 5. Post-flight Validation
+Once the server responds, the runtime validates the response body against the backend's source-of-truth model. If the backend breaks the contract, the runtime captures the error at the boundary, ensuring your frontend code never receives malformed data.
+
+### Why a "Generic" Runtime?
+
+The runtime is "generic" because it is completely decoupled from your specific API logic. It doesn't know what a `User` or a `Product` is; it simply knows how to interpret the `.axiom` instructions and execute them. 
+
+This means:
+*   **Zero Boilerplate:** You don't write transport code.
+*   **Predictability:** The same `.axiom` file will result in the same behavior on iOS as it does on macOS.
+*   **Observability:** The runtime provides standardized logs and traces for every stage of the pipeline (Validation, Cache Hit, Retry Attempt).
+
+---
+
+### Open Source & Roadmap
+
+<Callout type="info">
+The Generic Runtime is currently in a closed-alpha phase as we finalize internal testing and Proof of Concept (PoC) validations. 
+</Callout>
+
+We believe that the core of your application's infrastructure should be transparent and auditable. **We plan to open-source the Generic Runtime shortly after the initial alpha testing phase.** This will allow the community to audit the security of the signature verification and contribute to the expansion of transport protocols and client frameworks.

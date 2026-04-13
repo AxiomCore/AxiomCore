@@ -1,0 +1,66 @@
+---
+title: Rich Error Handling
+description: Using the deterministic error model to build resilient UIs.
+---
+
+One of the core benefits of the Axiom Runtime is its **Rich Error Model**. Instead of simple strings, you receive a structured `AxiomError` that categorizes exactly where and why a failure occurred.
+
+### Error Structure
+
+An `AxiomError` provides:
+1.  **Stage**: Where it failed (`validationRequest`, `networkSend`, `deserialize`, etc.)
+2.  **Category**: The high-level type (`network`, `validation`, `server`, `auth`).
+3.  **Code**: A specific, typed code (e.g., `HttpStatus(404)` or `ValidationError`).
+4.  **Retryable**: A boolean determined by the Acore policy and the error type.
+
+### Type-Safe Error Handling
+
+Using Dart's switch expressions, you can build highly specific error UIs:
+
+```dart
+void handleApiError(AxiomError error) {
+  final (title, message) = switch (error.code) {
+    ValidationError() => (
+      "Validation Failed",
+      "The data doesn't match the contract: ${error.details}",
+    ),
+    HttpStatus(code: 404) => (
+      "Not Found",
+      "We couldn't find that record on the server.",
+    ),
+    HttpStatus(code: >= 500) => (
+      "Server Error",
+      "Our backend is having trouble. We've been notified.",
+    ),
+    NetworkTimeout() || NetworkConnectionFailed() => (
+      "Connection Error",
+      "Check your internet and try again.",
+    ),
+    _ => ("Error", error.message),
+  };
+
+  // Show Dialog, Log to Sentry, etc.
+}
+```
+
+### Error Stages
+
+Understanding the `ErrorStage` helps isolate bugs instantly:
+
+*   **`validationRequest`**: The frontend sent data that violates the Acore/Rod rules.
+*   **`validationResponse`**: The backend returned data that violates the contract. (This indicates a **Contract Breach**).
+*   **`deserialize`**: The data returned was not valid JSON or didn't match the DTO structure.
+*   **`networkReceive`**: A standard HTTP failure happened during the transfer.
+
+### Manual Retries
+
+If an error is marked as `retryable: true`, you can easily trigger a refetch using the query manager:
+
+```dart
+if (error.retryable) {
+  ElevatedButton(
+    onPressed: () => sdk.getUser(userId: 1).refresh(),
+    child: const Text("Retry"),
+  );
+}
+```

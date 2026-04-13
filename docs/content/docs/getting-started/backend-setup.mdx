@@ -1,0 +1,74 @@
+---
+title: Backend Setup
+description: Defining, building, and releasing your behavioral contract.
+---
+
+import { Steps } from 'fumadocs-ui/components/steps';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+Axiom Core turns your backend into the absolute source of truth. You can iterate locally for rapid development or release to the Axiom Hub for production-grade signed contracts.
+
+<Steps>
+### Initialize the Project
+Navigate to your FastAPI root and run:
+```bash
+axiom init
+```
+This creates an `axiom.acore` file. Axiom automatically detects your entry point (e.g., `main.py:app`) and populates the initial configuration.
+
+### Build Locally
+To generate your first behavioral contract, run the build command:
+```bash
+axiom build
+```
+**Outcome:** A `.axiom` file is generated in your project root. At this stage, the contract is **unsigned**, meaning it is perfect for local testing but will trigger a warning in the client-side runtime logs.
+
+### Inspect Structure & Behavior
+Before releasing, use the built-in TUI to verify that your routes, models, and behavioral policies (caching, retries) are correct. You can inspect specific variants defined in your `.acore` file:
+
+```bash
+# Inspect the default variant
+axiom inspect
+
+# Inspect a specific variant
+axiom inspect mobile
+axiom inspect web
+```
+*Use the TUI to browse models and routes. If something looks wrong, update your Python code or `.acore` configuration and rebuild.*
+
+### Release to the Hub
+Once you are satisfied with the contract, you can release it to the Axiom Hub. This process cryptographically signs the contract and makes it available for the frontend team to pull.
+
+<Tabs items={['Standard Release', 'Direct Build & Release']}>
+  <Tab value="Standard Release">
+    If you have already built and inspected your `.axiom` file:
+    ```bash
+    axiom release
+    ```
+  </Tab>
+  <Tab value="Direct Build & Release">
+    To build and release in a single step:
+    ```bash
+    axiom build --release
+    ```
+  </Tab>
+</Tabs>
+
+<Callout type="warn">
+**Note:** You must be logged in (`axiom login`) and have a linked project (`axiom project link`) to perform a release. If you haven't logged in, the CLI will prompt you to do so before the release can proceed.
+</Callout>
+
+### Manage Projects
+If this is a new service, you'll need to create and link a project in the Hub:
+```bash
+# 1. Create the project
+axiom project create --name "My-Service"
+
+# 2. Link the current folder to that project
+axiom project link
+```
+</Steps>
+
+<Callout type="info">
+**Backend as Source of Truth:** You never have to manually update a Swagger/OpenAPI file or rewrite your data structures in a separate config. Every time you change your Pydantic models or FastAPI routes, the structure is automatically synchronized during the next `build`.
+</Callout>

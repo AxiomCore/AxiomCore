@@ -1,0 +1,16 @@
+---
+title: FAQ
+description: Frequently asked questions about Axiom Core.
+---
+
+### Do I need to have Python installed on the machine running the CLI?
+The CLI includes a bundled Python interpreter for the **Ghost Parser**. While having Python 3.10+ is recommended for local development, the CLI can often introspect projects without a full local environment.
+
+### Why not just use OpenAPI/Swagger?
+OpenAPI defines **Data Structure**. Axiom defines **Data Behavior**. OpenAPI doesn't tell your mobile app how to handle a 503 error or how to manage local storage; Axiom makes those behaviors part of the signed contract.
+
+### Is the Rust Runtime open source?
+We are currently in the process of auditing the source code for the Rust Runtime. We plan to open-source the core engine and the FFI layer in the near future.
+
+### What happens if the backend changes but I don't run `axiom pull`?
+Axiom ensures stability. Because the client has its own local contract (`.axiom`), it will continue to validate against that contract. If the backend breaks the contract, the Runtime will catch the schema mismatch and throw a `ValidationException` instead of letting your app crash with a null-pointer error.

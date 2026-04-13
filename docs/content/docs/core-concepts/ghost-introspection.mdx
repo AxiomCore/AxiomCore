@@ -1,0 +1,33 @@
+---
+title: Ghost Introspection
+description: Schema extraction without dependency hell.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+One of the most powerful features of Axiom Core is its ability to understand your backend structure without requiring a fully configured production environment.
+
+### The Challenge of Traditional Parsing
+
+Historically, extracting a FastAPI schema has relied on two primary methods, each with significant trade-offs:
+
+1.  **Static Analysis:** Tools try to read your code as text. While fast, this is extremely difficult to do correctly given Python’s highly dynamic nature, often missing complex decorators or inherited Pydantic models.
+2.  **Runtime Inspection:** Tools actually run your application to see what routes exist. This requires you to have every dependency (Pandas, TensorFlow, SQLAlchemy, etc.) and all environment variables installed just to generate a client or a configuration.
+
+### The Axiom Approach: Ghost Modules
+
+Axiom uses a unique approach called the **Universal Ghost Finder**. When you run `axiom build`, we trigger a specialized Python process that intercepts the native `import` system.
+
+<Callout type="info">
+  **How it works:** Our parser creates "Ghost Objects" on the fly. If your code tries to import a heavy library like `torch` or `pandas` that isn't present in the environment, Axiom provides a "Ghost" version of it. This object satisfies the import requirements enough to let the parser reach your FastAPI route definitions and Pydantic models.
+</Callout>
+
+#### Benefits of Ghost Introspection:
+
+*   **Zero Dependency Requirements:** You can build your API contract on a machine (or CI/CD runner) that doesn't have your backend libraries installed.
+*   **Hybrid Execution:** Because it is a simulated execution rather than simple text parsing, we can accurately resolve complex Pydantic models and FastAPI decorators that static analysis tools would miss.
+*   **Efficiency:** By bypassing the loading of heavy third-party libraries, the introspection is significantly faster. While traditional application startup on large codebases can take a minute, Axiom introspection usually completes in a matter of seconds.
+
+### From Python to Acore Memory
+
+Once the structure is extracted, it is converted into a JSON Intermediate Representation (IR) and then mapped into **PKL Memory Objects**. This is the bridge that allows your editor to provide type-safe autocomplete inside your `Acore` files. When you type `Models.` or `Routes.`, you are seeing the direct result of this introspection, mapped into a typed configuration layer.

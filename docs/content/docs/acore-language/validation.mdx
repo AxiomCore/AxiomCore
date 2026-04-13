@@ -1,0 +1,66 @@
+---
+title: Validation
+description: Cross-platform deterministic validation with Rod.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Axiom Core uses **Rod** for all schema validations. Rod is a high-performance, cross-platform validation library built by Axiom Core that ensures your data is valid before it ever leaves the client or enters your application logic.
+
+<Callout type="info" title="Rod Documentation">
+  This page covers how to use validation inside Acore. For a deep dive into the Rod engine, visit [rod.axiomcore.dev](https://rod.axiomcore.dev) or check the [source on GitHub](https://github.com/AxiomCore/rod).
+</Callout>
+
+### The "Write-Once, Validate-Anywhere" Model
+
+Traditionally, validation logic is duplicated across the Backend (Python) and Frontend (Flutter). This leads to **Schema Drift**. 
+
+Axiom solves this by moving validation into the **Shared Rust Core**. You define the validation rules once in your `axiom.acore` file, and the **Generic Runtime** enforces them natively on the client device.
+
+### Defining Validations in Acore
+
+Validation is applied at the model level. You reference the model and field discovered during introspection and attach a `validate` block.
+
+```pkl
+local User = Models.User
+
+models {
+  [User._model] {
+    fields {
+      [User.email] {
+        validate {
+          type = "string"
+          email = true
+        }
+      }
+      [User.age] {
+        validate {
+          type = "number"
+          minimum = 18
+          int = true
+        }
+      }
+    }
+  }
+}
+```
+
+### How it Works: RodSpec
+
+Acore's validation syntax maps 1-to-1 with **RodSpec**—a serializable AST (Abstract Syntax Tree) for validation logic. 
+
+1.  **Contract Build:** Your Acore rules are compiled into a `RodSpec` and embedded in the `.axiom` file.
+2.  **Runtime Execution:** The Rust runtime parses this spec into an executable validator.
+3.  **Deterministic Enforcement:** 
+    *   **Outgoing:** Requests are validated against the spec before being sent.
+    *   **Incoming:** Server responses are validated before being returned to the Flutter SDK.
+
+### Why Rod?
+
+*   **Native Speed:** Validation happens in the Rust runtime, bypassing the overhead of high-level languages.
+*   **Consistency:** Because the same Rust core is used, a validation that passes in your test suite is guaranteed to behave identically in the production mobile app.
+*   **Precision:** Capture specific requirements like `trim`, `uuid`, or `regex` that standard JSON schemas often miss.
+
+<Callout type="warn">
+If a server response fails the Rod validation defined in your contract, the Axiom Runtime will throw a `ValidationException` and block the data from reaching your UI, preventing crashes caused by malformed data.
+</Callout>

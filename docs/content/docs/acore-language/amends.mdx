@@ -1,0 +1,28 @@
+---
+title: The 'amends' Keyword
+description: Linking your backend source to the contract.
+---
+
+The `amends` keyword is the "magic bridge" that connects Axiom to your Python code.
+
+### URI Structure
+
+The URI follows a specific format that tells the Axiom CLI which extractor to use and where to find your app:
+
+```pkl
+amends "axiom-python:<path_to_file>:<fastapi_variable_name>"
+```
+
+*   **`axiom-python`**: Specifies the Python/FastAPI extractor.
+*   **`./main.py`**: The relative path to your entry point.
+*   **`app`**: The name of the `FastAPI()` instance in your code.
+
+### What happens during `amends`?
+
+When you use this keyword, the Axiom CLI triggers the **Ghost Parser**. It injects two global objects into your PKL scope:
+1.  **`Models`**: A mapping of all discovered Pydantic/SQLAlchemy models.
+2.  **`Routes`**: A mapping of all discovered FastAPI endpoints.
+
+<Callout type="info">
+Because ACORE is typed, you cannot reference a route that doesn't exist in your Python code. If you rename a function in FastAPI, your `.acore` build will fail until you update the reference.
+</Callout>

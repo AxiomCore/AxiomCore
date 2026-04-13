@@ -1,0 +1,39 @@
+---
+title: Defining Variants
+description: Managing different API surfaces for different clients.
+---
+
+Axiom Core allows you to create multiple versions of your API from a single backend. This is useful for excluding "Admin" endpoints from a Mobile app or creating a "Lite" version of your SDK.
+
+### The `include` and `exclude` Logic
+
+By default, every endpoint is included. You can use glob patterns (`*`) to filter routes.
+
+```pkl
+variants {
+  ["mobile_app"] {
+    include = new { "*" }
+    exclude = new { "admin_*"; "internal_*" }
+  }
+
+  ["partner_api"] {
+    include = new { "public_*"; "orders_*" }
+  }
+}
+```
+
+### Per-Variant Policies
+
+You can also apply different default caching strategies per variant:
+
+```pkl
+variants {
+  ["mobile"] {
+    include = new { "*" }
+    cache {
+      strategy = "network_first"
+      ttlSeconds = 60
+    }
+  }
+}
+```

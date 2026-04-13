@@ -1,0 +1,44 @@
+---
+title: Introspecting Backend Objects
+description: Accessing Models and Routes as first-class citizens.
+---
+
+Acore allows you to treat your backend code as data. You use the `Models` and `Routes` objects to apply configurations.
+
+### Aliasing for Convenience
+
+To keep your configuration clean, it is a best practice to alias your models and routes using the `local` keyword:
+
+```pkl
+amends "axiom-python:./main.py:app"
+
+local User = Models.User
+local GetUser = Routes.get_user_by_id
+```
+
+### Mapping Behavior
+
+To apply a policy to a route or model, you use the object as a key in the `endpoints` or `models` mapping:
+
+```pkl
+endpoints {
+  [GetUser] {
+    // Behavior goes here
+    validate = true
+  }
+}
+
+models {
+  [User._model] {
+    fields {
+      [User.email] {
+        // Validation goes here
+      }
+    }
+  }
+}
+```
+
+<Callout>
+Note the use of square brackets `[...]`. This is PKL syntax for using an object reference as a key in a mapping.
+</Callout>

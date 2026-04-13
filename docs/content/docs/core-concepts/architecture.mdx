@@ -1,0 +1,31 @@
+---
+title: Architecture
+description: Understanding the Axiom lifecycle and components.
+---
+
+Axiom Core operates as a bridge between your Backend Source of Truth and your Frontend Consumer. It provides a deterministic pipeline to ensure that the code you write in your backend is exactly what is executed in your client application.
+
+### The Contract Lifecycle
+
+Rather than manual coordination, Axiom Core uses a multi-stage automated pipeline to manage the lifecycle of an API contract:
+
+1.  **Introspection:** The Axiom CLI uses **Ghost Modules** to parse your FastAPI application and extract its internal structure (models and routes) without needing to run the server or install heavy production dependencies.
+2.  **Configuration (Acore):** You use the **Acore** language (built on Apple's PKL) to "amend" your backend structure with behavioral rules such as Retries, Caching policies, and Validation constraints.
+3.  **Build & Sign:** The CLI compiles this configuration into a `.axiom` artifact. If released to the Axiom Hub, the file is cryptographically signed with your project's private key.
+4.  **The Pull:** The frontend developer pulls the `.axiom` file and a `trust-axiom.json` file (containing the Public Key). This allows the client to verify that the contract has not been tampered with.
+5.  **Code Generation:** Axiom generates a thin, typed SDK for the client (e.g., Dart for Flutter). This layer contains no network logic—only types and interfaces.
+6.  **The Enforcer (Runtime):** When the app makes a call, the **Rust Runtime** intercepts it, verifies the signature, and executes the call according to the policies defined in the contract.
+
+### Core Components
+
+#### 1. The Bridge (CLI)
+Written in Rust, the CLI is the developer's primary interface. It manages the build pipeline, cloud synchronization with the Axiom Hub, and the triggering of the introspection engine.
+
+#### 2. The Contract Layer (Acore)
+Acore is a declarative, typed language that allows you to treat your backend as an object. By importing your code via the bridge, you can access `Models.User` or `Routes.get_user` as first-class citizens to apply behavioral policies.
+
+#### 3. The Generic Runtime
+A high-performance engine written in Rust that lives inside your client application. It handles the "Heavy Lifting" that is usually duplicated across platforms:
+*   **Network Transport:** Optimized HTTP management and execution.
+*   **Local Persistence:** Uses `sled` for high-speed, binary-optimized caching.
+*   **Validation Engine:** Uses `rod-rs` to enforce schema constraints on both requests and responses before they hit your application logic.

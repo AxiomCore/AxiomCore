@@ -1,0 +1,17 @@
+{
+    "title": "Axiom Core",
+    "pages": [
+        "index",
+        "---Introduction---",
+        "introduction/why-axiom",
+        "getting-started",
+        "core-concepts",
+        "---Development---",
+        "acore-language",
+        "client-integration",
+        "---Infrastructure---",
+        "cloud-security",
+        "reference",
+        "roadmap"
+    ]
+}

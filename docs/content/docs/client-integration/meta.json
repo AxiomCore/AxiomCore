@@ -1,0 +1,10 @@
+{
+    "title": "Client Integration",
+    "pages": [
+        "sdk-structure",
+        "generic-runtime",
+        "using-the-sdk",
+        "reactive-ui",
+        "error-handling"
+    ]
+}

@@ -1,0 +1,88 @@
+---
+title: Installation
+description: Getting the Axiom CLI on your machine.
+---
+
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+import { Callout } from 'fumadocs-ui/components/callout';
+
+The Axiom CLI is a unified tool used by both backend and frontend developers to manage behavioral contracts, build artifacts, and generate client-side code.
+
+### Install the CLI
+
+Choose your preferred installation method. Both methods support macOS and Linux.
+
+<Tabs items={['curl', 'Homebrew']}>
+  <Tab value="curl">
+    Run the following command in your terminal:
+    ```bash
+    curl -fsSL https://axiomcore.dev/install | sh
+    ```
+    <Callout type="info">
+      The installer automatically sets binaries to `/usr/local/bin`. Because this is a system path, you will likely be prompted for your **sudo password** during the process.
+    </Callout>
+  </Tab>
+  <Tab value="Homebrew">
+    If you use Homebrew, you can install via our official tap:
+    ```bash
+    brew install AxiomCore/tap/axiom
+    ```
+    <Callout type="info">
+      Installing via Homebrew does **not** require sudo permissions as it installs within the Homebrew prefix.
+    </Callout>
+  </Tab>
+</Tabs>
+
+### Verification
+
+Once installed, verify that the CLI is correctly configured in your environment:
+
+```bash
+axiom --version
+```
+
+### What gets installed?
+
+The installation process provides two essential binaries:
+
+1.  **`axiom`**: The primary interface. Used for `init`, `build`, `pull`, and interacting with the Axiom Hub.
+2.  **`acore`**: The specialized language engine. It handles the evaluation of your `.acore` (PKL) configuration files.
+
+---
+
+### Upgrading
+
+Axiom Core is frequently updated with new features and runtime optimizations. To upgrade to the latest version:
+
+<Tabs items={['curl', 'Homebrew']}>
+  <Tab value="curl">
+    Simply run the installation command again to overwrite the existing binaries with the latest version:
+    ```bash
+    curl -fsSL https://axiomcore.dev/install | sh
+    ```
+  </Tab>
+  <Tab value="Homebrew">
+    Use the standard Homebrew upgrade command:
+    ```bash
+    brew upgrade AxiomCore/tap/axiom
+    ```
+  </Tab>
+</Tabs>
+
+---
+### Next Steps
+
+Now that you have the CLI, choose your path based on your role:
+
+<Cards>
+  <Card
+    title="Backend Setup"
+    href="/getting-started/backend-setup"
+    description="Introspect your FastAPI app and generate your first behavioral contract."
+  />
+  <Card
+    title="Frontend Setup"
+    href="/getting-started/frontend-setup"
+    description="Consume the contract in Flutter and boot up the Rust runtime."
+  />
+</Cards>

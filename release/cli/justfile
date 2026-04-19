@@ -1,0 +1,16 @@
+default:
+    @just --list
+
+build:
+    ./scripts/build.sh
+
+release:
+    ./scripts/release.sh
+
+publish version:
+    ./scripts/publish.sh {{version}}
+
+all version:
+    ./scripts/build.sh {{version}}
+    ./scripts/release.sh
+    ./scripts/publish.sh {{version}}

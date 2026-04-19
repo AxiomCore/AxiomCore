@@ -1,0 +1,43 @@
+# release/justfile
+
+default:
+    @just --list
+
+# ==========================================
+# 1. AXIOM CLI PIPELINE
+# ==========================================
+build-axiom version:
+    ./cli/scripts/build.sh {{version}}
+
+package-axiom:
+    ./cli/scripts/release.sh
+
+publish-axiom version:
+    ./cli/scripts/publish.sh {{version}}
+
+release-axiom version: (build-axiom version) package-axiom (publish-axiom version)
+
+
+# ==========================================
+# 2. ATMX CLI PIPELINE (NPM)
+# ==========================================
+release-atmx version:
+    echo "📦 Building and Publishing atmx-cli v{{version}} to NPM..."
+    cd atmx-cli && npm install && npm run build
+    cd atmx-cli && npm version {{version}} --no-git-tag-version
+    cd atmx-cli && npm publish --access public
+    echo "✅ atmx-cli published successfully!"
+
+
+# ==========================================
+# 3. EXTRACTOR MODULES PIPELINE
+# ==========================================
+release-extractor name version:
+    ./extractors/scripts/publish.sh {{name}} {{version}}
+
+
+# ==========================================
+# 4. RELEASE EVERYTHING
+# ==========================================
+release-all version: (release-axiom version) (release-atmx version)
+    @echo "🎉 All AxiomCore components released successfully for v{{version}}!"

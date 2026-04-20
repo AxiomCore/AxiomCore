@@ -55,7 +55,7 @@ pub fn render_endpoint_detail(f: &mut Frame, area: Rect, state: &State) {
     if let Some(ir_ep) = contract
         .ir
         .endpoints
-        .iter()
+        .values()
         .find(|e| e.name == endpoint.name)
     {
         for param in &ir_ep.parameters {

@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 
 // Import ensure_deps from the build crate
-use axiom_build::core::client_sdk::flutter::ensure_deps::ensure_deps;
+use axiom_build::core::utils::{ensure_deps, generate_from_fbs};
 
 pub async fn handle_pull_auto(
     contract: Option<PathBuf>,
@@ -67,7 +67,7 @@ pub async fn handle_pull_auto(
         output_dir: Some("lib/axiom_generated".to_string()),
     };
 
-    axiom_build::core::client_sdk::flutter::generate_from_fbs::generate_from_fbs(
+    generate_from_fbs(
         &project_root,
         &frontend_cfg,
         &[], // No FlatBuffers for now

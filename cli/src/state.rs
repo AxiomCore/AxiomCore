@@ -75,12 +75,12 @@ impl IRDiff {
 
         let old_map: HashMap<String, u32> = old_ir
             .endpoints
-            .iter()
+            .values()
             .map(|e| (e.path.clone(), e.id))
             .collect();
         let new_map: HashMap<String, u32> = new
             .endpoints
-            .iter()
+            .values()
             .map(|e| (e.path.clone(), e.id))
             .collect();
 

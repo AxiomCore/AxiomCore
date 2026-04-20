@@ -1,14 +1,14 @@
 [package]
 name = "axiom-cli"
-version = "0.0.82"
+version = "0.0.86"
 edition = "2021"
 
 [dependencies]
-axiom-lib = { path = "../axiom-lib" }
-axiom-cloud = { path = "../axiom-cloud" }
-axiom-client = { path = "../axiom-client" }
-axiom-extractor = { path = "../axiom-extractor" }
-axiom-build = { path = "../axiom-build" }
+axiom-lib = { path = "../../axiom-lib" }
+axiom-cloud = { path = "../../axiom-cloud" }
+axiom-extractor = { path = "../../axiom-extractor" }
+axiom-build = { path = "../../axiom-build" }
+acore = { path = "../../acore" }
 
 # UI Core
 ratatui = "0.26"

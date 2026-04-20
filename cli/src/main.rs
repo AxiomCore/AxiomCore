@@ -46,18 +46,35 @@ enum Commands {
         action: CacheAction,
     },
     Install {
+        package: String,
+        /// Installs an Acore/Axiom compiler extractor module
         #[arg(long)]
-        extractor: Option<String>,
-        #[arg(required_unless_present = "extractor")]
-        package: Option<String>,
+        module: bool,
     },
+    Eval {
+        file: PathBuf,
+        #[arg(short, long)]
+        format: Option<String>,
+        #[arg(short, long)]
+        variant: Option<String>,
+    },
+    /// Test an Acore configuration file
+    Test {
+        file: PathBuf,
+    },
+    /// Start the Acore REPL
+    Repl,
+    /// Start the Axiom/Acore Language Server
+    Lsp,
     /// Build the .axiom artifact from local source
     Build {
+        /// Path to the .acore configuration file
+        file: PathBuf,
         #[arg(long)]
         variant: Option<String>,
-        /// Skip upload and signing (local build only).
+        /// Automatically release the contract to Axiom Cloud after building
         #[arg(long)]
-        local: bool,
+        release: bool,
     },
     /// Inspect an .axiom file's IR and Policies
     Inspect {
@@ -65,7 +82,8 @@ enum Commands {
         path: PathBuf,
     },
     Release {
-        file_path: PathBuf,
+        /// Path to the .axiom file (Defaults to .axiom in the current directory)
+        file_path: Option<PathBuf>,
     },
     Pull {
         #[arg(long)]
@@ -97,6 +115,14 @@ enum ProjectAction {
     Link {
         #[arg(long)]
         project_id: Option<String>,
+    },
+    /// Resolves local acore project dependencies
+    Resolve {
+        dir: PathBuf,
+    },
+    /// Packages a local acore project
+    Package {
+        dir: PathBuf,
     },
 }
 
@@ -221,6 +247,14 @@ async fn main() -> anyhow::Result<()> {
         Commands::Pull { .. } => "pull",
         Commands::Watch { .. } => "watch",
         Commands::Project { .. } => "project",
+        Commands::Eval {
+            file,
+            format,
+            variant,
+        } => "eval",
+        Commands::Test { file } => "test",
+        Commands::Repl => "repl",
+        Commands::Lsp => "lsp",
     };
 
     // Send Telemetry (This internally handles the "Kill Switch" / Access Revocation)
@@ -240,32 +274,78 @@ async fn main() -> anyhow::Result<()> {
 // Helper to route commands (Refactored from original main)
 async fn execute_command(command: &Commands) -> anyhow::Result<()> {
     match command {
-        Commands::Init => commands::init::handle_init().await,
-        Commands::Login => handle_login_tui().await,
-        Commands::Join { .. } => Ok(()), // Handled in main, but needed here for match exhaustiveness
-        Commands::Cache { action } => {
-            let db_path = dirs::home_dir().unwrap().join(".axiom/cache");
-            match action {
-                CacheAction::Ls => commands::cache::handle_ls(&db_path).await,
-                CacheAction::Get { key } => commands::cache::handle_get(&db_path, key).await,
-                CacheAction::Clear => commands::cache::handle_clear(&db_path).await,
+        Commands::Repl => {
+            tokio::task::spawn_blocking(|| {
+                acore::repl::run_repl();
+            })
+            .await
+            .unwrap();
+            Ok(())
+        }
+        Commands::Lsp => {
+            acore::server::run_server().await;
+            Ok(())
+        }
+        Commands::Eval {
+            file,
+            format,
+            variant,
+        } => {
+            let mut evaluator =
+                acore::evaluator::Evaluator::new(acore::security::SecurityManager::allow_all());
+            evaluator.active_variant = variant.clone();
+
+            let uri = format!("file://{}", file.canonicalize().unwrap().display());
+            let val = evaluator.evaluate_module(&uri)?;
+
+            let out_fmt = match format.as_deref().unwrap_or("pcf").to_lowercase().as_str() {
+                "json" => acore::render::OutputFormat::Json,
+                "yaml" => acore::render::OutputFormat::Yaml,
+                "md" | "markdown" => acore::render::OutputFormat::Markdown,
+                _ => acore::render::OutputFormat::Pcf,
+            };
+
+            if let Some(out) = acore::render::process_outputs(&mut evaluator, &val, out_fmt, None)?
+            {
+                println!("{}", out);
+            }
+            Ok(())
+        }
+        Commands::Test { file } => {
+            if acore::tester::run_tests(file.to_str().unwrap())? {
+                Ok(())
+            } else {
+                anyhow::bail!("Tests failed")
             }
         }
-        Commands::Install { extractor, package } => {
-            if let Some(e) = extractor {
-                commands::install::handle_install(e).await
+        Commands::Install { package, module } => {
+            if *module {
+                acore::package::install_tool(package)
+                    .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                Ok(())
             } else {
+                println!("Marketplace installation coming soon for '{}'", package);
                 Ok(())
             }
         }
-        Commands::Build { variant, local } => {
-            let variant = variant.clone().unwrap_or("default".to_string());
+
+        Commands::Build {
+            file,
+            variant,
+            release,
+        } => {
+            let variant_str = variant.clone().unwrap_or("default".to_string());
+            let file_path = file.to_string_lossy().to_string();
 
             if std::env::var("CI").is_ok() {
-                // 👇 Non-TUI build mode
-                match axiom_build::core::build::handle_build(&variant, "", "", None).await {
-                    Ok(_) => {
-                        println!("✅ Build Succeeded!");
+                match axiom_build::core::build::handle_build(&file_path, &variant_str, "", "", None)
+                    .await
+                {
+                    Ok(out_file) => {
+                        println!("✅ Build Succeeded! Generated {}", out_file);
+                        if *release {
+                            commands::release::handle_release(&out_file).await?;
+                        }
                         Ok(())
                     }
                     Err(e) => {
@@ -274,8 +354,15 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                     }
                 }
             } else {
-                handle_build_command(variant).await
+                handle_build_command(file_path, variant_str, *release).await
             }
+        }
+        Commands::Release { file_path } => {
+            // Default to ".axiom" in current directory if no path is passed
+            let path = file_path
+                .clone()
+                .unwrap_or_else(|| std::path::PathBuf::from(".axiom"));
+            commands::release::handle_release(path.to_str().unwrap()).await
         }
         Commands::Inspect { path } => handle_inspect(path).await,
         Commands::Project { action } => match action {
@@ -285,6 +372,14 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             }
             ProjectAction::Link { project_id } => {
                 commands::project::handle_project_link(project_id.clone()).await
+            }
+            ProjectAction::Resolve { dir } => {
+                acore::project_cmd::resolve_project(dir.to_str().unwrap())
+                    .map_err(|e| anyhow::anyhow!(e.to_string()))
+            }
+            ProjectAction::Package { dir } => {
+                acore::project_cmd::package_project(dir.to_str().unwrap())
+                    .map_err(|e| anyhow::anyhow!(e.to_string()))
             }
         },
         Commands::Pull {
@@ -298,9 +393,10 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                 commands::watch::handle_watch_consumer().await
             }
         }
-        Commands::Release { file_path } => {
-            commands::release::handle_release(file_path.to_str().unwrap()).await
-        }
+        Commands::Init => todo!(),
+        Commands::Login => todo!(),
+        Commands::Join { email } => todo!(),
+        Commands::Cache { action } => todo!(),
     }
 }
 
@@ -389,19 +485,31 @@ fn normalize_validator_yaml(raw_spec: &str) -> String {
     }
 }
 
-async fn handle_build_command(variant: String) -> anyhow::Result<()> {
+async fn handle_build_command(
+    file_path: String,
+    variant: String,
+    release: bool,
+) -> anyhow::Result<()> {
     let mut state = crate::state::State::new();
     let (action_tx, mut action_rx) = tokio::sync::mpsc::unbounded_channel::<Action>();
 
     let mut tui = crate::tui::Tui::new().map_err(|e| anyhow::anyhow!(e))?;
     tui.enter().map_err(|e| anyhow::anyhow!(e))?;
 
-    // 1. We wrap the loop in a block so we can capture the result
-    let task_result = async {
+    // Capture the generated path from the task_result
+    let task_result: anyhow::Result<String> = async {
         let v_clone = variant.clone();
-        let _build_task = tokio::spawn(async move {
-            match axiom_build::core::build::handle_build(&v_clone, "", "", Some(action_tx.clone()))
-                .await
+        let f_clone = file_path.clone();
+
+        tokio::spawn(async move {
+            match axiom_build::core::build::handle_build(
+                &f_clone,
+                &v_clone,
+                "",
+                "",
+                Some(action_tx.clone()),
+            )
+            .await
             {
                 Ok(path) => {
                     let _ = action_tx.send(Action::BuildSuccess(path));
@@ -415,47 +523,49 @@ async fn handle_build_command(variant: String) -> anyhow::Result<()> {
         loop {
             tui.draw(|f| render_build_dashboard(f, f.size(), &state))?;
 
-            // Check for key events
             if let Ok(event) = tui.event_rx.try_recv() {
                 if let crate::tui::Event::Key(key) = event {
                     if key.code == KeyCode::Char('q') || key.code == KeyCode::Esc {
-                        return Ok(()); // User quit
+                        return Err(anyhow::anyhow!("Build cancelled by user."));
                     }
                 }
             }
 
-            // Process updates from the build thread
             while let Ok(action) = action_rx.try_recv() {
                 if let Action::BuildFailed(ref msg) = action {
-                    // Stop the loop if build fails so we can show the error or exit
                     return Err(anyhow::anyhow!(msg.clone()));
                 }
-                if let Action::BuildSuccess(_) = action {
-                    // Optionally wait for a keypress or exit automatically
+                if let Action::BuildSuccess(path) = action {
                     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                    return Ok(());
+                    return Ok(path);
                 }
                 state.update(action);
             }
 
-            // Short sleep to prevent CPU spiking
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
     }
     .await;
 
-    // 2. ALWAYS call exit, regardless of what task_result is
     tui.exit().map_err(|e| anyhow::anyhow!(e))?;
 
-    // 3. Now handle the result of the build
-    if let Err(e) = task_result {
-        // Now it's safe to print to the terminal again!
-        eprintln!("❌ Build failed: {}", e);
-        return Err(e);
-    }
+    // Process the result after TUI exits
+    match task_result {
+        Ok(output_filename) => {
+            println!("✅ Build Succeeded! Generated: {}", output_filename);
 
-    println!("✅ Build Succeeded!");
-    Ok(())
+            // Trigger release if flag was passed
+            if release {
+                println!("\n🚀 Initiating Release...");
+                crate::commands::release::handle_release(&output_filename).await?;
+            }
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("❌ Build failed: {}", e);
+            Err(e)
+        }
+    }
 }
 
 pub async fn handle_inspect(file_path: &Path) -> anyhow::Result<()> {

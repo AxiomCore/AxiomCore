@@ -69,9 +69,11 @@ pub async fn handle_watch_dynamic(build_flag: bool) -> anyhow::Result<()> {
             Some(res) = rx.recv() => {
                 if let Ok(_) = res {
                     state.is_rebuilding = true;
-                    // 1. Evaluate config via Pkl
-                    let new_config = evaluate_acore_config(acore_path.to_str().unwrap())?;
-                    let new_ir = new_config.ir.clone().unwrap();
+                    // 1. Evaluate config via Acore
+                    let new_config = evaluate_acore_config(acore_path.to_str().unwrap(), None)?;
+
+                    // FIX: Extract IR safely using the helper
+                    let new_ir = new_config.to_ir();
 
                     // 2. Calculate Diff
                     state.watch_diff = IRDiff::from_irs(&state.previous_ir, &new_ir);
@@ -79,7 +81,13 @@ pub async fn handle_watch_dynamic(build_flag: bool) -> anyhow::Result<()> {
 
                     // 3. Build local file if flag is set
                     if build_flag {
-                         axiom_build::core::build::handle_build("default", "", "", None).await?;
+                         axiom_build::core::build::handle_build(
+                            acore_path.to_str().unwrap(),
+                            "default",
+                            "",
+                            "",
+                            None
+                         ).await?;
                     }
 
                     state.is_rebuilding = false;

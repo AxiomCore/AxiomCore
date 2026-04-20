@@ -81,14 +81,18 @@ pub fn render_model_browser(f: &mut Frame, area: Rect, state: &State) {
             for field in &model_def.fields {
                 structure_info.push(Line::from(vec![
                     Span::styled(
-                        format!("{:<15}", field.name),
+                        format!("{:<15}", field.1.name),
                         Style::default().fg(Color::White),
                     ),
                     Span::styled(
-                        format!("{:?}", field.type_ref),
+                        format!("{:?}", field.1.type_ref),
                         Style::default().fg(Color::Yellow),
                     ),
-                    Span::raw(if field.is_optional { " (Optional)" } else { "" }),
+                    Span::raw(if field.1.is_optional {
+                        " (Optional)"
+                    } else {
+                        ""
+                    }),
                 ]));
             }
         }

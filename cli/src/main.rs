@@ -58,6 +58,13 @@ enum Commands {
         #[arg(short, long)]
         variant: Option<String>,
     },
+    Test {
+        /// Optional path to an .acore file. If omitted, uses axiom.acore
+        file: Option<PathBuf>,
+        /// Only run test suites that match this tag
+        #[arg(long)]
+        tag: Option<String>,
+    },
     /// Start a local API Mock Server from your contract
     Serve {
         /// Optional path to an .acore file. If omitted, pulls configuration from Axiom Cloud.
@@ -282,6 +289,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Diff { .. } => "diff",
         Commands::Serve { .. } => "serve",
         Commands::Deploy { .. } => "deploy",
+        Commands::Test { .. } => "test",
         Commands::Eval {
             file,
             format,
@@ -308,6 +316,9 @@ async fn main() -> anyhow::Result<()> {
 // Helper to route commands (Refactored from original main)
 async fn execute_command(command: &Commands) -> anyhow::Result<()> {
     match command {
+        Commands::Test { file, tag } => {
+            commands::test::handle_test(file.clone(), tag.clone()).await
+        }
         Commands::Serve { file, port } => commands::serve::handle_serve(file.clone(), *port).await,
         Commands::Deploy { target } => match target {
             DeployTarget::MockServer { file } => {

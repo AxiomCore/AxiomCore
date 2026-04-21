@@ -8,4 +8,5 @@ pub mod project; // Add this
 pub mod pull;
 pub mod release;
 pub mod serve;
+pub mod test;
 pub mod watch;

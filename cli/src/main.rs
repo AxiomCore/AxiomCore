@@ -58,9 +58,13 @@ enum Commands {
         #[arg(short, long)]
         variant: Option<String>,
     },
-    /// Test an Acore configuration file
-    Test {
-        file: PathBuf,
+    /// Start a local API Mock Server from your contract
+    Serve {
+        /// Optional path to an .acore file. If omitted, pulls configuration from Axiom Cloud.
+        file: Option<PathBuf>,
+        /// Port to bind the server to
+        #[arg(short, long, default_value = "8080")]
+        port: u16,
     },
     /// Start the Acore REPL
     Repl,
@@ -100,6 +104,34 @@ enum Commands {
     Project {
         #[command(subcommand)]
         action: ProjectAction,
+    },
+    Deploy {
+        #[command(subcommand)]
+        target: DeployTarget,
+    },
+    /// Diff Acore files to see what changed
+    Diff {
+        /// The main acore file (or the old file if file2 is provided)
+        file1: PathBuf,
+
+        /// An optional second file to compare against. If omitted, diffs against the lockfile.
+        file2: Option<PathBuf>,
+
+        /// Output format: text, semantic, atom, or changelog (default)
+        #[arg(long, default_value = "changelog")]
+        format: String,
+
+        /// Specify the variant to evaluate before diffing
+        #[arg(long)]
+        variant: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum DeployTarget {
+    MockServer {
+        /// Optional path to the .acore file. If omitted, uses axiom.acore in current directory.
+        file: Option<PathBuf>,
     },
 }
 
@@ -247,12 +279,14 @@ async fn main() -> anyhow::Result<()> {
         Commands::Pull { .. } => "pull",
         Commands::Watch { .. } => "watch",
         Commands::Project { .. } => "project",
+        Commands::Diff { .. } => "diff",
+        Commands::Serve { .. } => "serve",
+        Commands::Deploy { .. } => "deploy",
         Commands::Eval {
             file,
             format,
             variant,
         } => "eval",
-        Commands::Test { file } => "test",
         Commands::Repl => "repl",
         Commands::Lsp => "lsp",
     };
@@ -274,6 +308,15 @@ async fn main() -> anyhow::Result<()> {
 // Helper to route commands (Refactored from original main)
 async fn execute_command(command: &Commands) -> anyhow::Result<()> {
     match command {
+        Commands::Serve { file, port } => commands::serve::handle_serve(file.clone(), *port).await,
+        Commands::Deploy { target } => match target {
+            DeployTarget::MockServer { file } => {
+                let path = file
+                    .clone()
+                    .unwrap_or_else(|| std::path::PathBuf::from("axiom.acore"));
+                commands::deploy::handle_deploy_mock_server(path).await
+            }
+        },
         Commands::Repl => {
             tokio::task::spawn_blocking(|| {
                 acore::repl::run_repl();
@@ -311,13 +354,6 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             }
             Ok(())
         }
-        Commands::Test { file } => {
-            if acore::tester::run_tests(file.to_str().unwrap())? {
-                Ok(())
-            } else {
-                anyhow::bail!("Tests failed")
-            }
-        }
         Commands::Install { package, module } => {
             if *module {
                 acore::package::install_tool(package)
@@ -343,6 +379,10 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                 {
                     Ok(out_file) => {
                         println!("✅ Build Succeeded! Generated {}", out_file);
+                        let lockfile_path = format!("{}.lockfile", file_path);
+                        if let Ok(content) = std::fs::read_to_string(&file_path) {
+                            let _ = std::fs::write(&lockfile_path, content);
+                        }
                         if *release {
                             commands::release::handle_release(&out_file).await?;
                         }
@@ -392,6 +432,20 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             } else {
                 commands::watch::handle_watch_consumer().await
             }
+        }
+        Commands::Diff {
+            file1,
+            file2,
+            format,
+            variant,
+        } => {
+            crate::commands::diff::handle_diff(
+                file1.clone(),
+                file2.clone(),
+                format.clone(),
+                variant.clone(),
+            )
+            .await
         }
         Commands::Init => todo!(),
         Commands::Login => todo!(),
@@ -553,6 +607,23 @@ async fn handle_build_command(
     match task_result {
         Ok(output_filename) => {
             println!("✅ Build Succeeded! Generated: {}", output_filename);
+
+            let lockfile_path = format!("{}.lockfile", file_path);
+            let mut eval =
+                acore::evaluator::Evaluator::new(acore::security::SecurityManager::allow_all());
+            if let Ok(val) = eval.evaluate_module(&format!(
+                "file://{}",
+                std::fs::canonicalize(&file_path).unwrap().display()
+            )) {
+                // Render it to JSON
+                if let Ok(json_output) =
+                    acore::render::render_value(&mut eval, &val, acore::render::OutputFormat::Json)
+                {
+                    if let Err(e) = std::fs::write(&lockfile_path, json_output) {
+                        eprintln!("⚠️ Failed to write lockfile: {}", e);
+                    }
+                }
+            }
 
             // Trigger release if flag was passed
             if release {

@@ -11,6 +11,7 @@ axiom-build = { path = "../../axiom-build" }
 acore = { path = "../../acore" }
 acore-diff = { path = "../../acore-diff" }
 axiom-mock = { path = "../../axiom-mock" }
+axiom-test-runner = { path = "../../axiom-test-runner" }
 
 # UI Core
 ratatui = "0.26"

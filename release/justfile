@@ -40,4 +40,7 @@ release-extractor name version:
 # 4. RELEASE EVERYTHING
 # ==========================================
 release-all version: (release-axiom version) (release-atmx version)
+    @echo "📦 Releasing Extractors..."
+    just release-extractor axiom-fastapi {{version}}
+    just release-extractor axiom-go-extractor {{version}}
     @echo "🎉 All AxiomCore components released successfully for v{{version}}!"

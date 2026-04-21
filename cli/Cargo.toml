@@ -9,6 +9,8 @@ axiom-cloud = { path = "../../axiom-cloud" }
 axiom-extractor = { path = "../../axiom-extractor" }
 axiom-build = { path = "../../axiom-build" }
 acore = { path = "../../acore" }
+acore-diff = { path = "../../acore-diff" }
+axiom-mock = { path = "../../axiom-mock" }
 
 # UI Core
 ratatui = "0.26"

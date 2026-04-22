@@ -7,7 +7,7 @@ if [ -z "$VERSION" ]; then
     echo "❌ Error: No version provided. Usage: ./publish.sh v0.1.0"
     exit 1
 fi
-PLAIN_VERSION="${VERSION#v}"
+PLAIN_VERSION="${VERSION}"
 
 CLI_REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RELEASE_DIR="$CLI_REPO_DIR/release"

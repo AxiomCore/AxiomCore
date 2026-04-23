@@ -1,0 +1,268 @@
+{
+  "axiom": "1.0",
+  "backend": {
+    "codec": "json",
+    "entrypoint": "app",
+    "language": "python"
+  },
+  "endpoints": {
+    "create_item": {
+      "id": 0,
+      "method": "POST",
+      "name": "create_item",
+      "path": "/items",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "void"
+      }
+    },
+    "delete_item": {
+      "id": 0,
+      "method": "DELETE",
+      "name": "delete_item",
+      "path": "/items/{item_id}",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "void"
+      }
+    },
+    "get_item": {
+      "id": 0,
+      "method": "GET",
+      "name": "get_item",
+      "path": "/items/{item_id}",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "void"
+      }
+    },
+    "list_items": {
+      "id": 0,
+      "method": "GET",
+      "name": "list_items",
+      "path": "/items",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "void"
+      }
+    },
+    "list_users": {
+      "id": 0,
+      "method": "GET",
+      "name": "list_users",
+      "path": "/admin/users",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "void"
+      }
+    },
+    "login": {
+      "id": 0,
+      "method": "POST",
+      "name": "login",
+      "path": "/login",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "void"
+      }
+    },
+    "register": {
+      "id": 0,
+      "method": "POST",
+      "name": "register",
+      "path": "/register",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "void"
+      }
+    },
+    "send_email": {
+      "id": 0,
+      "method": "POST",
+      "name": "send_email",
+      "path": "/send-email",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "void"
+      }
+    },
+    "websocket_endpoint": {
+      "id": 0,
+      "method": "WS",
+      "name": "websocket_endpoint",
+      "path": "/ws",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "void"
+      }
+    }
+  },
+  "models": {
+    "Item": {
+      "fields": {
+        "description": {
+          "isOptional": false,
+          "name": "description",
+          "typeRef": {
+            "kind": "string"
+          },
+          "validate": {
+            "type": "string"
+          }
+        },
+        "id": {
+          "isOptional": false,
+          "name": "id",
+          "typeRef": {
+            "kind": "string"
+          },
+          "validate": {
+            "type": "string"
+          }
+        },
+        "owner_id": {
+          "isOptional": false,
+          "name": "owner_id",
+          "typeRef": {
+            "kind": "string"
+          },
+          "validate": {
+            "type": "string"
+          }
+        },
+        "title": {
+          "isOptional": false,
+          "name": "title",
+          "typeRef": {
+            "kind": "string"
+          },
+          "validate": {
+            "type": "string"
+          }
+        }
+      },
+      "name": "Item"
+    },
+    "ItemCreate": {
+      "fields": {
+        "description": {
+          "isOptional": false,
+          "name": "description",
+          "typeRef": {
+            "kind": "string"
+          },
+          "validate": {
+            "type": "string"
+          }
+        },
+        "title": {
+          "isOptional": false,
+          "name": "title",
+          "typeRef": {
+            "kind": "string"
+          },
+          "validate": {
+            "type": "string"
+          }
+        }
+      },
+      "name": "ItemCreate"
+    },
+    "Token": {
+      "fields": {
+        "access_token": {
+          "isOptional": false,
+          "name": "access_token",
+          "typeRef": {
+            "kind": "string"
+          },
+          "validate": {
+            "type": "string"
+          }
+        },
+        "token_type": {
+          "isOptional": false,
+          "name": "token_type",
+          "typeRef": {
+            "kind": "string"
+          },
+          "validate": {
+            "type": "string"
+          }
+        }
+      },
+      "name": "Token"
+    },
+    "User": {
+      "fields": {
+        "email": {
+          "isOptional": false,
+          "name": "email",
+          "typeRef": {
+            "kind": "string"
+          },
+          "validate": {
+            "type": "string"
+          }
+        },
+        "id": {
+          "isOptional": false,
+          "name": "id",
+          "typeRef": {
+            "kind": "string"
+          },
+          "validate": {
+            "type": "string"
+          }
+        },
+        "role": {
+          "isOptional": false,
+          "name": "role",
+          "typeRef": {
+            "kind": "string"
+          },
+          "validate": {
+            "type": "string"
+          }
+        }
+      },
+      "name": "User"
+    },
+    "UserCreate": {
+      "fields": {
+        "email": {
+          "isOptional": false,
+          "name": "email",
+          "typeRef": {
+            "kind": "string"
+          },
+          "validate": {
+            "type": "string"
+          }
+        },
+        "password": {
+          "isOptional": false,
+          "name": "password",
+          "typeRef": {
+            "kind": "string"
+          },
+          "validate": {
+            "type": "string"
+          }
+        }
+      },
+      "name": "UserCreate"
+    }
+  },
+  "project": {
+    "id": "my-axiom-project",
+    "version": "v0.0.1"
+  },
+  "variants": {
+    "default": {
+      "include": [
+        "*"
+      ]
+    }
+  }
+}

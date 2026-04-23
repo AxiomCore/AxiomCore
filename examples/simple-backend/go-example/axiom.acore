@@ -1,0 +1,12 @@
+amends "axiom-go:."
+
+project {
+  id = "my-axiom-project"
+  version = "v0.0.1"
+}
+
+variants {
+  ["default"] {
+    include = new { "*" }
+  }
+}

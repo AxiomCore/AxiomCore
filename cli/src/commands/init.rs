@@ -1,10 +1,50 @@
 use anyhow::Ok;
+use console::style;
 use crossterm::event::KeyCode;
 
 use crate::state::InitStep;
 use std::fs;
 
-pub async fn handle_init() -> anyhow::Result<()> {
+pub async fn handle_init(
+    cli_entrypoint: Option<String>,
+    cli_module: Option<String>,
+) -> anyhow::Result<()> {
+    // 1. If arguments are provided, skip the TUI and generate directly.
+    if let Some(ep) = cli_entrypoint {
+        let mod_name = cli_module.unwrap_or_else(|| "axiom-fastpi".to_string());
+
+        let content = format!(
+            r#"amends "{mod_name}:{ep}"
+
+project {{
+  id = "my-axiom-project"
+  version = "v0.0.1"
+}}
+
+variants {{
+  ["default"] {{
+    include = new {{ "*" }}
+  }}
+}}
+"#
+        );
+
+        fs::write("axiom.acore", content)?;
+
+        println!(
+            "\n{}",
+            style("✨ Project Initialized Successfully!").green().bold()
+        );
+        println!("Created {}", style("axiom.acore").cyan());
+        println!(
+            "Using module {} with entrypoint {}\n",
+            style(&mod_name).yellow(),
+            style(&ep).yellow()
+        );
+        return Ok(());
+    }
+
+    // 2. TUI flow (Original) if no parameters were supplied
     let mut state = crate::state::State::new();
     state.init_context.version = "v0.0.1".to_string(); // Default
 
@@ -86,7 +126,7 @@ pub async fn handle_init() -> anyhow::Result<()> {
 
 fn generate_acore_file(state: &crate::state::State) -> anyhow::Result<()> {
     let content = format!(
-        r#"amends "axiom-python:{entrypoint}"
+        r#"amends "axiom-fastpi:{entrypoint}"
 
 project {{
   id = "{name}"

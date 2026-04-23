@@ -13,7 +13,7 @@ pub fn get_watch_context() -> Option<(PathBuf, Vec<PathBuf>)> {
     }
 
     let content = std::fs::read_to_string(&acore_path).ok()?;
-    // Simple regex/parsing to find amends "axiom-python:./main.py:app"
+    // Simple regex/parsing to find amends "axiom-fastpi:./main.py:app"
     let re = regex::Regex::new(r#"amends\s+"[^:]+:([^:]+):[^"]+""#).unwrap();
 
     let mut targets = vec![acore_path.clone()];

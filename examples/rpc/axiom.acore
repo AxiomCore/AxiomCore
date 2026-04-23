@@ -1,4 +1,4 @@
-amends "axiom-python:/Users/yashmakan/AxiomCore/_axiom/AxiomCore/examples/rpc/test_server.py:app"
+amends "axiom-fastpi:/Users/yashmakan/AxiomCore/_axiom/AxiomCore/examples/rpc/test_server.py:app"
 
 local Models = module.Models
 local Routes = module.Routes

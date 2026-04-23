@@ -35,7 +35,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    Init,
+    Init {
+        /// Entrypoint path (e.g., main.py:app)
+        entrypoint: Option<String>,
+        /// The Acore compiler module to use (e.g., axiom-fastapi)
+        #[arg(long)]
+        module: Option<String>,
+    },
     Login,
     /// Join the waitlist if you don't have a referral code
     Join {
@@ -275,7 +281,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Extract command name for logging
     let cmd_name = match &cli.command {
-        Commands::Init => "init",
+        Commands::Init { .. } => "init",
         Commands::Login => "login",
         Commands::Join { .. } => "join",
         Commands::Cache { .. } => "cache",
@@ -291,9 +297,9 @@ async fn main() -> anyhow::Result<()> {
         Commands::Deploy { .. } => "deploy",
         Commands::Test { .. } => "test",
         Commands::Eval {
-            file,
-            format,
-            variant,
+            file: _,
+            format: _,
+            variant: _,
         } => "eval",
         Commands::Repl => "repl",
         Commands::Lsp => "lsp",
@@ -458,10 +464,27 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             )
             .await
         }
-        Commands::Init => todo!(),
-        Commands::Login => todo!(),
-        Commands::Join { email } => todo!(),
-        Commands::Cache { action } => todo!(),
+        Commands::Init { entrypoint, module } => {
+            crate::commands::init::handle_init(entrypoint.clone(), module.clone()).await
+        }
+        Commands::Login => handle_login_tui().await,
+        Commands::Join { email } => crate::commands::join::handle_join(email.clone()).await,
+        Commands::Cache { action } => {
+            let mut cache_dir =
+                dirs::config_dir().ok_or_else(|| anyhow::anyhow!("No config dir"))?;
+            cache_dir.push("axiom");
+            cache_dir.push("cache");
+            cache_dir.push("sled_db");
+            std::fs::create_dir_all(&cache_dir)?;
+
+            match action {
+                CacheAction::Ls => crate::commands::cache::handle_ls(&cache_dir).await,
+                CacheAction::Get { key } => {
+                    crate::commands::cache::handle_get(&cache_dir, key).await
+                }
+                CacheAction::Clear => crate::commands::cache::handle_clear(&cache_dir).await,
+            }
+        }
     }
 }
 

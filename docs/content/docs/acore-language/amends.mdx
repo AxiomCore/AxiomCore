@@ -10,10 +10,10 @@ The `amends` keyword is the "magic bridge" that connects Axiom to your Python co
 The URI follows a specific format that tells the Axiom CLI which extractor to use and where to find your app:
 
 ```pkl
-amends "axiom-python:<path_to_file>:<fastapi_variable_name>"
+amends "axiom-fastpi:<path_to_file>:<fastapi_variable_name>"
 ```
 
-*   **`axiom-python`**: Specifies the Python/FastAPI extractor.
+*   **`axiom-fastpi`**: Specifies the Python/FastAPI extractor.
 *   **`./main.py`**: The relative path to your entry point.
 *   **`app`**: The name of the `FastAPI()` instance in your code.
 

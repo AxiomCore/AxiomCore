@@ -1,6 +1,6 @@
 {
   "name": "atmx-cli",
-  "version": "0.1.98",
+  "version": "0.1.99",
   "description": "",
   "main": "dist/index.js",
   "scripts": {

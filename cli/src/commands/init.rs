@@ -11,7 +11,7 @@ pub async fn handle_init(
 ) -> anyhow::Result<()> {
     // 1. If arguments are provided, skip the TUI and generate directly.
     if let Some(ep) = cli_entrypoint {
-        let mod_name = cli_module.unwrap_or_else(|| "axiom-fastpi".to_string());
+        let mod_name = cli_module.unwrap_or_else(|| "axiom-fastapi".to_string());
 
         let content = format!(
             r#"amends "{mod_name}:{ep}"
@@ -126,7 +126,7 @@ variants {{
 
 fn generate_acore_file(state: &crate::state::State) -> anyhow::Result<()> {
     let content = format!(
-        r#"amends "axiom-fastpi:{entrypoint}"
+        r#"amends "axiom-fastapi:{entrypoint}"
 
 project {{
   id = "{name}"

@@ -50,22 +50,22 @@ pub async fn handle_serve(file: Option<PathBuf>, port: u16) -> Result<()> {
             .map_err(|_| anyhow!("Not logged in. Run 'axiom login' first."))?;
 
         let current_dir = std::env::current_dir()?;
-        let project_id = crate::auth_store::get_project_id(&current_dir)?.ok_or_else(|| {
+        let project_slug = crate::auth_store::get_project_id(&current_dir)?.ok_or_else(|| {
             anyhow!("Directory not linked to an Axiom project. Run 'axiom project link'.")
         })?;
 
-        let (json_path, etag_path) = get_cache_paths(&project_id)?;
+        let (json_path, etag_path) = get_cache_paths(&project_slug)?;
         let cached_etag = fs::read_to_string(&etag_path).ok();
 
         println!(
             "Downloading mock configuration for project {}...",
-            style(&project_id).cyan()
+            style(&project_slug).cyan()
         );
 
         let client = CloudClient::new(auth_data.access_token);
 
         match client
-            .get_mock_config(&project_id, cached_etag.as_deref())
+            .get_mock_config(&project_slug, cached_etag.as_deref())
             .await?
         {
             axiom_cloud::project::MockResponse::NotModified => {

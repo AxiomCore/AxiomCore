@@ -105,8 +105,15 @@ enum Commands {
     Pull {
         #[arg(long)]
         contract: Option<PathBuf>,
+
         #[arg(long)]
         contract_config: Option<PathBuf>,
+
+        #[arg(long)]
+        framework: Option<String>,
+
+        #[arg(long)]
+        name: Option<String>,
     },
     /// Watch for changes and rebuild/pull automatically
     Watch {
@@ -156,6 +163,8 @@ enum ProjectAction {
         name: Option<String>,
         #[arg(long)]
         description: Option<String>,
+        #[arg(long)]
+        path: Option<PathBuf>,
     },
     Link {
         #[arg(long)]
@@ -424,8 +433,17 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
         Commands::Inspect { path } => handle_inspect(path).await,
         Commands::Project { action } => match action {
             ProjectAction::List => commands::project::handle_project_list().await,
-            ProjectAction::Create { name, description } => {
-                commands::project::handle_project_create(name.clone(), description.clone()).await
+            ProjectAction::Create {
+                name,
+                description,
+                path,
+            } => {
+                commands::project::handle_project_create(
+                    name.clone(),
+                    description.clone(),
+                    path.clone(),
+                )
+                .await
             }
             ProjectAction::Link { project_id } => {
                 commands::project::handle_project_link(project_id.clone()).await
@@ -442,7 +460,17 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
         Commands::Pull {
             contract,
             contract_config,
-        } => commands::pull::handle_pull_auto(contract.clone(), contract_config.clone()).await,
+            framework,
+            name,
+        } => {
+            commands::pull::handle_pull(
+                contract.clone(),
+                contract_config.clone(),
+                framework.clone(),
+                name.clone(),
+            )
+            .await
+        }
         Commands::Watch { build } => {
             if *build {
                 commands::watch::handle_watch_dynamic(true).await

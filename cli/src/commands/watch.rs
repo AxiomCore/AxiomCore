@@ -1,4 +1,4 @@
-use crate::commands::pull::handle_pull_auto;
+use crate::commands::pull::handle_pull;
 use crate::components::watch_hud::render_watch_hud;
 use crate::state::{IRDiff, State};
 use axiom_extractor::evaluate_acore_config;
@@ -13,7 +13,7 @@ pub fn get_watch_context() -> Option<(PathBuf, Vec<PathBuf>)> {
     }
 
     let content = std::fs::read_to_string(&acore_path).ok()?;
-    // Simple regex/parsing to find amends "axiom-fastpi:./main.py:app"
+    // Simple regex/parsing to find amends "axiom-fastapi:./main.py:app"
     let re = regex::Regex::new(r#"amends\s+"[^:]+:([^:]+):[^"]+""#).unwrap();
 
     let mut targets = vec![acore_path.clone()];
@@ -102,7 +102,7 @@ pub async fn handle_watch_dynamic(build_flag: bool) -> anyhow::Result<()> {
 
 pub async fn handle_watch_consumer() -> anyhow::Result<()> {
     // 1. Ensure config exists (Run pull once)
-    handle_pull_auto(None, None).await?;
+    handle_pull(None, None, None, None).await?;
 
     let mut tui = crate::tui::Tui::new().map_err(|e| anyhow::anyhow!(e))?;
     let mut state = State::new();

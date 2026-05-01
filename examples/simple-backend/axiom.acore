@@ -1,6 +1,0 @@
-amends "axiom-fastpi:main.py:app"
-
-project {
-  id = "my-axiom-project"
-  version = "v0.0.1"
-}

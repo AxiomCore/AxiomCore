@@ -16,7 +16,7 @@ RUNTIME_DIR="$REPO_ROOT/../axiom-runtime"
 DIST_DIR="$RUNTIME_DIR/dist/wasm"
 
 # Flutter Plugin Paths
-FLUTTER_PLUGIN_ROOT="$REPO_ROOT/axiom-sdk/flutter/axiom_flutter"
+FLUTTER_PLUGIN_ROOT="$REPO_ROOT/../axiom-sdk/flutter/axiom_flutter"
 FLUTTER_WEB_ASSETS="$FLUTTER_PLUGIN_ROOT/lib/assets/wasm"
 
 # ATMX JS Library Paths

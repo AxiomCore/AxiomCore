@@ -31,7 +31,7 @@ if [ "$SDK" == "flutter" ]; then
     # Skip actual publish if --skip-publish flag is passed (used for prepping files before build)
     if [ "$3" != "--skip-publish" ]; then
         echo "🚀 Publishing axiom_flutter_generator to pub.dev..."
-        dart pub publish --force
+        fvm dart pub publish --force
     fi
 
     # 3. Publish Main SDK
@@ -41,7 +41,7 @@ if [ "$SDK" == "flutter" ]; then
 
     if [ "$3" != "--skip-publish" ]; then
         echo "🚀 Publishing axiom_flutter to pub.dev..."
-        dart pub publish --force
+        fvm dart pub publish --force
     fi
 
     echo "✅ Flutter SDK updated/published successfully!"

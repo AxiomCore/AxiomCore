@@ -30,9 +30,9 @@ publish-sdk sdk version:
 
 release-atmx version:
     echo "📦 Building and Publishing atmx-cli v{{version}} to NPM..."
-    cd ../atmx-cli && npm install && npm run build
-    cd ../atmx-cli && npm version {{version}} --no-git-tag-version
-    cd ../atmx-cli && npm publish --access public
+    cd atmx-cli && npm install && npm run build
+    cd atmx-cli && npm version {{version}} --no-git-tag-version
+    cd atmx-cli && npm publish --access public
     echo "✅ atmx-cli published successfully!"
 
 release-extractor name version:

@@ -20,7 +20,7 @@ FLUTTER_PLUGIN_ROOT="$REPO_ROOT/../axiom-sdk/flutter/axiom_flutter"
 FLUTTER_WEB_ASSETS="$FLUTTER_PLUGIN_ROOT/lib/assets/wasm"
 
 # ATMX JS Library Paths
-ATMX_ROOT="$REPO_ROOT/axiom-sdk/web/atmx"
+ATMX_ROOT="$REPO_ROOT/../axiom-sdk/web/atmx"
 ATMX_VENDOR_DIR="$ATMX_ROOT/src/core/vendor"
 
 echo "🚀 Starting WebAssembly Build Process..."

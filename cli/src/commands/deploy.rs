@@ -18,7 +18,7 @@ pub async fn handle_deploy_mock_server(file: PathBuf) -> Result<()> {
         .map_err(|_| anyhow!("Not logged in. Run 'axiom login' first."))?;
 
     let current_dir = std::env::current_dir()?;
-    let project_id = crate::auth_store::get_project_id(&current_dir)?.ok_or_else(|| {
+    let project_slug = crate::auth_store::get_project_id(&current_dir)?.ok_or_else(|| {
         anyhow!("Directory not linked to an Axiom project. Run 'axiom project link'.")
     })?;
 
@@ -47,12 +47,12 @@ pub async fn handle_deploy_mock_server(file: PathBuf) -> Result<()> {
     // 3. Upload to Axiom Cloud
     println!(
         "☁️  Uploading mock configuration for project {}...",
-        style(&project_id).cyan()
+        style(&project_slug).cyan()
     );
 
     let client = CloudClient::new(auth_data.access_token);
     client
-        .upload_mock_config(&project_id, &json_payload)
+        .upload_mock_config(&project_slug, &json_payload)
         .await?;
 
     println!(

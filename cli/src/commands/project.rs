@@ -1,6 +1,6 @@
 use crate::auth_store;
 use crate::components::fuzzy_finder::{render_fuzzy_finder, ProjectItem};
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use axiom_cloud::CloudClient;
 use console::style;
 use crossterm::event::KeyCode;
@@ -8,6 +8,7 @@ use dialoguer::{theme::ColorfulTheme, Input};
 use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
 use std::env;
+use std::path::Path;
 use tui_input::backend::crossterm::EventHandler;
 
 pub async fn handle_project_list() -> Result<()> {
@@ -29,10 +30,17 @@ pub async fn handle_project_list() -> Result<()> {
     Ok(())
 }
 
-pub async fn handle_project_create(name: Option<String>, desc: Option<String>) -> Result<()> {
+pub async fn handle_project_create(
+    name: Option<String>,
+    desc: Option<String>,
+    path: Option<std::path::PathBuf>,
+) -> Result<()> {
     let auth_data = auth_store::load_auth_data()?;
     let client = CloudClient::new(auth_data.access_token);
 
+    // -------------------------------
+    // 1. Resolve name (CLI > prompt)
+    // -------------------------------
     let project_name = match name {
         Some(n) => n,
         None => Input::with_theme(&ColorfulTheme::default())
@@ -40,6 +48,9 @@ pub async fn handle_project_create(name: Option<String>, desc: Option<String>) -
             .interact_text()?,
     };
 
+    // -------------------------------
+    // 2. Resolve description
+    // -------------------------------
     let _project_desc = match desc {
         Some(d) => Some(d),
         None => {
@@ -55,12 +66,49 @@ pub async fn handle_project_create(name: Option<String>, desc: Option<String>) -
         }
     };
 
-    let project = client.create_project(&project_name).await?;
-    println!("✅ Project created: {}", style(&project.name).green(),);
+    // -------------------------------
+    // 3. Resolve contract path
+    // -------------------------------
+    let contract_path = match path {
+        Some(p) => p,
+        None => {
+            // default fallback
+            std::path::PathBuf::from(".axiom")
+        }
+    };
 
-    // Auto-link to current directory?
+    if !contract_path.exists() {
+        return Err(anyhow!(
+            "Contract file not found at {}",
+            contract_path.display()
+        ));
+    }
+
+    // -------------------------------
+    // 4. Extract project slug
+    // -------------------------------
+    let file_bytes = std::fs::read(&contract_path)?;
+    let contract = axiom_lib::unpackager::unpack_axiom_bytes(&file_bytes)?;
+
+    let project_slug = contract.project.project_id.clone();
+
+    if project_slug.is_empty() {
+        return Err(anyhow!("Invalid contract: missing project_id"));
+    }
+
+    // -------------------------------
+    // 5. Create project
+    // -------------------------------
+    let project = client.create_project(&project_name, &project_slug).await?;
+
+    println!("✅ Project created: {}", style(&project.name).green());
+
+    // -------------------------------
+    // 6. Auto-link directory
+    // -------------------------------
     let current_dir = env::current_dir()?;
     auth_store::link_project(&current_dir, &project.id)?;
+
     println!(
         "🔗 Linked project to current directory: {}",
         style(current_dir.display()).dim()

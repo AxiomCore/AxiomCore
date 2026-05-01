@@ -1,6 +1,6 @@
 [package]
 name = "axiom-cli"
-version = "0.1.97"
+version = "0.1.113"
 edition = "2021"
 
 [dependencies]
@@ -42,6 +42,7 @@ serde_yaml = "0.9"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 dirs = "5.0"
+toml_edit = "0.22"
 ed25519-dalek = "2.0"
 chrono = { version = "0.4", features = ["serde"] }
 sled = "0.34"

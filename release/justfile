@@ -33,6 +33,12 @@ release-atmx version:
     cd atmx-cli && npm install && npm run build
     cd atmx-cli && npm version {{version}} --no-git-tag-version
     cd atmx-cli && npm publish --access public
+
+    @echo "📦 Building and Publishing atmx-web core to Cloudflare R2..."
+    cd ../../axiom-sdk/web/atmx && npm install && npm run build
+    cd ../../axiom-sdk/web/atmx && npm version {{version}} --no-git-tag-version
+    cd ../../axiom-sdk/web/atmx && chmod +x scripts/upload.sh && ./scripts/upload.sh
+
     echo "✅ atmx-cli published successfully!"
 
 release-extractor name version:

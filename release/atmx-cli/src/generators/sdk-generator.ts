@@ -44,13 +44,17 @@ function generateEndpointMethod(
 
   const argType =
     params.length > 0
-      ? `{ ${params.map((p) => `${camelCase(p.name)}${p.isOptional ? "?" : ""}: ${prefixModels(mapTypeToTs(p.typeRef, pascalNs))}`).join(", ")} }`
+      ? `{ ${params
+          .map((p) => {
+            // ✨ FIX: Make everything optional so DOM forms can fill in the blanks!
+            return `${camelCase(p.name)}?: ${prefixModels(mapTypeToTs(p.typeRef, pascalNs))}`;
+          })
+          .join(", ")} }`
       : "void";
 
-  // We generate a method that takes the typed arguments and returns the exact string ATMX expects
   return `
   /** RPC String Generator for <AxQuery> or <AxMutate> */
-  ${camelCase(ep.name)}(args${params.length > 0 ? "" : "?"}: ${argType}): string {
+  ${camelCase(ep.name)}(args${params.length > 0 ? "?" : ""}: ${argType} | void): string {
     const argsStr = args && Object.keys(args).length > 0 ? JSON.stringify(args) : '';
     return \`${ns}.${ep.name}(\${argsStr})\`;
   }\n`;

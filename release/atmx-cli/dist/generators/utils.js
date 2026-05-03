@@ -7,27 +7,55 @@ exports.normalizeIr = normalizeIr;
 exports.mapTypeToTs = mapTypeToTs;
 function pascalCase(str) {
     if (!str)
-        return '';
+        return "";
     return str
         .split(/[_\-\s]+/)
-        .map(part => part.charAt(0).toUpperCase() + part.slice(1))
-        .join('');
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join("");
 }
 function camelCase(str) {
     const pascal = pascalCase(str);
     return pascal.charAt(0).toLowerCase() + pascal.slice(1);
 }
 function normalizeIr(obj) {
-    if (Array.isArray(obj))
-        return obj.map(normalizeIr);
-    if (obj !== null && typeof obj === 'object') {
+    // ✨ FIX: Recursively convert Axiom Core HashMaps back into Arrays for the generator
+    if (obj !== null && typeof obj === "object") {
         const newObj = {};
         for (const key of Object.keys(obj)) {
             const camelKey = key.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
             newObj[camelKey] = normalizeIr(obj[key]);
         }
+        // Convert common Maps to Arrays if they exist
+        if (newObj.endpoints &&
+            typeof newObj.endpoints === "object" &&
+            !Array.isArray(newObj.endpoints)) {
+            newObj.endpoints = Object.values(newObj.endpoints);
+        }
+        if (newObj.models &&
+            typeof newObj.models === "object" &&
+            !Array.isArray(newObj.models)) {
+            newObj.models = Object.values(newObj.models);
+        }
+        if (newObj.enums &&
+            typeof newObj.enums === "object" &&
+            !Array.isArray(newObj.enums)) {
+            newObj.enums = Object.values(newObj.enums);
+        }
+        // Traverse down into models to normalize fields
+        if (Array.isArray(newObj.models)) {
+            newObj.models = newObj.models.map((model) => {
+                if (model.fields &&
+                    typeof model.fields === "object" &&
+                    !Array.isArray(model.fields)) {
+                    model.fields = Object.values(model.fields);
+                }
+                return model;
+            });
+        }
         return newObj;
     }
+    if (Array.isArray(obj))
+        return obj.map(normalizeIr);
     return obj;
 }
 /**
@@ -35,25 +63,31 @@ function normalizeIr(obj) {
  */
 function mapTypeToTs(typeRef, ns) {
     if (!typeRef)
-        return 'any';
-    if (typeRef.kind === 'primitive') {
+        return "any";
+    if (typeRef.kind === "primitive") {
         switch (typeRef.value) {
-            case 'string': return 'string';
-            case 'int':
-            case 'float':
-            case 'double': return 'number';
-            case 'boolean': return 'boolean';
-            case 'dateTime': return 'Date';
-            case 'bytes': return 'Uint8Array';
-            default: return 'any';
+            case "string":
+                return "string";
+            case "int":
+            case "float":
+            case "double":
+                return "number";
+            case "boolean":
+                return "boolean";
+            case "dateTime":
+                return "Date";
+            case "bytes":
+                return "Uint8Array";
+            default:
+                return "any";
         }
     }
-    if (typeRef.kind === 'named') {
+    if (typeRef.kind === "named") {
         const name = pascalCase(typeRef.value);
-        return ns ? `${ns}${name}` : name; // ✅ FIX HERE
+        return ns ? `${ns}${name}` : name;
     }
-    if (typeRef.kind === 'list') {
+    if (typeRef.kind === "list") {
         return `${mapTypeToTs(typeRef.value, ns)}[]`;
     }
-    return 'any';
+    return "any";
 }

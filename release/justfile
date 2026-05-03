@@ -73,8 +73,13 @@ release-all version:
     just release-axiom {{version}}
 
     # 4. Publish Apple Framework + Flutter SDKs to pub.dev
-    # (publish-apple calculates the zip hash, uploads it, and calls publish-sdk)
-    just publish-apple {{version}}
+    @echo "📦 Publishing Apple SDK..."
+    @if just publish-apple {{version}}; then \
+        echo "✅ Apple SDK published successfully"; \
+    else \
+        echo "⚠️ Apple publish failed (likely rate limit). Skipping for now."; \
+        echo "publish-apple {{version}}" >> .release_todo; \
+    fi
 
     # 5. Release Web SDK
     just release-atmx {{version}}

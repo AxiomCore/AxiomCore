@@ -32,16 +32,17 @@ release-atmx version:
     #!/usr/bin/env bash
     set -e
     CLEAN_VERSION=$(echo "{{version}}" | sed 's/^v//')
+    JUSTFILE_DIR="{{justfile_directory()}}"
 
     echo "📦 Building and Publishing atmx-cli v$CLEAN_VERSION to NPM..."
-    cd atmx-cli
+    cd "$JUSTFILE_DIR/atmx-cli"
     npm version $CLEAN_VERSION --no-git-tag-version
     npm install
     npm run build
     npm publish --access public || echo "⚠️ NPM Publish failed (maybe already exists?)"
 
     echo "📦 Preparing atmx-web core v$CLEAN_VERSION..."
-    cd "$(dirname "$0")/../axiom-sdk/web/atmx"
+    cd "$JUSTFILE_DIR/../../axiom-sdk/web/atmx"
     npm version $CLEAN_VERSION --no-git-tag-version
 
     echo "📝 Updating ATMX_VERSION constant in src/index.ts..."

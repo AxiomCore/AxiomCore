@@ -66,7 +66,7 @@ function generateEndpointMethod(
       : prefixModels(rawReturnType);
 
   if (isReact) {
-    const bodyParam = params.find((p: any) => p.source === "body");
+    const bodyParam = params.find((p: any) => p.source === "body") as any;
     const payloadLogic = bodyParam
       ? `const payload = (args as any)?.${camelCase(bodyParam.name)};`
       : `const payload = undefined;`;

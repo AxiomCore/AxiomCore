@@ -41,7 +41,7 @@ release-atmx version:
     npm publish --access public || echo "⚠️ NPM Publish failed (maybe already exists?)"
 
     echo "📦 Preparing atmx-web core v$CLEAN_VERSION..."
-    cd ../../axiom-sdk/web/atmx
+    cd "$(dirname "$0")/../axiom-sdk/web/atmx"
     npm version $CLEAN_VERSION --no-git-tag-version
 
     echo "📝 Updating ATMX_VERSION constant in src/index.ts..."

@@ -1,0 +1,387 @@
+{
+  "axiom": "1.0",
+  "backend": {
+    "codec": "json",
+    "entrypoint": "app",
+    "language": "python"
+  },
+  "endpoints": {
+    "create_item": {
+      "auth": {
+        "condition": "and",
+        "confidence": "high",
+        "methods": [
+          {
+            "location": "header",
+            "name": "Authorization",
+            "oauth2Flows": {
+              "password": {
+                "tokenUrl": "login"
+              }
+            },
+            "scheme": "bearer",
+            "type": "bearer"
+          }
+        ],
+        "required": true
+      },
+      "id": 2,
+      "method": "POST",
+      "name": "create_item",
+      "parameters": [
+        {
+          "isOptional": false,
+          "name": "item",
+          "source": "body",
+          "typeRef": {
+            "kind": "named",
+            "value": "ItemCreate"
+          }
+        }
+      ],
+      "path": "/items",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "named",
+        "value": "Item"
+      }
+    },
+    "delete_item": {
+      "auth": {
+        "condition": "and",
+        "confidence": "high",
+        "methods": [
+          {
+            "location": "header",
+            "name": "Authorization",
+            "oauth2Flows": {
+              "password": {
+                "tokenUrl": "login"
+              }
+            },
+            "scheme": "bearer",
+            "type": "bearer"
+          }
+        ],
+        "required": true
+      },
+      "id": 5,
+      "method": "DELETE",
+      "name": "delete_item",
+      "parameters": [
+        {
+          "isOptional": false,
+          "name": "item_id",
+          "source": "path",
+          "typeRef": {
+            "kind": "string"
+          }
+        }
+      ],
+      "path": "/items/{item_id}",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "json"
+      }
+    },
+    "get_item": {
+      "id": 4,
+      "method": "GET",
+      "name": "get_item",
+      "parameters": [
+        {
+          "isOptional": false,
+          "name": "item_id",
+          "source": "path",
+          "typeRef": {
+            "kind": "string"
+          }
+        }
+      ],
+      "path": "/items/{item_id}",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "named",
+        "value": "Item"
+      }
+    },
+    "list_items": {
+      "id": 3,
+      "method": "GET",
+      "name": "list_items",
+      "parameters": [
+        {
+          "isOptional": true,
+          "name": "skip",
+          "source": "query",
+          "typeRef": {
+            "kind": "int64"
+          }
+        },
+        {
+          "isOptional": true,
+          "name": "limit",
+          "source": "query",
+          "typeRef": {
+            "kind": "int64"
+          }
+        },
+        {
+          "isOptional": true,
+          "name": "search",
+          "source": "query",
+          "typeRef": {
+            "kind": "string"
+          }
+        }
+      ],
+      "path": "/items",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "list",
+        "value": {
+          "kind": "named",
+          "value": "Item"
+        }
+      }
+    },
+    "list_users": {
+      "auth": {
+        "condition": "and",
+        "confidence": "high",
+        "methods": [
+          {
+            "location": "header",
+            "name": "Authorization",
+            "oauth2Flows": {
+              "password": {
+                "tokenUrl": "login"
+              }
+            },
+            "scheme": "bearer",
+            "type": "bearer"
+          }
+        ],
+        "required": true
+      },
+      "id": 7,
+      "method": "GET",
+      "name": "list_users",
+      "path": "/admin/users",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "json"
+      }
+    },
+    "login": {
+      "id": 1,
+      "method": "POST",
+      "name": "login",
+      "path": "/login",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "named",
+        "value": "Token"
+      }
+    },
+    "register": {
+      "id": 0,
+      "method": "POST",
+      "name": "register",
+      "parameters": [
+        {
+          "isOptional": false,
+          "name": "user",
+          "source": "body",
+          "typeRef": {
+            "kind": "named",
+            "value": "UserCreate"
+          }
+        }
+      ],
+      "path": "/register",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "named",
+        "value": "User"
+      }
+    },
+    "send_email": {
+      "auth": {
+        "condition": "and",
+        "confidence": "high",
+        "methods": [
+          {
+            "location": "header",
+            "name": "Authorization",
+            "oauth2Flows": {
+              "password": {
+                "tokenUrl": "login"
+              }
+            },
+            "scheme": "bearer",
+            "type": "bearer"
+          }
+        ],
+        "required": true
+      },
+      "id": 6,
+      "method": "POST",
+      "name": "send_email",
+      "parameters": [
+        {
+          "isOptional": false,
+          "name": "background_tasks",
+          "source": "query",
+          "typeRef": {
+            "kind": "json"
+          }
+        }
+      ],
+      "path": "/send-email",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "json"
+      }
+    },
+    "websocket_endpoint": {
+      "id": 8,
+      "method": "WS",
+      "name": "websocket_endpoint",
+      "path": "/ws",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "void"
+      }
+    }
+  },
+  "models": {
+    "Item": {
+      "fields": {
+        "description": {
+          "isOptional": true,
+          "name": "description",
+          "typeRef": {
+            "kind": "string"
+          }
+        },
+        "id": {
+          "isOptional": false,
+          "name": "id",
+          "typeRef": {
+            "kind": "string"
+          }
+        },
+        "owner_id": {
+          "isOptional": false,
+          "name": "owner_id",
+          "typeRef": {
+            "kind": "string"
+          }
+        },
+        "title": {
+          "isOptional": false,
+          "name": "title",
+          "typeRef": {
+            "kind": "string"
+          }
+        }
+      },
+      "name": "Item"
+    },
+    "ItemCreate": {
+      "fields": {
+        "description": {
+          "isOptional": true,
+          "name": "description",
+          "typeRef": {
+            "kind": "string"
+          }
+        },
+        "title": {
+          "isOptional": false,
+          "name": "title",
+          "typeRef": {
+            "kind": "string"
+          }
+        }
+      },
+      "name": "ItemCreate"
+    },
+    "Token": {
+      "fields": {
+        "access_token": {
+          "isOptional": false,
+          "name": "access_token",
+          "typeRef": {
+            "kind": "string"
+          }
+        },
+        "token_type": {
+          "isOptional": false,
+          "name": "token_type",
+          "typeRef": {
+            "kind": "string"
+          }
+        }
+      },
+      "name": "Token"
+    },
+    "User": {
+      "fields": {
+        "email": {
+          "isOptional": false,
+          "name": "email",
+          "typeRef": {
+            "kind": "json"
+          }
+        },
+        "id": {
+          "isOptional": false,
+          "name": "id",
+          "typeRef": {
+            "kind": "string"
+          }
+        },
+        "role": {
+          "isOptional": false,
+          "name": "role",
+          "typeRef": {
+            "kind": "string"
+          }
+        }
+      },
+      "name": "User"
+    },
+    "UserCreate": {
+      "fields": {
+        "email": {
+          "isOptional": false,
+          "name": "email",
+          "typeRef": {
+            "kind": "json"
+          }
+        },
+        "password": {
+          "isOptional": false,
+          "name": "password",
+          "typeRef": {
+            "kind": "string"
+          }
+        }
+      },
+      "name": "UserCreate"
+    }
+  },
+  "project": {
+    "id": "py-example",
+    "version": "v0.0.1"
+  },
+  "variants": {
+    "default": {
+      "include": [
+        "*"
+      ]
+    }
+  }
+}

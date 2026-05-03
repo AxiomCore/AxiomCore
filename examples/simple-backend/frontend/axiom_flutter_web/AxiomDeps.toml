@@ -1,0 +1,7 @@
+framework = "flutter"
+
+[contracts]
+
+[contracts.py-example]
+source = "/Users/yashmakan/AxiomCore/AxiomCore/examples/simple-backend/frontend/axiom_flutter_web/../../py-example/.axiom"
+base_url = "http://localhost:8000"

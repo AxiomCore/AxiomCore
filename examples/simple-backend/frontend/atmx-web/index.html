@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Axiom ATMX Vanilla Web Test</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+    </head>
+
+    <body class="bg-slate-50 text-slate-800 p-8 max-w-4xl mx-auto font-sans">
+        <!-- COMPONENT 1: NAVBAR & STATUS -->
+        <nav
+            class="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm mb-8 border border-slate-200"
+        >
+            <div class="font-bold text-xl text-blue-600">Axiom ATMX Web</div>
+            <div
+                id="engine-status"
+                class="text-xs font-bold text-amber-500 animate-pulse"
+            >
+                Initializing WASM Engine...
+            </div>
+        </nav>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <!-- COMPONENT 2: AUTHENTICATION (Register & Login) -->
+            <div class="space-y-6">
+                <!-- REGISTER FORM -->
+                <div
+                    class="bg-white p-6 rounded-xl shadow-sm border border-slate-200"
+                >
+                    <h2 class="text-lg font-bold border-b pb-4 mb-4">
+                        1. Register
+                    </h2>
+
+                    <!--
+                  MAGIC: We map this form directly to the 'pyExample.register' endpoint.
+                  The ATMX runtime automatically intercepts the submit event, serializes
+                  the inputs into the JSON body, and executes the WASM call.
+                -->
+                    <form ax-mutate="pyExample.register()" class="space-y-4">
+                        <div>
+                            <label
+                                class="text-[10px] font-bold text-slate-400 uppercase"
+                                >Email</label
+                            >
+                            <input
+                                type="text"
+                                name="email"
+                                value="test@test.com"
+                                class="w-full mt-1 p-2 bg-slate-50 border rounded-md outline-none"
+                            />
+                            <!-- Field-level errors automatically bind here if Rust validation fails -->
+                            <div
+                                ax-error-for="email"
+                                class="text-red-500 text-xs mt-1 font-bold"
+                                hidden
+                            ></div>
+                        </div>
+
+                        <div>
+                            <label
+                                class="text-[10px] font-bold text-slate-400 uppercase"
+                                >Password</label
+                            >
+                            <input
+                                type="password"
+                                name="password"
+                                value="123456"
+                                class="w-full mt-1 p-2 bg-slate-50 border rounded-md outline-none"
+                            />
+                            <div
+                                ax-error-for="password"
+                                class="text-red-500 text-xs mt-1 font-bold"
+                                hidden
+                            ></div>
+                        </div>
+
+                        <!--
+                      ax-bind:disabled prevents double-clicks.
+                      ax-when handles the UI state transitions automatically.
+                    -->
+                        <button
+                            type="submit"
+                            ax-bind:disabled="$state.isMutating"
+                            class="w-full bg-slate-800 text-white font-bold py-3 rounded-xl hover:bg-slate-900 disabled:opacity-50 transition"
+                        >
+                            <span ax-when="idle, data, error">Register</span>
+                            <span ax-when="mutating" hidden
+                                >Registering...</span
+                            >
+                            <span
+                                ax-when="success"
+                                class="text-green-400"
+                                hidden
+                                >✅ Registered!</span
+                            >
+                        </button>
+
+                        <div
+                            ax-when="error"
+                            class="text-red-500 text-xs mt-2 font-bold"
+                            ax-text="$error.message"
+                            hidden
+                        ></div>
+                    </form>
+                </div>
+
+                <!-- LOGIN FORM -->
+                <div
+                    class="bg-white p-6 rounded-xl shadow-sm border border-slate-200"
+                >
+                    <h2 class="text-lg font-bold border-b pb-4 mb-4">
+                        2. Login
+                    </h2>
+
+                    <!-- ✨ UPDATED: Clean, safe helper call! -->
+                    <form
+                        ax-mutate="pyExample.login()"
+                        ax-headers="{ 'Content-Type': 'application/x-www-form-urlencoded' }"
+                        ax-on:success="atmx.setAuthToken('pyExample', 'Authorization', $data.access_token)"
+                        class="space-y-4"
+                    >
+                        <div>
+                            <label
+                                class="text-[10px] font-bold text-slate-400 uppercase"
+                                >Email (Username)</label
+                            >
+                            <input
+                                type="text"
+                                name="username"
+                                value="test@test.com"
+                                class="w-full mt-1 p-2 bg-slate-50 border rounded-md outline-none"
+                            />
+                        </div>
+
+                        <div>
+                            <label
+                                class="text-[10px] font-bold text-slate-400 uppercase"
+                                >Password</label
+                            >
+                            <input
+                                type="password"
+                                name="password"
+                                value="123456"
+                                class="w-full mt-1 p-2 bg-slate-50 border rounded-md outline-none"
+                            />
+                        </div>
+
+                        <button
+                            type="submit"
+                            ax-bind:disabled="$state.isMutating"
+                            class="w-full bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-700 disabled:opacity-50 transition"
+                        >
+                            <span ax-when="idle, data, error">Login</span>
+                            <span ax-when="mutating" hidden>Logging in...</span>
+                            <span ax-when="success" class="text-white" hidden
+                                >✅ Token Stored!</span
+                            >
+                        </button>
+
+                        <div
+                            ax-when="error"
+                            class="text-red-500 text-xs mt-2 font-bold"
+                            ax-text="$error.message"
+                            hidden
+                        ></div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- COMPONENT 3: SECURE ACTIONS & LISTS -->
+            <div class="space-y-6">
+                <!-- CREATE ITEM FORM (Requires Auth) -->
+                <div
+                    class="bg-white p-6 rounded-xl shadow-sm border border-slate-200"
+                >
+                    <div
+                        class="flex justify-between items-center border-b pb-4 mb-4"
+                    >
+                        <h2 class="text-lg font-bold">3. Create Item</h2>
+                        <!-- Force refresh the list view below after a successful creation -->
+                        <span
+                            class="text-[10px] bg-amber-100 text-amber-700 px-2 py-1 rounded font-bold uppercase"
+                            >Requires Token</span
+                        >
+                    </div>
+
+                    <form
+                        ax-mutate="pyExample.create_item()"
+                        ax-on:success="document.getElementById('list-refresh-btn').click()"
+                        class="space-y-4"
+                    >
+                        <div>
+                            <label
+                                class="text-[10px] font-bold text-slate-400 uppercase"
+                                >Item Title</label
+                            >
+                            <input
+                                type="text"
+                                name="title"
+                                value="My Web Item"
+                                class="w-full mt-1 p-2 bg-slate-50 border rounded-md outline-none"
+                            />
+                        </div>
+
+                        <div>
+                            <label
+                                class="text-[10px] font-bold text-slate-400 uppercase"
+                                >Description</label
+                            >
+                            <input
+                                type="text"
+                                name="description"
+                                value="Created via ATMX DOM bindings!"
+                                class="w-full mt-1 p-2 bg-slate-50 border rounded-md outline-none"
+                            />
+                        </div>
+
+                        <button
+                            type="submit"
+                            ax-bind:disabled="$state.isMutating"
+                            class="w-full bg-green-600 text-white font-bold py-3 rounded-xl hover:bg-green-700 disabled:opacity-50 transition"
+                        >
+                            <span ax-when="idle, data, error">Create Item</span>
+                            <span ax-when="mutating" hidden>Sending...</span>
+                            <span ax-when="success" class="text-white" hidden
+                                >✅ Created!</span
+                            >
+                        </button>
+
+                        <div
+                            ax-when="error"
+                            class="text-red-500 text-xs mt-2 font-bold"
+                            ax-text="$error.message"
+                            hidden
+                        ></div>
+                    </form>
+                </div>
+
+                <div
+                    ax-query="pyExample.list_items({ limit: 10 })"
+                    ax-on:data="document.getElementById('items-container').innerHTML = $data.map(i => `<li class='p-3 bg-slate-50 border rounded-lg'><div class='font-bold text-slate-800'>${i.title}</div><div class='text-xs text-slate-500'>${i.description || ''}</div></li>`).join('')"
+                    class="bg-white p-6 rounded-xl shadow-sm border border-slate-200"
+                >
+                    <div
+                        class="flex justify-between items-center border-b pb-4 mb-4"
+                    >
+                        <h2 class="text-lg font-bold">4. Items List</h2>
+                        <button
+                            id="list-refresh-btn"
+                            ax-trigger="refresh"
+                            class="text-xs font-bold text-blue-600 hover:underline"
+                        >
+                            REFRESH
+                        </button>
+                    </div>
+
+                    <div
+                        ax-when="loading"
+                        class="text-center py-8 text-slate-400 font-medium animate-pulse"
+                    >
+                        Fetching items...
+                    </div>
+
+                    <div
+                        ax-when="error"
+                        class="text-red-500 text-sm font-bold p-4 bg-red-50 rounded"
+                        ax-text="$error.message"
+                        hidden
+                    ></div>
+
+                    <div ax-when="data, success" hidden class="space-y-3">
+                        <div
+                            ax-if="$data.length === 0"
+                            class="text-sm text-slate-500 italic text-center py-4"
+                        >
+                            No items found. Create one above!
+                        </div>
+
+                        <ul id="items-container" class="space-y-2"></ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- JS INITIALIZATION -->
+        <!-- 1. Import ATMX Core Runtime from Cloudflare R2 -->
+        <!-- Using type="module" to support top-level await in modern browsers -->
+        <script type="module">
+            import { atmx } from "https://atmx.axiomcore.dev/latest/atmx.es.js";
+
+            // Bind to window so our inline ax-on:* scripts can access it!
+            window.atmx = atmx;
+
+            async function init() {
+                try {
+                    await atmx.init({
+                        debug: true, // Enables professional Transaction Logs in console
+                        contracts: {
+                            // The namespace matches the route call: "pyExample.login()"
+                            pyExample: {
+                                baseUrl: "http://localhost:8000",
+                                contractUrl: "./py-example.axiom",
+                            },
+                        },
+                    });
+
+                    document.getElementById("engine-status").innerText =
+                        "✅ Engine Online";
+                    document.getElementById("engine-status").className =
+                        "text-xs font-bold text-green-600";
+                } catch (e) {
+                    document.getElementById("engine-status").innerText =
+                        "❌ Initialization Failed";
+                    document.getElementById("engine-status").className =
+                        "text-xs font-bold text-red-600";
+                    console.error(e);
+                }
+            }
+
+            init();
+        </script>
+    </body>
+</html>

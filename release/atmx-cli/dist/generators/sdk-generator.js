@@ -29,17 +29,23 @@ function generateSdk(multiIr) {
 }
 function generateEndpointMethod(ep, ns, pascalNs) {
     const params = ep.parameters || [];
-    const argType = params.length > 0
-        ? `{ ${params
-            .map((p) => {
-            // ✨ FIX: Make everything optional so DOM forms can fill in the blanks!
-            return `${(0, utils_1.camelCase)(p.name)}?: ${prefixModels((0, utils_1.mapTypeToTs)(p.typeRef, pascalNs))}`;
-        })
-            .join(", ")} }`
-        : "void";
+    // ✨ FIX: If there are no parameters, don't even add the `args` variable!
+    if (params.length === 0) {
+        return `
+  /** RPC String Generator for <AxQuery> or <AxMutate> */
+  ${(0, utils_1.camelCase)(ep.name)}(): string {
+    return \`${ns}.${ep.name}()\`;
+  }\n`;
+    }
+    // ✨ FIX: For endpoints with parameters, safely type them as optional objects
+    const argType = `{ ${params
+        .map((p) => {
+        return `${(0, utils_1.camelCase)(p.name)}?: ${prefixModels((0, utils_1.mapTypeToTs)(p.typeRef, pascalNs))}`;
+    })
+        .join(", ")} }`;
     return `
   /** RPC String Generator for <AxQuery> or <AxMutate> */
-  ${(0, utils_1.camelCase)(ep.name)}(args${params.length > 0 ? "?" : ""}: ${argType} | void): string {
+  ${(0, utils_1.camelCase)(ep.name)}(args?: ${argType}): string {
     const argsStr = args && Object.keys(args).length > 0 ? JSON.stringify(args) : '';
     return \`${ns}.${ep.name}(\${argsStr})\`;
   }\n`;

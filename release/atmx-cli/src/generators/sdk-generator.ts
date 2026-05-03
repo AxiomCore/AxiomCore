@@ -42,19 +42,25 @@ function generateEndpointMethod(
 ): string {
   const params = ep.parameters || [];
 
-  const argType =
-    params.length > 0
-      ? `{ ${params
-          .map((p) => {
-            // ✨ FIX: Make everything optional so DOM forms can fill in the blanks!
-            return `${camelCase(p.name)}?: ${prefixModels(mapTypeToTs(p.typeRef, pascalNs))}`;
-          })
-          .join(", ")} }`
-      : "void";
+  // ✨ FIX: If there are no parameters, don't even add the `args` variable!
+  if (params.length === 0) {
+    return `
+  /** RPC String Generator for <AxQuery> or <AxMutate> */
+  ${camelCase(ep.name)}(): string {
+    return \`${ns}.${ep.name}()\`;
+  }\n`;
+  }
+
+  // ✨ FIX: For endpoints with parameters, safely type them as optional objects
+  const argType = `{ ${params
+    .map((p) => {
+      return `${camelCase(p.name)}?: ${prefixModels(mapTypeToTs(p.typeRef, pascalNs))}`;
+    })
+    .join(", ")} }`;
 
   return `
   /** RPC String Generator for <AxQuery> or <AxMutate> */
-  ${camelCase(ep.name)}(args${params.length > 0 ? "?" : ""}: ${argType} | void): string {
+  ${camelCase(ep.name)}(args?: ${argType}): string {
     const argsStr = args && Object.keys(args).length > 0 ? JSON.stringify(args) : '';
     return \`${ns}.${ep.name}(\${argsStr})\`;
   }\n`;

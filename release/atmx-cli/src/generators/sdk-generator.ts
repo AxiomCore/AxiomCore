@@ -40,9 +40,12 @@ function generateEndpointMethod(
   ns: string,
   pascalNs: string,
 ): string {
-  const params = ep.parameters || [];
+  // ✨ FIX: Ensure params is always an Array regardless of the IR structure
+  const rawParams = ep.parameters || [];
+  const params = Array.isArray(rawParams)
+    ? rawParams
+    : Object.values(rawParams);
 
-  // ✨ FIX: If there are no parameters, don't even add the `args` variable!
   if (params.length === 0) {
     return `
   /** RPC String Generator for <AxQuery> or <AxMutate> */
@@ -51,9 +54,8 @@ function generateEndpointMethod(
   }\n`;
   }
 
-  // ✨ FIX: For endpoints with parameters, safely type them as optional objects
   const argType = `{ ${params
-    .map((p) => {
+    .map((p: any) => {
       return `${camelCase(p.name)}?: ${prefixModels(mapTypeToTs(p.typeRef, pascalNs))}`;
     })
     .join(", ")} }`;

@@ -14,7 +14,11 @@ export function camelCase(str: string): string {
 }
 
 export function normalizeIr(obj: any): any {
-  // ✨ FIX: Recursively convert Axiom Core HashMaps back into Arrays for the generator
+  // ✨ FIX: Arrays in JavaScript are Objects! We must check Array.isArray FIRST.
+  if (Array.isArray(obj)) {
+    return obj.map(normalizeIr);
+  }
+
   if (obj !== null && typeof obj === "object") {
     const newObj: any = {};
     for (const key of Object.keys(obj)) {
@@ -22,7 +26,7 @@ export function normalizeIr(obj: any): any {
       newObj[camelKey] = normalizeIr(obj[key]);
     }
 
-    // Convert common Maps to Arrays if they exist
+    // Convert common Maps to Arrays if they exist and are not already arrays
     if (
       newObj.endpoints &&
       typeof newObj.endpoints === "object" &&
@@ -62,7 +66,6 @@ export function normalizeIr(obj: any): any {
     return newObj;
   }
 
-  if (Array.isArray(obj)) return obj.map(normalizeIr);
   return obj;
 }
 

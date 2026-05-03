@@ -29,17 +29,33 @@ publish-sdk sdk version:
     ./scripts/publish_sdk.sh {{sdk}} {{version}}
 
 release-atmx version:
-    echo "📦 Building and Publishing atmx-cli v{{version}} to NPM..."
-    cd atmx-cli && npm install && npm run build
-    cd atmx-cli && npm version {{version}} --no-git-tag-version
-    cd atmx-cli && npm publish --access public
+    #!/usr/bin/env bash
+    set -e
+    CLEAN_VERSION=$(echo "{{version}}" | sed 's/^v//')
 
-    @echo "📦 Building and Publishing atmx-web core to Cloudflare R2..."
-    cd ../../axiom-sdk/web/atmx && npm install && npm run build
-    cd ../../axiom-sdk/web/atmx && npm version {{version}} --no-git-tag-version
-    cd ../../axiom-sdk/web/atmx && chmod +x scripts/upload.sh && ./scripts/upload.sh
+    echo "📦 Building and Publishing atmx-cli v$CLEAN_VERSION to NPM..."
+    cd ../atmx-cli
+    npm version $CLEAN_VERSION --no-git-tag-version
+    npm install
+    npm run build
+    npm publish --access public || echo "⚠️ NPM Publish failed (maybe already exists?)"
 
-    echo "✅ atmx-cli published successfully!"
+    echo "📦 Preparing atmx-web core v$CLEAN_VERSION..."
+    cd ../axiom-sdk/web/atmx
+    npm version $CLEAN_VERSION --no-git-tag-version
+
+    echo "📝 Updating ATMX_VERSION constant in src/index.ts..."
+    sed -i '' "s/export const ATMX_VERSION = \".*\";/export const ATMX_VERSION = \"$CLEAN_VERSION\";/" src/index.ts
+
+    echo "🛠 Building atmx-web..."
+    npm install
+    npm run build
+
+    echo "☁️ Uploading to Cloudflare R2..."
+    chmod +x scripts/upload.sh
+    ./scripts/upload.sh
+
+    echo "✅ ATMX published successfully!"
 
 release-extractor name version:
     ./extractors/scripts/publish.sh {{name}} {{version}}

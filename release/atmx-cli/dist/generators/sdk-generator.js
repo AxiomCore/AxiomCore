@@ -27,19 +27,29 @@ function generateSdk(multiIr) {
     lines.push(`}\nexport const sdk = new AxiomSdk();`);
     return lines.join("\n");
 }
-function generateEndpointMethod(ep, ns, pascalNs) {
-    const params = ep.parameters || [];
-    const argType = params.length > 0
-        ? `{ ${params.map((p) => `${(0, utils_1.camelCase)(p.name)}${p.isOptional ? "?" : ""}: ${prefixModels((0, utils_1.mapTypeToTs)(p.typeRef, pascalNs))}`).join(", ")} }`
-        : "void";
-    // We generate a method that takes the typed arguments and returns the exact string ATMX expects
-    return `
+function generateEndpointMethod(
+  ep: AxiomEndpoint,
+  ns: string,
+  pascalNs: string,
+): string {
+  const params = ep.parameters || [];
+
+  const argType =
+    params.length > 0
+      ? `{ ${params.map((p) => {
+          // ✨ FIX: Make everything optional so DOM forms can fill in the blanks!
+          return `${camelCase(p.name)}?: ${prefixModels(mapTypeToTs(p.typeRef, pascalNs))}`;
+        }).join(", ")} }`
+      : "void";
+
+  return `
   /** RPC String Generator for <AxQuery> or <AxMutate> */
-  ${(0, utils_1.camelCase)(ep.name)}(args${params.length > 0 ? "" : "?"}: ${argType}): string {
+  ${camelCase(ep.name)}(args${params.length > 0 ? "?" : ""}: ${argType} | void): string {
     const argsStr = args && Object.keys(args).length > 0 ? JSON.stringify(args) : '';
     return \`${ns}.${ep.name}(\${argsStr})\`;
   }\n`;
 }
+
 function prefixModels(type) {
     const primitives = [
         "string",

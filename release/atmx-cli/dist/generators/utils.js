@@ -18,14 +18,17 @@ function camelCase(str) {
     return pascal.charAt(0).toLowerCase() + pascal.slice(1);
 }
 function normalizeIr(obj) {
-    // ✨ FIX: Recursively convert Axiom Core HashMaps back into Arrays for the generator
+    // ✨ FIX: Arrays in JavaScript are Objects! We must check Array.isArray FIRST.
+    if (Array.isArray(obj)) {
+        return obj.map(normalizeIr);
+    }
     if (obj !== null && typeof obj === "object") {
         const newObj = {};
         for (const key of Object.keys(obj)) {
             const camelKey = key.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
             newObj[camelKey] = normalizeIr(obj[key]);
         }
-        // Convert common Maps to Arrays if they exist
+        // Convert common Maps to Arrays if they exist and are not already arrays
         if (newObj.endpoints &&
             typeof newObj.endpoints === "object" &&
             !Array.isArray(newObj.endpoints)) {
@@ -54,8 +57,6 @@ function normalizeIr(obj) {
         }
         return newObj;
     }
-    if (Array.isArray(obj))
-        return obj.map(normalizeIr);
     return obj;
 }
 /**

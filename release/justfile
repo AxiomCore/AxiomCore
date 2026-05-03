@@ -34,14 +34,14 @@ release-atmx version:
     CLEAN_VERSION=$(echo "{{version}}" | sed 's/^v//')
 
     echo "📦 Building and Publishing atmx-cli v$CLEAN_VERSION to NPM..."
-    cd ../atmx-cli
+    cd atmx-cli
     npm version $CLEAN_VERSION --no-git-tag-version
     npm install
     npm run build
     npm publish --access public || echo "⚠️ NPM Publish failed (maybe already exists?)"
 
     echo "📦 Preparing atmx-web core v$CLEAN_VERSION..."
-    cd ../axiom-sdk/web/atmx
+    cd ../../axiom-sdk/web/atmx
     npm version $CLEAN_VERSION --no-git-tag-version
 
     echo "📝 Updating ATMX_VERSION constant in src/index.ts..."

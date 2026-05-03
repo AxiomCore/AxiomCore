@@ -28,8 +28,11 @@ function generateSdk(multiIr) {
     return lines.join("\n");
 }
 function generateEndpointMethod(ep, ns, pascalNs) {
-    const params = ep.parameters || [];
-    // ✨ FIX: If there are no parameters, don't even add the `args` variable!
+    // ✨ FIX: Ensure params is always an Array regardless of the IR structure
+    const rawParams = ep.parameters || [];
+    const params = Array.isArray(rawParams)
+        ? rawParams
+        : Object.values(rawParams);
     if (params.length === 0) {
         return `
   /** RPC String Generator for <AxQuery> or <AxMutate> */
@@ -37,7 +40,6 @@ function generateEndpointMethod(ep, ns, pascalNs) {
     return \`${ns}.${ep.name}()\`;
   }\n`;
     }
-    // ✨ FIX: For endpoints with parameters, safely type them as optional objects
     const argType = `{ ${params
         .map((p) => {
         return `${(0, utils_1.camelCase)(p.name)}?: ${prefixModels((0, utils_1.mapTypeToTs)(p.typeRef, pascalNs))}`;

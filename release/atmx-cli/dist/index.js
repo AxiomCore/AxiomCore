@@ -42,13 +42,14 @@ const sdk_generator_1 = require("./generators/sdk-generator");
 const utils_1 = require("./generators/utils");
 const program = new commander_1.Command();
 program
-    .name('atmx')
-    .description('Generate TypeScript SDK from an ATMX Multi-Contract Config')
-    .version('0.2.0');
+    .name("atmx")
+    .description("Generate TypeScript SDK from an ATMX Multi-Contract Config")
+    .version("0.2.0");
 program
-    .command('generate')
-    .requiredOption('-c, --config <path>', 'Path to the atmx.config.json file')
-    .requiredOption('-o, --output <dir>', 'Output directory for generated files')
+    .command("generate")
+    .requiredOption("-c, --config <path>", "Path to the atmx.config.json file")
+    .requiredOption("-o, --output <dir>", "Output directory for generated files")
+    .option("-r, --react", "Generate React Hooks instead of Vanilla JS strings") // ✨ NEW
     .action(async (options) => {
     const configPath = path.resolve(options.config);
     const outputDir = path.resolve(options.output);
@@ -88,11 +89,12 @@ program
     }
     // Ensure output directory exists
     await fs.ensureDir(outputDir);
-    // 3. Pass the MultiIR Map to the generators (We will update these in Phase 3)
+    // 3. Pass the MultiIR Map to the generators
     const modelsContent = (0, model_generator_1.generateModels)(multiIr);
-    await fs.writeFile(path.join(outputDir, 'models.ts'), modelsContent);
-    const sdkContent = (0, sdk_generator_1.generateSdk)(multiIr);
-    await fs.writeFile(path.join(outputDir, 'sdk.ts'), sdkContent);
+    await fs.writeFile(path.join(outputDir, "models.ts"), modelsContent);
+    // ✨ NEW: Pass the react flag down
+    const sdkContent = (0, sdk_generator_1.generateSdk)(multiIr, options.react);
+    await fs.writeFile(path.join(outputDir, "sdk.ts"), sdkContent);
     console.log(`\n🎉 ATMX Multi-Contract SDK generated successfully in ${outputDir}`);
 });
 program.parse();

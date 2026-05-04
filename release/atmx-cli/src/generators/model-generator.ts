@@ -5,6 +5,7 @@ import { pascalCase, camelCase, mapTypeToTs } from "./utils";
 export function generateModels(multiIr: MultiIR): string {
   const sections: string[] = [
     `// GENERATED CODE – DO NOT EDIT.\n/* eslint-disable @typescript-eslint/no-explicit-any */\n`,
+    `/* eslint-disable @typescript-eslint/no-namespace */\n`, // ✨ FIX: Disable namespace lint error
   ];
 
   for (const [ns, ir] of Object.entries(multiIr)) {

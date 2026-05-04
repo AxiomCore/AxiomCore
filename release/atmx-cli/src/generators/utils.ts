@@ -58,7 +58,6 @@ export function normalizeIr(obj: any): any {
   return obj;
 }
 
-// ✨ FIX: Properly maps all Axiom primitives to TypeScript
 export function mapTypeToTs(typeRef: any, ns?: string): string {
   if (!typeRef || !typeRef.kind) return "any";
 
@@ -76,10 +75,10 @@ export function mapTypeToTs(typeRef: any, ns?: string): string {
       return "Date";
     case "bytes":
       return "Uint8Array";
-    case "json":
-      return "any";
     case "void":
       return "void";
+    case "json":
+      return "any";
     case "named":
       const name = pascalCase(typeRef.value);
       return ns ? `${ns}.${name}` : name;

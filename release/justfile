@@ -34,13 +34,6 @@ release-atmx version:
     CLEAN_VERSION=$(echo "{{version}}" | sed 's/^v//')
     JUSTFILE_DIR="{{justfile_directory()}}"
 
-    echo "📦 Building and Publishing atmx-cli v$CLEAN_VERSION to NPM..."
-    cd "$JUSTFILE_DIR/atmx-cli"
-    npm version $CLEAN_VERSION --no-git-tag-version
-    npm install
-    npm run build
-    npm publish --access public || echo "⚠️ NPM Publish failed (maybe already exists?)"
-
     echo "📦 Preparing atmx-web core v$CLEAN_VERSION..."
     cd "$JUSTFILE_DIR/../../axiom-sdk/web/atmx"
     npm version $CLEAN_VERSION --no-git-tag-version
@@ -52,11 +45,32 @@ release-atmx version:
     npm install
     npm run build
 
-    echo "☁️ Uploading to Cloudflare R2..."
+    echo "🚀 Publishing atmx-web to NPM..."
+    npm publish --access public || echo "⚠️ NPM Publish failed (maybe already exists?)"
+
+    echo "☁️ Uploading atmx-web to Cloudflare R2..."
     chmod +x scripts/upload.sh
     ./scripts/upload.sh
 
-    echo "✅ ATMX published successfully!"
+    # -----------------------------------------------------
+
+    echo "📦 Building and Publishing atmx-react v$CLEAN_VERSION to NPM..."
+    cd "$JUSTFILE_DIR/../../axiom-sdk/web/atmx-react"
+    npm version $CLEAN_VERSION --no-git-tag-version
+    npm install
+    npm run build
+    npm publish --access public || echo "⚠️ NPM Publish failed (maybe already exists?)"
+
+    # -----------------------------------------------------
+
+    echo "📦 Building and Publishing atmx-cli v$CLEAN_VERSION to NPM..."
+    cd "$JUSTFILE_DIR/atmx-cli"
+    npm version $CLEAN_VERSION --no-git-tag-version
+    npm install
+    npm run build
+    npm publish --access public || echo "⚠️ NPM Publish failed (maybe already exists?)"
+
+    echo "✅ ATMX Ecosystem published successfully!"
 
 release-extractor name version:
     ./extractors/scripts/publish.sh {{name}} {{version}}
@@ -93,4 +107,4 @@ release-all version:
     @echo "================================================="
     @echo "🎉 All AxiomCore components released successfully for v{{version}}!"
     @echo "⚠️ NOTE: Don't forget to commit the version bumps in axiom-sdk!"
-    @echo "   cd ../axiom-sdk && git add . && git commit -m 'chore: bump sdk to {{version}}' && git push"
+    @echo "   cd ../../axiom-sdk && git add . && git commit -m 'chore: bump sdk to {{version}}' && git push"

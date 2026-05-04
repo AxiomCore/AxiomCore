@@ -41,14 +41,10 @@ impl Framework {
     }
 }
 
-/// A single contract entry in AxiomDeps.toml.
 #[derive(Debug, Clone)]
 pub struct ContractEntry {
-    /// Unique hyphen-slug identifier, e.g. "my-api"
     pub name: String,
-    /// Original source path (local file). Stored in TOML so `axiom pull` can re-pull.
     pub source: Option<String>,
-    /// For future registry contracts: version string.
     pub version: Option<String>,
 }
 
@@ -67,6 +63,7 @@ pub async fn handle_pull(
     contract_config: Option<PathBuf>,
     framework_flag: Option<String>,
     name_flag: Option<String>,
+    out_flag: Option<String>,
 ) -> Result<()> {
     let project_root = std::env::current_dir()?;
     let deps_path = project_root.join("AxiomDeps.toml");
@@ -74,7 +71,10 @@ pub async fn handle_pull(
     // 1. Determine framework
     let framework = resolve_framework(&project_root, framework_flag.as_deref(), &deps_path)?;
 
-    // 2. Build contract list
+    // 2. Determine output directory
+    let out_dir = resolve_out_dir(&framework, out_flag)?;
+
+    // 3. Build contract list
     let contracts = resolve_contracts(
         contract.as_deref(),
         contract_config.as_deref(),
@@ -82,7 +82,7 @@ pub async fn handle_pull(
         &deps_path,
     )?;
 
-    // 3. Write AxiomDeps.toml (Now appends/updates without erasing custom fields!)
+    // 4. Write AxiomDeps.toml
     let axiom_deps = AxiomDeps {
         framework: framework.clone(),
         contracts: contracts.clone(),
@@ -90,14 +90,42 @@ pub async fn handle_pull(
     write_axiom_deps(&deps_path, &axiom_deps)?;
     println!("📝 AxiomDeps.toml written → {}", deps_path.display());
 
-    // 4. Install each contract to ~/.axiom/contracts/ then run codegen
+    // 5. Install each contract to ~/.axiom/contracts/ then run codegen
     for entry in &contracts {
         let installed_path = install_contract(entry)?;
-        run_codegen(&project_root, &framework, &installed_path, entry).await?;
+        run_codegen(&project_root, &framework, &installed_path, entry, &out_dir).await?;
     }
 
     println!("\n✅ axiom pull finished successfully.");
     Ok(())
+}
+
+// ==========================================
+// OUT DIR RESOLUTION
+// ==========================================
+
+fn resolve_out_dir(framework: &Framework, out_flag: Option<String>) -> Result<String> {
+    if let Some(o) = out_flag {
+        return Ok(o);
+    }
+
+    let default_dir = match framework {
+        Framework::Flutter | Framework::Dart => "lib/axiom_generated",
+        Framework::AtmxWeb | Framework::AtmxReact => "src/generated",
+    };
+
+    print!("📁 Output directory [{}]: ", default_dir);
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let input = input.trim();
+
+    if input.is_empty() {
+        Ok(default_dir.to_string())
+    } else {
+        Ok(input.to_string())
+    }
 }
 
 // ==========================================
@@ -109,7 +137,6 @@ fn resolve_framework(
     framework_flag: Option<&str>,
     deps_path: &Path,
 ) -> Result<Framework> {
-    // Priority 1: explicit --framework flag
     if let Some(f) = framework_flag {
         return Framework::from_str(f).with_context(|| {
             format!(
@@ -119,7 +146,6 @@ fn resolve_framework(
         });
     }
 
-    // Priority 2: existing AxiomDeps.toml
     if deps_path.exists() {
         if let Ok(existing) = read_framework_from_deps(deps_path) {
             println!(
@@ -130,14 +156,12 @@ fn resolve_framework(
         }
     }
 
-    // Priority 3: auto-detect then interactive confirm
     let detected = detect_framework(project_root);
     let detected_str = detected.as_ref().map(|f| f.as_str()).unwrap_or("unknown");
     prompt_framework_confirm(detected_str)
 }
 
 fn detect_framework(project_root: &Path) -> Option<Framework> {
-    // --- Flutter / Dart ---
     let pubspec = project_root.join("pubspec.yaml");
     if pubspec.exists() {
         if let Ok(content) = fs::read_to_string(&pubspec) {
@@ -148,22 +172,17 @@ fn detect_framework(project_root: &Path) -> Option<Framework> {
         }
     }
 
-    // --- atmx-web / atmx-react ---
     let pkg_json = project_root.join("package.json");
     if pkg_json.exists() {
         if let Ok(content) = fs::read_to_string(&pkg_json) {
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
                 let all_deps = merge_json_deps(&json);
-
-                // atmx-react: explicit dep name
                 if all_deps
                     .iter()
                     .any(|d| d == "atmx-react" || d == "@axiomcore/react")
                 {
                     return Some(Framework::AtmxReact);
                 }
-
-                // atmx-web: explicit dep name OR structural indicators
                 if all_deps
                     .iter()
                     .any(|d| d == "atmx" || d == "@axiomcore/web")
@@ -175,8 +194,6 @@ fn detect_framework(project_root: &Path) -> Option<Framework> {
                 {
                     return Some(Framework::AtmxWeb);
                 }
-
-                // Fallback: react + vite → likely atmx-react project
                 if all_deps.iter().any(|d| d == "react")
                     && project_root.join("vite.config.ts").exists()
                 {
@@ -185,7 +202,6 @@ fn detect_framework(project_root: &Path) -> Option<Framework> {
             }
         }
     }
-
     None
 }
 
@@ -221,10 +237,7 @@ fn merge_json_deps(json: &serde_json::Value) -> Vec<String> {
 }
 
 fn prompt_framework_confirm(detected: &str) -> Result<Framework> {
-    print!(
-        "🔍 Detected framework: {} (press Enter to confirm, or type override [flutter/dart/atmx-web/atmx-react]): ",
-        detected
-    );
+    print!("🔍 Detected framework: {} (press Enter to confirm, or type override [flutter/dart/atmx-web/atmx-react]): ", detected);
     io::stdout().flush()?;
 
     let mut input = String::new();
@@ -258,7 +271,6 @@ fn resolve_contracts(
     name_flag: Option<&str>,
     deps_path: &Path,
 ) -> Result<Vec<ContractEntry>> {
-    // No args passed → re-use existing AxiomDeps.toml
     if contract.is_none() && contract_config.is_none() {
         if deps_path.exists() {
             let entries = read_contracts_from_deps(deps_path)?;
@@ -267,10 +279,7 @@ fn resolve_contracts(
                 return Ok(entries);
             }
         }
-        anyhow::bail!(
-            "No contract specified and no AxiomDeps.toml found. \
-             Use --contract <path> or --contract-config <path>."
-        );
+        anyhow::bail!("No contract specified and no AxiomDeps.toml found. Use --contract <path> or --contract-config <path>.");
     }
 
     let mut entries = Vec::new();
@@ -294,24 +303,19 @@ fn resolve_single_contract_name(path: &Path, name_flag: Option<&str>) -> Result<
     if let Some(n) = name_flag {
         return Ok(slugify(n));
     }
-
-    // Infer from filename stem (e.g. ".axiom" → "axiom", "core-api.axiom" → "core-api")
     let inferred = path
         .file_stem()
         .map(|s| slugify(&s.to_string_lossy()))
         .filter(|s| !s.is_empty() && s != ".")
         .unwrap_or_else(|| "default".to_string());
-
     print!(
         "📄 Contract name [{}] (press Enter to confirm, or type a new name): ",
         inferred
     );
     io::stdout().flush()?;
-
     let mut input = String::new();
     io::stdin().read_line(&mut input)?;
     let input = input.trim();
-
     if input.is_empty() {
         Ok(inferred)
     } else {
@@ -323,7 +327,6 @@ fn load_contracts_from_json_config(cfg_path: &Path) -> Result<Vec<ContractEntry>
     let content = fs::read_to_string(cfg_path)
         .with_context(|| format!("Cannot read contract config: {}", cfg_path.display()))?;
     let parsed: serde_json::Value = serde_json::from_str(&content)?;
-
     let contracts_obj = parsed["contracts"]
         .as_object()
         .with_context(|| "contract-config JSON must have a top-level 'contracts' object")?;
@@ -342,7 +345,6 @@ fn load_contracts_from_json_config(cfg_path: &Path) -> Result<Vec<ContractEntry>
     Ok(entries)
 }
 
-/// Make path absolute without requiring it to exist on disk.
 fn canonicalize_or_absolute(p: &Path) -> Result<PathBuf> {
     if p.is_absolute() {
         Ok(p.to_path_buf())
@@ -385,12 +387,7 @@ fn install_contract(entry: &ContractEntry) -> Result<PathBuf> {
             dest.display()
         );
     } else {
-        anyhow::bail!(
-            "Contract '{}' has no source and is not installed at {}. \
-             Re-run with --contract <path>.",
-            entry.name,
-            dest.display()
-        );
+        anyhow::bail!("Contract '{}' has no source and is not installed at {}. Re-run with --contract <path>.", entry.name, dest.display());
     }
 
     Ok(dest)
@@ -411,6 +408,7 @@ async fn run_codegen(
     framework: &Framework,
     installed_contract: &Path,
     entry: &ContractEntry,
+    out_dir: &str,
 ) -> Result<()> {
     println!(
         "\n⚙️  Generating '{}' SDK for {}...",
@@ -419,21 +417,27 @@ async fn run_codegen(
     );
 
     match framework {
-        Framework::Flutter => run_codegen_flutter(project_root, installed_contract, entry).await?,
-        Framework::Dart => run_codegen_dart(project_root, installed_contract, entry).await?,
-        Framework::AtmxWeb => run_codegen_atmx_web(project_root, installed_contract, entry).await?,
+        Framework::Flutter => {
+            run_codegen_flutter(project_root, installed_contract, entry, out_dir).await?
+        }
+        Framework::Dart => {
+            run_codegen_dart(project_root, installed_contract, entry, out_dir).await?
+        }
+        Framework::AtmxWeb => {
+            run_codegen_atmx(project_root, installed_contract, entry, out_dir, false).await?
+        }
         Framework::AtmxReact => {
-            run_codegen_atmx_react(project_root, installed_contract, entry).await?
+            run_codegen_atmx(project_root, installed_contract, entry, out_dir, true).await?
         }
     }
     Ok(())
 }
 
-// --- Flutter ---
 async fn run_codegen_flutter(
     project_root: &Path,
     installed_contract: &Path,
     entry: &ContractEntry,
+    out_dir: &str,
 ) -> Result<()> {
     let asset_dir = project_root.join("assets").join("axiom");
     fs::create_dir_all(&asset_dir)?;
@@ -445,7 +449,7 @@ async fn run_codegen_flutter(
 
     let frontend_cfg = axiom_lib::config::FrontendConfig {
         framework: "flutter".to_string(),
-        output_dir: Some(format!("lib/axiom_generated/{}", entry.name)),
+        output_dir: Some(out_dir.to_string()),
     };
 
     let deps_toml_path = project_root.join("AxiomDeps.toml");
@@ -456,19 +460,18 @@ async fn run_codegen_flutter(
         &deps_toml_path.to_string_lossy(),
     )
     .await?;
-
     Ok(())
 }
 
-// --- Dart (pure, no Flutter asset system) ---
 async fn run_codegen_dart(
     project_root: &Path,
     installed_contract: &Path,
     entry: &ContractEntry,
+    out_dir: &str,
 ) -> Result<()> {
     let frontend_cfg = axiom_lib::config::FrontendConfig {
         framework: "dart".to_string(),
-        output_dir: Some(format!("lib/axiom_generated/{}", entry.name)),
+        output_dir: Some(out_dir.to_string()),
     };
     generate_from_fbs(
         project_root,
@@ -478,15 +481,17 @@ async fn run_codegen_dart(
     )
     .await?;
 
-    println!("📦 Dart SDK generated → lib/axiom_generated/{}", entry.name);
+    println!("📦 Dart SDK generated → {}", out_dir);
     Ok(())
 }
 
-// --- atmx-web (Vite vanilla TS) ---
-async fn run_codegen_atmx_web(
+/// A dedicated execution pipeline for ATMX frameworks (bypasses `generate_from_fbs` and `dart pub get`)
+async fn run_codegen_atmx(
     project_root: &Path,
     installed_contract: &Path,
     entry: &ContractEntry,
+    out_dir: &str,
+    is_react: bool,
 ) -> Result<()> {
     let public_dir = project_root.join("public");
     fs::create_dir_all(&public_dir)?;
@@ -499,54 +504,39 @@ async fn run_codegen_atmx_web(
     })?;
     println!("📄 Vite static asset → public/{}.axiom", entry.name);
 
-    fs::create_dir_all(project_root.join("src").join("generated").join(&entry.name))?;
-    let frontend_cfg = axiom_lib::config::FrontendConfig {
-        framework: "atmx-web".to_string(),
-        output_dir: Some(format!("src/generated/{}", entry.name)),
-    };
-    generate_from_fbs(
-        project_root,
-        &frontend_cfg,
-        &[],
-        &installed_contract.to_string_lossy(),
-    )
-    .await?;
+    // ✨ FIX: Removed atmx.config.json generation entirely!
 
-    println!("📦 atmx-web SDK generated → src/generated/{}", entry.name);
-    Ok(())
-}
+    // 2. Trigger `npx atmx generate` using AxiomDeps.toml
+    #[cfg(target_os = "windows")]
+    let npx_cmd = "npx.cmd";
+    #[cfg(not(target_os = "windows"))]
+    let npx_cmd = "npx";
 
-// --- atmx-react (Vite + React) ---
-async fn run_codegen_atmx_react(
-    project_root: &Path,
-    installed_contract: &Path,
-    entry: &ContractEntry,
-) -> Result<()> {
-    let public_dir = project_root.join("public");
-    fs::create_dir_all(&public_dir)?;
-    let public_contract = public_dir.join(format!("{}.axiom", entry.name));
-    fs::copy(installed_contract, &public_contract).with_context(|| {
-        format!(
-            "Failed to copy contract to public/: {}",
-            public_contract.display()
-        )
-    })?;
-    println!("📄 Vite static asset → public/{}.axiom", entry.name);
+    let mut cmd = tokio::process::Command::new(npx_cmd);
+    cmd.current_dir(project_root)
+        .arg("atmx")
+        .arg("generate")
+        .arg("-c")
+        .arg("AxiomDeps.toml") // ✨ FIX: Read TOML directly
+        .arg("-o")
+        .arg(out_dir);
 
-    fs::create_dir_all(project_root.join("src").join("generated").join(&entry.name))?;
-    let frontend_cfg = axiom_lib::config::FrontendConfig {
-        framework: "atmx-react".to_string(),
-        output_dir: Some(format!("src/generated/{}", entry.name)),
-    };
-    generate_from_fbs(
-        project_root,
-        &frontend_cfg,
-        &[],
-        &installed_contract.to_string_lossy(),
-    )
-    .await?;
+    if is_react {
+        cmd.arg("--react");
+    }
 
-    println!("📦 atmx-react SDK generated → src/generated/{}", entry.name);
+    println!("📦 Running atmx-cli generation...");
+    let output = cmd.output().await?;
+
+    if !output.status.success() {
+        println!(
+            "--- stderr ---\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        anyhow::bail!("atmx-cli generation failed");
+    }
+
+    println!("📦 ATMX SDK generated → {}", out_dir);
     Ok(())
 }
 
@@ -574,7 +564,6 @@ pub fn write_axiom_deps(path: &Path, deps: &AxiomDeps) -> Result<()> {
         .with_context(|| "AxiomDeps.toml: 'contracts' must be a table")?;
 
     for entry in &deps.contracts {
-        // FIX: Use `entry()` to modify the table in-place, preserving `base_url`!
         let sub = contracts_table
             .entry(&entry.name)
             .or_insert(Item::Table(Table::new()))
@@ -582,7 +571,6 @@ pub fn write_axiom_deps(path: &Path, deps: &AxiomDeps) -> Result<()> {
             .with_context(|| {
                 format!("AxiomDeps.toml: 'contracts.{}' must be a table", entry.name)
             })?;
-
         if let Some(ref source) = entry.source {
             sub["source"] = toml_edit::value(source.as_str());
         }
@@ -608,12 +596,10 @@ fn read_framework_from_deps(path: &Path) -> Result<Framework> {
 fn read_contracts_from_deps(path: &Path) -> Result<Vec<ContractEntry>> {
     let content = fs::read_to_string(path)?;
     let doc = content.parse::<DocumentMut>()?;
-
     let contracts = match doc.get("contracts").and_then(|c| c.as_table()) {
         Some(t) => t,
         None => return Ok(vec![]),
     };
-
     let mut entries = Vec::new();
     for (name, item) in contracts.iter() {
         if let Some(sub) = item.as_table() {
@@ -631,10 +617,6 @@ fn read_contracts_from_deps(path: &Path) -> Result<Vec<ContractEntry>> {
     }
     Ok(entries)
 }
-
-// ==========================================
-// HELPERS
-// ==========================================
 
 fn slugify(s: &str) -> String {
     s.trim()

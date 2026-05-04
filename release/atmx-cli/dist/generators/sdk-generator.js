@@ -59,6 +59,7 @@ function generateSdk(multiIr, isReact = false) {
     lines.push(`};\n`);
     return lines.join("\n");
 }
+// FILE: atmx-cli/src/generators/sdk-generator.ts (Partial replacement)
 function generateEndpointMethod(ep, ns, camelNs, isReact) {
     const rawParams = ep.parameters || [];
     const params = Array.isArray(rawParams)
@@ -69,8 +70,10 @@ function generateEndpointMethod(ep, ns, camelNs, isReact) {
     const returnType = rawReturnType === "void" || rawReturnType === "any"
         ? rawReturnType
         : prefixModels(rawReturnType);
-    // ✨ FIX: If no parameters are defined, default to accepting an optional Record<string, any>
-    // This allows developers to pass undocumented fields (like FastAPI Form data)
+    // Map camelCase TS args back to original IR snake_case names!
+    const argsMapping = params
+        .map((p) => `if (args && '${(0, utils_1.camelCase)(p.name)}' in args) { mappedArgs["${p.name}"] = (args as any)["${(0, utils_1.camelCase)(p.name)}"]; delete mappedArgs["${(0, utils_1.camelCase)(p.name)}"]; }`)
+        .join("\n    ");
     if (params.length === 0) {
         if (isReact) {
             const decLogic = generateLambda(ep.returnType, "fromJson", camelNs);
@@ -94,7 +97,6 @@ function generateEndpointMethod(ep, ns, camelNs, isReact) {
   },`;
         }
     }
-    // Endpoints with explicitly defined parameters
     const argType = `{ ${params.map((p) => `${(0, utils_1.camelCase)(p.name)}${p.isOptional ? "?" : ""}: ${prefixModels((0, utils_1.mapTypeToTs)(p.typeRef, camelNs))}`).join(", ")} }`;
     if (isReact) {
         const bodyParam = params.find((p) => p.source === "body");
@@ -108,10 +110,13 @@ function generateEndpointMethod(ep, ns, camelNs, isReact) {
         return `
   get${(0, utils_1.pascalCase)(ep.name)}Def(args?: ${argType}): AxiomQueryDef<${returnType}> {
     ${payloadLogic}
+    const mappedArgs: any = { ...(args || {}) };
+    ${argsMapping}
+
     return {
       namespace: "${ns}", name: "${ep.name}", endpointId: ${ep.id},
       method: "${ep.method ? ep.method.toUpperCase() : "GET"}", path: "${ep.path}",
-      payload: payload, args: args || {}, decoder: ${decLogic}, serializer: ${serLogic}, isStream: ${ep.isStream === true}
+      payload: payload, args: mappedArgs, decoder: ${decLogic}, serializer: ${serLogic}, isStream: ${ep.isStream === true}
     };
   },
   use${(0, utils_1.pascalCase)(ep.name)}${!isQuery ? "Mutation" : ""}(args?: ${argType}, options?: { enabled?: boolean }) {
@@ -121,7 +126,9 @@ function generateEndpointMethod(ep, ns, camelNs, isReact) {
     else {
         return `
   ${(0, utils_1.camelCase)(ep.name)}(args?: ${argType}): string {
-    const argsStr = args && Object.keys(args).length > 0 ? JSON.stringify(args) : '';
+    const mappedArgs: any = { ...(args || {}) };
+    ${argsMapping}
+    const argsStr = Object.keys(mappedArgs).length > 0 ? JSON.stringify(mappedArgs) : '';
     return \`${ns}.${ep.name}(\${argsStr})\`;
   },`;
     }

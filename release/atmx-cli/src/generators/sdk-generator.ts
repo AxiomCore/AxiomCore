@@ -39,6 +39,21 @@ export function generateSdk(
   }
   lines.push(`}\nexport const sdk = new AxiomSdk();`);
 
+  lines.push(`\nexport const AxiomDefaultConfig = {`);
+  lines.push(`  contracts: {`);
+  for (const ns of Object.keys(multiIr)) {
+    lines.push(`    "${ns}": {`);
+    lines.push(`      contractUrl: "/${ns}.axiom",`);
+    lines.push(
+      `      baseUrl: "http://localhost:8000" // Override this in production!`,
+    );
+    lines.push(`    },`);
+  }
+  lines.push(`  }`);
+  lines.push(`};\n`);
+
+  return lines.join("\n");
+
   return lines.join("\n");
 }
 

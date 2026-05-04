@@ -5,6 +5,7 @@ const utils_1 = require("./utils");
 function generateModels(multiIr) {
     const sections = [
         `// GENERATED CODE – DO NOT EDIT.\n/* eslint-disable @typescript-eslint/no-explicit-any */\n`,
+        `/* eslint-disable @typescript-eslint/no-namespace */\n`, // ✨ FIX: Disable namespace lint error
     ];
     for (const [ns, ir] of Object.entries(multiIr)) {
         const camelNs = (0, utils_1.camelCase)(ns);

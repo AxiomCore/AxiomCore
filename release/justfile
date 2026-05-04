@@ -57,6 +57,10 @@ release-atmx version:
     echo "📦 Building and Publishing atmx-react v$CLEAN_VERSION to NPM..."
     cd "$JUSTFILE_DIR/../../axiom-sdk/web/atmx-react"
     npm version $CLEAN_VERSION --no-git-tag-version
+
+    echo "📝 Updating atmx-web dependency version in package.json..."
+    sed -i '' "s/\"atmx-web\": \".*\"/\"atmx-web\": \"^$CLEAN_VERSION\"/" package.json
+
     npm install
     npm run build
     npm publish --access public || echo "⚠️ NPM Publish failed (maybe already exists?)"

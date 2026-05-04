@@ -76,6 +76,8 @@ export function generateSdk(
   return lines.join("\n");
 }
 
+// FILE: atmx-cli/src/generators/sdk-generator.ts (Partial replacement)
+
 function generateEndpointMethod(
   ep: AxiomEndpoint,
   ns: string,
@@ -94,8 +96,14 @@ function generateEndpointMethod(
       ? rawReturnType
       : prefixModels(rawReturnType);
 
-  // ✨ FIX: If no parameters are defined, default to accepting an optional Record<string, any>
-  // This allows developers to pass undocumented fields (like FastAPI Form data)
+  // Map camelCase TS args back to original IR snake_case names!
+  const argsMapping = params
+    .map(
+      (p: any) =>
+        `if (args && '${camelCase(p.name)}' in args) { mappedArgs["${p.name}"] = (args as any)["${camelCase(p.name)}"]; delete mappedArgs["${camelCase(p.name)}"]; }`,
+    )
+    .join("\n    ");
+
   if (params.length === 0) {
     if (isReact) {
       const decLogic = generateLambda(ep.returnType, "fromJson", camelNs);
@@ -119,7 +127,6 @@ function generateEndpointMethod(
     }
   }
 
-  // Endpoints with explicitly defined parameters
   const argType = `{ ${params.map((p: any) => `${camelCase(p.name)}${p.isOptional ? "?" : ""}: ${prefixModels(mapTypeToTs(p.typeRef, camelNs))}`).join(", ")} }`;
 
   if (isReact) {
@@ -137,10 +144,13 @@ function generateEndpointMethod(
     return `
   get${pascalCase(ep.name)}Def(args?: ${argType}): AxiomQueryDef<${returnType}> {
     ${payloadLogic}
+    const mappedArgs: any = { ...(args || {}) };
+    ${argsMapping}
+
     return {
       namespace: "${ns}", name: "${ep.name}", endpointId: ${ep.id},
       method: "${ep.method ? ep.method.toUpperCase() : "GET"}", path: "${ep.path}",
-      payload: payload, args: args || {}, decoder: ${decLogic}, serializer: ${serLogic}, isStream: ${ep.isStream === true}
+      payload: payload, args: mappedArgs, decoder: ${decLogic}, serializer: ${serLogic}, isStream: ${ep.isStream === true}
     };
   },
   use${pascalCase(ep.name)}${!isQuery ? "Mutation" : ""}(args?: ${argType}, options?: { enabled?: boolean }) {
@@ -149,7 +159,9 @@ function generateEndpointMethod(
   } else {
     return `
   ${camelCase(ep.name)}(args?: ${argType}): string {
-    const argsStr = args && Object.keys(args).length > 0 ? JSON.stringify(args) : '';
+    const mappedArgs: any = { ...(args || {}) };
+    ${argsMapping}
+    const argsStr = Object.keys(mappedArgs).length > 0 ? JSON.stringify(mappedArgs) : '';
     return \`${ns}.${ep.name}(\${argsStr})\`;
   },`;
   }

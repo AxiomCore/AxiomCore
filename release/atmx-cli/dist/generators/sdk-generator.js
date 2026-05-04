@@ -64,39 +64,38 @@ function generateEndpointMethod(ep, ns, camelNs, isReact) {
     const params = Array.isArray(rawParams)
         ? rawParams
         : Object.values(rawParams);
-    if (params.length === 0) {
-        if (isReact) {
-            const isQuery = ep.method ? ep.method.toUpperCase() === "GET" : true;
-            const rawReturnType = (0, utils_1.mapTypeToTs)(ep.returnType, camelNs);
-            const returnType = rawReturnType === "void" || rawReturnType === "any"
-                ? rawReturnType
-                : prefixModels(rawReturnType);
-            const decLogic = generateLambda(ep.returnType, "fromJson", camelNs);
-            return `
-  get${(0, utils_1.pascalCase)(ep.name)}Def(): AxiomQueryDef<${returnType}> {
-    return {
-      namespace: "${ns}", name: "${ep.name}", endpointId: ${ep.id},
-      method: "${ep.method ? ep.method.toUpperCase() : "GET"}", path: "${ep.path}",
-      args: {}, decoder: ${decLogic}, serializer: (p: any) => p, isStream: ${ep.isStream === true}
-    };
-  },
-  use${(0, utils_1.pascalCase)(ep.name)}${!isQuery ? "Mutation" : ""}(options?: { enabled?: boolean }) {
-    ${isQuery ? `return useAxiomQuery<${returnType}>(this.get${(0, utils_1.pascalCase)(ep.name)}Def(), options);` : `return useAxiomMutation<${returnType}, void | Record<string,any>>(() => this.get${(0, utils_1.pascalCase)(ep.name)}Def());`}
-  },`;
-        }
-        else {
-            return `
-  ${(0, utils_1.camelCase)(ep.name)}(): string {
-    return \`${ns}.${ep.name}()\`;
-  },`;
-        }
-    }
-    const argType = `{ ${params.map((p) => `${(0, utils_1.camelCase)(p.name)}?: ${prefixModels((0, utils_1.mapTypeToTs)(p.typeRef, camelNs))}`).join(", ")} }`;
     const isQuery = ep.method ? ep.method.toUpperCase() === "GET" : true;
     const rawReturnType = (0, utils_1.mapTypeToTs)(ep.returnType, camelNs);
     const returnType = rawReturnType === "void" || rawReturnType === "any"
         ? rawReturnType
         : prefixModels(rawReturnType);
+    // ✨ FIX: If no parameters are defined, default to accepting an optional Record<string, any>
+    // This allows developers to pass undocumented fields (like FastAPI Form data)
+    if (params.length === 0) {
+        if (isReact) {
+            const decLogic = generateLambda(ep.returnType, "fromJson", camelNs);
+            return `
+  get${(0, utils_1.pascalCase)(ep.name)}Def(args?: Record<string, any>): AxiomQueryDef<${returnType}> {
+    return {
+      namespace: "${ns}", name: "${ep.name}", endpointId: ${ep.id},
+      method: "${ep.method ? ep.method.toUpperCase() : "GET"}", path: "${ep.path}",
+      args: args || {}, decoder: ${decLogic}, serializer: (p: any) => p, isStream: ${ep.isStream === true}
+    };
+  },
+  use${(0, utils_1.pascalCase)(ep.name)}${!isQuery ? "Mutation" : ""}(options?: { enabled?: boolean }) {
+    ${isQuery ? `return useAxiomQuery<${returnType}>(this.get${(0, utils_1.pascalCase)(ep.name)}Def(), options);` : `return useAxiomMutation<${returnType}, void | Record<string,any>>((a) => this.get${(0, utils_1.pascalCase)(ep.name)}Def(a));`}
+  },`;
+        }
+        else {
+            return `
+  ${(0, utils_1.camelCase)(ep.name)}(args?: Record<string, any>): string {
+    const argsStr = args && Object.keys(args).length > 0 ? JSON.stringify(args) : '';
+    return \`${ns}.${ep.name}(\${argsStr})\`;
+  },`;
+        }
+    }
+    // Endpoints with explicitly defined parameters
+    const argType = `{ ${params.map((p) => `${(0, utils_1.camelCase)(p.name)}${p.isOptional ? "?" : ""}: ${prefixModels((0, utils_1.mapTypeToTs)(p.typeRef, camelNs))}`).join(", ")} }`;
     if (isReact) {
         const bodyParam = params.find((p) => p.source === "body");
         const payloadLogic = bodyParam

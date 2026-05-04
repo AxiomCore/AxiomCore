@@ -114,6 +114,9 @@ enum Commands {
 
         #[arg(long)]
         name: Option<String>,
+
+        #[arg(short, long)]
+        out: Option<String>,
     },
     /// Watch for changes and rebuild/pull automatically
     Watch {
@@ -462,12 +465,14 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             contract_config,
             framework,
             name,
+            out, // <-- Add this
         } => {
             commands::pull::handle_pull(
                 contract.clone(),
                 contract_config.clone(),
                 framework.clone(),
                 name.clone(),
+                out.clone(), // <-- Pass this
             )
             .await
         }

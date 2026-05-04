@@ -1,5 +1,4 @@
-// atmx-cli/src/generators/utils.ts
-
+// FILE: atmx-cli/src/generators/utils.ts
 export function pascalCase(str: string): string {
   if (!str) return "";
   return str
@@ -14,19 +13,13 @@ export function camelCase(str: string): string {
 }
 
 export function normalizeIr(obj: any): any {
-  // ✨ FIX: Arrays in JavaScript are Objects! We must check Array.isArray FIRST.
-  if (Array.isArray(obj)) {
-    return obj.map(normalizeIr);
-  }
-
+  if (Array.isArray(obj)) return obj.map(normalizeIr);
   if (obj !== null && typeof obj === "object") {
     const newObj: any = {};
     for (const key of Object.keys(obj)) {
       const camelKey = key.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
       newObj[camelKey] = normalizeIr(obj[key]);
     }
-
-    // Convert common Maps to Arrays if they exist and are not already arrays
     if (
       newObj.endpoints &&
       typeof newObj.endpoints === "object" &&
@@ -48,8 +41,6 @@ export function normalizeIr(obj: any): any {
     ) {
       newObj.enums = Object.values(newObj.enums);
     }
-
-    // Traverse down into models to normalize fields
     if (Array.isArray(newObj.models)) {
       newObj.models = newObj.models.map((model: any) => {
         if (
@@ -62,46 +53,44 @@ export function normalizeIr(obj: any): any {
         return model;
       });
     }
-
     return newObj;
   }
-
   return obj;
 }
 
-/**
- * @param scopedNamespace If provided (e.g. 'Auth'), prefixes named types with 'models.Auth.'
- */
+// ✨ FIX: Properly maps all Axiom primitives to TypeScript
 export function mapTypeToTs(typeRef: any, ns?: string): string {
-  if (!typeRef) return "any";
+  if (!typeRef || !typeRef.kind) return "any";
 
-  if (typeRef.kind === "primitive") {
-    switch (typeRef.value) {
-      case "string":
-        return "string";
-      case "int":
-      case "float":
-      case "double":
-        return "number";
-      case "boolean":
-        return "boolean";
-      case "dateTime":
-        return "Date";
-      case "bytes":
-        return "Uint8Array";
-      default:
-        return "any";
-    }
+  switch (typeRef.kind) {
+    case "string":
+      return "string";
+    case "int32":
+    case "int64":
+    case "float32":
+    case "float64":
+      return "number";
+    case "bool":
+      return "boolean";
+    case "dateTime":
+      return "Date";
+    case "bytes":
+      return "Uint8Array";
+    case "json":
+      return "any";
+    case "void":
+      return "void";
+    case "named":
+      const name = pascalCase(typeRef.value);
+      return ns ? `${ns}.${name}` : name;
+    case "list":
+      return `${mapTypeToTs(typeRef.value, ns)}[]`;
+    case "map":
+      const valType = typeRef.value?.[1]
+        ? mapTypeToTs(typeRef.value[1], ns)
+        : "any";
+      return `Record<string, ${valType}>`;
+    default:
+      return "any";
   }
-
-  if (typeRef.kind === "named") {
-    const name = pascalCase(typeRef.value);
-    return ns ? `${ns}${name}` : name;
-  }
-
-  if (typeRef.kind === "list") {
-    return `${mapTypeToTs(typeRef.value, ns)}[]`;
-  }
-
-  return "any";
 }

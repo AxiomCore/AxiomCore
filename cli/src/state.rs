@@ -120,14 +120,7 @@ impl State {
                 available_projects: Vec::new(),
                 selected_project_idx: 0,
             },
-            init_context: InitContext {
-                step: InitStep::Language,
-                selected_language: 0,
-                selected_framework: 0,
-                project_name: String::new(),
-                version: "v0.0.1".into(),
-                entrypoint: "./main.py:app".into(),
-            },
+            init_context: InitContext::default(),
             active_view: ViewMode::Dashboard,
             login_context: LoginContext {
                 status: LoginStatus::Idle,
@@ -199,22 +192,48 @@ impl State {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub enum InitStep {
     Language,
     Framework,
     ProjectName,
-    Version,
     Entrypoint,
     Success,
 }
 
+#[derive(Debug, Clone)]
 pub struct InitContext {
     pub step: InitStep,
+    pub languages: Vec<String>, // Dynamic list for auto-sorting
     pub selected_language: usize,
     pub selected_framework: usize,
     pub project_name: String,
-    pub version: String,
     pub entrypoint: String,
+    pub cursor_position: usize, // Tracks cursor for the active text input
+    pub current_step: usize,    // e.g. 1
+    pub total_steps: usize,     // e.g. 3 (Go) or 4 (Python)
+}
+
+impl Default for InitContext {
+    fn default() -> Self {
+        Self {
+            step: InitStep::Language,
+            languages: vec![
+                "Python".into(),
+                "Go".into(),
+                "Rust (Coming soon)".into(),
+                "Javascript (Coming soon)".into(),
+                "Dart (Coming soon)".into(),
+            ],
+            selected_language: 0,
+            selected_framework: 0,
+            project_name: String::new(),
+            entrypoint: String::new(),
+            cursor_position: 0,
+            current_step: 1,
+            total_steps: 4,
+        }
+    }
 }
 
 pub enum LoginStatus {

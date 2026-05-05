@@ -1,0 +1,6 @@
+framework = "atmx-web"
+
+[contracts]
+
+[contracts.realtime-chat]
+source = "/Users/yashmakan/AxiomCore/AxiomCore/examples/realtime-chat/frontend/atmx-web/../../backend/go-chat/.axiom"

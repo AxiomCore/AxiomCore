@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Axiom Realtime Chat</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+    </head>
+    <body class="bg-slate-100 text-slate-800 p-8 max-w-2xl mx-auto font-sans">
+        <nav
+            class="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm mb-6 border border-slate-200"
+        >
+            <div class="font-bold text-xl text-blue-600">
+                Axiom Realtime Chat
+            </div>
+            <ax-engine-status
+                loading-text="Connecting..."
+                ready-text="✅ Engine Online"
+                error-text="❌ Failed"
+            ></ax-engine-status>
+        </nav>
+
+        <!-- Chat Container -->
+        <!-- ✨ MAGIC: ax-query automatically mounts the WebSocket when the page loads! -->
+        <div
+            :ax-query="sdk.realtimeChat.handleConnections()"
+            ax-on:data="
+                        document.getElementById('ws-loader').style.display = 'none';
+                        const ul = document.getElementById('messages');
+                        const isMe = $data.sender === document.getElementById('sender').value;
+                        const align = isMe ? 'justify-end' : 'justify-start';
+                        const color = isMe ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-800';
+                        ul.innerHTML += `<li class='flex ${align}'><div class='max-w-[70%] p-3 rounded-xl ${color}'><div class='text-[10px] opacity-70 mb-1 font-bold'>${$data.sender}</div><div>${$data.content}</div></div></li>`;
+                        document.getElementById('chat-window').scrollTop = document.getElementById('chat-window').scrollHeight;
+                    "
+            class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[600px]"
+        >
+            <div class="bg-slate-800 text-white p-4 font-bold text-sm">
+                Live Global Chat Room
+            </div>
+
+            <!-- Messages Area -->
+            <div class="flex-1 p-4 overflow-y-auto space-y-4" id="chat-window">
+                <!-- ✨ FIX: We use an ID to force hide it when the first message arrives -->
+                <div
+                    id="ws-loader"
+                    class="text-center text-slate-400 text-xs py-4 animate-pulse"
+                >
+                    Connecting to WebSocket via Rust WASM...
+                </div>
+                <div
+                    ax-when="error"
+                    class="text-red-500 text-center text-xs py-4"
+                    ax-text="$error.message"
+                ></div>
+
+                <!-- Message List -->
+                <ul id="messages" class="space-y-3"></ul>
+            </div>
+
+            <!-- Input Area -->
+            <div class="p-4 bg-slate-50 border-t border-slate-200 flex gap-2">
+                <input
+                    type="text"
+                    id="sender"
+                    value="WebUser"
+                    class="w-1/4 p-3 rounded-lg border border-slate-300 outline-none"
+                    placeholder="Name"
+                />
+                <input
+                    type="text"
+                    id="content"
+                    class="w-full p-3 rounded-lg border border-slate-300 outline-none"
+                    placeholder="Type a message..."
+                    onkeypress="if (event.key === 'Enter') sendMsg();"
+                />
+                <button
+                    onclick="sendMsg()"
+                    class="bg-blue-600 text-white font-bold px-6 py-3 rounded-lg hover:bg-blue-700 transition"
+                >
+                    Send
+                </button>
+            </div>
+        </div>
+
+        <script type="module">
+            const { atmx } =
+                await import("https://atmx.axiomcore.dev/v0.66.0/atmx.es.js");
+            const { sdk } = await import("./generated/sdk.js");
+
+            window.atmx = atmx;
+            window.sdk = sdk;
+
+            await atmx.init({
+                debug: true,
+                contracts: {
+                    "realtime-chat": {
+                        baseUrl: "http://localhost:8080",
+                        contractUrl: "./public/realtime-chat.axiom",
+                    },
+                },
+            });
+
+            atmx.triggerQuery(document.body);
+
+            // Send a message upstream through the active socket
+            window.sendMsg = () => {
+                const content = document.getElementById("content");
+                if (!content.value) return;
+
+                const payload = {
+                    sender: document.getElementById("sender").value,
+                    content: content.value,
+                };
+
+                sdk.realtimeChat.axiom.send("handleConnections", payload);
+                content.value = "";
+            };
+        </script>
+    </body>
+</html>

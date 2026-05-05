@@ -33,12 +33,12 @@ export function generateSdk(
       lines.push(`    clearAuthToken(methodName: string) {`);
       lines.push(`      clearAuthToken("${ns}", methodName);`);
       lines.push(`    },`);
-      // ✨ FIX: Use the top-level axiomQueryManager instead of require()
       lines.push(
         `    connect(methodName: string, args?: Record<string, any>) {`,
       );
+      // ✨ FIX: Use the specific module name instead of 'this'
       lines.push(
-        `      const def = (this as any)[\`get\${methodName.charAt(0).toUpperCase() + methodName.slice(1)}Def\`](args);`,
+        `      const def = (${camelNs}Module as any)[\`get\${methodName.charAt(0).toUpperCase() + methodName.slice(1)}Def\`](args);`,
       );
       lines.push(`      axiomQueryManager.connect(def);`);
       lines.push(`    },`);
@@ -46,7 +46,7 @@ export function generateSdk(
         `    disconnect(methodName: string, args?: Record<string, any>) {`,
       );
       lines.push(
-        `      const def = (this as any)[\`get\${methodName.charAt(0).toUpperCase() + methodName.slice(1)}Def\`](args);`,
+        `      const def = (${camelNs}Module as any)[\`get\${methodName.charAt(0).toUpperCase() + methodName.slice(1)}Def\`](args);`,
       );
       lines.push(`      axiomQueryManager.disconnect(def);`);
       lines.push(`    },`);
@@ -54,7 +54,7 @@ export function generateSdk(
         `    send(methodName: string, payload: any, args?: Record<string, any>) {`,
       );
       lines.push(
-        `      const def = (this as any)[\`get\${methodName.charAt(0).toUpperCase() + methodName.slice(1)}Def\`](args);`,
+        `      const def = (${camelNs}Module as any)[\`get\${methodName.charAt(0).toUpperCase() + methodName.slice(1)}Def\`](args);`,
       );
       lines.push(`      axiomQueryManager.send(def, payload);`);
       lines.push(`    }`);

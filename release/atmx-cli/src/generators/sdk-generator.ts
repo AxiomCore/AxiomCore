@@ -9,21 +9,20 @@ export function generateSdk(
   const lines: string[] = [
     `// GENERATED CODE – DO NOT EDIT.`,
     `/* eslint-disable @typescript-eslint/no-explicit-any */`,
+    `/* eslint-disable @typescript-eslint/no-unused-vars */`,
     `import * as models from './models';\n`,
   ];
 
   if (isReact) {
-    // ✨ FIX: Auto-import the auth helpers to bind them to the module
+    // ✨ FIX: Auto-import the auth helpers and QueryManager directly
     lines.push(
-      `import { useAxiomQuery, useAxiomMutation, setAuthToken, clearAuthToken } from 'atmx-react';`,
+      `import { useAxiomQuery, useAxiomMutation, setAuthToken, clearAuthToken, axiomQueryManager } from 'atmx-react';`,
     );
     lines.push(`import type { AxiomQueryDef } from 'atmx-react';\n`);
   }
 
   for (const [ns, ir] of Object.entries(multiIr)) {
     const camelNs = camelCase(ns);
-
-    // 👉 THIS LINE WAS MISSING IN THE PREVIOUS STEP!
     lines.push(`export const ${camelNs}Module = {`);
 
     lines.push(`  axiom: {`);
@@ -34,11 +33,10 @@ export function generateSdk(
       lines.push(`    clearAuthToken(methodName: string) {`);
       lines.push(`      clearAuthToken("${ns}", methodName);`);
       lines.push(`    },`);
-      // ✨ FIX: Properly generate React WebSocket imperative methods!
+      // ✨ FIX: Use the top-level axiomQueryManager instead of require()
       lines.push(
         `    connect(methodName: string, args?: Record<string, any>) {`,
       );
-      lines.push(`      const { axiomQueryManager } = require('atmx-react');`);
       lines.push(
         `      const def = (this as any)[\`get\${methodName.charAt(0).toUpperCase() + methodName.slice(1)}Def\`](args);`,
       );
@@ -47,7 +45,6 @@ export function generateSdk(
       lines.push(
         `    disconnect(methodName: string, args?: Record<string, any>) {`,
       );
-      lines.push(`      const { axiomQueryManager } = require('atmx-react');`);
       lines.push(
         `      const def = (this as any)[\`get\${methodName.charAt(0).toUpperCase() + methodName.slice(1)}Def\`](args);`,
       );
@@ -56,7 +53,6 @@ export function generateSdk(
       lines.push(
         `    send(methodName: string, payload: any, args?: Record<string, any>) {`,
       );
-      lines.push(`      const { axiomQueryManager } = require('atmx-react');`);
       lines.push(
         `      const def = (this as any)[\`get\${methodName.charAt(0).toUpperCase() + methodName.slice(1)}Def\`](args);`,
       );
@@ -137,8 +133,6 @@ export function generateSdk(
   return lines.join("\n");
 }
 
-// FILE: atmx-cli/src/generators/sdk-generator.ts (Partial replacement)
-
 function generateEndpointMethod(
   ep: AxiomEndpoint,
   ns: string,
@@ -150,14 +144,16 @@ function generateEndpointMethod(
     ? rawParams
     : Object.values(rawParams);
 
-  const isQuery = ep.method ? ep.method.toUpperCase() === "GET" : true;
+  // ✨ FIX: Treat "WS" as a query (subscription) instead of a mutation!
+  const isQuery = ep.method
+    ? ["GET", "WS"].includes(ep.method.toUpperCase())
+    : true;
   const rawReturnType = mapTypeToTs(ep.returnType, camelNs);
   const returnType =
     rawReturnType === "void" || rawReturnType === "any"
       ? rawReturnType
       : prefixModels(rawReturnType);
 
-  // Map camelCase TS args back to original IR snake_case names!
   const argsMapping = params
     .map(
       (p: any) =>
@@ -176,7 +172,7 @@ function generateEndpointMethod(
       args: args || {}, decoder: ${decLogic}, serializer: (p: any) => p, isStream: ${ep.isStream === true}
     };
   },
-  use${pascalCase(ep.name)}${!isQuery ? "Mutation" : ""}(options?: { enabled?: boolean }) {
+  use${pascalCase(ep.name)}(${isQuery ? "options?: { enabled?: boolean }" : ""}) {
     ${isQuery ? `return useAxiomQuery<${returnType}>(this.get${pascalCase(ep.name)}Def(), options);` : `return useAxiomMutation<${returnType}, void | Record<string,any>>((a) => this.get${pascalCase(ep.name)}Def(a));`}
   },`;
     } else {
@@ -214,7 +210,7 @@ function generateEndpointMethod(
       payload: payload, args: mappedArgs, decoder: ${decLogic}, serializer: ${serLogic}, isStream: ${ep.isStream === true}
     };
   },
-  use${pascalCase(ep.name)}${!isQuery ? "Mutation" : ""}(args?: ${argType}, options?: { enabled?: boolean }) {
+  use${pascalCase(ep.name)}(${isQuery ? `args?: ${argType}, options?: { enabled?: boolean }` : `args?: ${argType}`}) {
     ${isQuery ? `return useAxiomQuery<${returnType}>(this.get${pascalCase(ep.name)}Def(args), options);` : `return useAxiomMutation<${returnType}, ${argType}>((a) => this.get${pascalCase(ep.name)}Def(a || args));`}
   },`;
   } else {

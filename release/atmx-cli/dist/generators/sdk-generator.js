@@ -15,6 +15,8 @@ function generateSdk(multiIr, isReact = false) {
     }
     for (const [ns, ir] of Object.entries(multiIr)) {
         const camelNs = (0, utils_1.camelCase)(ns);
+        // 👉 THIS LINE WAS MISSING IN THE PREVIOUS STEP!
+        lines.push(`export const ${camelNs}Module = {`);
         lines.push(`  axiom: {`);
         if (isReact) {
             lines.push(`    setAuthToken(methodName: string, token: string) {`);

@@ -30,6 +30,9 @@ function generateSdk(multiIr, isReact = false) {
             lines.push(`    },`);
             lines.push(`    disconnect(methodName: string, args?: Record<string, any>) {`);
             lines.push(`      console.warn("Manual disconnect not implemented for React. Unmount the component.");`);
+            lines.push(`    },`);
+            lines.push(`    send(methodName: string, payload: any, args?: Record<string, any>) {`);
+            lines.push(`      console.warn("Manual send not implemented for React. Use useAxiomQuery.");`);
             lines.push(`    }`);
         }
         else {
@@ -46,6 +49,10 @@ function generateSdk(multiIr, isReact = false) {
             lines.push(`    disconnect(methodName: string, args?: Record<string, any>) {`);
             lines.push(`      const argsStr = args && Object.keys(args).length > 0 ? JSON.stringify(args) : '';`);
             lines.push(`      (window as any).atmx?.disconnect(\`${ns}.\${methodName}(\${argsStr})\`);`);
+            lines.push(`    },`);
+            lines.push(`    send(methodName: string, payload: any, args?: Record<string, any>) {`);
+            lines.push(`      const argsStr = args && Object.keys(args).length > 0 ? JSON.stringify(args) : '';`);
+            lines.push(`      (window as any).atmx?.send(\`${ns}.\${methodName}(\${argsStr})\`, payload);`);
             lines.push(`    }`);
         }
         lines.push(`  },`);

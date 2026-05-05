@@ -22,6 +22,10 @@ export function generateSdk(
 
   for (const [ns, ir] of Object.entries(multiIr)) {
     const camelNs = camelCase(ns);
+
+    // 👉 THIS LINE WAS MISSING IN THE PREVIOUS STEP!
+    lines.push(`export const ${camelNs}Module = {`);
+
     lines.push(`  axiom: {`);
     if (isReact) {
       lines.push(`    setAuthToken(methodName: string, token: string) {`);

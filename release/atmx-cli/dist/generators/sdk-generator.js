@@ -25,14 +25,21 @@ function generateSdk(multiIr, isReact = false) {
             lines.push(`    clearAuthToken(methodName: string) {`);
             lines.push(`      clearAuthToken("${ns}", methodName);`);
             lines.push(`    },`);
+            // ✨ FIX: Properly generate React WebSocket imperative methods!
             lines.push(`    connect(methodName: string, args?: Record<string, any>) {`);
-            lines.push(`      console.warn("Manual connect not implemented for React. Use useAxiomQuery.");`);
+            lines.push(`      const { axiomQueryManager } = require('atmx-react');`);
+            lines.push(`      const def = (this as any)[\`get\${methodName.charAt(0).toUpperCase() + methodName.slice(1)}Def\`](args);`);
+            lines.push(`      axiomQueryManager.connect(def);`);
             lines.push(`    },`);
             lines.push(`    disconnect(methodName: string, args?: Record<string, any>) {`);
-            lines.push(`      console.warn("Manual disconnect not implemented for React. Unmount the component.");`);
+            lines.push(`      const { axiomQueryManager } = require('atmx-react');`);
+            lines.push(`      const def = (this as any)[\`get\${methodName.charAt(0).toUpperCase() + methodName.slice(1)}Def\`](args);`);
+            lines.push(`      axiomQueryManager.disconnect(def);`);
             lines.push(`    },`);
             lines.push(`    send(methodName: string, payload: any, args?: Record<string, any>) {`);
-            lines.push(`      console.warn("Manual send not implemented for React. Use useAxiomQuery.");`);
+            lines.push(`      const { axiomQueryManager } = require('atmx-react');`);
+            lines.push(`      const def = (this as any)[\`get\${methodName.charAt(0).toUpperCase() + methodName.slice(1)}Def\`](args);`);
+            lines.push(`      axiomQueryManager.send(def, payload);`);
             lines.push(`    }`);
         }
         else {

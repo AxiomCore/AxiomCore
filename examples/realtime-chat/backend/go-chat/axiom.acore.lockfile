@@ -1,0 +1,65 @@
+{
+  "axiom": "1.0",
+  "backend": {
+    "codec": "json",
+    "entrypoint": "./main.go",
+    "language": "python"
+  },
+  "endpoints": {
+    "handleConnections": {
+      "id": 0,
+      "method": "WS",
+      "name": "handleConnections",
+      "path": "/ws",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "named",
+        "value": "ChatMessage"
+      },
+      "streaming": {
+        "direction": "bidirectional",
+        "reconnect": "auto",
+        "type": "websocket"
+      }
+    }
+  },
+  "models": {
+    "ChatMessage": {
+      "fields": {
+        "content": {
+          "isOptional": false,
+          "name": "content",
+          "typeRef": {
+            "kind": "string"
+          }
+        },
+        "sender": {
+          "isOptional": false,
+          "name": "sender",
+          "typeRef": {
+            "kind": "string"
+          }
+        },
+        "timestamp": {
+          "isOptional": false,
+          "name": "timestamp",
+          "typeRef": {
+            "kind": "string"
+          }
+        }
+      },
+      "name": "ChatMessage"
+    }
+  },
+  "project": {
+    "id": "go-chat",
+    "version": "v0.1.0"
+  },
+  "variants": {
+    "default": {
+      "include": [
+        "*"
+      ]
+    }
+  }
+}

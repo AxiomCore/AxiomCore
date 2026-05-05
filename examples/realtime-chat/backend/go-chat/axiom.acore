@@ -1,0 +1,17 @@
+amends "axiom-go:./main.go"
+
+project {
+  id = "go-chat"
+  version = "v0.1.0"
+}
+
+endpoints {
+  ["handleConnections"] {
+    method = "WS"
+    streaming = new WebSocketDef {
+      direction = "bidirectional"
+      reconnect = "auto"
+    }
+    returnType = new TypeRefNamed { value = "ChatMessage" }
+  }
+}

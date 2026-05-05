@@ -25,17 +25,17 @@ function generateSdk(multiIr, isReact = false) {
             lines.push(`    clearAuthToken(methodName: string) {`);
             lines.push(`      clearAuthToken("${ns}", methodName);`);
             lines.push(`    },`);
-            // ✨ FIX: Use the top-level axiomQueryManager instead of require()
             lines.push(`    connect(methodName: string, args?: Record<string, any>) {`);
-            lines.push(`      const def = (this as any)[\`get\${methodName.charAt(0).toUpperCase() + methodName.slice(1)}Def\`](args);`);
+            // ✨ FIX: Use the specific module name instead of 'this'
+            lines.push(`      const def = (${camelNs}Module as any)[\`get\${methodName.charAt(0).toUpperCase() + methodName.slice(1)}Def\`](args);`);
             lines.push(`      axiomQueryManager.connect(def);`);
             lines.push(`    },`);
             lines.push(`    disconnect(methodName: string, args?: Record<string, any>) {`);
-            lines.push(`      const def = (this as any)[\`get\${methodName.charAt(0).toUpperCase() + methodName.slice(1)}Def\`](args);`);
+            lines.push(`      const def = (${camelNs}Module as any)[\`get\${methodName.charAt(0).toUpperCase() + methodName.slice(1)}Def\`](args);`);
             lines.push(`      axiomQueryManager.disconnect(def);`);
             lines.push(`    },`);
             lines.push(`    send(methodName: string, payload: any, args?: Record<string, any>) {`);
-            lines.push(`      const def = (this as any)[\`get\${methodName.charAt(0).toUpperCase() + methodName.slice(1)}Def\`](args);`);
+            lines.push(`      const def = (${camelNs}Module as any)[\`get\${methodName.charAt(0).toUpperCase() + methodName.slice(1)}Def\`](args);`);
             lines.push(`      axiomQueryManager.send(def, payload);`);
             lines.push(`    }`);
         }

@@ -1,0 +1,16 @@
+{
+    "selected_files": [
+        "/Users/yashmakan/AxiomCore/AxiomCore/release/cli/justfile",
+        "/Users/yashmakan/AxiomCore/AxiomCore/release/cli/scripts/build.sh",
+        "/Users/yashmakan/AxiomCore/AxiomCore/release/cli/scripts/publish.sh",
+        "/Users/yashmakan/AxiomCore/AxiomCore/release/cli/scripts/release.sh",
+        "/Users/yashmakan/AxiomCore/AxiomCore/release/extractors/scripts/publish.sh",
+        "/Users/yashmakan/AxiomCore/AxiomCore/release/homebrew-tap/Formula/axiom.rb",
+        "/Users/yashmakan/AxiomCore/AxiomCore/release/justfile",
+        "/Users/yashmakan/AxiomCore/AxiomCore/release/scripts/build_apple.sh",
+        "/Users/yashmakan/AxiomCore/AxiomCore/release/scripts/publish_apple.sh",
+        "/Users/yashmakan/AxiomCore/AxiomCore/release/scripts/publish_sdk.sh",
+        "/Users/yashmakan/AxiomCore/AxiomCore/release/scripts/wasm.sh"
+    ],
+    "compressed_files": []
+}

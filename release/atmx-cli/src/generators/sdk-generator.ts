@@ -22,28 +22,61 @@ export function generateSdk(
 
   for (const [ns, ir] of Object.entries(multiIr)) {
     const camelNs = camelCase(ns);
-    lines.push(`export const ${camelNs}Module = {`);
-
-    // ✨ FIX: Safely bind auth tokens using the EXACT namespace string from the TOML file!
+    lines.push(`  axiom: {`);
     if (isReact) {
-      lines.push(`  setAuthToken(methodName: string, token: string) {`);
-      lines.push(`    setAuthToken("${ns}", methodName, token);`);
-      lines.push(`  },`);
-      lines.push(`  clearAuthToken(methodName: string) {`);
-      lines.push(`    clearAuthToken("${ns}", methodName);`);
-      lines.push(`  },`);
+      lines.push(`    setAuthToken(methodName: string, token: string) {`);
+      lines.push(`      setAuthToken("${ns}", methodName, token);`);
+      lines.push(`    },`);
+      lines.push(`    clearAuthToken(methodName: string) {`);
+      lines.push(`      clearAuthToken("${ns}", methodName);`);
+      lines.push(`    },`);
+      lines.push(
+        `    connect(methodName: string, args?: Record<string, any>) {`,
+      );
+      lines.push(
+        `      console.warn("Manual connect not implemented for React. Use useAxiomQuery.");`,
+      );
+      lines.push(`    },`);
+      lines.push(
+        `    disconnect(methodName: string, args?: Record<string, any>) {`,
+      );
+      lines.push(
+        `      console.warn("Manual disconnect not implemented for React. Unmount the component.");`,
+      );
+      lines.push(`    }`);
     } else {
-      lines.push(`  setAuthToken(methodName: string, token: string) {`);
+      lines.push(`    setAuthToken(methodName: string, token: string) {`);
       lines.push(
-        `    (window as any).atmx?.setAuthToken("${ns}", methodName, token);`,
+        `      (window as any).atmx?.setAuthToken("${ns}", methodName, token);`,
       );
-      lines.push(`  },`);
-      lines.push(`  clearAuthToken(methodName: string) {`);
+      lines.push(`    },`);
+      lines.push(`    clearAuthToken(methodName: string) {`);
       lines.push(
-        `    (window as any).atmx?.clearAuthToken("${ns}", methodName);`,
+        `      (window as any).atmx?.clearAuthToken("${ns}", methodName);`,
       );
-      lines.push(`  },`);
+      lines.push(`    },`);
+      lines.push(
+        `    connect(methodName: string, args?: Record<string, any>) {`,
+      );
+      lines.push(
+        `      const argsStr = args && Object.keys(args).length > 0 ? JSON.stringify(args) : '';`,
+      );
+      lines.push(
+        `      (window as any).atmx?.connect(\`${ns}.\${methodName}(\${argsStr})\`);`,
+      );
+      lines.push(`    },`);
+      lines.push(
+        `    disconnect(methodName: string, args?: Record<string, any>) {`,
+      );
+      lines.push(
+        `      const argsStr = args && Object.keys(args).length > 0 ? JSON.stringify(args) : '';`,
+      );
+      lines.push(
+        `      (window as any).atmx?.disconnect(\`${ns}.\${methodName}(\${argsStr})\`);`,
+      );
+      lines.push(`    }`);
     }
+    lines.push(`  },`);
 
     const endpointsMap = ir.endpoints || {};
     const endpoints = Array.isArray(endpointsMap)

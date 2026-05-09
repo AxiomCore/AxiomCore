@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Axiom Offline Feed</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+    </head>
+    <body class="bg-slate-100 text-slate-800 font-sans">
+        <!-- Axiom Query Wrapper -->
+        <div :ax-query="sdk.feed.getPosts()" class="max-w-xl mx-auto py-8 px-4">
+            <!-- Top Navigation -->
+            <nav
+                class="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm mb-6 border border-slate-200"
+            >
+                <div class="font-bold text-xl text-blue-600">Offline Feed</div>
+
+                <!-- Status Badges -->
+                <div class="flex items-center gap-3">
+                    <!-- Network vs Cache Badge -->
+                    <div
+                        ax-when="data, success"
+                        class="text-xs font-bold px-2 py-1 rounded bg-slate-100"
+                    >
+                        Source:
+                        <span
+                            ax-text="$state.source"
+                            class="text-blue-600 uppercase"
+                        ></span>
+                    </div>
+
+                    <!-- Background Fetching Spinner -->
+                    <div
+                        ax-if="$state.isFetching"
+                        class="flex items-center text-xs text-amber-500 font-bold"
+                    >
+                        <svg
+                            class="animate-spin h-4 w-4 mr-1"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                        >
+                            <circle
+                                class="opacity-25"
+                                cx="12"
+                                cy="12"
+                                r="10"
+                                stroke-width="4"
+                            ></circle>
+                            <path
+                                class="opacity-75"
+                                fill="currentColor"
+                                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                            ></path>
+                        </svg>
+                        Syncing...
+                    </div>
+                </div>
+            </nav>
+
+            <!-- Refresh Button -->
+            <button
+                ax-trigger="refresh"
+                class="w-full mb-6 bg-blue-600 text-white font-bold py-3 rounded-xl shadow-sm hover:bg-blue-700 active:scale-95 transition"
+            >
+                Pull to Refresh
+            </button>
+
+            <!-- Initial Loading State -->
+            <div ax-when="loading" class="space-y-4">
+                <div
+                    class="h-32 bg-white rounded-xl shadow-sm border border-slate-200 animate-pulse"
+                ></div>
+                <div
+                    class="h-32 bg-white rounded-xl shadow-sm border border-slate-200 animate-pulse"
+                ></div>
+            </div>
+
+            <!-- Error State (If max retries fail) -->
+            <div
+                ax-when="error"
+                class="bg-red-50 text-red-600 p-4 rounded-xl border border-red-200 font-bold"
+            >
+                Error: <span ax-text="$error.message"></span>
+            </div>
+
+            <!-- Feed List -->
+            <div ax-when="data, success" class="space-y-4">
+                <!-- Render a card for each post in $data -->
+                <div
+                    ax-for="$item in $data"
+                    ax-key="$item.id"
+                    class="bg-white p-5 rounded-xl shadow-sm border border-slate-200"
+                >
+                    <div class="flex items-center gap-3 mb-3">
+                        <div
+                            class="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold text-lg"
+                            ax-text="$item.author.charAt(0)"
+                        ></div>
+                        <div>
+                            <div class="font-bold" ax-text="$item.author"></div>
+                            <div
+                                class="text-xs text-slate-400"
+                                ax-text="$item.timestamp"
+                            ></div>
+                        </div>
+                    </div>
+                    <div
+                        class="text-slate-700 leading-relaxed"
+                        ax-text="$item.content"
+                    ></div>
+                </div>
+            </div>
+        </div>
+
+        <script type="module">
+            const { atmx } =
+                await import("https://atmx.axiomcore.dev/latest/atmx.es.js");
+            const { sdk } = await import("./generated/sdk.js");
+
+            window.atmx = atmx;
+            window.sdk = sdk;
+
+            await atmx.init({
+                debug: true,
+                contracts: {
+                    feed: {
+                        baseUrl: "http://localhost:8080",
+                        contractUrl: "/public/feed.axiom",
+                    },
+                },
+            });
+
+            atmx.triggerQuery(document.body);
+        </script>
+    </body>
+</html>

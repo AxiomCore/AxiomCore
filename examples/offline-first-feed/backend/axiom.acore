@@ -1,0 +1,56 @@
+amends "axiom-fastapi:./main.py:app"
+
+project {
+  id = "offline-feed"
+  version = "v0.1.0"
+}
+
+// Global Policies
+policies = new PolicyConfig {
+  retry = new RetryPolicy {
+    maxAttempts = 5
+    backoff = new ExponentialBackoff { initialDelay = "500ms" multiplier = 2.0 }
+    retryOnTimeout = true
+  }
+}
+
+endpoints {
+  ["get_posts"] {
+    // 1. Instantly return cached data, fetch in background
+    cache = new CachePolicy {
+      strategy = "stale_while_revalidate"
+      ttlSeconds = 300
+    }
+
+    mock = new MockConfig {
+      enabled = true
+
+      // ✨ FIX: Tell the Mock Server how to generate fake data!
+      fallback = new MockResponse {
+        status = 200
+        data = new CollectionData {
+          count = 3
+          item = new TemplateData {
+            body = new {
+              id = "{{faker.number.int}}"
+              author = "{{faker.name}}"
+              content = "{{faker.lorem.paragraph}}"
+              // This generates a random date every time, making it easy
+              // to see when the cache revalidates vs when it serves stale data!
+              timestamp = "{{faker.date.past}}"
+            }
+          }
+        }
+      }
+
+      // 2. Inject a 50% Timeout Failure to prove Retries work
+      fault = new FaultConfig {
+        networkFault = new NetworkFault {
+          type = "timeout"
+          probability = 0.5
+          delayMs = 3000
+        }
+      }
+    }
+  }
+}

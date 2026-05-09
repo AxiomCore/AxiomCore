@@ -1,0 +1,86 @@
+{
+  "axiom": "1.0",
+  "backend": {
+    "codec": "json",
+    "entrypoint": "app",
+    "language": "python"
+  },
+  "endpoints": {
+    "get_posts": {
+      "cache": {
+        "strategy": "stale_while_revalidate",
+        "ttlSeconds": 300
+      },
+      "id": 0,
+      "method": "GET",
+      "mock": {
+        "enabled": true,
+        "fallback": {
+          "data": {
+            "count": 3,
+            "item": {
+              "body": {
+                "author": "{{faker.name}}",
+                "content": "{{faker.lorem.paragraph}}",
+                "id": "{{faker.number.int}}",
+                "timestamp": "{{faker.date.past}}"
+              },
+              "type": "template"
+            },
+            "type": "collection"
+          },
+          "delayJitterMs": 0,
+          "delayMs": 0,
+          "status": 200,
+          "weight": 1
+        },
+        "fault": {
+          "errorRate": 0,
+          "networkFault": {
+            "delayMs": 3000,
+            "probability": 0.5,
+            "type": "timeout"
+          }
+        },
+        "selectionStrategy": "first_match"
+      },
+      "name": "get_posts",
+      "path": "/posts",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "list",
+        "value": {
+          "kind": "named",
+          "value": "Post"
+        }
+      }
+    }
+  },
+  "policies": {
+    "retry": {
+      "backoff": {
+        "initialDelay": "500ms",
+        "multiplier": 2,
+        "type": "exponential"
+      },
+      "maxAttempts": 5,
+      "retryOnCodes": [
+        502,
+        503,
+        504
+      ],
+      "retryOnTimeout": true
+    }
+  },
+  "project": {
+    "id": "offline-feed",
+    "version": "v0.1.0"
+  },
+  "variants": {
+    "default": {
+      "include": [
+        "*"
+      ]
+    }
+  }
+}

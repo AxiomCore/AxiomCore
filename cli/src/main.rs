@@ -78,6 +78,9 @@ enum Commands {
         /// Port to bind the server to
         #[arg(short, long, default_value = "8080")]
         port: u16,
+        /// Enable verbose debug logging for incoming requests and responses
+        #[arg(short, long)]
+        debug: bool,
     },
     /// Start the Acore REPL
     Repl,
@@ -337,7 +340,9 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
         Commands::Test { file, tag } => {
             commands::test::handle_test(file.clone(), tag.clone()).await
         }
-        Commands::Serve { file, port } => commands::serve::handle_serve(file.clone(), *port).await,
+        Commands::Serve { file, port, debug } => {
+            commands::serve::handle_serve(file.clone(), *port, *debug).await
+        }
         Commands::Deploy { target } => match target {
             DeployTarget::MockServer { file } => {
                 let path = file

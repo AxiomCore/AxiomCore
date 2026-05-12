@@ -20,7 +20,7 @@ fn get_cache_paths(project_id: &str) -> Result<(PathBuf, PathBuf)> {
     Ok((json_path, etag_path))
 }
 
-pub async fn handle_serve(file: Option<PathBuf>, port: u16) -> Result<()> {
+pub async fn handle_serve(file: Option<PathBuf>, port: u16, debug: bool) -> Result<()> {
     println!(
         "{}",
         style("🚀 Starting Axiom Mock Server...").cyan().bold()
@@ -86,7 +86,7 @@ pub async fn handle_serve(file: Option<PathBuf>, port: u16) -> Result<()> {
     println!("✅ Mock Configuration Loaded Successfully.\n");
 
     // Boot the Mock Server via Axum
-    if let Err(e) = axiom_mock::start_mock_server(&config_json, port).await {
+    if let Err(e) = axiom_mock::start_mock_server(&config_json, port, debug).await {
         return Err(anyhow!("Mock Server Error: {}", e));
     }
 

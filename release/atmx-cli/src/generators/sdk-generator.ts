@@ -1,255 +1,205 @@
-// FILE: atmx-cli/src/generators/sdk-generator.ts
-import { AxiomEndpoint, AxiomParameter, MultiIR } from "../types";
-import { pascalCase, camelCase, mapTypeToTs } from "./utils";
+import { AxiomIR, AxiomEndpoint, AxiomTypeRef } from "../types.js";
 
-export function generateSdk(
-  multiIr: MultiIR,
-  isReact: boolean = false,
-): string {
-  const lines: string[] = [
-    `// GENERATED CODE – DO NOT EDIT.`,
-    `/* eslint-disable @typescript-eslint/no-explicit-any */`,
-    `/* eslint-disable @typescript-eslint/no-unused-vars */`,
-    `import * as models from './models';\n`,
-  ];
-
-  if (isReact) {
-    // ✨ FIX: Auto-import the auth helpers and QueryManager directly
-    lines.push(
-      `import { useAxiomQuery, useAxiomMutation, setAuthToken, clearAuthToken, axiomQueryManager } from 'atmx-react';`,
-    );
-    lines.push(`import type { AxiomQueryDef } from 'atmx-react';\n`);
-  }
-
-  for (const [ns, ir] of Object.entries(multiIr)) {
-    const camelNs = camelCase(ns);
-    lines.push(`export const ${camelNs}Module = {`);
-
-    lines.push(`  axiom: {`);
-    if (isReact) {
-      lines.push(`    setAuthToken(methodName: string, token: string) {`);
-      lines.push(`      setAuthToken("${ns}", methodName, token);`);
-      lines.push(`    },`);
-      lines.push(`    clearAuthToken(methodName: string) {`);
-      lines.push(`      clearAuthToken("${ns}", methodName);`);
-      lines.push(`    },`);
-      lines.push(
-        `    connect(methodName: string, args?: Record<string, any>) {`,
-      );
-      // ✨ FIX: Use the specific module name instead of 'this'
-      lines.push(
-        `      const def = (${camelNs}Module as any)[\`get\${methodName.charAt(0).toUpperCase() + methodName.slice(1)}Def\`](args);`,
-      );
-      lines.push(`      axiomQueryManager.connect(def);`);
-      lines.push(`    },`);
-      lines.push(
-        `    disconnect(methodName: string, args?: Record<string, any>) {`,
-      );
-      lines.push(
-        `      const def = (${camelNs}Module as any)[\`get\${methodName.charAt(0).toUpperCase() + methodName.slice(1)}Def\`](args);`,
-      );
-      lines.push(`      axiomQueryManager.disconnect(def);`);
-      lines.push(`    },`);
-      lines.push(
-        `    send(methodName: string, payload: any, args?: Record<string, any>) {`,
-      );
-      lines.push(
-        `      const def = (${camelNs}Module as any)[\`get\${methodName.charAt(0).toUpperCase() + methodName.slice(1)}Def\`](args);`,
-      );
-      lines.push(`      axiomQueryManager.send(def, payload);`);
-      lines.push(`    }`);
-    } else {
-      lines.push(`    setAuthToken(methodName: string, token: string) {`);
-      lines.push(
-        `      (window as any).atmx?.setAuthToken("${ns}", methodName, token);`,
-      );
-      lines.push(`    },`);
-      lines.push(`    clearAuthToken(methodName: string) {`);
-      lines.push(
-        `      (window as any).atmx?.clearAuthToken("${ns}", methodName);`,
-      );
-      lines.push(`    },`);
-      lines.push(
-        `    connect(methodName: string, args?: Record<string, any>) {`,
-      );
-      lines.push(
-        `      const argsStr = args && Object.keys(args).length > 0 ? JSON.stringify(args) : '';`,
-      );
-      lines.push(
-        `      (window as any).atmx?.connect(\`${ns}.\${methodName}(\${argsStr})\`);`,
-      );
-      lines.push(`    },`);
-      lines.push(
-        `    disconnect(methodName: string, args?: Record<string, any>) {`,
-      );
-      lines.push(
-        `      const argsStr = args && Object.keys(args).length > 0 ? JSON.stringify(args) : '';`,
-      );
-      lines.push(
-        `      (window as any).atmx?.disconnect(\`${ns}.\${methodName}(\${argsStr})\`);`,
-      );
-      lines.push(`    },`);
-      lines.push(
-        `    send(methodName: string, payload: any, args?: Record<string, any>) {`,
-      );
-      lines.push(
-        `      const argsStr = args && Object.keys(args).length > 0 ? JSON.stringify(args) : '';`,
-      );
-      lines.push(
-        `      (window as any).atmx?.send(\`${ns}.\${methodName}(\${argsStr})\`, payload);`,
-      );
-      lines.push(`    }`);
-    }
-    lines.push(`  },`);
-
-    const endpointsMap = ir.endpoints || {};
-    const endpoints = Array.isArray(endpointsMap)
-      ? endpointsMap
-      : Object.values(endpointsMap);
-
-    endpoints.forEach((ep: any) => {
-      lines.push(generateEndpointMethod(ep, ns, camelNs, isReact));
-    });
-    lines.push(`};\n`);
-  }
-
-  lines.push(`export const sdk = {`);
-  for (const ns of Object.keys(multiIr)) {
-    lines.push(`  ${camelCase(ns)}: ${camelCase(ns)}Module,`);
-  }
-  lines.push(`};\n`);
-
-  lines.push(`export const AxiomDefaultConfig = {`);
-  lines.push(`  contracts: {`);
-  for (const ns of Object.keys(multiIr)) {
-    lines.push(`    "${ns}": {`);
-    lines.push(`      contractUrl: "/${ns}.axiom",`);
-    lines.push(`      baseUrl: "http://localhost:8000"`);
-    lines.push(`    },`);
-  }
-  lines.push(`  }`);
-  lines.push(`};\n`);
-
-  return lines.join("\n");
+export interface ContractPayload {
+  ir: AxiomIR;
+  baseUrl: string;
+  file: string;
 }
 
-function generateEndpointMethod(
-  ep: AxiomEndpoint,
-  ns: string,
-  camelNs: string,
+// Helper to convert Axiom TypeRef to TypeScript Types
+function getTsType(namespace: string, typeRef?: AxiomTypeRef): string {
+  if (!typeRef) return "any";
+  if (typeRef.kind === "named") {
+    return `models.${namespace}.${typeRef.value}`;
+  } else if (typeRef.kind === "list") {
+    return `${getTsType(namespace, typeRef.value as AxiomTypeRef)}[]`;
+  } else if (typeRef.kind === "primitive") {
+    if (["int32", "int64", "float32", "float64"].includes(typeRef.value))
+      return "number";
+    if (typeRef.value === "bool") return "boolean";
+    if (typeRef.value === "string") return "string";
+  } else if (typeRef.kind === "void") {
+    return "void";
+  }
+  return "any";
+}
+
+// Helper to get the correct deserializer function for a given TypeRef
+function getDecoder(namespace: string, typeRef?: AxiomTypeRef): string {
+  if (!typeRef) return `(json: any) => json`;
+
+  if (typeRef.kind === "named") {
+    return `models.Mappers.${namespace}.${typeRef.value}.fromJson`;
+  } else if (
+    typeRef.kind === "list" &&
+    (typeRef.value as AxiomTypeRef).kind === "named"
+  ) {
+    const innerName = (typeRef.value as any).value;
+    return `(json: any[]) => json.map(models.Mappers.${namespace}.${innerName}.fromJson)`;
+  }
+
+  return `(json: any) => json`;
+}
+
+export function generateSDKContent(
+  contracts: Record<string, ContractPayload>,
   isReact: boolean,
 ): string {
-  const rawParams = ep.parameters || [];
-  const params = Array.isArray(rawParams)
-    ? rawParams
-    : Object.values(rawParams);
+  let content = `// GENERATED CODE – DO NOT EDIT.\n/* eslint-disable @typescript-eslint/no-explicit-any */\n/* eslint-disable @typescript-eslint/no-unused-vars */\n\n`;
 
-  // ✨ FIX: Treat "WS" as a query (subscription) instead of a mutation!
-  const isQuery = ep.method
-    ? ["GET", "WS"].includes(ep.method.toUpperCase())
-    : true;
-  const rawReturnType = mapTypeToTs(ep.returnType, camelNs);
-  const returnType =
-    rawReturnType === "void" || rawReturnType === "any"
-      ? rawReturnType
-      : prefixModels(rawReturnType);
-
-  const argsMapping = params
-    .map(
-      (p: any) =>
-        `if (args && '${camelCase(p.name)}' in args) { mappedArgs["${p.name}"] = (args as any)["${camelCase(p.name)}"]; delete mappedArgs["${camelCase(p.name)}"]; }`,
-    )
-    .join("\n    ");
-
-  if (params.length === 0) {
-    if (isReact) {
-      const decLogic = generateLambda(ep.returnType, "fromJson", camelNs);
-      return `
-  get${pascalCase(ep.name)}Def(args?: Record<string, any>): AxiomQueryDef<${returnType}> {
-    return {
-      namespace: "${ns}", name: "${ep.name}", endpointId: ${ep.id},
-      method: "${ep.method ? ep.method.toUpperCase() : "GET"}", path: "${ep.path}",
-      args: args || {}, decoder: ${decLogic}, serializer: (p: any) => p, isStream: ${ep.isStream === true}
-    };
-  },
-  use${pascalCase(ep.name)}(${isQuery ? "options?: { enabled?: boolean }" : ""}) {
-    ${isQuery ? `return useAxiomQuery<${returnType}>(this.get${pascalCase(ep.name)}Def(), options);` : `return useAxiomMutation<${returnType}, void | Record<string,any>>((a) => this.get${pascalCase(ep.name)}Def(a));`}
-  },`;
-    } else {
-      return `
-  ${camelCase(ep.name)}(args?: Record<string, any>): string {
-    const argsStr = args && Object.keys(args).length > 0 ? JSON.stringify(args) : '';
-    return \`${ns}.${ep.name}(\${argsStr})\`;
-  },`;
-    }
-  }
-
-  const argType = `{ ${params.map((p: any) => `${camelCase(p.name)}${p.isOptional ? "?" : ""}: ${prefixModels(mapTypeToTs(p.typeRef, camelNs))}`).join(", ")} }`;
-
-  if (isReact) {
-    const bodyParam = params.find(
-      (p: any) => p.source === "body",
-    ) as AxiomParameter;
-    const payloadLogic = bodyParam
-      ? `const payload = (args as any)?.${camelCase(bodyParam.name)};`
-      : `const payload = undefined;`;
-    const decLogic = generateLambda(ep.returnType, "fromJson", camelNs);
-    const serLogic = bodyParam
-      ? generateLambda(bodyParam.typeRef, "toJson", camelNs)
-      : `(p: any) => p`;
-
-    return `
-  get${pascalCase(ep.name)}Def(args?: ${argType}): AxiomQueryDef<${returnType}> {
-    ${payloadLogic}
-    const mappedArgs: any = { ...(args || {}) };
-    ${argsMapping}
-
-    return {
-      namespace: "${ns}", name: "${ep.name}", endpointId: ${ep.id},
-      method: "${ep.method ? ep.method.toUpperCase() : "GET"}", path: "${ep.path}",
-      payload: payload, args: mappedArgs, decoder: ${decLogic}, serializer: ${serLogic}, isStream: ${ep.isStream === true}
-    };
-  },
-  use${pascalCase(ep.name)}(${isQuery ? `args?: ${argType}, options?: { enabled?: boolean }` : `args?: ${argType}`}) {
-    ${isQuery ? `return useAxiomQuery<${returnType}>(this.get${pascalCase(ep.name)}Def(args), options);` : `return useAxiomMutation<${returnType}, ${argType}>((a) => this.get${pascalCase(ep.name)}Def(a || args));`}
-  },`;
+  if (!isReact) {
+    content += `import * as models from './models.js';\n\n`;
   } else {
-    return `
-  ${camelCase(ep.name)}(args?: ${argType}): string {
-    const mappedArgs: any = { ...(args || {}) };
-    ${argsMapping}
-    const argsStr = Object.keys(mappedArgs).length > 0 ? JSON.stringify(mappedArgs) : '';
-    return \`${ns}.${ep.name}(\${argsStr})\`;
-  },`;
+    content += `import * as models from './models.js';\n`;
+    content += `import { useAxiomQuery, useAxiomMutation, setAuthToken, clearAuthToken, axiomQueryManager } from "atmx-react";\n`;
+    content += `import type { AxiomQueryDef } from "atmx-react";\n\n`;
   }
-}
 
-function generateLambda(
-  typeRef: any,
-  mode: "fromJson" | "toJson",
-  ns: string,
-): string {
-  if (!typeRef || !typeRef.kind || typeRef.kind === "void")
-    return mode === "fromJson" ? `() => undefined` : `(p: any) => p`;
-  if (typeRef.kind === "list" && typeRef.value?.kind === "named")
-    return `(data: any[]) => data.map(models.Mappers.${ns}.${pascalCase(typeRef.value.value)}.${mode})`;
-  if (typeRef.kind === "named")
-    return `models.Mappers.${ns}.${pascalCase(typeRef.value)}.${mode}`;
-  return `(data: any) => data`;
-}
+  // 1. Generate Individual Modules
+  for (const [namespace, contract] of Object.entries(contracts)) {
+    content += `export const ${namespace}Module = {\n`;
+    content += `  axiom: {\n`;
+    content += `    setAuthToken(methodName: string, token: string) {\n`;
+    if (isReact) {
+      content += `      setAuthToken("${namespace}", methodName, token);\n`;
+    } else {
+      content += `      (window as any).atmx?.setAuthToken("${namespace}", methodName, token);\n`;
+    }
+    content += `    },\n`;
+    content += `    clearAuthToken(methodName: string) {\n`;
+    if (isReact) {
+      content += `      clearAuthToken("${namespace}", methodName);\n`;
+    } else {
+      content += `      (window as any).atmx?.clearAuthToken("${namespace}", methodName);\n`;
+    }
+    content += `    },\n`;
+    content += `    connect(methodName: string, args?: Record<string, any>) {\n`;
+    if (isReact) {
+      content += `      const def = (${namespace}Module as any)[\`get\${methodName.charAt(0).toUpperCase() + methodName.slice(1)}Def\`](args);\n`;
+      content += `      axiomQueryManager.connect(def);\n`;
+    } else {
+      content += `      const argsStr = args && Object.keys(args).length > 0 ? JSON.stringify(args) : '';\n`;
+      content += `      (window as any).atmx?.connect(\`${namespace}.\${methodName}(\${argsStr})\`);\n`;
+    }
+    content += `    },\n`;
+    content += `    disconnect(methodName: string, args?: Record<string, any>) {\n`;
+    if (isReact) {
+      content += `      const def = (${namespace}Module as any)[\`get\${methodName.charAt(0).toUpperCase() + methodName.slice(1)}Def\`](args);\n`;
+      content += `      axiomQueryManager.disconnect(def);\n`;
+    } else {
+      content += `      const argsStr = args && Object.keys(args).length > 0 ? JSON.stringify(args) : '';\n`;
+      content += `      (window as any).atmx?.disconnect(\`${namespace}.\${methodName}(\${argsStr})\`);\n`;
+    }
+    content += `    },\n`;
+    content += `    send(methodName: string, payload: any, args?: Record<string, any>) {\n`;
+    if (isReact) {
+      content += `      const def = (${namespace}Module as any)[\`get\${methodName.charAt(0).toUpperCase() + methodName.slice(1)}Def\`](args);\n`;
+      content += `      axiomQueryManager.send(def, payload);\n`;
+    } else {
+      content += `      const argsStr = args && Object.keys(args).length > 0 ? JSON.stringify(args) : '';\n`;
+      content += `      (window as any).atmx?.send(\`${namespace}.\${methodName}(\${argsStr})\`, payload);\n`;
+    }
+    content += `    }\n`;
+    content += `  },\n\n`;
 
-function prefixModels(type: string): string {
-  const primitives = [
-    "string",
-    "number",
-    "boolean",
-    "Date",
-    "Uint8Array",
-    "void",
-    "any",
-  ];
-  if (!type || primitives.includes(type)) return type;
-  if (type.endsWith("[]")) return `${prefixModels(type.slice(0, -2))}[]`;
-  if (type.startsWith("models.")) return type;
-  return `models.${type}`;
+    // Extract endpoints handling objects vs arrays
+    const endpoints: AxiomEndpoint[] = Array.isArray(contract.ir.endpoints)
+      ? contract.ir.endpoints
+      : Object.values(contract.ir.endpoints || {});
+
+    for (const endpoint of endpoints) {
+      const fnName = endpoint.name.replace(/_([a-z])/g, (g) =>
+        g[1].toUpperCase(),
+      );
+      const capFnName = fnName.charAt(0).toUpperCase() + fnName.slice(1);
+
+      if (isReact) {
+        const tsType = getTsType(namespace, endpoint.returnType);
+        const decoder = getDecoder(namespace, endpoint.returnType);
+
+        content += `  get${capFnName}Def(\n`;
+        content += `    args?: Record<string, any>,\n`;
+        content += `  ): AxiomQueryDef<${tsType}> {\n`;
+        content += `    return {\n`;
+        content += `      namespace: "${namespace}",\n`;
+        content += `      name: "${endpoint.name}",\n`;
+        content += `      endpointId: ${endpoint.id || 0},\n`;
+        content += `      method: "${endpoint.method}",\n`;
+        content += `      path: "${endpoint.path}",\n`;
+        content += `      args: args || {},\n`;
+        content += `      decoder: ${decoder},\n`;
+        content += `      serializer: (p: any) => p,\n`;
+        content += `      isStream: ${endpoint.isStream ? "true" : "false"},\n`;
+        content += `    };\n`;
+        content += `  },\n`;
+
+        if (endpoint.method === "GET" || endpoint.method === "WS") {
+          content += `  use${capFnName}(options?: { enabled?: boolean }) {\n`;
+          content += `    return useAxiomQuery<${tsType}>(\n`;
+          content += `      this.get${capFnName}Def(),\n`;
+          content += `      options,\n`;
+          content += `    );\n`;
+          content += `  },\n`;
+        } else {
+          content += `  use${capFnName}(options?: any) {\n`;
+          content += `    return useAxiomMutation<${tsType}>(\n`;
+          content += `      this.get${capFnName}Def(),\n`;
+          content += `      options,\n`;
+          content += `    );\n`;
+          content += `  },\n`;
+        }
+      } else {
+        // Vanilla Web generator logic
+        content += `  ${fnName}(args?: Record<string, any>): string {\n`;
+        content += `    const argsStr = args && Object.keys(args).length > 0 ? JSON.stringify(args) : '';\n`;
+        content += `    return \`${namespace}.${endpoint.name}(\${argsStr})\`;\n`;
+        content += `  },\n`;
+      }
+    }
+    content += `};\n\n`;
+  }
+
+  // 2. Generate the Smart Proxy SDK
+  content += `const internalSdk: Record<string, any> = {\n`;
+  for (const namespace of Object.keys(contracts)) {
+    content += `  ${namespace}: ${namespace}Module,\n`;
+  }
+  content += `};\n\n`;
+
+  content += `// ✨ The Magic Proxy: Safely intercepts Alpine.js evaluations during boot!\n`;
+  content += `export const sdk = new Proxy(internalSdk, {\n`;
+  content += `  get(target: any, prop: string, receiver: any) {\n`;
+  content += `    if (prop in target) {\n`;
+  content += `      return Reflect.get(target, prop, receiver);\n`;
+  content += `    }\n`;
+  content += `    // If Alpine tries to access a namespace that doesn't exist yet, return a nested Proxy!\n`;
+  content += `    return new Proxy({}, {\n`;
+  content += `      get(subTarget: any, subProp: string) {\n`;
+  content += `        return () => \`\${String(prop)}.\${String(subProp)}()\`;\n`;
+  content += `      }\n`;
+  content += `    });\n`;
+  content += `  }\n`;
+  content += `});\n\n`;
+
+  content += `// Auto-attach to window for Alpine.js immediate hydration\n`;
+  content += `if (typeof window !== "undefined") {\n`;
+  content += `  (window as any).sdk = sdk;\n`;
+  content += `}\n\n`;
+
+  // 3. Generate Default Config
+  content += `export const AxiomDefaultConfig = {\n`;
+  content += `  contracts: {\n`;
+  for (const [ns, def] of Object.entries(contracts)) {
+    // Determine file path or default to namespace
+    const contractPath = def.file ? def.file : `/${ns}.axiom`;
+
+    content += `    "${ns}": {\n`;
+    content += `      contractUrl: "${contractPath}",\n`;
+    content += `      baseUrl: "${def.baseUrl}"\n`;
+    content += `    },\n`;
+  }
+  content += `  }\n`;
+  content += `};\n`;
+
+  return content;
 }

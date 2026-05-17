@@ -39,6 +39,7 @@ const fs = __importStar(require("fs-extra"));
 const path = __importStar(require("path"));
 const toml = __importStar(require("@iarna/toml"));
 const model_generator_1 = require("./generators/model-generator");
+// ✨ FIX: Import generateSDKContent and ContractPayload
 const sdk_generator_1 = require("./generators/sdk-generator");
 const utils_1 = require("./generators/utils");
 const program = new commander_1.Command();
@@ -66,6 +67,7 @@ program
         process.exit(1);
     }
     const multiIr = {};
+    const generatorPayload = {}; // ✨ NEW: Payload for SDK
     const projectRoot = path.dirname(configPath); // Frontend project root
     // 2. Loop through contracts
     for (const [namespace, contract] of Object.entries(rawConfig.contracts)) {
@@ -79,12 +81,20 @@ program
         if (!rawFile.ir)
             continue;
         multiIr[namespace] = (0, utils_1.normalizeIr)(rawFile.ir);
+        // ✨ NEW: Combine IR with TOML config for the SDK generator
+        generatorPayload[namespace] = {
+            ir: multiIr[namespace],
+            baseUrl: contract.base_url || "http://localhost:8080",
+            file: `/${namespace}.axiom`,
+        };
         console.log(`✅ Loaded contract: [${namespace}] -> ${axiomFilePath}`);
     }
     await fs.ensureDir(outputDir);
+    // 3. Generate Models (Needs raw MultiIR)
     const modelsContent = (0, model_generator_1.generateModels)(multiIr);
     await fs.writeFile(path.join(outputDir, "models.ts"), modelsContent);
-    const sdkContent = (0, sdk_generator_1.generateSdk)(multiIr, options.react);
+    // 4. Generate SDK (Needs enriched ContractPayload)
+    const sdkContent = (0, sdk_generator_1.generateSDKContent)(generatorPayload, options.react);
     await fs.writeFile(path.join(outputDir, "sdk.ts"), sdkContent);
     console.log(`\n🎉 ATMX Multi-Contract SDK generated successfully in ${outputDir}`);
 });

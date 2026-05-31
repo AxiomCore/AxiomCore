@@ -149,11 +149,24 @@ export function generateSDKContent(
           content += `  },\n`;
         }
       } else {
-        // Vanilla Web generator logic
-        content += `  ${fnName}(args?: Record<string, any>): string {\n`;
-        content += `    const argsStr = args && Object.keys(args).length > 0 ? JSON.stringify(args) : '';\n`;
-        content += `    return \`${namespace}.${endpoint.name}(\${argsStr})\`;\n`;
-        content += `  },\n`;
+        // ✨ UPGRADED: Vanilla Web static compiler methods mapped to dynamic objects
+        content += `  ${fnName}: Object.assign(\n`;
+        content += `    (args?: Record<string, any>): string => {\n`;
+        content += `      const argsStr = args && Object.keys(args).length > 0 ? JSON.stringify(args) : '';\n`;
+        content += `      return \`${namespace}.${endpoint.name}(\${argsStr})\`;\n`;
+        content += `    },\n`;
+        content += `    {\n`;
+        content += `      invalidate(args?: Record<string, any>) {\n`;
+        content += `        (window as any).atmx?.invalidate("${namespace}.${endpoint.name}", args);\n`;
+        content += `      },\n`;
+        content += `      setData(data: any, args?: Record<string, any>) {\n`;
+        content += `        (window as any).atmx?.setQueryData("${namespace}.${endpoint.name}", args || {}, data);\n`;
+        content += `      },\n`;
+        content += `      mutate(payload: any = {}, args?: Record<string, any>): Promise<any> {\n`;
+        content += `        return (window as any).atmx?.mutate("${namespace}.${endpoint.name}", args, payload);\n`;
+        content += `      }\n`;
+        content += `    }\n`;
+        content += `  ),\n`;
       }
     }
     content += `};\n\n`;
@@ -172,10 +185,25 @@ export function generateSDKContent(
   content += `    if (prop in target) {\n`;
   content += `      return Reflect.get(target, prop, receiver);\n`;
   content += `    }\n`;
-  content += `    // If Alpine tries to access a namespace that doesn't exist yet, return a nested Proxy!\n`;
+  content += `    // Create a dynamic namespace proxy\n`;
   content += `    return new Proxy({}, {\n`;
   content += `      get(subTarget: any, subProp: string) {\n`;
-  content += `        return () => \`\${String(prop)}.\${String(subProp)}()\`;\n`;
+  content += `        // Return a callable function that returns the string definition\n`;
+  content += `        const routeFn = (args?: Record<string, any>) => {\n`;
+  content += `          const argsStr = args && Object.keys(args).length > 0 ? JSON.stringify(args) : '';\n`;
+  content += `          return \`\${String(prop)}.\${String(subProp)}(\${argsStr})\`;\n`;
+  content += `        };\n`;
+  content += `        // Attach typed helper methods directly to the function!\n`;
+  content += `        routeFn.invalidate = (args?: Record<string, any>) => {\n`;
+  content += `          (window as any).atmx?.invalidate(\`\${String(prop)}.\${String(subProp)}\`, args);\n`;
+  content += `        };\n`;
+  content += `        routeFn.setData = (data: any, args?: Record<string, any>) => {\n`;
+  content += `          (window as any).atmx?.setQueryData(\`\${String(prop)}.\${String(subProp)}\`, args || {}, data);\n`;
+  content += `        };\n`;
+  content += `        routeFn.mutate = (payload: any = {}, args?: Record<string, any>): Promise<any> => {\n`;
+  content += `          return (window as any).atmx?.mutate(\`\${String(prop)}.\${String(subProp)}\`, args, payload);\n`;
+  content += `        };\n`;
+  content += `        return routeFn;\n`;
   content += `      }\n`;
   content += `    });\n`;
   content += `  }\n`;

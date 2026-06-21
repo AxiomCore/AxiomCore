@@ -1,0 +1,44 @@
+---
+title: Axiom Test Runner
+description: Contract-driven, concurrent API testing.
+---
+
+`axiom test` parses your `.acore` `testConfig` block and executes concurrent, async tests via the Tokio runtime.
+
+### Standard Assertions
+Assert against statuses, durations, headers, and schemas.
+```pkl
+expect = new Listing {
+  new StatusExpectation { value = 200 }
+  new DurationExpectation { op = "lt", valueMs = 150 }
+  new HeaderExpectation { key = "Content-Type", op = "contains", value = "json" }
+}
+```
+
+### JSON Path & Body Quantifiers
+For array data, `BodyQuantifierExpectation` is incredibly powerful:
+```pkl
+new BodyQuantifierExpectation {
+  path = "data.users"
+  quantifier = "every"  // Validates ALL elements
+  itemPath = "isActive" // Navigates inside the array element
+  op = "eq"
+  value = true
+}
+```
+
+### Variable Capturing
+Pass data between requests securely:
+```pkl
+capture = new Listing {
+  new ResponseCapture {
+    path = "body.auth.access_token"
+    bindAs = "token" 
+  }
+}
+// Next request can use:
+// headers = new { Authorization = "Bearer {{ store.token }}" }
+```
+
+### WebSocket Testing
+If the `route` defined in your test maps to a `WebSocketDef`, the test runner automatically connects via `ws://`, sends the payload provided in the `body` field, awaits the first incoming message frame, and runs assertions against it before cleanly disconnecting.

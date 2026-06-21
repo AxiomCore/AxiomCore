@@ -1,0 +1,141 @@
+---
+title: Frontend Quickstart
+description: Pull a contract and bind it to your UI using ATMX or Flutter.
+---
+
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Once the backend team has compiled the `.axiom` contract, the frontend team can pull it to instantly generate a **Thin SDK** backed by the Native Wasm/FFI Runtime.
+
+### 1. Pull the Contract
+
+Navigate to your frontend project root (React, Vanilla Web, or Flutter) and run:
+
+```bash
+axiom pull
+```
+The CLI Wizard will guide you:
+1.  **Source:** Choose "Local File" (and provide the path to `.axiom`) or "Remote Project" (if the backend team used `axiom release`).
+2.  **Framework:** Select React, Vanilla Web (ATMX), or Flutter.
+3.  **Action:** Axiom generates an `AxiomDeps.toml` file, downloads the Wasm/FFI runtime into your assets, and generates the Type-Safe SDK.
+
+---
+
+### 2. Initialize the Runtime
+
+The Axiom Generic Runtime must be booted once when your application starts.
+
+<Tabs items={['React (ATMX)', 'Vanilla Web (ATMX)', 'Flutter']}>
+  <Tab value="React (ATMX)">
+    Wrap your application in the `<AxiomProvider>`. It autonomously boots the Wasm engine and handles SDK proxies.
+
+    ```tsx title="src/App.tsx"
+    import { AxiomProvider } from "atmx-react";
+    import { AxiomDefaultConfig } from "./generated/sdk";
+
+    function App() {
+      return (
+        <AxiomProvider config={AxiomDefaultConfig}>
+          <MyApplication />
+        </AxiomProvider>
+      );
+    }
+    ```
+  </Tab>
+  <Tab value="Vanilla Web (ATMX)">
+    Import the runtime and call `.init()`. ATMX automatically scans the DOM for `ax-query` attributes.
+
+    ```html title="index.html"
+    <script type="module">
+      import { atmx } from "atmx-web";
+      import { AxiomDefaultConfig } from "./generated/sdk.js";
+
+      await atmx.init(AxiomDefaultConfig);
+    </script>
+    ```
+  </Tab>
+  <Tab value="Flutter">
+    Boot the native FFI runtime (Rust). Use `path_provider` to give Axiom a directory for the `Sled` local database.
+
+    ```dart title="main.dart"
+    import 'package:axiom_flutter/axiom_flutter.dart';
+    import 'package:my_app/axiom_generated/axiom_sdk.dart';
+
+    late final AxiomSdk sdk;
+
+    void main() async {
+      WidgetsFlutterBinding.ensureInitialized();
+      final dir = await getApplicationDocumentsDirectory();
+
+      sdk = await AxiomSdk.create(
+        config: AxiomDefaultConfig.config, // Auto-generated
+      );
+
+      runApp(MyApp());
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### 3. Make a Reactive Query
+
+Because Axiom manages cache, retries, and state, you don't "fetch" data; you **bind** to it reactively.
+
+<Tabs items={['React (ATMX)', 'Vanilla Web (ATMX)', 'Flutter']}>
+  <Tab value="React (ATMX)">
+    Use the generated hook. The Wasm runtime handles the network call and updates the state (idle -> loading -> success).
+
+    ```tsx title="src/UserProfile.tsx"
+    import { sdk } from "./generated/sdk";
+
+    export function UserProfile() {
+      // Magic Proxy: Executes securely in Wasm
+      const { data, isLoading, error } = sdk.users.useGetUser({ id: 1 });
+
+      if (isLoading) return <p>Loading...</p>;
+      if (error) return <p>Error: {error.message}</p>;
+
+      return <div>Welcome, {data.name}!</div>;
+    }
+    ```
+  </Tab>
+  <Tab value="Vanilla Web (ATMX)">
+    No Javascript required! The DOM scanner maps attributes directly to Wasm instructions.
+
+    ```html title="profile.html"
+    <!-- The engine binds the SDK call to this scope -->
+    <div ax-query="sdk.users.getUser({ id: 1 })">
+      
+      <!-- Shows while Wasm is fetching -->
+      <p ax-when="loading">Syncing with server...</p>
+
+      <!-- Renders when Wasm returns data -->
+      <div ax-when="data">
+        Welcome, <span ax-text="$data.name"></span>
+      </div>
+
+    </div>
+    ```
+  </Tab>
+  <Tab value="Flutter">
+    Use the `AxiomBuilder` widget to stream states from the Rust FFI engine.
+
+    ```dart title="user_profile.dart"
+    AxiomBuilder(
+      query: sdk.users.getUser(id: 1),
+      loading: (context) => CircularProgressIndicator(),
+      error: (context, err) => Text(err.message),
+      builder: (context, state, data) {
+        return Text("Welcome, ${data.name}");
+      }
+    )
+    ```
+  </Tab>
+</Tabs>
+
+<Callout type="info">
+**Zero-JS Hydration (Web):** In React and Vanilla Web, if the query has been made before, the ATMX engine uses synchronous `sessionStorage` to render the DOM *instantly*, completely bypassing Wasm boot times and eliminating loading flickers.
+</Callout>

@@ -1,88 +1,66 @@
 ---
 title: Installation
-description: Getting the Axiom CLI on your machine.
+description: Install the Axiom CLI and required extractor plugins.
 ---
 
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 import { Callout } from 'fumadocs-ui/components/callout';
 
-The Axiom CLI is a unified tool used by both backend and frontend developers to manage behavioral contracts, build artifacts, and generate client-side code.
+The Axiom CLI is a unified binary written in Rust. It manages project initialization, contract compilation, diffing, testing, and cloud synchronization.
 
-### Install the CLI
+### 1. Install the CLI
 
-Choose your preferred installation method. Both methods support macOS and Linux.
+Both macOS and Linux are supported natively. Windows users should use WSL2.
 
 <Tabs items={['curl', 'Homebrew']}>
   <Tab value="curl">
-    Run the following command in your terminal:
     ```bash
     curl -fsSL https://axiomcore.dev/install | sh
     ```
-    <Callout type="info">
-      The installer automatically sets binaries to `/usr/local/bin`. Because this is a system path, you will likely be prompted for your **sudo password** during the process.
-    </Callout>
+    *Note: This script places the binary in `/usr/local/bin` and may require your sudo password.*
   </Tab>
   <Tab value="Homebrew">
-    If you use Homebrew, you can install via our official tap:
     ```bash
     brew install AxiomCore/tap/axiom
     ```
-    <Callout type="info">
-      Installing via Homebrew does **not** require sudo permissions as it installs within the Homebrew prefix.
-    </Callout>
   </Tab>
 </Tabs>
 
-### Verification
-
-Once installed, verify that the CLI is correctly configured in your environment:
-
+Verify the installation:
 ```bash
 axiom --version
 ```
 
-### What gets installed?
+---
 
-The installation process provides two essential binaries:
+### 2. Join the Private Alpha
+AxiomCore requires an authorized machine ID to interact with the build and release pipelines.
 
-1.  **`axiom`**: The primary interface. Used for `init`, `build`, `pull`, and interacting with the Axiom Hub.
-2.  **`acore`**: The specialized language engine. It handles the evaluation of your `.acore` (PKL) configuration files.
+```bash
+axiom join you@yourcompany.com
+```
+*We will email you a referral code. Once received, any subsequent command will prompt you to enter it, authenticating your machine permanently.*
 
 ---
 
-### Upgrading
+### 3. Install Backend Extractors
+Axiom uses specialized, decoupled binary extractors to parse your backend code (Ghost Introspection) without needing massive local environments.
 
-Axiom Core is frequently updated with new features and runtime optimizations. To upgrade to the latest version:
+Depending on your backend language, install the required extractor plugin. Axiom will automatically download the correct binary for your OS and Architecture (e.g., `macos-arm64`) into `~/.axiom/plugins/`.
 
-<Tabs items={['curl', 'Homebrew']}>
-  <Tab value="curl">
-    Simply run the installation command again to overwrite the existing binaries with the latest version:
+<Tabs items={['FastAPI (Python)', 'Go (Native)']}>
+  <Tab value="FastAPI (Python)">
     ```bash
-    curl -fsSL https://axiomcore.dev/install | sh
+    axiom install axiom-fastapi --module
     ```
   </Tab>
-  <Tab value="Homebrew">
-    Use the standard Homebrew upgrade command:
+  <Tab value="Go (Native)">
     ```bash
-    brew upgrade AxiomCore/tap/axiom
+    axiom install axiom-go-extractor --module
     ```
   </Tab>
 </Tabs>
 
----
-### Next Steps
-
-Now that you have the CLI, choose your path based on your role:
-
-<Cards>
-  <Card
-    title="Backend Setup"
-    href="/getting-started/backend-setup"
-    description="Introspect your FastAPI app and generate your first behavioral contract."
-  />
-  <Card
-    title="Frontend Setup"
-    href="/getting-started/frontend-setup"
-    description="Consume the contract in Flutter and boot up the Rust runtime."
-  />
-</Cards>
+<Callout type="info">
+The `axiom install` command allows Axiom to support new backend frameworks without requiring you to update the main CLI tool.
+</Callout>

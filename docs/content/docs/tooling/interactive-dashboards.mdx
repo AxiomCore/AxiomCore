@@ -1,0 +1,22 @@
+---
+title: Interactive TUIs
+description: Terminal User Interfaces built with Ratatui.
+---
+
+AxiomCore embraces the terminal. Instead of dumping logs to `stdout`, Axiom uses highly interactive dashboards.
+
+### `axiom inspect`
+Browse the compiled binary payload visually.
+*   **Endpoint Detail:** View parsed Path parameters, Cache TTLs, Retry Backoff strategies, and Extracted Validation YAMLs.
+*   **Model Browser:** Inspect the generated FlatBuffer and JSON representations of your backend models.
+
+### `axiom watch`
+A persistent, split-pane dashboard for local development.
+*   **Top Pane:** Live connection status and last sync time.
+*   **Bottom Pane:** Real-time semantic diff. If you add an endpoint to FastAPI, the Watch HUD instantly displays `+ [NEW] /users` in green without requiring a manual rebuild.
+
+### `axiom cache ls`
+View and manage the native `Sled` key-value database.
+*   Inspect exact payload sizes.
+*   View calculated Expiration times and TTLs.
+*   Manually evict (`[x]`) stale keys during debugging.

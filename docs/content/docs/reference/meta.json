@@ -1,8 +1,4 @@
 {
-    "title": "Reference",
-    "pages": [
-        "cli",
-        "config-schema",
-        "faq"
-    ]
+  "title": "Reference & Appendix",
+  "pages": ["acore-schema-reference", "error-codes", "benchmarks", "faqs"]
 }

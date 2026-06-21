@@ -1,17 +1,19 @@
 {
-    "title": "Axiom Core",
-    "pages": [
-        "index",
-        "---Introduction---",
-        "introduction/why-axiom",
-        "getting-started",
-        "core-concepts",
-        "---Development---",
-        "acore-language",
-        "client-integration",
-        "---Infrastructure---",
-        "cloud-security",
-        "reference",
-        "roadmap"
-    ]
+  "title": "AxiomCore",
+  "pages": [
+    "---Introduction---",
+    "introduction",
+    "getting-started",
+    "---Architecture---",
+    "core-concepts",
+    "acore-language",
+    "---Client SDKs---",
+    "clients",
+    "---Developer Tooling---",
+    "workflows",
+    "tooling",
+    "---Infrastructure---",
+    "cloud",
+    "reference"
+  ]
 }

@@ -1,0 +1,27 @@
+---
+title: Standard Library
+description: Built-in functions and utilities in Acore.
+---
+
+Acore comes with several native modules to aid in dynamic configuration.
+
+### `acore.math`
+```pkl
+import "acore:math"
+
+maxConnections = math.max(10, read_env("CONN_LIMIT").toInt())
+```
+
+### `acore.json` and `acore.yaml`
+Parse raw strings at compile time.
+```pkl
+import "acore:json"
+
+local configData = json.parse(read("file://config.json"))
+```
+
+### `acore.base`
+The base library provides native String and Collection helpers.
+*   **Strings:** `toUpperCase()`, `trim()`, `replaceFirst()`, `split()`.
+*   **Lists/Maps:** `filter()`, `map()`, `fold()`, `minBy()`.
+*   **System:** `read_env("VAR_NAME")` to safely inject CI secrets into your contract before building.

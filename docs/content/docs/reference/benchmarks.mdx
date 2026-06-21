@@ -1,0 +1,17 @@
+---
+title: Benchmarks
+description: Performance metrics for the Generic Runtime.
+---
+
+*Note: Benchmarks are updated periodically during the Private Alpha.*
+
+| Metric | Wasm (Web) | FFI (macOS / iOS) |
+| :--- | :--- | :--- |
+| **Engine Initialization** | ~40ms (Browser compilation) | ~5ms |
+| **Cache Read (sessionStorage / Sled)** | ~1ms | < 1ms |
+| **DOM Hydration (ATMX)** | 0ms (Sync SessionStorage) | N/A |
+| **Memory Footprint** | ~2MB (Wasm Heap) | ~8MB (Rust Shared) |
+| **FlatBuffers Decoding** | N/A | < 1ms (Zero-copy) |
+
+### Codec Note
+WebAssembly currently utilizes the highly optimized `serde_json` implementation for messaging. Native environments (Flutter/Swift) can opt-in to `flatbuffers` in the `BackendConfig` to achieve true zero-copy memory parsing across the FFI boundary.

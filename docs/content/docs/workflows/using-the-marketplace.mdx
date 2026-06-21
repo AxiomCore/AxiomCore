@@ -1,0 +1,17 @@
+---
+title: Using the Marketplace
+description: Seamlessly importing third-party API contracts.
+---
+
+*The Axiom Marketplace is currently in active development.*
+
+**The Concept:**
+Integrating APIs like Stripe, Twilio, or SendGrid usually means reading extensive documentation, installing fat NPM packages, and handling their specific retry edge-cases.
+
+With AxiomCore, verified `.axiom` contracts for major providers are hosted on the Hub. You can pull them directly into your frontend app:
+
+```bash
+axiom pull --name stripe-v1
+```
+
+Because `.axiom` is a generic artifact, the Axiom Runtime automatically knows how to handle Stripe's rate limits and pagination logic natively. You get a fully typed SDK for Stripe in Flutter or React, powered entirely by your local Wasm/Rust engine.

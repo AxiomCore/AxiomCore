@@ -1,0 +1,69 @@
+---
+title: React (ATMX)
+description: React bindings for the ATMX WebAssembly Engine.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`atmx-react` brings the power of the Axiom WebAssembly engine into React using custom hooks and Context-aware wrapper components.
+
+### 1. Provider Setup
+Wrap your app in the `<AxiomProvider>`. This automatically downloads and instantiates the `axiom_runtime.wasm` engine.
+
+```tsx
+import { AxiomProvider } from "atmx-react";
+import { AxiomDefaultConfig } from "./generated/sdk";
+
+export default function App() {
+  return (
+    <AxiomProvider config={AxiomDefaultConfig} fallback={<p>Booting Wasm...</p>}>
+      <Dashboard />
+    </AxiomProvider>
+  );
+}
+```
+
+### 2. The Magic Proxy
+The generated SDK uses a Javascript `Proxy` object. When you call `sdk.users.getUser`, you are not executing JS fetch logic. The proxy captures the path and arguments, allocs memory, and triggers the Wasm engine via `axiom_wasm_call()`.
+
+```tsx
+import { sdk } from "./generated/sdk";
+
+function Profile() {
+  const { data, isLoading, error } = sdk.users.useGetUser({ id: 42 });
+
+  if (isLoading) return <Spinner />;
+  return <h1>{data.name}</h1>;
+}
+```
+
+### 3. Declarative Components
+For rapid development, ATMX provides Context-inheriting UI components that eliminate hook boilerplate.
+
+```tsx
+import { AxQuery, AxWhen } from "atmx-react";
+import { sdk } from "./generated/sdk";
+
+function Profile() {
+  return (
+    <AxQuery call={sdk.users.getProfileDef()}>
+      <AxWhen is="loading">
+        <Spinner />
+      </AxWhen>
+      
+      <AxWhen is="data">
+        {/* Child components can access data via `useAxiomData()` */}
+        <UserProfileCard /> 
+      </AxWhen>
+      
+      <AxWhen is="error">
+        <ErrorAlert />
+      </AxWhen>
+    </AxQuery>
+  );
+}
+```
+
+<Callout type="info" title="Zero-JS Hydration">
+If a query result is stored in the local `sessionStorage` cache, `atmx-react` instantly hydrates the component with data *synchronously* on the first render frame, avoiding React's typical double-render flash.
+</Callout>

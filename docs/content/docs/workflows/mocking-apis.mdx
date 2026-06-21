@@ -1,0 +1,77 @@
+---
+title: Mocking APIs
+description: Stateful, intelligent mock servers powered by Axum.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+AxiomCore includes a high-performance **Mock Server** written in Rust (Axum). It reads your `.acore` file and spins up an intelligent, stateful API instantly.
+
+### Starting the Server
+
+```bash
+axiom serve --file axiom.acore --port 8080 --debug
+```
+
+### 1. Templating and Faker Proxies
+
+You can define dynamic responses directly in your `.acore` file using the `TemplateData` strategy. Axiom injects `faker` and `request` objects.
+
+```pkl
+mock = new MockConfig {
+  responses = new Listing {
+    new MockResponse {
+      status = 200
+      data = new TemplateData {
+        body = new {
+          id = "{{ faker.uuid }}"
+          email = "{{ internet.email }}"
+          echoed_id = "{{ request.path.id }}"
+        }
+      }
+    }
+  }
+}
+```
+
+### 2. Stateful Mocks (Store Mutations)
+
+Mocks shouldn't just be static JSON. Axiom maintains an in-memory `Store`. You can mutate state when endpoints are hit!
+
+```pkl
+// 1. Initial State
+mock = new MockConfig {
+  state = new MockStateConfig {
+    initial = new { users = new Listing {} }
+    // 2. On POST /users
+    onReceive = new Listing {
+      new StoreMutation {
+        type = "append"
+        key = "users"
+        value = new { id = "{{ faker.uuid }}", name = "{{ request.body.name }}" }
+      }
+    }
+  }
+}
+```
+Now, a `GET /users` endpoint can return `{{ store.users }}`, reflecting the actual data you POSTed during the session!
+
+### 3. Fault Injection
+
+Simulate catastrophic network conditions locally to see how your frontend UI handles it:
+
+```pkl
+mock = new MockConfig {
+  fault = new FaultConfig {
+    // 10% chance to simulate a hard connection reset
+    networkFault = new NetworkFault { type = "connection_reset", probability = 0.1 }
+    // 5% chance to return a 500 Server Error
+    errorRate = 0.05
+    errorResponse = new MockResponse { status = 500 }
+  }
+}
+```
+
+<Callout type="info">
+**Swagger UI Included:** The mock server automatically generates full OpenAPI docs. Access them in your browser at `http://localhost:8080/axdoc`.
+</Callout>

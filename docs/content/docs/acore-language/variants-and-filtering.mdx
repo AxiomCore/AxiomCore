@@ -1,0 +1,28 @@
+---
+title: Variants & Filtering
+description: Managing multiple API surfaces for different clients.
+---
+
+You often don't want to expose every backend route to every client. Variants let you slice your API.
+
+```pkl
+variants = new Mapping {
+  ["mobile_app"] = new VariantConfig {
+    include = new Listing { "*" }
+    exclude = new Listing { "admin_*", "internal_metrics" }
+    
+    cache = new CachePolicy { strategy = "network_first"; ttlSeconds = 60 }
+  }
+
+  ["web_dashboard"] = new VariantConfig {
+    include = new Listing { "public_*", "admin_*" }
+    cache = new CachePolicy { strategy = "network_only" }
+  }
+}
+```
+
+When building, instruct the CLI which variant to compile:
+```bash
+axiom build axiom.acore --variant mobile_app
+```
+The resulting `.axiom` file will completely exclude the routes and models that aren't needed, shrinking the FlatBuffers schema and improving client security.

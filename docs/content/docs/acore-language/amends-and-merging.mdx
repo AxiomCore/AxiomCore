@@ -1,0 +1,33 @@
+---
+title: Amends & Deep Merging
+description: Bridging source code into Acore configuration.
+---
+
+The `amends` keyword is the foundation of Axiom. It instructs the CLI to run an extractor and inject the resulting data into your file's scope.
+
+### Basic Usage
+
+```pkl
+amends "axiom-fastapi:./main.py:app"
+```
+
+Once amended, Axiom injects two global variables: `Routes` and `Models`. You can reference them to override behavior:
+
+```pkl
+endpoints {
+  [Routes.get_user_by_id] {
+    cache = new CachePolicy { strategy = "cache_first"; ttlSeconds = 300 }
+  }
+}
+```
+
+### Deep Merging (Microservices)
+
+Acore uniquely supports **Multi-Amends Deep Merging**. If you have an API Gateway or multiple services, you can amend several extractors. The Acore engine will deeply merge the objects!
+
+```pkl
+amends "axiom-go:./billing-service/main.go"
+amends "axiom-fastapi:./auth-service/main.py:app"
+
+// Routes from BOTH services are now available in the `endpoints` map!
+```

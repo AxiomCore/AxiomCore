@@ -1,7 +1,9 @@
 {
-    "title": "Core Concepts",
-    "pages": [
-        "architecture",
-        "ghost-introspection"
-    ]
+  "title": "Core Concepts",
+  "pages": [
+    "the-axiom-pipeline",
+    "ghost-introspection",
+    "the-generic-runtime",
+    "trust-and-security"
+  ]
 }

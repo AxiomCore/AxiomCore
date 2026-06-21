@@ -1,0 +1,33 @@
+---
+title: The Generic Runtime
+description: The Rust and WebAssembly engine powering your app.
+---
+
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+
+The **Generic Runtime** is the core execution engine that lives inside your frontend application. It guarantees that a mobile app and a web app will execute an API call identically.
+
+### Architecture
+
+<Tabs items={['Native (Mobile/Desktop)', 'Web (Wasm)']}>
+  <Tab value="Native (Mobile/Desktop)">
+    Written in **Rust**, the runtime connects to Flutter and Swift via **FFI (Foreign Function Interface)**. 
+    *   **Network:** Managed by highly optimized native HTTP pools (`reqwest`).
+    *   **Cache:** Powered by **Sled**, an embedded, high-performance Key-Value database.
+    *   **Speed:** Near-zero overhead. Memory is shared safely across the FFI boundary using byte buffers.
+  </Tab>
+  <Tab value="Web (Wasm)">
+    Compiled to **WebAssembly** via `wasm-bindgen`. 
+    *   **Network:** Plugs directly into the browser's native `fetch` and `WebSocket` APIs.
+    *   **Cache:** Synchronizes with `sessionStorage` and `IndexedDB`.
+    *   **Zero-JS Hydration:** The ATMX DOM scanner reads the JS cache *before* Wasm is fully downloaded, rendering the UI instantly without loading flickers.
+  </Tab>
+</Tabs>
+
+### The Execution Flow
+
+1.  **Intercept:** You call `sdk.users.get()`. The proxy converts this to an Endpoint ID and a byte payload.
+2.  **Lookup:** The runtime checks its routing table and policies.
+3.  **Cache Check:** If the policy is `CacheFirst` or `StaleWhileRevalidate`, the runtime reads from the local DB.
+4.  **Transport:** The runtime serializes the data (JSON or FlatBuffers) and executes the network request.
+5.  **Event Stream:** The runtime streams events (`CacheHit`, `NetworkSuccess`, `Error`) back to the UI framework over a broadcast channel.

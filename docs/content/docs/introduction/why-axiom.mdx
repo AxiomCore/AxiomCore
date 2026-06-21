@@ -1,97 +1,52 @@
 ---
-title: Why Axiom Core?
-description: Moving beyond fragile API glue code and maintenance-heavy boilerplate.
+title: The Non-Deterministic Gap
+description: Why Swagger, GraphQL, and tRPC aren't enough.
 ---
 
-import { Card, Cards } from 'fumadocs-ui/components/card';
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
-import { ShieldCheck, Zap, Layers, Code2, AlertTriangle, Scale } from 'lucide-react';
 
-In modern application development, the **"Glue Code"** between the frontend and backend is the primary source of bugs, security leaks, and architectural drift. Axiom Core was built to eliminate this layer entirely by replacing fragile manual implementations with a deterministic, native runtime.
+Modern app development is plagued by **"Glue Code"**. 
 
-### The Problem: The "Non-Deterministic" Gap
+Tools like **OpenAPI (Swagger)**, **GraphQL**, and **tRPC** are fantastic at defining the *shape* of data (types). However, they completely fail to define the *behavior* of the API. 
 
-Most teams rely on **OpenAPI (Swagger)** or **GraphQL**. While these tools are excellent at defining the *shape* of data (Types), they completely fail to define the *behavior* of the API (Logic).
+### The Problem: Behavioral Drift
+If a backend developer wants an endpoint to be cached for 60 seconds, or to retry 3 times on a `502 Bad Gateway` error, they have no way to enforce this across clients. 
 
-<Cards>
-  <Card
-    icon={<Layers />}
-    title="Logic Duplication"
-    description="Every client (iOS, Android, Web) manually implements its own retry logic, caching strategy, and error handling. This leads to 'Feature Parity' nightmares."
-  />
-  <Card
-    icon={<AlertTriangle />}
-    title="Architectural Drift"
-    description="When a backend field changes from required to optional, or an error status code logic shifts, older mobile clients crash because they aren't 'aware' of the new contract."
-  />
-  <Card
-    icon={<ShieldCheck />}
-    title="Fragile Contracts"
-    description="Standard JSON schemas are informative but not enforceable. There is no 'Guardian' at the network layer to ensure the contract is actually followed."
-  />
-</Cards>
+The iOS team writes a retry loop in Swift. The Web team writes one in Axios/React Query. The Android team forgets to write one entirely. This results in **Behavioral Drift**—where the exact same API acts completely differently depending on the platform.
+
+### The Maintenance Tax of "Fat CodeGen"
+To solve integration, developers use Code Generators (like `openapi-generator`). But **generated code is still code**. 
+
+<Callout type="warn" title="The High Cost of Fat SDKs">
+A typical OpenAPI-generated SDK for a medium-sized project can exceed **10,000+ lines of Dart or TypeScript**. You are forced to compile, ship, and maintain massive serialization files, HTTP wrapper logic, and error-parsing blobs that you didn't even write.
+</Callout>
 
 ---
 
-### The Maintenance Tax of "Fat" CodeGen
+### The Axiom Paradigm: Thin SDKs + Generic Runtime
 
-Traditional tools solve API integration by generating massive amounts of boilerplate code. However, **generated code is still code.** 
+AxiomCore solves this by replacing generated code with a **pre-compiled Generic Runtime** (Rust for native, Wasm for Web).
 
-<Callout type="warn" title="The Hidden Cost of Fat SDKs">
-  Every line of generated network logic, serialization, and error parsing carries a maintenance cost. A typical OpenAPI-generated SDK for a medium-sized project can exceed **5,000+ lines of Dart/Kotlin code**. 
-  
-  This increases your "error surface," slows down compilation, and forces your developers to debug code they didn't even write.
-</Callout>
+Instead of generating HTTP fetch logic, Axiom generates a **Thin Proxy**. When you call `sdk.users.getUser()`, the SDK simply forwards an instruction to the native Runtime. The Runtime executes the network call, handles the retries, checks the embedded SQLite/Sled cache, validates the schema using `rod-rs`, and returns the exact data.
 
-### The Axiom Solution: Thin SDK + Native Runtime
-
-Axiom Core introduces a **Deterministic Behavioral Layer** that moves complexity out of your application code and into a pre-compiled native engine.
-
-<Tabs items={['Traditional Flow', 'Axiom Flow']}>
-  <Tab value="Traditional Flow">
-    **Fat SDK Approach:**
-    1. Generate 5,000 lines of Dart code.
-    2. Manually implement `RetryPolicy`.
-    3. Manually implement `Dio` caching.
-    4. Manually handle `try/catch` for every status code.
-    5. **Risk:** High chance of platform-specific bugs.
+<Tabs items={['Traditional Integration', 'AxiomCore Integration']}>
+  <Tab value="Traditional Integration">
+    1. Backend writes FastAPI.
+    2. Backend exports `swagger.json`.
+    3. Frontend generates 5,000 lines of Axios/Dio logic.
+    4. Frontend manually writes caching wrappers.
+    5. Frontend manually handles WebSockets and SSE.
+    6. **Result:** High maintenance, platform-specific bugs.
   </Tab>
-  <Tab value="Axiom Flow">
-    **Thin SDK + Rust Runtime:**
-    1. Generate 200 lines of Type-only code.
-    2. Define behavior once in `Acore`.
-    3. The **Native Rust Runtime** enforces the policy.
-    4. **Result:** Zero network boilerplate in your app. Identical behavior on iOS & Android.
+  <Tab value="AxiomCore Integration">
+    1. Backend writes FastAPI or Go.
+    2. Axiom builds a signed `.axiom` binary.
+    3. Frontend pulls the contract.
+    4. The **Axiom Runtime** takes over all network, cache, and WebSocket logic autonomously.
+    5. **Result:** Zero API bugs. 100% deterministic behavior.
   </Tab>
 </Tabs>
 
----
-
-### Core Pillars
-
-#### 1. Backend as Source of Truth
-Instead of maintaining a separate OpenAPI spec or re-writing structures in a configuration file, Axiom **introspects your backend code directly**. If your Pydantic model changes, your contract changes. No drift, no manual sync.
-
-#### 2. Deterministic Enforcement
-With Acore, behaviors like **Caching** (Stale-while-revalidate, Cache-first) and **Retries** (Exponential backoff with Jitter) are defined in the contract itself. The client-side runtime executes these instructions natively.
-
-#### 3. Cryptographic Integrity
-Every contract pulled from **Axiom Cloud** is signed. The `trust-axiom.json` ensures that your app only communicates via a verified, untampered behavioral contract.
-
----
-
-### Direct Comparison
-
-| Feature | OpenAPI / Swagger | GraphQL | Axiom Core |
-| :--- | :--- | :--- | :--- |
-| **Typed Models** | ✅ | ✅ | ✅ |
-| **Code Generation** | ⚠️ Fat SDK (High Maint) | ⚠️ Fat SDK (High Maint) | 🚀 Thin Layer (Zero Maint) |
-| **Retry Policies** | ❌ Manual | ❌ Manual | ✅ **Enforced** |
-| **Caching Strategy** | ❌ Manual | ❌ Manual | ✅ **Enforced** |
-| **Signed Security** | ❌ None | ❌ None | ✅ **Cryptographic** |
-| **Runtime Engine** | ❌ Application Layer | ❌ Application Layer | ✅ **Native Rust** |
-
-<Callout type="info" icon={<Zap />}>
-  **The Bottom Line:** By moving the complexity into a pre-compiled, deterministic Rust runtime, Axiom Core reduces your frontend API logic to a thin, typed interface, drastically lowering the cost of development and the probability of runtime errors.
-</Callout>
+### Cryptographic Trust
+Beyond behavior, Axiom enforces security. Every `.axiom` contract is cryptographically signed using Ed25519 keys via Axiom Cloud. If an attacker intercepts your API schema and attempts to modify validation rules, the Runtime will detect the broken signature and refuse to boot.

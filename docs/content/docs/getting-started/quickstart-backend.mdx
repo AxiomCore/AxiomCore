@@ -1,0 +1,47 @@
+---
+title: Backend Quickstart
+description: Extract your API and compile your first behavioral contract.
+---
+
+import { Steps } from 'fumadocs-ui/components/steps';
+
+Turn your FastAPI or Go application into a deterministic, compiled contract ready for frontend consumption.
+
+<Steps>
+### Initialize the Project
+Navigate to the root of your backend repository and run:
+```bash
+axiom init
+```
+This launches the **Interactive TUI Wizard**. Axiom will automatically scan your folder for `main.go` or `requirements.txt` and suggest the correct language.
+
+1.  Select your Language (Python or Go).
+2.  Provide a Project Name.
+3.  Confirm your Entrypoint (e.g., `./main.py:app` or `./main.go`).
+
+Axiom will generate an `axiom.acore` file linking your backend to the Acore compiler.
+
+### Build the Contract
+Compile your backend types, routes, and Acore behavioral policies into a unified binary artifact:
+
+```bash
+axiom build axiom.acore
+```
+**Outcome:** A `.axiom` file is generated. A `.lockfile` is also created to help you track state changes in the future using `axiom diff`.
+
+### (Optional) Inspect the Contract
+Before sharing the contract with the frontend team, you can browse it via the terminal interface:
+
+```bash
+axiom inspect .axiom
+```
+*Use the arrow keys to browse your extracted Endpoints, Schemas, and the automatically generated Normalized Validation YAMLs.*
+
+### Deploy a Local Mock Server
+Want to give the frontend team something to test against immediately? Boot the native Axiom mock engine:
+
+```bash
+axiom serve --file axiom.acore --port 8080 --debug
+```
+Your contract is now hosted as a live API. It includes an auto-generated Swagger documentation page accessible at `http://localhost:8080/axdoc`.
+</Steps>

@@ -1,0 +1,78 @@
+---
+title: Testing Contracts
+description: Native endpoint validation and WebSockets testing.
+---
+
+Axiom includes a blazing-fast, concurrent test runner built on Tokio. You define tests directly in your `.acore` contract, and Axiom executes them against your live or staging API.
+
+### Running Tests
+
+```bash
+# Run all tests
+axiom test
+
+# Run tests matching a specific tag
+axiom test --tag auth-critical
+```
+
+### The Test Suite Structure
+
+A `TestSuite` consists of `hooks` (setup/teardown) and `checks`.
+
+```pkl
+testConfig = new TestConfig {
+  suites = new Listing {
+    new TestSuite {
+      name = "User API Integration"
+      baseUrl = "https://staging.api.com"
+      tags = new Listing { "auth-critical" }
+      
+      checks = new Listing {
+        new CheckDef {
+          label = "Should fetch user profile"
+          route = "get_profile" // Refers to the Endpoint name!
+          headers = new { Authorization = "Bearer {{ store.token }}" }
+          
+          expect = new Listing {
+            new StatusExpectation { value = 200 }
+            new DurationExpectation { op = "lt", valueMs = 500 }
+            // Verify schema strictly matches the FlatBuffer/Pydantic definition
+            new SchemaExpectation { strict = true } 
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+### Advanced Assertions (Body Quantifiers)
+
+You can write deep JSON-path assertions against arrays:
+
+```pkl
+expect = new Listing {
+  new BodyQuantifierExpectation {
+    path = "users.list"
+    quantifier = "every"  // Options: every, some, none
+    itemPath = "isActive"
+    op = "eq"
+    value = true
+  }
+}
+```
+
+### Testing WebSockets natively
+The runner natively supports `ws://` connections. Simply target an endpoint mapped to a `WebSocketDef`. Axiom will connect, stream the requested `body` payload, await the first response chunk, and run assertions.
+
+### Variable Capture
+Capture variables from one request to use in the next:
+
+```pkl
+capture = new Listing {
+  new ResponseCapture {
+    path = "body.auth.access_token"
+    bindAs = "token" // Accessible via {{ store.token }}
+  }
+}
+```

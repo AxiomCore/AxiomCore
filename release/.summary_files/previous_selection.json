@@ -1,5 +1,11 @@
 {
     "selected_files": [
+        "/Users/yashmakan/AxiomCore/AxiomCore/release/atmx-cli/package.json",
+        "/Users/yashmakan/AxiomCore/AxiomCore/release/atmx-cli/src/generators/model-generator.ts",
+        "/Users/yashmakan/AxiomCore/AxiomCore/release/atmx-cli/src/generators/sdk-generator.ts",
+        "/Users/yashmakan/AxiomCore/AxiomCore/release/atmx-cli/src/generators/utils.ts",
+        "/Users/yashmakan/AxiomCore/AxiomCore/release/atmx-cli/src/index.ts",
+        "/Users/yashmakan/AxiomCore/AxiomCore/release/atmx-cli/src/types.ts",
         "/Users/yashmakan/AxiomCore/AxiomCore/release/cli/justfile",
         "/Users/yashmakan/AxiomCore/AxiomCore/release/cli/scripts/build.sh",
         "/Users/yashmakan/AxiomCore/AxiomCore/release/cli/scripts/publish.sh",

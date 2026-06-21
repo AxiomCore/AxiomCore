@@ -1,0 +1,41 @@
+---
+title: The Axiom Mock Engine
+description: Intelligent, stateful API mocking.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+When you run `axiom serve`, Axiom spins up a native Rust (Axum) web server that simulates your API based on the `.acore` definitions.
+
+### Faker Proxies
+The engine includes `fake-rs` internally. You can embed proxies in your template strings, and the server will hydrate them per request.
+*   `{{ faker.uuid }}`
+*   `{{ internet.email }}`
+*   `{{ name }}`
+*   `{{ number.int }}`
+*   `{{ date.past }}`
+
+### Request Context Variables
+Echo data directly back to the client:
+*   `{{ request.query.search }}`
+*   `{{ request.path.user_id }}`
+*   `{{ request.body.details.email }}`
+
+### Store Mutations (Stateful APIs)
+The mock server contains a shared, thread-safe memory `Store`. You can mutate this store to test complex workflows (like creating a user, then fetching a list of users).
+
+```pkl
+onReceive = new Listing {
+  new StoreMutation {
+    type = "append"
+    key = "users"
+    value = new { id = "{{ faker.uuid }}", name = "{{ request.body.name }}" }
+  }
+}
+```
+Available mutations: `set`, `increment`, `append`, `update`, `delete`.
+
+<Callout type="info" title="Targeted Updates">
+Using `update`, you can modify specific items in an array. 
+Example: `filterKey = "id"`, `filterValue = "{{ request.path.id }}"` will only update the array element where the ID matches the URL path parameter.
+</Callout>

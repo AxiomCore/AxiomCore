@@ -1,0 +1,18 @@
+---
+title: Deploying Mock Servers
+description: Cloud-hosted mock APIs for frontend teams.
+---
+
+You don't have to share `.acore` files over Slack to let the frontend team test edge cases. You can deploy your mock configuration directly to Axiom Cloud.
+
+### Deploy Command
+
+```bash
+axiom deploy mock-server
+```
+
+1.  Axiom reads your local `.acore` file and evaluates the `testConfig` and `mock` blocks.
+2.  It serializes the configuration to JSON and uploads it to the Axiom Hub linked to your project.
+3.  Frontend developers can now run `axiom serve` without a local `.acore` file. 
+
+The frontend CLI will automatically fetch the mock configuration from the cloud (caching it locally via `ETags` to prevent unnecessary downloads) and boot the Axum mock engine locally on their machine.

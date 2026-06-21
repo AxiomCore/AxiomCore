@@ -1,0 +1,21 @@
+---
+title: Project Management
+description: Syncing local environments to cloud namespaces.
+---
+
+Axiom Cloud acts as the central hub for your API contracts, providing Ed25519 signing and cross-team version distribution.
+
+### Authentication
+Authenticate your machine using `axiom login`. Tokens are stored locally in `~/.config/axiom/auth.json`.
+
+### Linking Projects
+To release a contract, the local directory must be linked to a cloud project ID.
+```bash
+axiom project link
+```
+This command opens a fuzzy-finder (via `fuzzy-matcher` and Ratatui). Type to filter your available Axiom Cloud projects and hit Enter to link the current working directory.
+
+### Project Lifecycle
+1.  Backend dev runs `axiom release`. The compiled `.axiom` file is pushed to the linked Cloud Project.
+2.  Cloud signs the file with the Project's Private Key.
+3.  Frontend dev runs `axiom pull`. Axiom fetches the signed binary and generates the localized SDK.

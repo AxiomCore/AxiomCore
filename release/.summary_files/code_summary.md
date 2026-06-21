@@ -38,6 +38,678 @@ Project Structure:
 ```
 
 ---
+## File: atmx-cli/package.json
+
+```json
+{
+  "name": "atmx-cli",
+  "version": "0.107.0",
+  "description": "",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc"
+  },
+  "bin": {
+    "atmx": "./dist/index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@iarna/toml": "^2.2.5",
+    "commander": "^14.0.3",
+    "fs-extra": "^11.3.4"
+  },
+  "devDependencies": {
+    "@types/fs-extra": "^11.0.4",
+    "@types/iarna__toml": "^2.0.5",
+    "@types/node": "^25.5.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}
+
+```
+---
+## File: atmx-cli/src/generators/model-generator.ts
+
+```ts
+// FILE: atmx-cli/src/generators/model-generator.ts
+import { AxiomEnum, AxiomModel, MultiIR } from "../types";
+import { pascalCase, camelCase, mapTypeToTs } from "./utils";
+
+export function generateModels(multiIr: MultiIR): string {
+  const sections: string[] = [
+    `// GENERATED CODE – DO NOT EDIT.\n/* eslint-disable @typescript-eslint/no-explicit-any */\n`,
+    `/* eslint-disable @typescript-eslint/no-namespace */\n`, // ✨ FIX: Disable namespace lint error
+  ];
+
+  for (const [ns, ir] of Object.entries(multiIr)) {
+    const camelNs = camelCase(ns);
+    // ✨ FIX: Use proper TS namespaces
+    sections.push(`export namespace ${camelNs} {`);
+
+    const enumsList = Array.isArray(ir.enums)
+      ? ir.enums
+      : Object.values(ir.enums || {});
+    const modelsList = Array.isArray(ir.models)
+      ? ir.models
+      : Object.values(ir.models || {});
+
+    enumsList.forEach((en: any) => sections.push(generateEnum(en)));
+    modelsList.forEach((model: any) =>
+      sections.push(generateInterface(model, camelNs)),
+    );
+
+    sections.push(`}\n`);
+  }
+
+  sections.push(generateMappers(multiIr));
+  return sections.join("\n");
+}
+
+function generateEnum(en: AxiomEnum): string {
+  const name = pascalCase(en.name);
+  const values = en.values.map((v) => `  ${pascalCase(v)}: "${v}"`).join(",\n");
+  return `
+  export const ${name} = {
+  ${values}
+  } as const;
+  export type ${name} = typeof ${name}[keyof typeof ${name}];
+  `;
+}
+
+function generateInterface(model: AxiomModel, ns: string): string {
+  const name = pascalCase(model.name);
+  const fields = model.fields
+    .map((f) => {
+      const type = mapTypeToTs(f.typeRef, ns);
+      return `    ${camelCase(f.name)}${f.isOptional ? "?" : ""}: ${type};`;
+    })
+    .join("\n");
+
+  return `
+  export interface ${name} {
+${fields}
+  }
+  `;
+}
+
+function generateMappers(multiIr: MultiIR): string {
+  const lines: string[] = [`export const Mappers: Record<string, any> = {`];
+
+  for (const [ns, ir] of Object.entries(multiIr)) {
+    const camelNs = camelCase(ns);
+    lines.push(`  ${camelNs}: {`);
+
+    const modelsList = Array.isArray(ir.models)
+      ? ir.models
+      : Object.values(ir.models || {});
+
+    modelsList.forEach((model: any) => {
+      const name = pascalCase(model.name);
+      const fullType = `${camelNs}.${name}`;
+
+      lines.push(
+        `    ${name}: {\n      fromJson: (json: any): ${fullType} => ({`,
+      );
+      model.fields.forEach((f: any) => {
+        lines.push(
+          `        ${camelCase(f.name)}: ${generateJsonLogic(f.typeRef, `json["${f.name}"]`, f.isOptional, "fromJson", camelNs)},`,
+        );
+      });
+      lines.push(`      }),\n      toJson: (obj: any): any => ({`);
+      model.fields.forEach((f: any) => {
+        lines.push(
+          `        "${f.name}": ${generateJsonLogic(f.typeRef, `obj.${camelCase(f.name)}`, f.isOptional, "toJson", camelNs)},`,
+        );
+      });
+      lines.push(`      })\n    },`);
+    });
+    lines.push(`  },`);
+  }
+  lines.push(`};\n`);
+  return lines.join("\n");
+}
+
+function generateJsonLogic(
+  typeRef: any,
+  access: string,
+  isOpt: boolean,
+  mode: "fromJson" | "toJson",
+  ns: string,
+): string {
+  const wrap = (logic: string) =>
+    isOpt ? `(${access} == null ? undefined : ${logic})` : logic;
+  if (!typeRef || !typeRef.kind) return access;
+  if (typeRef.kind === "dateTime")
+    return mode === "fromJson"
+      ? wrap(`new Date(${access})`)
+      : wrap(`${access}.toISOString()`);
+  if (typeRef.kind === "bytes")
+    return mode === "fromJson"
+      ? wrap(`new Uint8Array(${access})`)
+      : wrap(`Array.from(${access})`);
+  if (typeRef.kind === "named") {
+    const name = pascalCase(typeRef.value);
+    return wrap(
+      `(Mappers.${ns}["${name}"] ? Mappers.${ns}["${name}"].${mode}(${access}) : ${access})`,
+    );
+  }
+  if (typeRef.kind === "list")
+    return wrap(
+      `${access}.map((e: any) => ${generateJsonLogic(typeRef.value, "e", false, mode, ns)})`,
+    );
+  return access;
+}
+
+```
+---
+## File: atmx-cli/src/generators/sdk-generator.ts
+
+```ts
+import { AxiomIR, AxiomEndpoint, AxiomTypeRef } from "../types.js";
+
+export interface ContractPayload {
+  ir: AxiomIR;
+  baseUrl: string;
+  file: string;
+}
+
+// Helper to convert Axiom TypeRef to TypeScript Types
+function getTsType(namespace: string, typeRef?: AxiomTypeRef): string {
+  if (!typeRef) return "any";
+  if (typeRef.kind === "named") {
+    return `models.${namespace}.${typeRef.value}`;
+  } else if (typeRef.kind === "list") {
+    return `${getTsType(namespace, typeRef.value as AxiomTypeRef)}[]`;
+  } else if (typeRef.kind === "primitive") {
+    if (["int32", "int64", "float32", "float64"].includes(typeRef.value))
+      return "number";
+    if (typeRef.value === "bool") return "boolean";
+    if (typeRef.value === "string") return "string";
+  } else if (typeRef.kind === "void") {
+    return "void";
+  }
+  return "any";
+}
+
+// Helper to get the correct deserializer function for a given TypeRef
+function getDecoder(namespace: string, typeRef?: AxiomTypeRef): string {
+  if (!typeRef) return `(json: any) => json`;
+
+  if (typeRef.kind === "named") {
+    return `models.Mappers.${namespace}.${typeRef.value}.fromJson`;
+  } else if (
+    typeRef.kind === "list" &&
+    (typeRef.value as AxiomTypeRef).kind === "named"
+  ) {
+    const innerName = (typeRef.value as any).value;
+    return `(json: any[]) => json.map(models.Mappers.${namespace}.${innerName}.fromJson)`;
+  }
+
+  return `(json: any) => json`;
+}
+
+export function generateSDKContent(
+  contracts: Record<string, ContractPayload>,
+  isReact: boolean,
+): string {
+  let content = `// GENERATED CODE – DO NOT EDIT.\n/* eslint-disable @typescript-eslint/no-explicit-any */\n/* eslint-disable @typescript-eslint/no-unused-vars */\n\n`;
+
+  if (!isReact) {
+    content += `import * as models from './models.js';\n\n`;
+  } else {
+    content += `import * as models from './models.js';\n`;
+    content += `import { useAxiomQuery, useAxiomMutation, setAuthToken, clearAuthToken, axiomQueryManager } from "atmx-react";\n`;
+    content += `import type { AxiomQueryDef } from "atmx-react";\n\n`;
+  }
+
+  // 1. Generate Individual Modules
+  for (const [namespace, contract] of Object.entries(contracts)) {
+    content += `export const ${namespace}Module = {\n`;
+    content += `  axiom: {\n`;
+    content += `    setAuthToken(methodName: string, token: string) {\n`;
+    if (isReact) {
+      content += `      setAuthToken("${namespace}", methodName, token);\n`;
+    } else {
+      content += `      (window as any).atmx?.setAuthToken("${namespace}", methodName, token);\n`;
+    }
+    content += `    },\n`;
+    content += `    clearAuthToken(methodName: string) {\n`;
+    if (isReact) {
+      content += `      clearAuthToken("${namespace}", methodName);\n`;
+    } else {
+      content += `      (window as any).atmx?.clearAuthToken("${namespace}", methodName);\n`;
+    }
+    content += `    },\n`;
+    content += `    connect(methodName: string, args?: Record<string, any>) {\n`;
+    if (isReact) {
+      content += `      const def = (${namespace}Module as any)[\`get\${methodName.charAt(0).toUpperCase() + methodName.slice(1)}Def\`](args);\n`;
+      content += `      axiomQueryManager.connect(def);\n`;
+    } else {
+      content += `      const argsStr = args && Object.keys(args).length > 0 ? JSON.stringify(args) : '';\n`;
+      content += `      (window as any).atmx?.connect(\`${namespace}.\${methodName}(\${argsStr})\`);\n`;
+    }
+    content += `    },\n`;
+    content += `    disconnect(methodName: string, args?: Record<string, any>) {\n`;
+    if (isReact) {
+      content += `      const def = (${namespace}Module as any)[\`get\${methodName.charAt(0).toUpperCase() + methodName.slice(1)}Def\`](args);\n`;
+      content += `      axiomQueryManager.disconnect(def);\n`;
+    } else {
+      content += `      const argsStr = args && Object.keys(args).length > 0 ? JSON.stringify(args) : '';\n`;
+      content += `      (window as any).atmx?.disconnect(\`${namespace}.\${methodName}(\${argsStr})\`);\n`;
+    }
+    content += `    },\n`;
+    content += `    send(methodName: string, payload: any, args?: Record<string, any>) {\n`;
+    if (isReact) {
+      content += `      const def = (${namespace}Module as any)[\`get\${methodName.charAt(0).toUpperCase() + methodName.slice(1)}Def\`](args);\n`;
+      content += `      axiomQueryManager.send(def, payload);\n`;
+    } else {
+      content += `      const argsStr = args && Object.keys(args).length > 0 ? JSON.stringify(args) : '';\n`;
+      content += `      (window as any).atmx?.send(\`${namespace}.\${methodName}(\${argsStr})\`, payload);\n`;
+    }
+    content += `    }\n`;
+    content += `  },\n\n`;
+
+    // Extract endpoints handling objects vs arrays
+    const endpoints: AxiomEndpoint[] = Array.isArray(contract.ir.endpoints)
+      ? contract.ir.endpoints
+      : Object.values(contract.ir.endpoints || {});
+
+    for (const endpoint of endpoints) {
+      const fnName = endpoint.name.replace(/_([a-z])/g, (g) =>
+        g[1].toUpperCase(),
+      );
+      const capFnName = fnName.charAt(0).toUpperCase() + fnName.slice(1);
+
+      if (isReact) {
+        const tsType = getTsType(namespace, endpoint.returnType);
+        const decoder = getDecoder(namespace, endpoint.returnType);
+
+        content += `  get${capFnName}Def(\n`;
+        content += `    args?: Record<string, any>,\n`;
+        content += `  ): AxiomQueryDef<${tsType}> {\n`;
+        content += `    return {\n`;
+        content += `      namespace: "${namespace}",\n`;
+        content += `      name: "${endpoint.name}",\n`;
+        content += `      endpointId: ${endpoint.id || 0},\n`;
+        content += `      method: "${endpoint.method}",\n`;
+        content += `      path: "${endpoint.path}",\n`;
+        content += `      args: args || {},\n`;
+        content += `      decoder: ${decoder},\n`;
+        content += `      serializer: (p: any) => p,\n`;
+        content += `      isStream: ${endpoint.isStream ? "true" : "false"},\n`;
+        content += `    };\n`;
+        content += `  },\n`;
+
+        if (endpoint.method === "GET" || endpoint.method === "WS") {
+          content += `  use${capFnName}(options?: { enabled?: boolean }) {\n`;
+          content += `    return useAxiomQuery<${tsType}>(\n`;
+          content += `      this.get${capFnName}Def(),\n`;
+          content += `      options,\n`;
+          content += `    );\n`;
+          content += `  },\n`;
+        } else {
+          content += `  use${capFnName}(options?: any) {\n`;
+          content += `    return useAxiomMutation<${tsType}>(\n`;
+          content += `      this.get${capFnName}Def(),\n`;
+          content += `      options,\n`;
+          content += `    );\n`;
+          content += `  },\n`;
+        }
+      } else {
+        // ✨ UPGRADED: Vanilla Web static compiler methods mapped to dynamic objects
+        content += `  ${fnName}: Object.assign(\n`;
+        content += `    (args?: Record<string, any>): string => {\n`;
+        content += `      const argsStr = args && Object.keys(args).length > 0 ? JSON.stringify(args) : '';\n`;
+        content += `      return \`${namespace}.${endpoint.name}(\${argsStr})\`;\n`;
+        content += `    },\n`;
+        content += `    {\n`;
+        content += `      invalidate(args?: Record<string, any>) {\n`;
+        content += `        (window as any).atmx?.invalidate("${namespace}.${endpoint.name}", args);\n`;
+        content += `      },\n`;
+        content += `      setData(data: any, args?: Record<string, any>) {\n`;
+        content += `        (window as any).atmx?.setQueryData("${namespace}.${endpoint.name}", args || {}, data);\n`;
+        content += `      },\n`;
+        content += `      mutate(payload: any = {}, args?: Record<string, any>): Promise<any> {\n`;
+        content += `        return (window as any).atmx?.mutate("${namespace}.${endpoint.name}", args, payload);\n`;
+        content += `      }\n`;
+        content += `    }\n`;
+        content += `  ),\n`;
+      }
+    }
+    content += `};\n\n`;
+  }
+
+  // 2. Generate the Smart Proxy SDK
+  content += `const internalSdk: Record<string, any> = {\n`;
+  for (const namespace of Object.keys(contracts)) {
+    content += `  ${namespace}: ${namespace}Module,\n`;
+  }
+  content += `};\n\n`;
+
+  content += `// ✨ The Magic Proxy: Safely intercepts Alpine.js evaluations during boot!\n`;
+  content += `export const sdk = new Proxy(internalSdk, {\n`;
+  content += `  get(target: any, prop: string, receiver: any) {\n`;
+  content += `    if (prop in target) {\n`;
+  content += `      return Reflect.get(target, prop, receiver);\n`;
+  content += `    }\n`;
+  content += `    // Create a dynamic namespace proxy\n`;
+  content += `    return new Proxy({}, {\n`;
+  content += `      get(subTarget: any, subProp: string) {\n`;
+  content += `        // Return a callable function that returns the string definition\n`;
+  content += `        const routeFn = (args?: Record<string, any>) => {\n`;
+  content += `          const argsStr = args && Object.keys(args).length > 0 ? JSON.stringify(args) : '';\n`;
+  content += `          return \`\${String(prop)}.\${String(subProp)}(\${argsStr})\`;\n`;
+  content += `        };\n`;
+  content += `        // Attach typed helper methods directly to the function!\n`;
+  content += `        routeFn.invalidate = (args?: Record<string, any>) => {\n`;
+  content += `          (window as any).atmx?.invalidate(\`\${String(prop)}.\${String(subProp)}\`, args);\n`;
+  content += `        };\n`;
+  content += `        routeFn.setData = (data: any, args?: Record<string, any>) => {\n`;
+  content += `          (window as any).atmx?.setQueryData(\`\${String(prop)}.\${String(subProp)}\`, args || {}, data);\n`;
+  content += `        };\n`;
+  content += `        routeFn.mutate = (payload: any = {}, args?: Record<string, any>): Promise<any> => {\n`;
+  content += `          return (window as any).atmx?.mutate(\`\${String(prop)}.\${String(subProp)}\`, args, payload);\n`;
+  content += `        };\n`;
+  content += `        return routeFn;\n`;
+  content += `      }\n`;
+  content += `    });\n`;
+  content += `  }\n`;
+  content += `});\n\n`;
+
+  content += `// Auto-attach to window for Alpine.js immediate hydration\n`;
+  content += `if (typeof window !== "undefined") {\n`;
+  content += `  (window as any).sdk = sdk;\n`;
+  content += `}\n\n`;
+
+  // 3. Generate Default Config
+  content += `export const AxiomDefaultConfig = {\n`;
+  content += `  contracts: {\n`;
+  for (const [ns, def] of Object.entries(contracts)) {
+    // Determine file path or default to namespace
+    const contractPath = def.file ? def.file : `/${ns}.axiom`;
+
+    content += `    "${ns}": {\n`;
+    content += `      contractUrl: "${contractPath}",\n`;
+    content += `      baseUrl: "${def.baseUrl}"\n`;
+    content += `    },\n`;
+  }
+  content += `  }\n`;
+  content += `};\n`;
+
+  return content;
+}
+
+```
+---
+## File: atmx-cli/src/generators/utils.ts
+
+```ts
+// FILE: atmx-cli/src/generators/utils.ts
+export function pascalCase(str: string): string {
+  if (!str) return "";
+  return str
+    .split(/[_\-\s]+/)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join("");
+}
+
+export function camelCase(str: string): string {
+  const pascal = pascalCase(str);
+  return pascal.charAt(0).toLowerCase() + pascal.slice(1);
+}
+
+export function normalizeIr(obj: any): any {
+  if (Array.isArray(obj)) return obj.map(normalizeIr);
+  if (obj !== null && typeof obj === "object") {
+    const newObj: any = {};
+    for (const key of Object.keys(obj)) {
+      const camelKey = key.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
+      newObj[camelKey] = normalizeIr(obj[key]);
+    }
+    if (
+      newObj.endpoints &&
+      typeof newObj.endpoints === "object" &&
+      !Array.isArray(newObj.endpoints)
+    ) {
+      newObj.endpoints = Object.values(newObj.endpoints);
+    }
+    if (
+      newObj.models &&
+      typeof newObj.models === "object" &&
+      !Array.isArray(newObj.models)
+    ) {
+      newObj.models = Object.values(newObj.models);
+    }
+    if (
+      newObj.enums &&
+      typeof newObj.enums === "object" &&
+      !Array.isArray(newObj.enums)
+    ) {
+      newObj.enums = Object.values(newObj.enums);
+    }
+    if (Array.isArray(newObj.models)) {
+      newObj.models = newObj.models.map((model: any) => {
+        if (
+          model.fields &&
+          typeof model.fields === "object" &&
+          !Array.isArray(model.fields)
+        ) {
+          model.fields = Object.values(model.fields);
+        }
+        return model;
+      });
+    }
+    return newObj;
+  }
+  return obj;
+}
+
+export function mapTypeToTs(typeRef: any, ns?: string): string {
+  if (!typeRef || !typeRef.kind) return "any";
+
+  switch (typeRef.kind) {
+    case "string":
+      return "string";
+    case "int32":
+    case "int64":
+    case "float32":
+    case "float64":
+      return "number";
+    case "bool":
+      return "boolean";
+    case "dateTime":
+      return "Date";
+    case "bytes":
+      return "Uint8Array";
+    case "void":
+      return "void";
+    case "json":
+      return "any";
+    case "named":
+      const name = pascalCase(typeRef.value);
+      return ns ? `${ns}.${name}` : name;
+    case "list":
+      return `${mapTypeToTs(typeRef.value, ns)}[]`;
+    case "map":
+      const valType = typeRef.value?.[1]
+        ? mapTypeToTs(typeRef.value[1], ns)
+        : "any";
+      return `Record<string, ${valType}>`;
+    default:
+      return "any";
+  }
+}
+
+```
+---
+## File: atmx-cli/src/index.ts
+
+```ts
+#!/usr/bin/env node
+import { Command } from "commander";
+import * as fs from "fs-extra";
+import * as path from "path";
+import * as toml from "@iarna/toml";
+import { MultiIR } from "./types";
+import { generateModels } from "./generators/model-generator";
+// ✨ FIX: Import generateSDKContent and ContractPayload
+import {
+  generateSDKContent,
+  ContractPayload,
+} from "./generators/sdk-generator";
+import { normalizeIr } from "./generators/utils";
+
+const program = new Command();
+
+program
+  .name("atmx")
+  .description("Generate TypeScript SDK from AxiomDeps.toml")
+  .version("0.2.0");
+
+program
+  .command("generate")
+  .requiredOption("-c, --config <path>", "Path to AxiomDeps.toml")
+  .requiredOption("-o, --output <dir>", "Output directory for generated files")
+  .option("-r, --react", "Generate React Hooks instead of Vanilla JS strings")
+  .action(async (options) => {
+    const configPath = path.resolve(options.config);
+    const outputDir = path.resolve(options.output);
+
+    if (!fs.existsSync(configPath)) {
+      console.error(`❌ Error: Config file not found at ${configPath}`);
+      process.exit(1);
+    }
+
+    // 1. Read and Parse TOML
+    const tomlString = await fs.readFile(configPath, "utf-8");
+    const rawConfig = toml.parse(tomlString) as any;
+
+    if (!rawConfig.contracts || Object.keys(rawConfig.contracts).length === 0) {
+      console.error("❌ Error: No contracts defined in AxiomDeps.toml.");
+      process.exit(1);
+    }
+
+    const multiIr: MultiIR = {};
+    const generatorPayload: Record<string, ContractPayload> = {}; // ✨ NEW: Payload for SDK
+    const projectRoot = path.dirname(configPath); // Frontend project root
+
+    // 2. Loop through contracts
+    for (const [namespace, contract] of Object.entries(rawConfig.contracts)) {
+      // Rust CLI safely copies files to `public/[namespace].axiom`
+      const axiomFilePath = path.resolve(
+        projectRoot,
+        `public/${namespace}.axiom`,
+      );
+
+      if (!fs.existsSync(axiomFilePath)) {
+        console.warn(
+          `⚠️ Warning: Contract file not found at ${axiomFilePath}. Skipping...`,
+        );
+        continue;
+      }
+
+      const rawFile = await fs.readJSON(axiomFilePath);
+      if (!rawFile.ir) continue;
+
+      multiIr[namespace] = normalizeIr(rawFile.ir);
+
+      // ✨ NEW: Combine IR with TOML config for the SDK generator
+      generatorPayload[namespace] = {
+        ir: multiIr[namespace],
+        baseUrl: (contract as any).base_url || "http://localhost:8080",
+        file: `/${namespace}.axiom`,
+      };
+
+      console.log(`✅ Loaded contract: [${namespace}] -> ${axiomFilePath}`);
+    }
+
+    await fs.ensureDir(outputDir);
+
+    // 3. Generate Models (Needs raw MultiIR)
+    const modelsContent = generateModels(multiIr);
+    await fs.writeFile(path.join(outputDir, "models.ts"), modelsContent);
+
+    // 4. Generate SDK (Needs enriched ContractPayload)
+    const sdkContent = generateSDKContent(generatorPayload, options.react);
+    await fs.writeFile(path.join(outputDir, "sdk.ts"), sdkContent);
+
+    console.log(
+      `\n🎉 ATMX Multi-Contract SDK generated successfully in ${outputDir}`,
+    );
+  });
+
+program.parse();
+
+```
+---
+## File: atmx-cli/src/types.ts
+
+```ts
+export interface AxiomIR {
+  serviceName: string;
+  endpoints: AxiomEndpoint[];
+  models: Record<string, AxiomModel>;
+  enums: Record<string, AxiomEnum>;
+}
+
+export interface AxiomEndpoint {
+  id: number;
+  name: string;
+  path: string;
+  method: string;
+  parameters: AxiomParameter[];
+  returnType: AxiomTypeRef;
+  returnIsOptional: boolean;
+  isStream: boolean;
+}
+
+export interface AxiomParameter {
+  name: string;
+  source: "path" | "query" | "body";
+  typeRef: AxiomTypeRef;
+  isOptional: boolean;
+}
+
+export type AxiomTypeRef =
+  | { kind: "primitive" | "named"; value: string }
+  | { kind: "list"; value: AxiomTypeRef }
+  | { kind: "map"; value: [AxiomTypeRef, AxiomTypeRef] }
+  | { kind: "void" };
+
+export interface AxiomModel {
+  name: string;
+  fields: AxiomField[];
+}
+
+export interface AxiomField {
+  name: string;
+  typeRef: AxiomTypeRef;
+  isOptional: boolean;
+}
+
+export interface AxiomEnum {
+  name: string;
+  values: string[];
+}
+
+export interface AtmxContractConfig {
+  file: string; // Path relative to the config file (e.g., "./auth.axiom")
+  baseUrl: string; // The URL for runtime (not used during code generation, but part of schema)
+}
+
+export interface AtmxMultiConfig {
+  contracts: Record<string, AtmxContractConfig>;
+}
+
+// A Map holding the normalized IR for each contract
+export type MultiIR = Record<string, AxiomIR>;
+
+```
+---
 ## File: cli/justfile
 
 ```
@@ -339,9 +1011,9 @@ echo "✅ Published: $ASSET_NAME to $TARGET_REPO release $VERSION"
 class Axiom < Formula
   desc "Axiom CLI - Unified Configuration and API SDK Generator"
   homepage "https://github.com/AxiomCore/AxiomCore"
-  url "https://github.com/AxiomCore/AxiomCore/releases/download/v0.73.0/axiom-macos-arm64.tar.gz"
-  sha256 "52817e14166a0204f06b39d99ff64ad31916a3e318266e15cc275e8cdd71eb47"
-  version "0.73.0"
+  url "https://github.com/AxiomCore/AxiomCore/releases/download/v0.107.0/axiom-macos-arm64.tar.gz"
+  sha256 "2de47b32325efc5e36c751d3da297c7fd0d6d0d25e99a87bdc1480271439705f"
+  version "0.107.0"
 
   def install
     bin.install "axiom"

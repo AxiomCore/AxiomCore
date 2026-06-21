@@ -1,0 +1,34 @@
+---
+title: Trust & Security
+description: Cryptographic integrity for API Contracts.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+AxiomCore ensures that the frontend *only* executes verified behaviors.
+
+### Ed25519 Signatures
+
+When you deploy a contract using `axiom release`, Axiom Cloud generates an **Ed25519 cryptographic signature**. 
+
+The generated `.axiom` file contains:
+1. The XOR-obfuscated JSON Intermediate Representation (IR).
+2. The FlatBuffer schemas.
+3. The Base64 encoded signature.
+
+### Runtime Enforcement
+
+When your frontend application boots, the Generic Runtime executes a mandatory integrity check:
+
+```dart
+// The runtime will panic here if the contract was modified!
+await AxiomSdk.create(
+    config: AxiomDefaultConfig.config 
+);
+```
+
+The runtime compares the `.axiom` file against the `trust-axiom.json` public key distributed in your app. 
+
+<Callout type="error" title="Mitigating Man-in-the-Middle Attacks">
+If a malicious actor intercepts the `.axiom` file and tries to disable an authentication requirement, modify an endpoint path, or inject a malicious WebSocket URL, the Ed25519 signature validation will fail. The Axiom Runtime will refuse to initialize network connections.
+</Callout>

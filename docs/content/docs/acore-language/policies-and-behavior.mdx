@@ -1,0 +1,40 @@
+---
+title: Policies & Behavior
+description: Configuring retries, caches, and validations natively.
+---
+
+Attach policies either globally or per-endpoint to instruct the Generic Runtime on how to behave.
+
+### Cache Policy
+
+Axiom supports robust offline and high-performance caching.
+
+```pkl
+cache = new CachePolicy {
+  strategy = "stale_while_revalidate"
+  ttlSeconds = 3600
+}
+```
+*   `network_only`: Bypasses cache entirely.
+*   `cache_first`: Returns cache if valid; otherwise network.
+*   `network_first`: Attempts network; if timeout/offline, returns cache.
+*   `stale_while_revalidate`: Instantly returns cache to the UI, then fetches network in the background and updates the UI silently.
+
+### Retry Policy
+
+Prevent UI hangs and handle flaky internet autonomously.
+
+```pkl
+retry = new RetryPolicy {
+  maxAttempts = 3
+  retryOnCodes = new Listing { 502, 503, 504 }
+  retryOnTimeout = true
+  
+  backoff = new ExponentialBackoff {
+    initialDelay = "500ms"
+    multiplier = 2.0
+    useJitter = true
+  }
+}
+```
+*Available Backoffs:* `FixedBackoff`, `LinearBackoff`, `ExponentialBackoff`.

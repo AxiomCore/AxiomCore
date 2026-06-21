@@ -1,0 +1,22 @@
+---
+title: CLI Reference
+description: Exhaustive list of AxiomCore commands.
+---
+
+### Project Setup
+*   `axiom init`: Launches the TUI wizard to scaffold `axiom.acore`.
+*   `axiom install <extractor> --module`: Installs a backend schema extractor into `~/.axiom/plugins/`.
+*   `axiom join <email>`: Join the private alpha waitlist.
+
+### Compilation & Cloud
+*   `axiom build <file>`: Compiles the backend and `.acore` into a signed `.axiom` binary. Generates a `.lockfile`.
+*   `axiom release`: Uploads the local `.axiom` binary to Axiom Cloud for distribution.
+*   `axiom project create / link`: Associates your local directory with a cloud namespace.
+
+### Development
+*   `axiom serve`: Boots the Axum-based local mock server.
+*   `axiom watch`: Starts the live HUD. Rebuilds the contract automatically on file save.
+*   `axiom diff <file1> <file2>`: Computes JSON-Atom diffs. Supports `--format changelog | semantic | text`.
+
+### Client Generation
+*   `axiom pull`: Downloads the latest `.axiom` contract from the cloud and generates the client SDK (Flutter, ATMX Web, React).

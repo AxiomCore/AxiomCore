@@ -1,0 +1,9 @@
+{
+  "title": "Workflows",
+  "pages": [
+    "auditing-and-diffing",
+    "mocking-apis",
+    "testing-contracts",
+    "using-the-marketplace"
+  ]
+}

@@ -1,0 +1,44 @@
+---
+title: Auditing & Diffing
+description: Tracking behavioral API changes over time.
+---
+
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+Because AxiomCore compiles your API into a deterministic object, you can mathematically diff changes between commits using `axiom diff`.
+
+### How it works
+
+When you run `axiom build`, the CLI generates a `.lockfile` alongside your `.axiom` contract. This acts as a snapshot of your exact API state.
+
+If a backend developer modifies a FastAPI route, running `axiom diff` compares the new code against the lockfile using the **JSON-Atom** spec.
+
+### Output Formats
+
+<Tabs items={['Changelog (Default)', 'Semantic Terminal', 'Text (Git-style)']}>
+  <Tab value="Changelog (Default)">
+    Generates a human-readable Markdown summary categorized by impact.
+    ```bash
+    axiom diff axiom.acore --format changelog
+    ```
+    **Output:**
+    *   🚨 **Breaking Changes:** Parameter `userId` on **`getUser`** is now **Required**.
+    *   🚀 **New Features:** Added new endpoint: **`processPayment`**.
+    *   ⚙️ **Configuration:** Updated `cache` policy for **`getProducts`**.
+  </Tab>
+  <Tab value="Semantic Terminal">
+    Provides a colorized, tree-like JSON-Atom diff view. Perfect for deep debugging.
+    ```bash
+    axiom diff axiom.acore --format semantic
+    ```
+  </Tab>
+  <Tab value="Text (Git-style)">
+    Standard line-by-line file diff with inline character highlighting.
+    ```bash
+    axiom diff axiom.acore --format text
+    ```
+  </Tab>
+</Tabs>
+
+### Array Identity Diffing
+The underlying `acore-diff` engine is incredibly smart. If you re-order parameters in your backend, it doesn't see it as a "delete and insert". It uses Key-Based Array Identity (matching by `name` or `id`) to detect that a parameter simply moved or mutated.

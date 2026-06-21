@@ -1,12 +1,12 @@
 {
-    "title": "The Acore Language",
-    "pages": [
-        "syntax-overview",
-        "amends",
-        "metadata",
-        "backend-objects",
-        "variants",
-        "policies",
-        "validation"
-    ]
+  "title": "Acore Language",
+  "pages": [
+    "syntax-overview",
+    "amends-and-merging",
+    "policies-and-behavior",
+    "streaming-and-websockets",
+    "variants-and-filtering",
+    "validation",
+    "standard-library"
+  ]
 }

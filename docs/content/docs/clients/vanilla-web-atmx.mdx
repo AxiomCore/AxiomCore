@@ -1,0 +1,54 @@
+---
+title: Vanilla Web (ATMX)
+description: Framework-less, HTML-first API integration.
+---
+
+For server-rendered apps (Django, Flask, PHP) or Alpine.js sites, `atmx-web` allows you to bind APIs entirely via HTML attributes. **No build step required.**
+
+### Initialization
+Load the ES module and config directly in your `<head>`:
+
+```html
+<script type="module">
+  import { atmx } from "https://atmx.axiomcore.dev/latest/atmx.es.js";
+  import { AxiomDefaultConfig } from "/generated/sdk.js";
+
+  await atmx.init(AxiomDefaultConfig);
+</script>
+```
+
+### HTML-First Data Binding
+The ATMX `MutationObserver` scans the DOM for `ax-` attributes and links them to the Wasm engine autonomously.
+
+```html
+<div ax-query="sdk.billing.getInvoices()">
+  
+  <p ax-when="loading">Loading invoices...</p>
+  
+  <div ax-when="data">
+    <!-- List Rendering -->
+    <ul ax-for="invoice in $data">
+      <li ax-text="invoice.amount + ' - ' + invoice.status"></li>
+    </ul>
+  </div>
+
+</div>
+```
+
+### Forms and Mutations
+Binding forms is automatic. ATMX intercepts the submit event, serializes the `FormData`, and executes the Wasm mutation.
+
+```html
+<!-- ax-invalidates tells Wasm to refetch the users list upon success -->
+<form ax-mutate="sdk.users.createUser()" ax-invalidates="sdk.users.getUsers()">
+  <input name="email" type="email" />
+  
+  <!-- Automatic field-level error messages -->
+  <span ax-error-for="email" class="text-red-500"></span>
+
+  <button type="submit">
+    <span ax-when="idle">Create</span>
+    <span ax-when="mutating">Creating...</span>
+  </button>
+</form>
+```

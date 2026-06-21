@@ -1,0 +1,20 @@
+---
+title: Swift (iOS & macOS)
+description: Using AxiomCore natively in Apple ecosystems.
+---
+
+AxiomCore compiles the Generic Runtime into a Universal `AxiomRuntime.xcframework` supporting iOS, iOS Simulators, and macOS.
+
+### Swift Package Manager (SPM)
+
+Add the Axiom SDK repository to your Xcode project. The `Package.swift` automatically downloads the pre-compiled, checksum-verified binary framework from the Axiom release hub.
+
+```swift
+.binaryTarget(
+    name: "AxiomRuntime",
+    url: "https://github.com/AxiomCore/AxiomCore/releases/download/v0.107.0/AxiomRuntime.xcframework.zip",
+    checksum: "15614e..."
+)
+```
+
+*(Swift bindings are currently in active development. Please use the Flutter or Web SDKs for complete feature parity).*

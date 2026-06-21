@@ -1,0 +1,25 @@
+---
+title: The Axiom Pipeline
+description: How backend code transforms into a deterministic frontend runtime.
+---
+
+import { Steps } from 'fumadocs-ui/components/steps';
+
+AxiomCore is not a code generator; it is a **compiled execution pipeline**. Understanding how data flows from your backend source code to your user's device is critical.
+
+<Steps>
+### 1. Ghost Introspection
+Axiom does not execute your backend code. Instead, the CLI uses decoupled binary extractors (e.g., `axiom-fastapi`, `axiom-go-extractor`) to statically analyze your routes and models. It extracts a neutral Intermediate Representation (IR).
+
+### 2. The Acore Compilation
+You write an `axiom.acore` file that `amends` the extracted IR. Here, you inject behavioral policies like Caching Strategies, Retry Logic, and WebSockets definitions. The Acore compiler merges this into a unified AST (Abstract Syntax Tree).
+
+### 3. Packaging & FlatBuffers
+The compiler generates a `.axiom` artifact. If your backend supports it, Axiom automatically translates your models into **FlatBuffer schemas** and compiles them into the binary to ensure ultra-fast memory mapping on the client.
+
+### 4. SDK Generation
+The frontend runs `axiom pull`. Axiom reads the binary and generates a **Thin Proxy SDK** (e.g., Dart for Flutter, or TypeScript for React). This SDK contains *zero network logic*.
+
+### 5. Native Execution
+Inside the app, the **Generic Runtime** (Rust FFI or Wasm) intercepts the SDK calls. The runtime handles the heavy lifting: checking the local database for cache hits, establishing WebSockets, handling exponential backoff, and returning the exact data to the UI.
+</Steps>

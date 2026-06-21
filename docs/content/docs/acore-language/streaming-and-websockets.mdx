@@ -1,0 +1,29 @@
+---
+title: Streaming & WebSockets
+description: Declaring persistent connections in your contract.
+---
+
+Axiom goes beyond REST. You can define endpoints as Streams, and the generated SDKs will expose them as reactive channels.
+
+```pkl
+endpoints {
+  [Routes.chat_socket] {
+    streaming = new WebSocketDef {
+      direction = "bidirectional"
+      reconnect = "auto"
+      
+      // Strongly type the WebSocket frames!
+      client = new WsMessageDef { model = Models.ChatMessage }
+      server = new WsMessageDef { model = Models.ChatResponse }
+    }
+  }
+
+  [Routes.download_report] {
+    streaming = new FileStreamDef {
+      disposition = "attachment"
+    }
+  }
+}
+```
+
+When pulled to the frontend, the SDK generates an `AxiomChannel` object for WebSockets, handling reconnects in Rust/Wasm automatically.

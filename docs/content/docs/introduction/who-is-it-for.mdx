@@ -1,0 +1,23 @@
+---
+title: Who is Axiom for?
+description: How different roles utilize the AxiomCore platform.
+---
+
+AxiomCore is a full lifecycle platform. Depending on your role, the tools you use will differ drastically.
+
+### 🎨 For Frontend Developers (React, Flutter, Vanilla Web)
+You no longer care about HTTP status codes, caching libraries, or WebSocket reconnection logic. 
+*   **Zero-JS Hydration (ATMX):** If you use Vanilla Web or React, the `atmx-web` engine hydrates cached DOM states instantly from `sessionStorage` before the Wasm network engine even boots. Zero loading flickers.
+*   **Reactive UI Elements:** Use `<AxQuery>` in React or `AxiomBuilder` in Flutter to bind directly to an API. Axiom manages `loading`, `error`, `success`, and `mutating` states automatically.
+*   **Offline First:** Out-of-the-box local database caching via Sled (Native) or IndexedDB (Web).
+
+### ⚙️ For Backend Developers (Python, Go)
+You treat your backend as the absolute source of truth.
+*   **Ghost Introspection:** Axiom parses your `main.go` or `main.py` locally. You don't need a heavy Docker container or complex dependencies installed just to export a schema.
+*   **Behavioral Control:** Use the `.acore` language to attach `RetryPolicies` and `CacheStrategies` directly to your routes.
+*   **Variant Filtering:** Easily export different SDKs. Hide `admin_` routes from the mobile app variant using a single line of Acore configuration.
+
+### 🧪 For QA and SDETs
+Axiom provides an enterprise-grade testing and mocking environment built directly into the CLI.
+*   **Axiom Mock Server:** Run `axiom serve`. It spins up an Axum server that reads your contract, providing stateful mocking (e.g., creating a user actually updates the mock store) and probabilistic fault injection (timeouts, connection resets).
+*   **Native Test Runner:** Write tests in Acore. `axiom test` executes network calls, captures variables, and runs assertions (`BodyQuantifierExpectation`) directly against your staging environments.

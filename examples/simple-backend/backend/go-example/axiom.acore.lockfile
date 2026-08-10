@@ -1,0 +1,92 @@
+{
+  "axiom": "1.0",
+  "backend": {
+    "codec": "json",
+    "entrypoint": "./main.go",
+    "language": "python"
+  },
+  "endpoints": {
+    "createItem": {
+      "id": 1,
+      "method": "POST",
+      "name": "createItem",
+      "path": "/",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "void"
+      }
+    },
+    "deleteItem": {
+      "id": 4,
+      "method": "DELETE",
+      "name": "deleteItem",
+      "path": "/{id}",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "void"
+      }
+    },
+    "getItem": {
+      "id": 2,
+      "method": "GET",
+      "name": "getItem",
+      "path": "/{id}",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "void"
+      }
+    },
+    "getItems": {
+      "id": 0,
+      "method": "GET",
+      "name": "getItems",
+      "path": "/",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "void"
+      }
+    },
+    "updateItem": {
+      "id": 3,
+      "method": "PUT",
+      "name": "updateItem",
+      "path": "/{id}",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "void"
+      }
+    }
+  },
+  "models": {
+    "Item": {
+      "fields": {
+        "id": {
+          "isOptional": false,
+          "name": "id",
+          "typeRef": {
+            "kind": "int64"
+          }
+        },
+        "name": {
+          "isOptional": false,
+          "name": "name",
+          "typeRef": {
+            "kind": "string"
+          }
+        }
+      },
+      "name": "Item"
+    }
+  },
+  "project": {
+    "id": "go-example",
+    "version": "v0.0.1"
+  },
+  "variants": {
+    "default": {
+      "include": [
+        "*"
+      ]
+    }
+  }
+}

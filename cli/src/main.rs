@@ -88,13 +88,28 @@ enum Commands {
     Lsp,
     /// Build the .axiom artifact from local source
     Build {
-        /// Path to the .acore configuration file
-        file: PathBuf,
+        /// The Acore file to build (defaults to axiom.acore if not provided)
+        #[arg(default_value = "axiom.acore")]
+        file: String,
+
         #[arg(long)]
         variant: Option<String>,
-        /// Automatically release the contract to Axiom Cloud after building
+
+        /// Release the compiled contract to Axiom Cloud
         #[arg(long)]
         release: bool,
+
+        /// The Target Project ID in Axiom Cloud
+        #[arg(long)]
+        project: Option<String>,
+
+        /// The branch to deploy to (defaults to main)
+        #[arg(long, default_value = "main")]
+        branch: String,
+
+        /// Deployment commit message
+        #[arg(short, long, default_value = "CLI Deployment")]
+        message: String,
     },
     /// Inspect an .axiom file's IR and Policies
     Inspect {
@@ -403,18 +418,20 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             file,
             variant,
             release,
+            project,
+            branch,
+            message,
         } => {
             let variant_str = variant.clone().unwrap_or("default".to_string());
-            let file_path = file.to_string_lossy().to_string();
 
             if std::env::var("CI").is_ok() {
-                match axiom_build::core::build::handle_build(&file_path, &variant_str, "", "", None)
+                match axiom_build::core::build::handle_build(&file, &variant_str, "", "", None)
                     .await
                 {
                     Ok(out_file) => {
                         println!("✅ Build Succeeded! Generated {}", out_file);
-                        let lockfile_path = format!("{}.lockfile", file_path);
-                        if let Ok(content) = std::fs::read_to_string(&file_path) {
+                        let lockfile_path = format!("{}.lockfile", &file);
+                        if let Ok(content) = std::fs::read_to_string(&file) {
                             let _ = std::fs::write(&lockfile_path, content);
                         }
                         if *release {
@@ -428,7 +445,7 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                     }
                 }
             } else {
-                handle_build_command(file_path, variant_str, *release).await
+                handle_build_command(file, variant_str, *release).await
             }
         }
         Commands::Release { file_path } => {
@@ -612,7 +629,7 @@ fn normalize_validator_yaml(raw_spec: &str) -> String {
 }
 
 async fn handle_build_command(
-    file_path: String,
+    file_path: &String,
     variant: String,
     release: bool,
 ) -> anyhow::Result<()> {

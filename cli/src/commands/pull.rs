@@ -118,13 +118,10 @@ fn resolve_out_dir(framework: &Framework, out_flag: Option<String>) -> Result<St
     io::stdout().flush()?;
 
     let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    let input = input.trim();
-
-    if input.is_empty() {
+    if io::stdin().read_line(&mut input).is_err() || input.trim().is_empty() {
         Ok(default_dir.to_string())
     } else {
-        Ok(input.to_string())
+        Ok(input.trim().to_string())
     }
 }
 
@@ -157,7 +154,7 @@ fn resolve_framework(
     }
 
     let detected = detect_framework(project_root);
-    let detected_str = detected.as_ref().map(|f| f.as_str()).unwrap_or("unknown");
+    let detected_str = detected.as_ref().map(|f| f.as_str()).unwrap_or("atmx-web");
     prompt_framework_confirm(detected_str)
 }
 
@@ -179,27 +176,14 @@ fn detect_framework(project_root: &Path) -> Option<Framework> {
                 let all_deps = merge_json_deps(&json);
                 if all_deps
                     .iter()
-                    .any(|d| d == "atmx-react" || d == "@axiomcore/react")
+                    .any(|d| d == "atmx-react" || d == "@axiomcore/react" || d == "react")
                 {
                     return Some(Framework::AtmxReact);
                 }
-                if all_deps
-                    .iter()
-                    .any(|d| d == "atmx" || d == "@axiomcore/web")
-                    || project_root
-                        .join("public")
-                        .join("axiom_runtime.wasm")
-                        .exists()
-                    || project_root.join("public").join(".axiom").exists()
-                {
-                    return Some(Framework::AtmxWeb);
-                }
-                if all_deps.iter().any(|d| d == "react")
-                    && project_root.join("vite.config.ts").exists()
-                {
-                    return Some(Framework::AtmxReact);
-                }
+                // Any JavaScript/TypeScript workspace default to atmx-web
+                return Some(Framework::AtmxWeb);
             }
+            return Some(Framework::AtmxWeb);
         }
     }
     None
@@ -241,21 +225,14 @@ fn prompt_framework_confirm(detected: &str) -> Result<Framework> {
     io::stdout().flush()?;
 
     let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    let input = input.trim();
-
-    if input.is_empty() {
-        Framework::from_str(detected).with_context(|| {
-            format!(
-                "Could not recognise '{}'. Please pass --framework explicitly.",
-                detected
-            )
-        })
+    if io::stdin().read_line(&mut input).is_err() || input.trim().is_empty() {
+        Framework::from_str(detected)
+            .with_context(|| format!("Could not recognise '{}'.", detected))
     } else {
-        Framework::from_str(input).with_context(|| {
+        Framework::from_str(input.trim()).with_context(|| {
             format!(
                 "Unknown framework '{}'. Valid: flutter, dart, atmx-web, atmx-react",
-                input
+                input.trim()
             )
         })
     }
@@ -303,23 +280,23 @@ fn resolve_single_contract_name(path: &Path, name_flag: Option<&str>) -> Result<
     if let Some(n) = name_flag {
         return Ok(slugify(n));
     }
+
     let inferred = path
         .file_stem()
         .map(|s| slugify(&s.to_string_lossy()))
         .filter(|s| !s.is_empty() && s != ".")
         .unwrap_or_else(|| "default".to_string());
+
     print!(
         "📄 Contract name [{}] (press Enter to confirm, or type a new name): ",
         inferred
     );
     io::stdout().flush()?;
     let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    let input = input.trim();
-    if input.is_empty() {
+    if io::stdin().read_line(&mut input).is_err() || input.trim().is_empty() {
         Ok(inferred)
     } else {
-        Ok(slugify(input))
+        Ok(slugify(input.trim()))
     }
 }
 
@@ -346,10 +323,13 @@ fn load_contracts_from_json_config(cfg_path: &Path) -> Result<Vec<ContractEntry>
 }
 
 fn canonicalize_or_absolute(p: &Path) -> Result<PathBuf> {
-    if p.is_absolute() {
+    if let Ok(canon) = p.canonicalize() {
+        Ok(canon)
+    } else if p.is_absolute() {
         Ok(p.to_path_buf())
     } else {
-        Ok(std::env::current_dir()?.join(p))
+        let joined = std::env::current_dir()?.join(p);
+        Ok(joined.canonicalize().unwrap_or(joined))
     }
 }
 
@@ -485,7 +465,6 @@ async fn run_codegen_dart(
     Ok(())
 }
 
-/// A dedicated execution pipeline for ATMX frameworks (bypasses `generate_from_fbs` and `dart pub get`)
 async fn run_codegen_atmx(
     project_root: &Path,
     installed_contract: &Path,
@@ -493,6 +472,7 @@ async fn run_codegen_atmx(
     out_dir: &str,
     is_react: bool,
 ) -> Result<()> {
+    // 1. Copy to public/
     let public_dir = project_root.join("public");
     fs::create_dir_all(&public_dir)?;
     let public_contract = public_dir.join(format!("{}.axiom", entry.name));
@@ -502,11 +482,21 @@ async fn run_codegen_atmx(
             public_contract.display()
         )
     })?;
-    println!("📄 Vite static asset → public/{}.axiom", entry.name);
+    println!("📄 Static asset written → public/{}.axiom", entry.name);
 
-    // ✨ FIX: Removed atmx.config.json generation entirely!
+    // 2. Copy to static/axiom/ for Go servers if static folder exists
+    let static_axiom_dir = project_root.join("static").join("axiom");
+    if project_root.join("static").exists() {
+        fs::create_dir_all(&static_axiom_dir)?;
+        let _ = fs::copy(installed_contract, static_axiom_dir.join(".axiom"));
+        let _ = fs::copy(
+            installed_contract,
+            static_axiom_dir.join(format!("{}.axiom", entry.name)),
+        );
+        println!("📄 Static asset written → static/axiom/.axiom");
+    }
 
-    // 2. Trigger `npx atmx generate` using AxiomDeps.toml
+    // 3. Trigger `npx atmx generate`
     #[cfg(target_os = "windows")]
     let npx_cmd = "npx.cmd";
     #[cfg(not(target_os = "windows"))]
@@ -517,7 +507,7 @@ async fn run_codegen_atmx(
         .arg("atmx")
         .arg("generate")
         .arg("-c")
-        .arg("AxiomDeps.toml") // ✨ FIX: Read TOML directly
+        .arg("AxiomDeps.toml")
         .arg("-o")
         .arg(out_dir);
 

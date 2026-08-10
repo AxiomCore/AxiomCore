@@ -1,12 +1,6 @@
-amends "axiom-go:."
+amends "axiom-go:./main.go"
 
 project {
-  id = "my-axiom-project"
+  id = "go-example"
   version = "v0.0.1"
-}
-
-variants {
-  ["default"] {
-    include = new { "*" }
-  }
 }

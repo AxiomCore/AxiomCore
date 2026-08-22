@@ -1,7 +1,6 @@
 use acore::evaluator::Evaluator;
 use acore::security::SecurityManager;
 use anyhow::{anyhow, Result};
-use axiom_cloud::CloudClient;
 use console::style;
 use std::path::PathBuf;
 
@@ -14,9 +13,6 @@ pub async fn handle_deploy_mock_server(file: PathBuf) -> Result<()> {
     );
 
     // 1. Fetch Credentials and Project ID
-    let auth_data = crate::auth_store::load_auth_data()
-        .map_err(|_| anyhow!("Not logged in. Run 'axiom login' first."))?;
-
     let current_dir = std::env::current_dir()?;
     let project_slug = crate::auth_store::get_project_id(&current_dir)?.ok_or_else(|| {
         anyhow!("Directory not linked to an Axiom project. Run 'axiom project link'.")
@@ -50,7 +46,7 @@ pub async fn handle_deploy_mock_server(file: PathBuf) -> Result<()> {
         style(&project_slug).cyan()
     );
 
-    let client = CloudClient::new(auth_data.access_token);
+    let client = crate::auth_store::authenticated_cloud_client()?;
     client
         .upload_mock_config(&project_slug, &json_payload)
         .await?;

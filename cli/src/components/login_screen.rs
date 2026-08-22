@@ -122,7 +122,7 @@ pub fn render_login_screen(f: &mut Frame, area: Rect, state: &State) {
                 Line::from(e.as_str()),
                 Line::from(""),
                 Line::from(Span::styled(
-                    "Press [r] to retry or [Esc] to cancel",
+                    "Press [Esc] or [q] to close",
                     Style::default().dim(),
                 )),
             ])

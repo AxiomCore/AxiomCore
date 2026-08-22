@@ -231,6 +231,16 @@ project {{
   id = "{}"
   version = "v0.0.1"
 }}
+
+// OTLP/HTTP trace export is a release-level decision. Create a scoped source
+// in AxiomCore or use any OTLP-compatible collector, then add its ingest-only
+// header and set enabled = true before building a new cloud-signed release.
+// The endpoint and headers are immutable once the artifact is signed.
+observability {{
+  enabled = false
+  telemetryUrl = "https://api.axiomcore.dev/v1/traces"
+  sampleRate = 1.0
+}}
 "#,
         module, entrypoint, project_name
     );

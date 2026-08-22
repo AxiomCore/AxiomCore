@@ -1,0 +1,1037 @@
+{
+  "axiom": "1.0",
+  "backend": {
+    "codec": "json",
+    "entrypoint": "app",
+    "language": "python"
+  },
+  "endpoints": {
+    "archive_project": {
+      "id": 17,
+      "method": "POST",
+      "name": "archive_project",
+      "parameters": [
+        {
+          "isOptional": false,
+          "name": "project_id",
+          "source": "path",
+          "typeRef": {
+            "kind": "json"
+          }
+        }
+      ],
+      "path": "/projects/{project_id}/archive",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "named",
+        "value": "ProjectRead"
+      }
+    },
+    "complete_task": {
+      "id": 16,
+      "method": "POST",
+      "name": "complete_task",
+      "parameters": [
+        {
+          "isOptional": false,
+          "name": "task_id",
+          "source": "path",
+          "typeRef": {
+            "kind": "json"
+          }
+        }
+      ],
+      "path": "/tasks/{task_id}/complete",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "named",
+        "value": "TaskRead"
+      }
+    },
+    "create_project": {
+      "id": 6,
+      "method": "POST",
+      "name": "create_project",
+      "parameters": [
+        {
+          "isOptional": false,
+          "name": "data",
+          "source": "query",
+          "typeRef": {
+            "kind": "json"
+          }
+        }
+      ],
+      "path": "/projects",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "named",
+        "value": "ProjectRead"
+      }
+    },
+    "create_task": {
+      "id": 11,
+      "method": "POST",
+      "name": "create_task",
+      "parameters": [
+        {
+          "isOptional": false,
+          "name": "data",
+          "source": "query",
+          "typeRef": {
+            "kind": "json"
+          }
+        }
+      ],
+      "path": "/tasks",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "named",
+        "value": "TaskRead"
+      }
+    },
+    "create_user": {
+      "id": 1,
+      "method": "POST",
+      "name": "create_user",
+      "parameters": [
+        {
+          "isOptional": false,
+          "name": "data",
+          "source": "query",
+          "typeRef": {
+            "kind": "json"
+          }
+        }
+      ],
+      "path": "/users",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "named",
+        "value": "UserRead"
+      }
+    },
+    "delete_project": {
+      "id": 10,
+      "method": "DELETE",
+      "name": "delete_project",
+      "parameters": [
+        {
+          "isOptional": false,
+          "name": "project_id",
+          "source": "path",
+          "typeRef": {
+            "kind": "json"
+          }
+        }
+      ],
+      "path": "/projects/{project_id}",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "json"
+      }
+    },
+    "delete_task": {
+      "id": 15,
+      "method": "DELETE",
+      "name": "delete_task",
+      "parameters": [
+        {
+          "isOptional": false,
+          "name": "task_id",
+          "source": "path",
+          "typeRef": {
+            "kind": "json"
+          }
+        }
+      ],
+      "path": "/tasks/{task_id}",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "json"
+      }
+    },
+    "delete_user": {
+      "id": 5,
+      "method": "DELETE",
+      "name": "delete_user",
+      "parameters": [
+        {
+          "isOptional": false,
+          "name": "user_id",
+          "source": "path",
+          "typeRef": {
+            "kind": "json"
+          }
+        }
+      ],
+      "path": "/users/{user_id}",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "json"
+      }
+    },
+    "get_project": {
+      "id": 8,
+      "method": "GET",
+      "name": "get_project",
+      "parameters": [
+        {
+          "isOptional": false,
+          "name": "project_id",
+          "source": "path",
+          "typeRef": {
+            "kind": "json"
+          }
+        }
+      ],
+      "path": "/projects/{project_id}",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "named",
+        "value": "ProjectDetail"
+      }
+    },
+    "get_task": {
+      "id": 13,
+      "method": "GET",
+      "name": "get_task",
+      "parameters": [
+        {
+          "isOptional": false,
+          "name": "task_id",
+          "source": "path",
+          "typeRef": {
+            "kind": "json"
+          }
+        }
+      ],
+      "path": "/tasks/{task_id}",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "named",
+        "value": "TaskWithAssignee"
+      }
+    },
+    "get_user": {
+      "id": 3,
+      "method": "GET",
+      "name": "get_user",
+      "parameters": [
+        {
+          "isOptional": false,
+          "name": "user_id",
+          "source": "path",
+          "typeRef": {
+            "kind": "json"
+          }
+        }
+      ],
+      "path": "/users/{user_id}",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "named",
+        "value": "UserDetail"
+      }
+    },
+    "health": {
+      "id": 19,
+      "method": "GET",
+      "name": "health",
+      "path": "/health",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "json"
+      }
+    },
+    "list_projects": {
+      "id": 7,
+      "method": "GET",
+      "name": "list_projects",
+      "parameters": [
+        {
+          "isOptional": true,
+          "name": "search",
+          "source": "query",
+          "typeRef": {
+            "kind": "json"
+          }
+        },
+        {
+          "isOptional": true,
+          "name": "owner_id",
+          "source": "query",
+          "typeRef": {
+            "kind": "json"
+          }
+        },
+        {
+          "isOptional": true,
+          "name": "project_status",
+          "source": "query",
+          "typeRef": {
+            "kind": "json"
+          }
+        },
+        {
+          "isOptional": true,
+          "name": "page",
+          "source": "query",
+          "typeRef": {
+            "kind": "json"
+          }
+        },
+        {
+          "isOptional": true,
+          "name": "page_size",
+          "source": "query",
+          "typeRef": {
+            "kind": "json"
+          }
+        }
+      ],
+      "path": "/projects",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "named",
+        "value": "ProjectListResponse"
+      }
+    },
+    "list_tasks": {
+      "id": 12,
+      "method": "GET",
+      "name": "list_tasks",
+      "parameters": [
+        {
+          "isOptional": true,
+          "name": "search",
+          "source": "query",
+          "typeRef": {
+            "kind": "json"
+          }
+        },
+        {
+          "isOptional": true,
+          "name": "project_id",
+          "source": "query",
+          "typeRef": {
+            "kind": "json"
+          }
+        },
+        {
+          "isOptional": true,
+          "name": "assignee_id",
+          "source": "query",
+          "typeRef": {
+            "kind": "json"
+          }
+        },
+        {
+          "isOptional": true,
+          "name": "task_status",
+          "source": "query",
+          "typeRef": {
+            "kind": "json"
+          }
+        },
+        {
+          "isOptional": true,
+          "name": "priority",
+          "source": "query",
+          "typeRef": {
+            "kind": "json"
+          }
+        },
+        {
+          "isOptional": true,
+          "name": "overdue",
+          "source": "query",
+          "typeRef": {
+            "kind": "json"
+          }
+        },
+        {
+          "isOptional": true,
+          "name": "page",
+          "source": "query",
+          "typeRef": {
+            "kind": "json"
+          }
+        },
+        {
+          "isOptional": true,
+          "name": "page_size",
+          "source": "query",
+          "typeRef": {
+            "kind": "json"
+          }
+        }
+      ],
+      "path": "/tasks",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "named",
+        "value": "TaskListResponse"
+      }
+    },
+    "list_users": {
+      "id": 2,
+      "method": "GET",
+      "name": "list_users",
+      "parameters": [
+        {
+          "isOptional": true,
+          "name": "search",
+          "source": "query",
+          "typeRef": {
+            "kind": "json"
+          }
+        },
+        {
+          "isOptional": true,
+          "name": "role",
+          "source": "query",
+          "typeRef": {
+            "kind": "json"
+          }
+        },
+        {
+          "isOptional": true,
+          "name": "is_active",
+          "source": "query",
+          "typeRef": {
+            "kind": "json"
+          }
+        },
+        {
+          "isOptional": true,
+          "name": "limit",
+          "source": "query",
+          "typeRef": {
+            "kind": "json"
+          }
+        },
+        {
+          "isOptional": true,
+          "name": "offset",
+          "source": "query",
+          "typeRef": {
+            "kind": "json"
+          }
+        }
+      ],
+      "path": "/users",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "list",
+        "value": {
+          "kind": "named",
+          "value": "UserRead"
+        }
+      }
+    },
+    "stats": {
+      "id": 18,
+      "method": "GET",
+      "name": "stats",
+      "path": "/stats",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "json"
+      }
+    },
+    "update_project": {
+      "id": 9,
+      "method": "PATCH",
+      "name": "update_project",
+      "parameters": [
+        {
+          "isOptional": false,
+          "name": "project_id",
+          "source": "path",
+          "typeRef": {
+            "kind": "json"
+          }
+        },
+        {
+          "isOptional": false,
+          "name": "data",
+          "source": "query",
+          "typeRef": {
+            "kind": "json"
+          }
+        }
+      ],
+      "path": "/projects/{project_id}",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "named",
+        "value": "ProjectRead"
+      }
+    },
+    "update_task": {
+      "id": 14,
+      "method": "PATCH",
+      "name": "update_task",
+      "parameters": [
+        {
+          "isOptional": false,
+          "name": "task_id",
+          "source": "path",
+          "typeRef": {
+            "kind": "json"
+          }
+        },
+        {
+          "isOptional": false,
+          "name": "data",
+          "source": "query",
+          "typeRef": {
+            "kind": "json"
+          }
+        }
+      ],
+      "path": "/tasks/{task_id}",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "named",
+        "value": "TaskRead"
+      }
+    },
+    "update_user": {
+      "id": 4,
+      "method": "PATCH",
+      "name": "update_user",
+      "parameters": [
+        {
+          "isOptional": false,
+          "name": "user_id",
+          "source": "path",
+          "typeRef": {
+            "kind": "json"
+          }
+        },
+        {
+          "isOptional": false,
+          "name": "data",
+          "source": "query",
+          "typeRef": {
+            "kind": "json"
+          }
+        }
+      ],
+      "path": "/users/{user_id}",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "named",
+        "value": "UserRead"
+      }
+    }
+  },
+  "models": {
+    "PaginationMeta": {
+      "fields": {
+        "page": {
+          "isOptional": false,
+          "name": "page",
+          "typeRef": {
+            "kind": "int64"
+          }
+        },
+        "page_size": {
+          "isOptional": false,
+          "name": "page_size",
+          "typeRef": {
+            "kind": "int64"
+          }
+        },
+        "pages": {
+          "isOptional": false,
+          "name": "pages",
+          "typeRef": {
+            "kind": "int64"
+          }
+        },
+        "total": {
+          "isOptional": false,
+          "name": "total",
+          "typeRef": {
+            "kind": "int64"
+          }
+        }
+      },
+      "name": "PaginationMeta"
+    },
+    "ProjectDetail": {
+      "fields": {
+        "created_at": {
+          "isOptional": false,
+          "name": "created_at",
+          "typeRef": {
+            "kind": "json"
+          }
+        },
+        "description": {
+          "isOptional": true,
+          "name": "description",
+          "typeRef": {
+            "kind": "string"
+          }
+        },
+        "id": {
+          "isOptional": false,
+          "name": "id",
+          "typeRef": {
+            "kind": "int64"
+          }
+        },
+        "name": {
+          "isOptional": false,
+          "name": "name",
+          "typeRef": {
+            "kind": "string"
+          }
+        },
+        "owner": {
+          "isOptional": false,
+          "name": "owner",
+          "typeRef": {
+            "kind": "named",
+            "value": "UserRead"
+          }
+        },
+        "owner_id": {
+          "isOptional": false,
+          "name": "owner_id",
+          "typeRef": {
+            "kind": "int64"
+          }
+        },
+        "status": {
+          "isOptional": false,
+          "name": "status",
+          "typeRef": {
+            "kind": "named",
+            "value": "ProjectStatus"
+          }
+        },
+        "tasks": {
+          "isOptional": false,
+          "name": "tasks",
+          "typeRef": {
+            "kind": "list",
+            "value": {
+              "kind": "named",
+              "value": "TaskWithAssignee"
+            }
+          }
+        },
+        "updated_at": {
+          "isOptional": false,
+          "name": "updated_at",
+          "typeRef": {
+            "kind": "json"
+          }
+        }
+      },
+      "name": "ProjectDetail"
+    },
+    "ProjectListResponse": {
+      "fields": {
+        "items": {
+          "isOptional": false,
+          "name": "items",
+          "typeRef": {
+            "kind": "list",
+            "value": {
+              "kind": "named",
+              "value": "ProjectRead"
+            }
+          }
+        },
+        "meta": {
+          "isOptional": false,
+          "name": "meta",
+          "typeRef": {
+            "kind": "named",
+            "value": "PaginationMeta"
+          }
+        }
+      },
+      "name": "ProjectListResponse"
+    },
+    "ProjectRead": {
+      "fields": {
+        "created_at": {
+          "isOptional": false,
+          "name": "created_at",
+          "typeRef": {
+            "kind": "json"
+          }
+        },
+        "description": {
+          "isOptional": true,
+          "name": "description",
+          "typeRef": {
+            "kind": "string"
+          }
+        },
+        "id": {
+          "isOptional": false,
+          "name": "id",
+          "typeRef": {
+            "kind": "int64"
+          }
+        },
+        "name": {
+          "isOptional": false,
+          "name": "name",
+          "typeRef": {
+            "kind": "string"
+          }
+        },
+        "owner_id": {
+          "isOptional": false,
+          "name": "owner_id",
+          "typeRef": {
+            "kind": "int64"
+          }
+        },
+        "status": {
+          "isOptional": false,
+          "name": "status",
+          "typeRef": {
+            "kind": "named",
+            "value": "ProjectStatus"
+          }
+        },
+        "updated_at": {
+          "isOptional": false,
+          "name": "updated_at",
+          "typeRef": {
+            "kind": "json"
+          }
+        }
+      },
+      "name": "ProjectRead"
+    },
+    "TaskListResponse": {
+      "fields": {
+        "items": {
+          "isOptional": false,
+          "name": "items",
+          "typeRef": {
+            "kind": "list",
+            "value": {
+              "kind": "named",
+              "value": "TaskWithAssignee"
+            }
+          }
+        },
+        "meta": {
+          "isOptional": false,
+          "name": "meta",
+          "typeRef": {
+            "kind": "named",
+            "value": "PaginationMeta"
+          }
+        }
+      },
+      "name": "TaskListResponse"
+    },
+    "TaskRead": {
+      "fields": {
+        "assignee_id": {
+          "isOptional": true,
+          "name": "assignee_id",
+          "typeRef": {
+            "kind": "int64"
+          }
+        },
+        "created_at": {
+          "isOptional": false,
+          "name": "created_at",
+          "typeRef": {
+            "kind": "json"
+          }
+        },
+        "description": {
+          "isOptional": true,
+          "name": "description",
+          "typeRef": {
+            "kind": "string"
+          }
+        },
+        "due_at": {
+          "isOptional": true,
+          "name": "due_at",
+          "typeRef": {
+            "kind": "json"
+          }
+        },
+        "id": {
+          "isOptional": false,
+          "name": "id",
+          "typeRef": {
+            "kind": "int64"
+          }
+        },
+        "priority": {
+          "isOptional": false,
+          "name": "priority",
+          "typeRef": {
+            "kind": "named",
+            "value": "TaskPriority"
+          }
+        },
+        "project_id": {
+          "isOptional": false,
+          "name": "project_id",
+          "typeRef": {
+            "kind": "int64"
+          }
+        },
+        "status": {
+          "isOptional": false,
+          "name": "status",
+          "typeRef": {
+            "kind": "named",
+            "value": "TaskStatus"
+          }
+        },
+        "title": {
+          "isOptional": false,
+          "name": "title",
+          "typeRef": {
+            "kind": "string"
+          }
+        },
+        "updated_at": {
+          "isOptional": false,
+          "name": "updated_at",
+          "typeRef": {
+            "kind": "json"
+          }
+        }
+      },
+      "name": "TaskRead"
+    },
+    "TaskWithAssignee": {
+      "fields": {
+        "assignee": {
+          "isOptional": true,
+          "name": "assignee",
+          "typeRef": {
+            "kind": "named",
+            "value": "UserRead"
+          }
+        },
+        "assignee_id": {
+          "isOptional": true,
+          "name": "assignee_id",
+          "typeRef": {
+            "kind": "int64"
+          }
+        },
+        "created_at": {
+          "isOptional": false,
+          "name": "created_at",
+          "typeRef": {
+            "kind": "json"
+          }
+        },
+        "description": {
+          "isOptional": true,
+          "name": "description",
+          "typeRef": {
+            "kind": "string"
+          }
+        },
+        "due_at": {
+          "isOptional": true,
+          "name": "due_at",
+          "typeRef": {
+            "kind": "json"
+          }
+        },
+        "id": {
+          "isOptional": false,
+          "name": "id",
+          "typeRef": {
+            "kind": "int64"
+          }
+        },
+        "priority": {
+          "isOptional": false,
+          "name": "priority",
+          "typeRef": {
+            "kind": "named",
+            "value": "TaskPriority"
+          }
+        },
+        "project_id": {
+          "isOptional": false,
+          "name": "project_id",
+          "typeRef": {
+            "kind": "int64"
+          }
+        },
+        "status": {
+          "isOptional": false,
+          "name": "status",
+          "typeRef": {
+            "kind": "named",
+            "value": "TaskStatus"
+          }
+        },
+        "title": {
+          "isOptional": false,
+          "name": "title",
+          "typeRef": {
+            "kind": "string"
+          }
+        },
+        "updated_at": {
+          "isOptional": false,
+          "name": "updated_at",
+          "typeRef": {
+            "kind": "json"
+          }
+        }
+      },
+      "name": "TaskWithAssignee"
+    },
+    "UserDetail": {
+      "fields": {
+        "created_at": {
+          "isOptional": false,
+          "name": "created_at",
+          "typeRef": {
+            "kind": "json"
+          }
+        },
+        "email": {
+          "isOptional": false,
+          "name": "email",
+          "typeRef": {
+            "kind": "json"
+          }
+        },
+        "id": {
+          "isOptional": false,
+          "name": "id",
+          "typeRef": {
+            "kind": "int64"
+          }
+        },
+        "is_active": {
+          "isOptional": false,
+          "name": "is_active",
+          "typeRef": {
+            "kind": "bool"
+          }
+        },
+        "name": {
+          "isOptional": false,
+          "name": "name",
+          "typeRef": {
+            "kind": "string"
+          }
+        },
+        "projects": {
+          "isOptional": false,
+          "name": "projects",
+          "typeRef": {
+            "kind": "list",
+            "value": {
+              "kind": "named",
+              "value": "ProjectRead"
+            }
+          }
+        },
+        "role": {
+          "isOptional": false,
+          "name": "role",
+          "typeRef": {
+            "kind": "named",
+            "value": "UserRole"
+          }
+        },
+        "updated_at": {
+          "isOptional": false,
+          "name": "updated_at",
+          "typeRef": {
+            "kind": "json"
+          }
+        }
+      },
+      "name": "UserDetail"
+    },
+    "UserRead": {
+      "fields": {
+        "created_at": {
+          "isOptional": false,
+          "name": "created_at",
+          "typeRef": {
+            "kind": "json"
+          }
+        },
+        "email": {
+          "isOptional": false,
+          "name": "email",
+          "typeRef": {
+            "kind": "json"
+          }
+        },
+        "id": {
+          "isOptional": false,
+          "name": "id",
+          "typeRef": {
+            "kind": "int64"
+          }
+        },
+        "is_active": {
+          "isOptional": false,
+          "name": "is_active",
+          "typeRef": {
+            "kind": "bool"
+          }
+        },
+        "name": {
+          "isOptional": false,
+          "name": "name",
+          "typeRef": {
+            "kind": "string"
+          }
+        },
+        "role": {
+          "isOptional": false,
+          "name": "role",
+          "typeRef": {
+            "kind": "named",
+            "value": "UserRole"
+          }
+        },
+        "updated_at": {
+          "isOptional": false,
+          "name": "updated_at",
+          "typeRef": {
+            "kind": "json"
+          }
+        }
+      },
+      "name": "UserRead"
+    }
+  },
+  "project": {
+    "id": "demo-app",
+    "version": "v0.0.3"
+  },
+  "variants": {
+    "default": {
+      "include": [
+        "*"
+      ]
+    }
+  }
+}

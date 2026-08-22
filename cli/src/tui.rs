@@ -61,12 +61,25 @@ impl Tui {
                     maybe_event = reader.next().fuse() => {
                         if let Some(Ok(CrosstermEvent::Key(key))) = maybe_event {
                             if key.kind == KeyEventKind::Press {
-                                _event_tx.send(Event::Key(key)).unwrap();
+                                // The receiver is intentionally dropped while commands unwind.
+                                // Treat that as a normal shutdown signal rather than panicking
+                                // from this detached input task.
+                                if _event_tx.send(Event::Key(key)).is_err() {
+                                    break;
+                                }
                             }
                         }
                     },
-                    _ = tick_interval.tick() => _event_tx.send(Event::Tick).unwrap(),
-                    _ = render_interval.tick() => _event_tx.send(Event::Render).unwrap(),
+                    _ = tick_interval.tick() => {
+                        if _event_tx.send(Event::Tick).is_err() {
+                            break;
+                        }
+                    },
+                    _ = render_interval.tick() => {
+                        if _event_tx.send(Event::Render).is_err() {
+                            break;
+                        }
+                    },
                 }
             }
         });
@@ -81,6 +94,9 @@ impl Tui {
 
     pub fn exit(&mut self) -> Result<()> {
         self.cancellation_token.cancel();
+        // EventStream can be blocked waiting for terminal input. Aborting guarantees
+        // a command error cannot leave a background task alive during process teardown.
+        self.task.abort();
         crossterm::execute!(std::io::stdout(), LeaveAlternateScreen, cursor::Show)?;
         crossterm::terminal::disable_raw_mode()?;
         Ok(())

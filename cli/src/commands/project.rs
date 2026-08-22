@@ -1,19 +1,16 @@
 use crate::auth_store;
 use crate::components::fuzzy_finder::{render_fuzzy_finder, ProjectItem};
 use anyhow::{anyhow, Result};
-use axiom_cloud::CloudClient;
 use console::style;
 use crossterm::event::KeyCode;
 use dialoguer::{theme::ColorfulTheme, Input};
 use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
 use std::env;
-use std::path::Path;
 use tui_input::backend::crossterm::EventHandler;
 
 pub async fn handle_project_list() -> Result<()> {
-    let auth_data = auth_store::load_auth_data()?;
-    let client = CloudClient::new(auth_data.access_token);
+    let client = auth_store::authenticated_cloud_client()?;
 
     let projects = client.list_projects().await?;
 
@@ -35,8 +32,7 @@ pub async fn handle_project_create(
     desc: Option<String>,
     path: Option<std::path::PathBuf>,
 ) -> Result<()> {
-    let auth_data = auth_store::load_auth_data()?;
-    let client = CloudClient::new(auth_data.access_token);
+    let client = auth_store::authenticated_cloud_client()?;
 
     // -------------------------------
     // 1. Resolve name (CLI > prompt)
@@ -72,8 +68,14 @@ pub async fn handle_project_create(
     let contract_path = match path {
         Some(p) => p,
         None => {
-            // default fallback
-            std::path::PathBuf::from(".axiom")
+            // Prefer the visible default emitted by `axiom build`, while
+            // keeping existing hidden artifacts usable.
+            let visible = std::path::PathBuf::from("axiom.axiom");
+            if visible.is_file() {
+                visible
+            } else {
+                std::path::PathBuf::from(".axiom")
+            }
         }
     };
 
@@ -122,8 +124,7 @@ pub async fn handle_project_link(project_id: Option<String>) -> Result<()> {
     let pid = match project_id {
         Some(id) => id,
         None => {
-            let auth_data = auth_store::load_auth_data()?;
-            let client = CloudClient::new(auth_data.access_token);
+            let client = auth_store::authenticated_cloud_client()?;
             let projects = client.list_projects().await?;
             let items: Vec<ProjectItem> = projects
                 .into_iter()
@@ -180,5 +181,18 @@ pub async fn handle_project_link(project_id: Option<String>) -> Result<()> {
 
     auth_store::link_project(&current_dir, &pid)?;
     println!("🔗 Linked project {} successfully.", style(pid).cyan());
+    Ok(())
+}
+
+pub async fn handle_project_rotate_key(project_slug: String) -> Result<()> {
+    let client = auth_store::authenticated_cloud_client()?;
+    let key = client.rotate_project_key(&project_slug).await?;
+    println!(
+        "✅ Rotated signing key for {}: {} ({})",
+        style(project_slug).cyan(),
+        style(key.id).green(),
+        key.algorithm
+    );
+    println!("   Previous public keys remain available to verify older contract releases.");
     Ok(())
 }

@@ -99,9 +99,15 @@ enum Commands {
         #[arg(long)]
         release: bool,
 
-        /// The Target Project ID in Axiom Cloud
+        /// Optional Cloud project ID or slug override. By default the linked
+        /// directory project is used automatically.
         #[arg(long)]
         project: Option<String>,
+
+        /// Optional immutable Cloud release version. Interactive releases
+        /// suggest the next available version on a collision.
+        #[arg(long)]
+        version: Option<String>,
 
         /// The branch to deploy to (defaults to main)
         #[arg(long, default_value = "main")]
@@ -113,12 +119,21 @@ enum Commands {
     },
     /// Inspect an .axiom file's IR and Policies
     Inspect {
-        #[arg(default_value = ".axiom")]
+        #[arg(default_value = "axiom.axiom")]
         path: PathBuf,
     },
     Release {
-        /// Path to the .axiom file (Defaults to .axiom in the current directory)
+        /// Path to the .axiom file (defaults to axiom.axiom in the current directory)
         file_path: Option<PathBuf>,
+
+        /// Optional Cloud project ID or slug override. A linked directory is
+        /// resolved automatically when this is omitted.
+        #[arg(long)]
+        project: Option<String>,
+
+        /// Optional immutable Cloud release version override.
+        #[arg(long)]
+        version: Option<String>,
     },
     Pull {
         #[arg(long)]
@@ -190,6 +205,12 @@ enum ProjectAction {
     Link {
         #[arg(long)]
         project_id: Option<String>,
+    },
+    /// Replace the active signing key while retaining old public keys for verification
+    RotateKey {
+        /// Project slug, for example `demo-app`
+        #[arg(long)]
+        project: String,
     },
     /// Resolves local acore project dependencies
     Resolve {
@@ -419,6 +440,7 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             variant,
             release,
             project,
+            version,
             branch,
             message,
         } => {
@@ -435,7 +457,14 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                             let _ = std::fs::write(&lockfile_path, content);
                         }
                         if *release {
-                            commands::release::handle_release(&out_file).await?;
+                            commands::release::handle_release(
+                                &out_file,
+                                project.as_deref(),
+                                version.as_deref(),
+                                Some(Path::new(file)),
+                                &variant_str,
+                            )
+                            .await?;
                         }
                         Ok(())
                     }
@@ -445,17 +474,50 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                     }
                 }
             } else {
-                handle_build_command(file, variant_str, *release).await
+                handle_build_command(
+                    file,
+                    variant_str,
+                    *release,
+                    project.as_deref(),
+                    version.as_deref(),
+                )
+                .await
             }
         }
-        Commands::Release { file_path } => {
-            // Default to ".axiom" in current directory if no path is passed
-            let path = file_path
-                .clone()
-                .unwrap_or_else(|| std::path::PathBuf::from(".axiom"));
-            commands::release::handle_release(path.to_str().unwrap()).await
+        Commands::Release {
+            file_path,
+            project,
+            version,
+        } => {
+            // `axiom build` now creates the visible `axiom.axiom` artifact.
+            // Retain the legacy hidden filename as a fallback for existing
+            // projects and CI scripts.
+            let path = file_path.clone().unwrap_or_else(|| {
+                let visible = std::path::PathBuf::from("axiom.axiom");
+                if visible.is_file() {
+                    visible
+                } else {
+                    std::path::PathBuf::from(".axiom")
+                }
+            });
+            let default_source = Path::new("axiom.acore");
+            commands::release::handle_release(
+                path.to_str().unwrap(),
+                project.as_deref(),
+                version.as_deref(),
+                default_source.is_file().then_some(default_source),
+                "default",
+            )
+            .await
         }
-        Commands::Inspect { path } => handle_inspect(path).await,
+        Commands::Inspect { path } => {
+            let artifact = if path.as_path() == Path::new("axiom.axiom") && !path.is_file() {
+                PathBuf::from(".axiom")
+            } else {
+                path.clone()
+            };
+            handle_inspect(&artifact).await
+        }
         Commands::Project { action } => match action {
             ProjectAction::List => commands::project::handle_project_list().await,
             ProjectAction::Create {
@@ -472,6 +534,9 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             }
             ProjectAction::Link { project_id } => {
                 commands::project::handle_project_link(project_id.clone()).await
+            }
+            ProjectAction::RotateKey { project } => {
+                commands::project::handle_project_rotate_key(project.clone()).await
             }
             ProjectAction::Resolve { dir } => {
                 acore::project_cmd::resolve_project(dir.to_str().unwrap())
@@ -548,14 +613,16 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
 // =========================================================================================
 
 async fn handle_login_tui() -> anyhow::Result<()> {
+    // Do not enter raw/alternate-screen mode until the device flow is ready. If the
+    // authentication service rejects or rate-limits the request, the developer gets
+    // a normal shell error and no detached TUI task is left running.
+    let auth_info = CloudClient::start_login().await?;
+
     let mut state = crate::state::State::new();
     let mut tui = crate::tui::Tui::new().map_err(|e| anyhow::anyhow!(e))?;
     tui.enter().map_err(|e| anyhow::anyhow!(e))?;
 
-    // STEP 1: Get the code (Library is now silent!)
-    let auth_info = CloudClient::start_login().await?;
-
-    // STEP 2: Put the data into the TUI State
+    // Put the device-flow details into the TUI state.
     state.login_context.status = crate::state::LoginStatus::WaitingForUser {
         code: auth_info.user_code.clone(),
         url: auth_info.verification_uri.clone(),
@@ -581,6 +648,7 @@ async fn handle_login_tui() -> anyhow::Result<()> {
                         crate::auth_store::save_tokens(
                             val["access_token"].as_str().unwrap_or_default(),
                             val["refresh_token"].as_str().unwrap_or_default(),
+                            val["expires_in"].as_u64().unwrap_or_default(),
                         )?;
                         state.login_context.status = crate::state::LoginStatus::Success;
                     }
@@ -599,6 +667,11 @@ async fn handle_login_tui() -> anyhow::Result<()> {
                 match key.code {
                     KeyCode::Char('q') | KeyCode::Esc => {
                         login_task.abort();
+                        if let crate::state::LoginStatus::Error(message) =
+                            &state.login_context.status
+                        {
+                            return Err(anyhow::anyhow!(message.clone()));
+                        }
                         return Ok(());
                     }
                     KeyCode::Enter
@@ -632,6 +705,8 @@ async fn handle_build_command(
     file_path: &String,
     variant: String,
     release: bool,
+    project_override: Option<&str>,
+    version_override: Option<&str>,
 ) -> anyhow::Result<()> {
     let mut state = crate::state::State::new();
     let (action_tx, mut action_rx) = tokio::sync::mpsc::unbounded_channel::<Action>();
@@ -717,7 +792,14 @@ async fn handle_build_command(
             // Trigger release if flag was passed
             if release {
                 println!("\n🚀 Initiating Release...");
-                crate::commands::release::handle_release(&output_filename).await?;
+                crate::commands::release::handle_release(
+                    &output_filename,
+                    project_override,
+                    version_override,
+                    Some(Path::new(file_path)),
+                    &variant,
+                )
+                .await?;
             }
             Ok(())
         }

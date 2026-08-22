@@ -1,0 +1,6 @@
+amends "axiom-fastapi:main.py:app"
+
+project {
+  id = "demo-app"
+  version = "v0.0.3"
+}

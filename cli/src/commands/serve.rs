@@ -1,7 +1,6 @@
 use acore::evaluator::Evaluator;
 use acore::security::SecurityManager;
 use anyhow::{anyhow, Result};
-use axiom_cloud::CloudClient;
 use console::style;
 use std::fs;
 use std::path::PathBuf;
@@ -46,9 +45,6 @@ pub async fn handle_serve(file: Option<PathBuf>, port: u16, debug: bool) -> Resu
     } else {
         println!("☁️  No local .acore file provided. Authenticating with Axiom Cloud...");
 
-        let auth_data = crate::auth_store::load_auth_data()
-            .map_err(|_| anyhow!("Not logged in. Run 'axiom login' first."))?;
-
         let current_dir = std::env::current_dir()?;
         let project_slug = crate::auth_store::get_project_id(&current_dir)?.ok_or_else(|| {
             anyhow!("Directory not linked to an Axiom project. Run 'axiom project link'.")
@@ -62,7 +58,7 @@ pub async fn handle_serve(file: Option<PathBuf>, port: u16, debug: bool) -> Resu
             style(&project_slug).cyan()
         );
 
-        let client = CloudClient::new(auth_data.access_token);
+        let client = crate::auth_store::authenticated_cloud_client()?;
 
         match client
             .get_mock_config(&project_slug, cached_etag.as_deref())

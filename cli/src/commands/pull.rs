@@ -1,6 +1,12 @@
 // axiom-cli/src/commands/pull.rs
 
 use anyhow::{Context, Result};
+use axiom_cloud::{
+    contract::{self, PullContractError, PulledContract},
+    CloudClient,
+};
+use dialoguer::Confirm;
+use serde_json::Value;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -46,6 +52,10 @@ pub struct ContractEntry {
     pub name: String,
     pub source: Option<String>,
     pub version: Option<String>,
+    /// The cloud proof for the exact installed artifact. Both values are
+    /// public verification material; neither is a credential.
+    pub signature: Option<String>,
+    pub public_key: Option<String>,
 }
 
 #[derive(Debug)]
@@ -59,7 +69,8 @@ pub struct AxiomDeps {
 // ==========================================
 
 pub async fn handle_pull(
-    contract: Option<PathBuf>,
+    source: Option<String>,
+    contract: Option<String>,
     contract_config: Option<PathBuf>,
     framework_flag: Option<String>,
     name_flag: Option<String>,
@@ -76,24 +87,50 @@ pub async fn handle_pull(
 
     // 3. Build contract list
     let contracts = resolve_contracts(
+        source.as_deref(),
         contract.as_deref(),
         contract_config.as_deref(),
         name_flag.as_deref(),
         &deps_path,
     )?;
 
-    // 4. Write AxiomDeps.toml
+    // 4. Fetch every contract before changing the project's dependency
+    // manifest. A failed remote authorization or lookup must not leave a
+    // newly-created AxiomDeps.toml pointing at an unusable dependency.
+    let mut installed_contracts = Vec::with_capacity(contracts.len());
+    for mut entry in contracts {
+        let installed = install_contract(&entry).await?;
+        match installed.proof {
+            Some(proof) => {
+                entry.signature = Some(proof.signature);
+                entry.public_key = Some(proof.public_key);
+            }
+            None => {
+                // A local source or an older API response has no cryptographic
+                // proof. Never preserve proof material from a previous pull.
+                entry.signature = None;
+                entry.public_key = None;
+            }
+        }
+        installed_contracts.push((entry, installed.path));
+    }
+
+    // 5. Persist the dependency manifest only after every source was
+    // successfully resolved.
     let axiom_deps = AxiomDeps {
         framework: framework.clone(),
-        contracts: contracts.clone(),
+        contracts: installed_contracts
+            .iter()
+            .map(|(entry, _)| entry.clone())
+            .collect(),
     };
     write_axiom_deps(&deps_path, &axiom_deps)?;
     println!("📝 AxiomDeps.toml written → {}", deps_path.display());
 
-    // 5. Install each contract to ~/.axiom/contracts/ then run codegen
-    for entry in &contracts {
-        let installed_path = install_contract(entry)?;
-        run_codegen(&project_root, &framework, &installed_path, entry, &out_dir).await?;
+    // 6. Generate the selected framework bindings from the verified local
+    // contract copies.
+    for (entry, installed_path) in installed_contracts {
+        run_codegen(&project_root, &framework, &installed_path, &entry, &out_dir).await?;
     }
 
     println!("\n✅ axiom pull finished successfully.");
@@ -243,12 +280,21 @@ fn prompt_framework_confirm(detected: &str) -> Result<Framework> {
 // ==========================================
 
 fn resolve_contracts(
-    contract: Option<&Path>,
+    source: Option<&str>,
+    contract: Option<&str>,
     contract_config: Option<&Path>,
     name_flag: Option<&str>,
     deps_path: &Path,
 ) -> Result<Vec<ContractEntry>> {
-    if contract.is_none() && contract_config.is_none() {
+    if source.is_some() && contract.is_some() {
+        anyhow::bail!("pass a pull source either positionally or with --contract, not both");
+    }
+    if (source.is_some() || contract.is_some()) && contract_config.is_some() {
+        anyhow::bail!("--contract-config cannot be combined with a contract source");
+    }
+
+    let source = source.or(contract);
+    if source.is_none() && contract_config.is_none() {
         if deps_path.exists() {
             let entries = read_contracts_from_deps(deps_path)?;
             if !entries.is_empty() {
@@ -256,21 +302,45 @@ fn resolve_contracts(
                 return Ok(entries);
             }
         }
-        anyhow::bail!("No contract specified and no AxiomDeps.toml found. Use --contract <path> or --contract-config <path>.");
+        anyhow::bail!("No contract specified and no AxiomDeps.toml found. Use `axiom pull <artifact|config|URL|organization/project>`.");
     }
 
     let mut entries = Vec::new();
 
     if let Some(cfg_path) = contract_config {
-        entries.extend(load_contracts_from_json_config(cfg_path)?);
-    } else if let Some(c_path) = contract {
-        let abs = canonicalize_or_absolute(c_path)?;
-        let name = resolve_single_contract_name(&abs, name_flag)?;
-        entries.push(ContractEntry {
-            name,
-            source: Some(abs.to_string_lossy().to_string()),
-            version: None,
-        });
+        entries.extend(load_contracts_from_config(cfg_path)?);
+    } else if let Some(value) = source {
+        let path = Path::new(value);
+        if path.exists() {
+            if is_contract_config_path(path) {
+                entries.extend(load_contracts_from_config(path)?);
+            } else {
+                let abs = canonicalize_or_absolute(path)?;
+                let name = resolve_single_contract_name(&abs, name_flag)?;
+                entries.push(ContractEntry {
+                    name,
+                    source: Some(abs.to_string_lossy().to_string()),
+                    version: None,
+                    signature: None,
+                    public_key: None,
+                });
+            }
+        } else {
+            let reference = contract::parse_pull_reference(value).with_context(|| {
+                "pull source is neither an existing local file nor a valid AxiomCore contract reference"
+            })?;
+            let name = name_flag
+                .map(slugify)
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| reference.project_slug.clone());
+            entries.push(ContractEntry {
+                name,
+                source: Some(reference.download_url()),
+                version: reference.version,
+                signature: None,
+                public_key: None,
+            });
+        }
     }
 
     Ok(entries)
@@ -300,6 +370,28 @@ fn resolve_single_contract_name(path: &Path, name_flag: Option<&str>) -> Result<
     }
 }
 
+fn is_contract_config_path(path: &Path) -> bool {
+    path.file_name().and_then(|value| value.to_str()) == Some("AxiomDeps.toml")
+        || path
+            .extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|extension| {
+                extension.eq_ignore_ascii_case("toml") || extension.eq_ignore_ascii_case("json")
+            })
+}
+
+fn load_contracts_from_config(cfg_path: &Path) -> Result<Vec<ContractEntry>> {
+    if cfg_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("toml"))
+        || cfg_path.file_name().and_then(|value| value.to_str()) == Some("AxiomDeps.toml")
+    {
+        return read_contracts_from_deps(cfg_path);
+    }
+    load_contracts_from_json_config(cfg_path)
+}
+
 fn load_contracts_from_json_config(cfg_path: &Path) -> Result<Vec<ContractEntry>> {
     let content = fs::read_to_string(cfg_path)
         .with_context(|| format!("Cannot read contract config: {}", cfg_path.display()))?;
@@ -317,6 +409,8 @@ fn load_contracts_from_json_config(cfg_path: &Path) -> Result<Vec<ContractEntry>
             name,
             source,
             version,
+            signature: None,
+            public_key: None,
         });
     }
     Ok(entries)
@@ -337,40 +431,196 @@ fn canonicalize_or_absolute(p: &Path) -> Result<PathBuf> {
 // CONTRACT INSTALL → ~/.axiom/contracts/
 // ==========================================
 
-fn install_contract(entry: &ContractEntry) -> Result<PathBuf> {
+struct InstalledContract {
+    path: PathBuf,
+    proof: Option<contract::ContractProof>,
+}
+
+async fn install_contract(entry: &ContractEntry) -> Result<InstalledContract> {
     let install_dir = contract_install_dir(&entry.name)?;
     fs::create_dir_all(&install_dir)?;
     let dest = install_dir.join("contract.axiom");
+    let legacy_proof = contract_proof_path(&dest);
 
-    if let Some(ref src_str) = entry.source {
-        let src = PathBuf::from(src_str);
-        if !src.exists() {
-            anyhow::bail!(
-                "Source file for contract '{}' not found: {}",
+    let proof = if let Some(ref src_str) = entry.source {
+        if is_remote_contract_source(src_str) {
+            let reference = contract::parse_pull_reference(src_str)?
+                .with_version_override(entry.version.as_deref())?;
+            let downloaded = download_remote_contract(&reference).await?;
+            write_downloaded_contract(&dest, &downloaded.bytes)?;
+            println!(
+                "☁️  Pulled '{}' from {}",
                 entry.name,
-                src.display()
+                reference.download_url()
             );
+            downloaded.proof
+        } else {
+            let src = PathBuf::from(src_str);
+            if !src.exists() {
+                anyhow::bail!(
+                    "Source file for contract '{}' not found: {}",
+                    entry.name,
+                    src.display()
+                );
+            }
+            fs::copy(&src, &dest).with_context(|| {
+                format!(
+                    "Failed to install contract '{}': {} → {}",
+                    entry.name,
+                    src.display(),
+                    dest.display()
+                )
+            })?;
+            None
         }
-        fs::copy(&src, &dest).with_context(|| {
-            format!(
-                "Failed to install contract '{}': {} → {}",
-                entry.name,
-                src.display(),
-                dest.display()
-            )
-        })?;
-        println!("📥 Installed '{}' → {}", entry.name, dest.display());
     } else if dest.exists() {
         println!(
             "✓  Contract '{}' already installed at {}",
             entry.name,
             dest.display()
         );
+        match (&entry.signature, &entry.public_key) {
+            (Some(signature), Some(public_key)) => Some(contract::ContractProof {
+                signature: signature.clone(),
+                public_key: public_key.clone(),
+            }),
+            _ => None,
+        }
     } else {
         anyhow::bail!("Contract '{}' has no source and is not installed at {}. Re-run with --contract <path>.", entry.name, dest.display());
+    };
+
+    // Versions before the TOML proof format emitted this temporary file. It
+    // contains public material only, but remove it once so AxiomDeps.toml is
+    // the single source of dependency and verification metadata.
+    remove_contract_proof(&legacy_proof)?;
+    if entry.source.is_some() {
+        println!("📥 Installed '{}' → {}", entry.name, dest.display());
     }
 
-    Ok(dest)
+    Ok(InstalledContract { path: dest, proof })
+}
+
+fn is_remote_contract_source(source: &str) -> bool {
+    source.trim_start().starts_with("http://") || source.trim_start().starts_with("https://")
+}
+
+async fn download_remote_contract(reference: &contract::PullReference) -> Result<PulledContract> {
+    loop {
+        // Keep the production and loopback CLI profiles hermetic. A user can
+        // paste a share URL while running `laxiom`, but their local bearer must
+        // never be sent to production (or vice versa). Public references still
+        // work anonymously across profiles.
+        let active_base = axiom_cloud::cloud_base_url()?;
+        let profile_matches_reference =
+            active_base.trim_end_matches('/') == reference.base_url.trim_end_matches('/');
+        let authenticated = if profile_matches_reference {
+            crate::auth_store::authenticated_cloud_client().ok()
+        } else {
+            None
+        };
+        let result = match authenticated.as_ref() {
+            Some(client) => client.pull_contract_reference(reference).await,
+            None => CloudClient::pull_contract_reference_anonymous(reference).await,
+        };
+
+        match result {
+            Ok(data) => return Ok(data),
+            Err(error) => match error.downcast_ref::<PullContractError>() {
+                Some(PullContractError::AuthenticationRequired) => {
+                    anyhow::bail!(
+                        "This contract is private. Run `axiom login`, then retry `axiom pull {}`.",
+                        reference.download_url()
+                    );
+                }
+                Some(PullContractError::AccessDenied { email }) => {
+                    eprintln!("{email} does not have access to this account.");
+                    let switch_account = Confirm::new()
+                        .with_prompt("Switch account and sign in again?")
+                        .default(false)
+                        .interact()
+                        .context("could not read the account-switch selection")?;
+                    if !switch_account {
+                        anyhow::bail!(
+                            "Contract pull cancelled. No private contract was downloaded."
+                        );
+                    }
+                    login_for_contract_pull().await?;
+                }
+                Some(PullContractError::NotFound) => {
+                    if authenticated.is_none() {
+                        if !profile_matches_reference {
+                            anyhow::bail!(
+						"This reference belongs to a different control-plane profile. Use `laxiom` for a loopback private project or `axiom` for a production private project."
+					);
+                        }
+                        anyhow::bail!(
+                            "Contract project or requested version was not found. It may be private; run `axiom login` and retry if you expect access."
+                        );
+                    }
+                    if reference.version.is_none() {
+                        anyhow::bail!(
+                            "The project is unavailable, or it has no contract promoted to latest yet. A release reaches latest only after its required verification, semantic, test, and delivery-policy checks pass."
+                        );
+                    }
+                    anyhow::bail!("Contract project or requested version was not found.");
+                }
+                Some(PullContractError::RateLimited) => {
+                    anyhow::bail!("Contract pull is rate limited. Please wait briefly and retry.");
+                }
+                _ => return Err(error),
+            },
+        }
+    }
+}
+
+async fn login_for_contract_pull() -> Result<()> {
+    println!("Starting AxiomCore device login for the selected account...");
+    let serialized = CloudClient::login().await?;
+    let token: Value = serde_json::from_str(&serialized)
+        .context("AxiomCore returned an invalid device-login session")?;
+    let access_token = token["access_token"]
+        .as_str()
+        .filter(|value| !value.trim().is_empty())
+        .context("AxiomCore returned an incomplete device-login session")?;
+    let refresh_token = token["refresh_token"]
+        .as_str()
+        .filter(|value| !value.trim().is_empty())
+        .context("AxiomCore returned an incomplete device-login session")?;
+    let expires_in = token["expires_in"]
+        .as_u64()
+        .context("AxiomCore returned an invalid device-login expiry")?;
+    crate::auth_store::save_tokens(access_token, refresh_token, expires_in)?;
+    println!("✅ Signed in. Rechecking project access...");
+    Ok(())
+}
+
+fn write_downloaded_contract(destination: &Path, data: &[u8]) -> Result<()> {
+    let parent = destination
+        .parent()
+        .context("download destination has no parent directory")?;
+    let temporary = parent.join(format!(".contract.{}.tmp", std::process::id()));
+    fs::write(&temporary, data).context("failed to write downloaded contract")?;
+    fs::rename(&temporary, destination).context("failed to install downloaded contract")?;
+    Ok(())
+}
+
+fn contract_proof_path(contract_path: &Path) -> PathBuf {
+    let file_name = contract_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("contract.axiom");
+    contract_path.with_file_name(format!("{file_name}.proof.json"))
+}
+
+fn remove_contract_proof(path: &Path) -> Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => {
+            Err(error).with_context(|| format!("failed to remove stale proof: {}", path.display()))
+        }
+    }
 }
 
 fn contract_install_dir(name: &str) -> Result<PathBuf> {
@@ -484,6 +734,8 @@ async fn run_codegen_atmx(
     })?;
     println!("📄 Static asset written → public/{}.axiom", entry.name);
 
+    remove_contract_proof(&contract_proof_path(&public_contract))?;
+
     // 2. Copy to static/axiom/ for Go servers if static folder exists
     let static_axiom_dir = project_root.join("static").join("axiom");
     if project_root.join("static").exists() {
@@ -496,15 +748,34 @@ async fn run_codegen_atmx(
         println!("📄 Static asset written → static/axiom/.axiom");
     }
 
-    // 3. Trigger `npx atmx generate`
+    // 3. Trigger the project-pinned generator when present. Otherwise use the
+    // exact companion CLI version instead of inheriting an arbitrary global
+    // `atmx` executable from PATH. This keeps generated SDK syntax compatible
+    // with the Axiom CLI that invoked it.
     #[cfg(target_os = "windows")]
-    let npx_cmd = "npx.cmd";
+    let local_atmx = project_root
+        .join("node_modules")
+        .join(".bin")
+        .join("atmx.cmd");
     #[cfg(not(target_os = "windows"))]
-    let npx_cmd = "npx";
+    let local_atmx = project_root.join("node_modules").join(".bin").join("atmx");
 
-    let mut cmd = tokio::process::Command::new(npx_cmd);
+    let mut cmd = if local_atmx.is_file() {
+        tokio::process::Command::new(&local_atmx)
+    } else {
+        #[cfg(target_os = "windows")]
+        let npx_cmd = "npx.cmd";
+        #[cfg(not(target_os = "windows"))]
+        let npx_cmd = "npx";
+        let mut command = tokio::process::Command::new(npx_cmd);
+        command
+            .arg("--yes")
+            .arg("--package")
+            .arg(format!("atmx-cli@{}", env!("CARGO_PKG_VERSION")))
+            .arg("atmx");
+        command
+    };
     cmd.current_dir(project_root)
-        .arg("atmx")
         .arg("generate")
         .arg("-c")
         .arg("AxiomDeps.toml")
@@ -566,6 +837,21 @@ pub fn write_axiom_deps(path: &Path, deps: &AxiomDeps) -> Result<()> {
         }
         if let Some(ref version) = entry.version {
             sub["version"] = toml_edit::value(version.as_str());
+        } else {
+            // A versionless reference intentionally follows the active release
+            // channel. Do not leave a previous immutable pin behind when a
+            // developer changes `pull org/project/vX` to `pull org/project`.
+            sub.remove("version");
+        }
+        match (&entry.signature, &entry.public_key) {
+            (Some(signature), Some(public_key)) => {
+                sub["signature"] = toml_edit::value(signature.as_str());
+                sub["public_key"] = toml_edit::value(public_key.as_str());
+            }
+            _ => {
+                sub.remove("signature");
+                sub.remove("public_key");
+            }
         }
     }
 
@@ -598,10 +884,20 @@ fn read_contracts_from_deps(path: &Path) -> Result<Vec<ContractEntry>> {
                 .get("version")
                 .and_then(|v| v.as_str())
                 .map(String::from);
+            let signature = sub
+                .get("signature")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let public_key = sub
+                .get("public_key")
+                .and_then(|v| v.as_str())
+                .map(String::from);
             entries.push(ContractEntry {
                 name: name.to_string(),
                 source,
                 version,
+                signature,
+                public_key,
             });
         }
     }

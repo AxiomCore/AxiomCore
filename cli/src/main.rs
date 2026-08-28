@@ -15,7 +15,7 @@ use crate::components::inspect::endpoint_list::render_endpoint_list;
 use crate::components::inspect::model_browser::render_model_browser;
 use crate::state::InspectTab;
 use crate::telemetry::Telemetry;
-use axiom_cloud::{CliApi, CloudClient};
+use axiom_cloud::{uses_local_cloud, CliApi, CloudClient};
 use axiom_lib::action::Action;
 use clap::{Parser, Subcommand};
 use console::style;
@@ -136,8 +136,13 @@ enum Commands {
         version: Option<String>,
     },
     Pull {
+        /// Local .axiom artifact, AxiomDeps.toml/JSON config, AxiomCore URL,
+        /// or organization/project[/version] contract reference.
+        source: Option<String>,
+
+        /// Explicit local artifact, config, URL, or contract reference.
         #[arg(long)]
-        contract: Option<PathBuf>,
+        contract: Option<String>,
 
         #[arg(long)]
         contract_config: Option<PathBuf>,
@@ -197,6 +202,9 @@ enum ProjectAction {
     Create {
         #[arg(long)]
         name: Option<String>,
+        /// Lowercase project identifier used in release URLs, for example payments-api.
+        #[arg(long)]
+        slug: Option<String>,
         #[arg(long)]
         description: Option<String>,
         #[arg(long)]
@@ -254,69 +262,78 @@ async fn main() -> anyhow::Result<()> {
         return commands::join::handle_join(email.clone()).await;
     }
 
-    // Load Access Config
-    let mut access_config = AccessConfig::load().await?;
+    let local_cloud = uses_local_cloud()?;
+    let active_config = if local_cloud {
+        // The private-alpha referral gate and its telemetry only apply to the
+        // public control plane. A loopback endpoint is an explicit developer
+        // choice and uses an isolated local CLI profile, never production
+        // registration or telemetry state.
+        None
+    } else {
+        // Load Access Config
+        let mut access_config = AccessConfig::load().await?;
 
-    // If no config exists, force registration
-    if access_config.is_none() {
-        println!(
-            "{}",
-            style("🔒 Axiom CLI is currently in Private Alpha.")
-                .bold()
-                .yellow()
-        );
-        println!("To proceed, you need a valid referral code.\n");
-        let referral_from_env = std::env::var("AXIOM_REFERRAL_CODE").ok();
-
-        let code = if let Some(env_code) = referral_from_env {
-            println!("Using referral code from environment variable.");
-            env_code
-        } else {
-            // If running in CI and no referral provided, fail cleanly
-            if std::env::var("CI").is_ok() {
-                eprintln!("❌ No AXIOM_REFERRAL_CODE provided in CI environment.");
-                std::process::exit(1);
-            }
-
+        // If no config exists, force registration
+        if access_config.is_none() {
             println!(
-                "If you don't have one, run: {}",
-                style("axiom join <EMAIL>").cyan()
+                "{}",
+                style("🔒 Axiom CLI is currently in Private Alpha.")
+                    .bold()
+                    .yellow()
             );
-            println!("");
+            println!("To proceed, you need a valid referral code.\n");
+            let referral_from_env = std::env::var("AXIOM_REFERRAL_CODE").ok();
 
-            Input::with_theme(&ColorfulTheme::default())
-                .with_prompt("Enter Referral Code")
-                .interact_text()?
-        };
+            let code = if let Some(env_code) = referral_from_env {
+                println!("Using referral code from environment variable.");
+                env_code
+            } else {
+                // If running in CI and no referral provided, fail cleanly
+                if std::env::var("CI").is_ok() {
+                    eprintln!("❌ No AXIOM_REFERRAL_CODE provided in CI environment.");
+                    std::process::exit(1);
+                }
 
-        // Create temp config to generate machine ID
-        let temp_config = AccessConfig::save(&code).await?;
-
-        println!("{}", style("Verifying code...").dim());
-
-        // Register with Server
-        match CliApi::register(&temp_config.referral_code, &temp_config.machine_id).await {
-            Ok(_) => {
                 println!(
-                    "✅ {}",
-                    style("Access Granted. Welcome to Axiom.").green().bold()
+                    "If you don't have one, run: {}",
+                    style("axiom join <EMAIL>").cyan()
                 );
                 println!("");
-                access_config = Some(temp_config);
-            }
-            Err(e) => {
-                // Registration failed, wipe local config so they try again next time
-                let _ = AccessConfig::wipe().await;
-                println!(
-                    "\n❌ {}",
-                    style(format!("Authorization Failed: {}", e)).red()
-                );
-                std::process::exit(1);
+
+                Input::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Enter Referral Code")
+                    .interact_text()?
+            };
+
+            // Create temp config to generate machine ID
+            let temp_config = AccessConfig::save(&code).await?;
+
+            println!("{}", style("Verifying code...").dim());
+
+            // Register with Server
+            match CliApi::register(&temp_config.referral_code, &temp_config.machine_id).await {
+                Ok(_) => {
+                    println!(
+                        "✅ {}",
+                        style("Access Granted. Welcome to Axiom.").green().bold()
+                    );
+                    println!("");
+                    access_config = Some(temp_config);
+                }
+                Err(e) => {
+                    // Registration failed, wipe local config so they try again next time
+                    let _ = AccessConfig::wipe().await;
+                    println!(
+                        "\n❌ {}",
+                        style(format!("Authorization Failed: {}", e)).red()
+                    );
+                    std::process::exit(1);
+                }
             }
         }
-    }
 
-    let active_config = access_config.unwrap();
+        access_config
+    };
 
     // 3. EXECUTE COMMAND
     // -------------------------------------------------------------------------
@@ -357,15 +374,17 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // Send Telemetry (This internally handles the "Kill Switch" / Access Revocation)
-    Telemetry::track(
-        &active_config,
-        cmd_name,
-        std::env::args().collect(),
-        duration,
-        success,
-        error_msg,
-    )
-    .await;
+    if let Some(active_config) = active_config.as_ref() {
+        Telemetry::track(
+            active_config,
+            cmd_name,
+            std::env::args().collect(),
+            duration,
+            success,
+            error_msg,
+        )
+        .await;
+    }
 
     result
 }
@@ -522,11 +541,13 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             ProjectAction::List => commands::project::handle_project_list().await,
             ProjectAction::Create {
                 name,
+                slug,
                 description,
                 path,
             } => {
                 commands::project::handle_project_create(
                     name.clone(),
+                    slug.clone(),
                     description.clone(),
                     path.clone(),
                 )
@@ -548,6 +569,7 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             }
         },
         Commands::Pull {
+            source,
             contract,
             contract_config,
             framework,
@@ -555,6 +577,7 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             out, // <-- Add this
         } => {
             commands::pull::handle_pull(
+                source.clone(),
                 contract.clone(),
                 contract_config.clone(),
                 framework.clone(),
@@ -590,9 +613,7 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
         Commands::Login => handle_login_tui().await,
         Commands::Join { email } => crate::commands::join::handle_join(email.clone()).await,
         Commands::Cache { action } => {
-            let mut cache_dir =
-                dirs::config_dir().ok_or_else(|| anyhow::anyhow!("No config dir"))?;
-            cache_dir.push("axiom");
+            let mut cache_dir = crate::auth_store::get_config_dir()?;
             cache_dir.push("cache");
             cache_dir.push("sled_db");
             std::fs::create_dir_all(&cache_dir)?;

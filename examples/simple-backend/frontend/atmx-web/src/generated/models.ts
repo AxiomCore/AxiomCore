@@ -1,43 +1,48 @@
 // GENERATED CODE – DO NOT EDIT.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+/* eslint-disable @typescript-eslint/no-namespace */
 
-export interface PyExampleItem {
-  description?: any;
-  id: any;
-  ownerId: any;
-  title: any;
-}
+export namespace firstProject {
 
+  export interface Item {
+    description?: string;
+    id: string;
+    ownerId: string;
+    title: string;
+  }
+  
 
-export interface PyExampleItemCreate {
-  description?: any;
-  title: any;
-}
+  export interface ItemCreate {
+    description?: string;
+    title: string;
+  }
+  
 
+  export interface Token {
+    accessToken: string;
+    tokenType: string;
+  }
+  
 
-export interface PyExampleToken {
-  accessToken: any;
-  tokenType: any;
-}
+  export interface User {
+    email: any;
+    id: string;
+    role: string;
+  }
+  
 
-
-export interface PyExampleUser {
-  email: any;
-  id: any;
-  role: any;
-}
-
-
-export interface PyExampleUserCreate {
-  email: any;
-  password: any;
+  export interface UserCreate {
+    email: any;
+    password: string;
+  }
+  
 }
 
 export const Mappers: Record<string, any> = {
-  pyExample: {
+  firstProject: {
     Item: {
-      fromJson: (json: any): PyExampleItem => ({
+      fromJson: (json: any): firstProject.Item => ({
         description: json["description"],
         id: json["id"],
         ownerId: json["owner_id"],
@@ -51,7 +56,7 @@ export const Mappers: Record<string, any> = {
       })
     },
     ItemCreate: {
-      fromJson: (json: any): PyExampleItemCreate => ({
+      fromJson: (json: any): firstProject.ItemCreate => ({
         description: json["description"],
         title: json["title"],
       }),
@@ -61,7 +66,7 @@ export const Mappers: Record<string, any> = {
       })
     },
     Token: {
-      fromJson: (json: any): PyExampleToken => ({
+      fromJson: (json: any): firstProject.Token => ({
         accessToken: json["access_token"],
         tokenType: json["token_type"],
       }),
@@ -71,7 +76,7 @@ export const Mappers: Record<string, any> = {
       })
     },
     User: {
-      fromJson: (json: any): PyExampleUser => ({
+      fromJson: (json: any): firstProject.User => ({
         email: json["email"],
         id: json["id"],
         role: json["role"],
@@ -83,7 +88,7 @@ export const Mappers: Record<string, any> = {
       })
     },
     UserCreate: {
-      fromJson: (json: any): PyExampleUserCreate => ({
+      fromJson: (json: any): firstProject.UserCreate => ({
         email: json["email"],
         password: json["password"],
       }),

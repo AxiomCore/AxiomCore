@@ -7,9 +7,9 @@ use std::{
 };
 
 /// Releases are scoped to an Axiom Cloud project, never to the `project_id`
-/// string embedded in an `.axiom` artifact alone. A directory linked with
-/// `axiom project link` is the primary source of truth; the artifact is used
-/// only as a convenient fallback for first-time releases.
+/// string embedded in an `.axiom` artifact alone. A directory link is reused
+/// silently; a first-time interactive release explicitly creates or selects a
+/// project and saves that choice for all future release commands.
 pub async fn handle_release(
     file_path: &str,
     project_override: Option<&str>,
@@ -21,6 +21,22 @@ pub async fn handle_release(
         anyhow::bail!("Artifact file not found at '{}'", file_path);
     }
 
+    let mut artifact_path = PathBuf::from(file_path);
+    let mut file_bytes = std::fs::read(&artifact_path)?;
+    let contract = axiom_lib::unpackager::unpack_axiom_bytes(&file_bytes)?;
+    let contract_version = contract.project.version.clone();
+
+    let client = crate::auth_store::authenticated_cloud_client().map_err(|error| {
+        anyhow::anyhow!(
+            "You are not logged in to Axiom Cloud. Run `axiom login`, then rerun `axiom release` or `axiom build --release`. Details: {error}"
+        )
+    })?;
+    let project_slug = crate::commands::project::resolve_release_project(
+        &client,
+        project_override,
+        contract.project.project_id.as_str(),
+    )
+    .await?;
     let pb = ProgressBar::new_spinner();
     pb.enable_steady_tick(std::time::Duration::from_millis(100));
     pb.set_style(
@@ -29,19 +45,6 @@ pub async fn handle_release(
             .expect("Failed to parse progress bar template"),
     );
     pb.set_message(format!("Uploading '{}' to Axiom Cloud...", file_path));
-
-    let mut artifact_path = PathBuf::from(file_path);
-    let mut file_bytes = std::fs::read(&artifact_path)?;
-    let contract = axiom_lib::unpackager::unpack_axiom_bytes(&file_bytes)?;
-    let contract_version = contract.project.version.clone();
-
-    let client = crate::auth_store::authenticated_cloud_client()?;
-    let project_slug = resolve_project_slug(
-        &client,
-        project_override,
-        contract.project.project_id.as_str(),
-    )
-    .await?;
     let mut artifact_hash = hex_sha256(&file_bytes);
     let mut version = requested_version(version_override, &contract_version)?;
 
@@ -128,54 +131,6 @@ pub async fn handle_release(
         version
     ));
     Ok(())
-}
-
-async fn resolve_project_slug(
-    client: &axiom_cloud::CloudClient,
-    project_override: Option<&str>,
-    artifact_project_id: &str,
-) -> anyhow::Result<String> {
-    let projects = client
-        .list_projects()
-        .await
-        .map_err(|error| anyhow::anyhow!("Could not resolve the release project: {error}"))?;
-
-    let current_dir = std::env::current_dir().ok();
-    let linked_id = current_dir
-        .as_deref()
-        .and_then(|path| crate::auth_store::get_project_id(path).ok().flatten());
-
-    let (candidate, source) =
-        if let Some(value) = project_override.filter(|value| !value.trim().is_empty()) {
-            (value.trim(), "the --project override")
-        } else if let Some(value) = linked_id.as_deref() {
-            (value, "the project linked to this directory")
-        } else {
-            (artifact_project_id.trim(), "the compiled artifact")
-        };
-
-    if candidate.is_empty() {
-        anyhow::bail!(
-            "No Axiom Cloud project could be resolved for this release. Run `axiom project link` once in this directory, then retry."
-        );
-    }
-
-    if let Some(project) = projects
-        .iter()
-        .find(|project| project.id == candidate || project.slug == candidate)
-    {
-        return Ok(project.slug.clone());
-    }
-
-    if project_override.is_some() {
-        anyhow::bail!(
-            "No Axiom Cloud project matches `{candidate}`. `--project` accepts a Cloud project ID or slug. Run `axiom project list` to choose one."
-        );
-    }
-
-    anyhow::bail!(
-        "Could not resolve {source} (`{candidate}`) to an Axiom Cloud project. Run `axiom project link` once in this directory, then retry. You never need to edit `project_id` in your contract."
-    )
 }
 
 fn hex_sha256(bytes: &[u8]) -> String {

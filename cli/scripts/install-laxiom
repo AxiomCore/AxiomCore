@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Install a stable `laxiom` command without relying on the caller's $PWD.
+set -euo pipefail
+
+script_dir="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+target_dir="${AXIOM_LOCAL_BIN_DIR:-$HOME/.local/bin}"
+target="$target_dir/laxiom"
+
+mkdir -p "$target_dir"
+if [[ -e "$target" && ! -L "$target" ]]; then
+  printf 'Refusing to overwrite non-symlink command: %s\n' "$target" >&2
+  exit 1
+fi
+
+ln -sfn "$script_dir/laxiom" "$target"
+printf 'Installed laxiom at %s\n' "$target"
+case ":${PATH}:" in
+  *":${target_dir}:"*) ;;
+  *)
+    printf 'Add this directory to PATH, then open a new shell:\n'
+    printf '  export PATH="%s:$PATH"\n' "$target_dir"
+    ;;
+esac

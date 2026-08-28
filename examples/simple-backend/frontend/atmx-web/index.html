@@ -4,7 +4,7 @@
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>Axiom ATMX Vanilla Web Test</title>
-        <script src="https://cdn.tailwindcss.com"></script>
+        <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     </head>
     <body class="bg-slate-50 text-slate-800 p-8 max-w-4xl mx-auto font-sans">
         <nav
@@ -30,7 +30,7 @@
 
                     <!-- ✨ MAGIC: We use the TS SDK method directly. No args required! -->
                     <form
-                        :ax-mutate="sdk.pyExample.register()"
+                        :ax-mutate="sdk.firstProject.register()"
                         class="space-y-4"
                     >
                         <div>
@@ -89,7 +89,7 @@
                         <div
                             ax-when="error"
                             class="text-red-500 text-xs mt-2 font-bold"
-                            ax-text="$error.message"
+                            ax-text="($error && $error.message) || ''"
                             hidden
                         ></div>
                     </form>
@@ -103,7 +103,7 @@
                     </h2>
                     <!-- ✨ MAGIC: Strongly typed login method with declarative auth storage! -->
                     <form
-                        :ax-mutate="sdk.pyExample.login()"
+                        :ax-mutate="sdk.firstProject.login()"
                         ax-headers="{ 'Content-Type': 'application/x-www-form-urlencoded' }"
                         ax-store-token="$data.access_token"
                         class="space-y-4"
@@ -146,7 +146,7 @@
                         <div
                             ax-when="error"
                             class="text-red-500 text-xs mt-2 font-bold"
-                            ax-text="$error.message"
+                            ax-text="($error && $error.message) || ''"
                             hidden
                         ></div>
                     </form>
@@ -167,8 +167,8 @@
                         >
                     </div>
                     <form
-                        :ax-mutate="sdk.pyExample.createItem()"
-                        ax-refresh="pyExample.list_items"
+                        :ax-mutate="sdk.firstProject.createItem()"
+                        ax-invalidates="first-project.list_items"
                         class="space-y-4"
                     >
                         <div>
@@ -209,7 +209,7 @@
                         <div
                             ax-when="error"
                             class="text-red-500 text-xs mt-2 font-bold"
-                            ax-text="$error.message"
+                            ax-text="($error && $error.message) || ''"
                             hidden
                         ></div>
                     </form>
@@ -217,7 +217,7 @@
 
                 <!-- ✨ MAGIC: Typed List Fetching -->
                 <div
-                    :ax-query="sdk.pyExample.listItems({ limit: 10 })"
+                        :ax-query="sdk.firstProject.listItems({ limit: 10 })"
                     class="bg-white p-6 rounded-xl shadow-sm border border-slate-200"
                 >
                     <div
@@ -241,13 +241,13 @@
                     <div
                         ax-when="error"
                         class="text-red-500 text-sm font-bold p-4 bg-red-50 rounded"
-                        ax-text="$error.message"
+                        ax-text="($error && $error.message) || ''"
                         hidden
                     ></div>
 
                     <div ax-when="data, success" hidden class="space-y-3">
                         <div
-                            ax-if="$data.length === 0"
+                            ax-if="$data && $data.length === 0"
                             class="text-sm text-slate-500 italic text-center py-4"
                         >
                             No items found. Create one above!
@@ -276,9 +276,14 @@
         </div>
 
         <script type="module">
-            const scriptUrl = `https://atmx.axiomcore.dev/latest/atmx.es.js?t=${Date.now()}`;
-            const { atmx } = await import(scriptUrl);
-            const { sdk } = await import("./generated/sdk.js");
+            import "/src/styles.css";
+
+            // This is a generated local public asset, so resolve its URL at
+            // runtime. Vite intentionally rejects literal module imports from
+            // public/, while a runtime URL works in both dev and production.
+            const atmxModuleURL = new URL("/atmx.es.js", window.location.origin);
+            const { atmx } = await import(/* @vite-ignore */ atmxModuleURL.href);
+            const { sdk, AxiomDefaultConfig } = await import("/src/generated/sdk.ts");
 
             window.atmx = atmx;
             window.sdk = sdk;
@@ -286,11 +291,16 @@
             // ✨ The init() function now returns a typed Result, allowing you to catch
             // network/wasm failures gracefully!
             const result = await atmx.init({
-                debug: true,
+                debug: import.meta.env.DEV,
+                // Keep this example on matching locally built ATMX and WASM
+                // assets so it tests the checked-out Axiom code, not the CDN.
+                wasmUrl: "/axiom_runtime.wasm",
                 contracts: {
-                    pyExample: {
-                        baseUrl: "http://localhost:8000",
-                        contractUrl: "./py-example.axiom",
+                    "first-project": {
+                        ...AxiomDefaultConfig.contracts["first-project"],
+                        // Port 8000 is the local AxiomCore control plane.
+                        // The FastAPI application deliberately uses 8001.
+                        baseUrl: "http://127.0.0.1:8001",
                     },
                 },
             });

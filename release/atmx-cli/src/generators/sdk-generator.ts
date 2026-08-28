@@ -1,16 +1,33 @@
 import { AxiomIR, AxiomEndpoint, AxiomTypeRef } from "../types.js";
+import { camelCase } from "./utils.js";
 
 export interface ContractPayload {
   ir: AxiomIR;
   baseUrl: string;
   file: string;
+  signature?: string;
+  publicKey?: string;
+}
+
+// Contract namespaces are runtime strings, and can legitimately contain
+// hyphens (for example `first-project`). They must never be interpolated
+// directly into TypeScript identifiers. Keep the runtime namespace exact,
+// while using this stable safe form only for generated bindings.
+function namespaceIdentifier(namespace: string): string {
+  const candidate = camelCase(namespace).replace(/[^A-Za-z0-9_$]/g, "");
+  if (!candidate) return "contract";
+  return /^[A-Za-z_$]/.test(candidate) ? candidate : `contract${candidate}`;
+}
+
+function moduleIdentifier(namespace: string): string {
+  return `${namespaceIdentifier(namespace)}Module`;
 }
 
 // Helper to convert Axiom TypeRef to TypeScript Types
 function getTsType(namespace: string, typeRef?: AxiomTypeRef): string {
   if (!typeRef) return "any";
   if (typeRef.kind === "named") {
-    return `models.${namespace}.${typeRef.value}`;
+    return `models.${namespaceIdentifier(namespace)}.${typeRef.value}`;
   } else if (typeRef.kind === "list") {
     return `${getTsType(namespace, typeRef.value as AxiomTypeRef)}[]`;
   } else if (typeRef.kind === "primitive") {
@@ -29,7 +46,7 @@ function getDecoder(namespace: string, typeRef?: AxiomTypeRef): string {
   if (!typeRef) return `(json: any) => json`;
 
   if (typeRef.kind === "named") {
-    return `models.Mappers.${namespace}.${typeRef.value}.fromJson`;
+    return `models.Mappers.${namespaceIdentifier(namespace)}.${typeRef.value}.fromJson`;
   } else if (
     typeRef.kind === "list" &&
     (typeRef.value as AxiomTypeRef).kind === "named"
@@ -56,8 +73,16 @@ export function generateSDKContent(
   }
 
   // 1. Generate Individual Modules
+  const namespaces = Object.keys(contracts);
+  const aliasCounts = new Map<string, number>();
+  for (const namespace of namespaces) {
+    const alias = namespaceIdentifier(namespace);
+    aliasCounts.set(alias, (aliasCounts.get(alias) ?? 0) + 1);
+  }
+
   for (const [namespace, contract] of Object.entries(contracts)) {
-    content += `export const ${namespace}Module = {\n`;
+    const moduleName = moduleIdentifier(namespace);
+    content += `export const ${moduleName} = {\n`;
     content += `  axiom: {\n`;
     content += `    setAuthToken(methodName: string, token: string) {\n`;
     if (isReact) {
@@ -75,7 +100,7 @@ export function generateSDKContent(
     content += `    },\n`;
     content += `    connect(methodName: string, args?: Record<string, any>) {\n`;
     if (isReact) {
-      content += `      const def = (${namespace}Module as any)[\`get\${methodName.charAt(0).toUpperCase() + methodName.slice(1)}Def\`](args);\n`;
+      content += `      const def = (${moduleName} as any)[\`get\${methodName.charAt(0).toUpperCase() + methodName.slice(1)}Def\`](args);\n`;
       content += `      axiomQueryManager.connect(def);\n`;
     } else {
       content += `      const argsStr = args && Object.keys(args).length > 0 ? JSON.stringify(args) : '';\n`;
@@ -84,7 +109,7 @@ export function generateSDKContent(
     content += `    },\n`;
     content += `    disconnect(methodName: string, args?: Record<string, any>) {\n`;
     if (isReact) {
-      content += `      const def = (${namespace}Module as any)[\`get\${methodName.charAt(0).toUpperCase() + methodName.slice(1)}Def\`](args);\n`;
+      content += `      const def = (${moduleName} as any)[\`get\${methodName.charAt(0).toUpperCase() + methodName.slice(1)}Def\`](args);\n`;
       content += `      axiomQueryManager.disconnect(def);\n`;
     } else {
       content += `      const argsStr = args && Object.keys(args).length > 0 ? JSON.stringify(args) : '';\n`;
@@ -93,7 +118,7 @@ export function generateSDKContent(
     content += `    },\n`;
     content += `    send(methodName: string, payload: any, args?: Record<string, any>) {\n`;
     if (isReact) {
-      content += `      const def = (${namespace}Module as any)[\`get\${methodName.charAt(0).toUpperCase() + methodName.slice(1)}Def\`](args);\n`;
+      content += `      const def = (${moduleName} as any)[\`get\${methodName.charAt(0).toUpperCase() + methodName.slice(1)}Def\`](args);\n`;
       content += `      axiomQueryManager.send(def, payload);\n`;
     } else {
       content += `      const argsStr = args && Object.keys(args).length > 0 ? JSON.stringify(args) : '';\n`;
@@ -174,8 +199,16 @@ export function generateSDKContent(
 
   // 2. Generate the Smart Proxy SDK
   content += `const internalSdk: Record<string, any> = {\n`;
-  for (const namespace of Object.keys(contracts)) {
-    content += `  ${namespace}: ${namespace}Module,\n`;
+  for (const namespace of namespaces) {
+    const alias = namespaceIdentifier(namespace);
+    const moduleName = moduleIdentifier(namespace);
+    // The canonical key is always the exact contract namespace. Add a safe
+    // dot-notation alias when it is unambiguous, so `sdk.firstProject` and
+    // `sdk["first-project"]` both address the same contract.
+    content += `  ${JSON.stringify(namespace)}: ${moduleName},\n`;
+    if (alias !== namespace && aliasCounts.get(alias) === 1 && !contracts[alias]) {
+      content += `  ${alias}: ${moduleName},\n`;
+    }
   }
   content += `};\n\n`;
 
@@ -221,9 +254,15 @@ export function generateSDKContent(
     // Determine file path or default to namespace
     const contractPath = def.file ? def.file : `/${ns}.axiom`;
 
-    content += `    "${ns}": {\n`;
-    content += `      contractUrl: "${contractPath}",\n`;
-    content += `      baseUrl: "${def.baseUrl}"\n`;
+    content += `    ${JSON.stringify(ns)}: {\n`;
+    content += `      contractUrl: ${JSON.stringify(contractPath)},\n`;
+    content += `      baseUrl: ${JSON.stringify(def.baseUrl)}`;
+    if (def.signature && def.publicKey) {
+      content += `,\n      contractSignature: ${JSON.stringify(def.signature)},\n`;
+      content += `      contractPublicKey: ${JSON.stringify(def.publicKey)}\n`;
+    } else {
+      content += `\n`;
+    }
     content += `    },\n`;
   }
   content += `  }\n`;

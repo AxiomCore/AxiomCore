@@ -46,7 +46,7 @@ const program = new commander_1.Command();
 program
     .name("atmx")
     .description("Generate TypeScript SDK from AxiomDeps.toml")
-    .version("0.2.0");
+    .version("0.131.0");
 program
     .command("generate")
     .requiredOption("-c, --config <path>", "Path to AxiomDeps.toml")
@@ -86,6 +86,8 @@ program
             ir: multiIr[namespace],
             baseUrl: contract.base_url || "http://localhost:8080",
             file: `/${namespace}.axiom`,
+            signature: contract.signature,
+            publicKey: contract.public_key,
         };
         console.log(`✅ Loaded contract: [${namespace}] -> ${axiomFilePath}`);
     }

@@ -11,7 +11,7 @@ pub async fn handle_install(extractor_name: &str) -> Result<()> {
         .map(|d| d.access_token)
         .unwrap_or_default();
 
-    let client = CloudClient::new(token);
+    let client = CloudClient::new(token)?;
     let home = dirs::home_dir().context("Could not determine home directory.")?;
     let plugins_dir = home.join(".axiom/plugins");
     fs::create_dir_all(&plugins_dir)?;

@@ -6,8 +6,7 @@ use std::fs;
 use std::path::PathBuf;
 
 fn get_cache_paths(project_id: &str) -> Result<(PathBuf, PathBuf)> {
-    let mut cache_dir = dirs::config_dir().ok_or_else(|| anyhow!("No config dir"))?;
-    cache_dir.push("axiom");
+    let mut cache_dir = crate::auth_store::get_config_dir()?;
     cache_dir.push("cache");
     cache_dir.push("mocks");
 

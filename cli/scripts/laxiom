@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Run the locally built Axiom CLI against a loopback AxiomCore control plane.
+# This wrapper deliberately does not invoke the globally installed `axiom`
+# binary, so local development never accidentally uses a stale CLI build.
+set -euo pipefail
+
+# Resolve symlinks ourselves instead of using `readlink -f`, which macOS does
+# not provide. `install-laxiom` places a symlink in ~/.local/bin, and the
+# repository-relative binary must be resolved from this real script location.
+script_source="${BASH_SOURCE[0]}"
+while [[ -L "$script_source" ]]; do
+  link_dir="$(CDPATH= cd -- "$(dirname -- "$script_source")" && pwd)"
+  script_source="$(readlink "$script_source")"
+  [[ "$script_source" != /* ]] && script_source="$link_dir/$script_source"
+done
+script_dir="$(CDPATH= cd -- "$(dirname -- "$script_source")" && pwd)"
+cli_dir="$(CDPATH= cd -- "$script_dir/.." && pwd)"
+cli_bin="${AXIOM_LOCAL_CLI_BIN:-$cli_dir/target/release/axiom-cli}"
+local_api_url="${AXIOM_LOCAL_API_URL:-http://localhost:8000}"
+
+if [[ ! -x "$cli_bin" ]]; then
+  printf 'Local Axiom CLI is not built. Run: cargo build --release --manifest-path "%s/Cargo.toml"\n' "$cli_dir" >&2
+  exit 1
+fi
+
+exec env AXIOM_CLOUD_URL="$local_api_url" "$cli_bin" "$@"

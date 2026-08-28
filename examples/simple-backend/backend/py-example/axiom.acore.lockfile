@@ -7,6 +7,7 @@
   },
   "endpoints": {
     "create_item": {
+      "id": 2,
       "auth": {
         "condition": "and",
         "confidence": "high",
@@ -25,7 +26,6 @@
         ],
         "required": true
       },
-      "id": 2,
       "method": "POST",
       "name": "create_item",
       "parameters": [
@@ -47,6 +47,7 @@
       }
     },
     "delete_item": {
+      "id": 5,
       "auth": {
         "condition": "and",
         "confidence": "high",
@@ -65,7 +66,6 @@
         ],
         "required": true
       },
-      "id": 5,
       "method": "DELETE",
       "name": "delete_item",
       "parameters": [
@@ -146,6 +146,7 @@
       }
     },
     "list_users": {
+      "id": 7,
       "auth": {
         "condition": "and",
         "confidence": "high",
@@ -164,7 +165,6 @@
         ],
         "required": true
       },
-      "id": 7,
       "method": "GET",
       "name": "list_users",
       "path": "/admin/users",
@@ -185,7 +185,7 @@
       }
     },
     "register": {
-      "id": 0,
+      "id": 9,
       "method": "POST",
       "name": "register",
       "parameters": [
@@ -207,6 +207,7 @@
       }
     },
     "send_email": {
+      "id": 6,
       "auth": {
         "condition": "and",
         "confidence": "high",
@@ -225,7 +226,6 @@
         ],
         "required": true
       },
-      "id": 6,
       "method": "POST",
       "name": "send_email",
       "parameters": [
@@ -373,9 +373,17 @@
       "name": "UserCreate"
     }
   },
+  "observability": {
+    "enabled": true,
+    "headers": {
+      "x-axiom-telemetry-dsn": "axot_pmYlIhkzTgnvIhhJqiTpEogBKmYkjuukaAUHcERpA38"
+    },
+    "sampleRate": 1,
+    "telemetryUrl": "http://localhost:8000/v1/traces"
+  },
   "project": {
     "id": "py-example",
-    "version": "v0.0.1"
+    "version": "v0.0.3"
   },
   "variants": {
     "default": {

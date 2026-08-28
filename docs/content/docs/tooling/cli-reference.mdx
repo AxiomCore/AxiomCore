@@ -11,12 +11,117 @@ description: Exhaustive list of AxiomCore commands.
 ### Compilation & Cloud
 *   `axiom build <file>`: Compiles the backend and `.acore` into a signed `.axiom` binary. Generates a `.lockfile`.
 *   `axiom release`: Uploads the local `.axiom` binary to Axiom Cloud for distribution.
-*   `axiom project create / link`: Associates your local directory with a cloud namespace.
+*   `axiom project create / link`: Creates or associates the current directory with a cloud project.
+
+For `axiom release` and `axiom build --release`, an existing directory link is
+used without prompting. On the first release from an unlinked directory, the
+CLI loads the signed-in account's projects and shows an arrow-key picker with
+**Create a new project** first. Selecting an existing project links it before
+the artifact is uploaded. Creating one collects name, lowercase slug, and an
+optional description, then links and deploys in the same release command.
+If the CLI is not signed in, it stops with `axiom login` instructions instead
+of guessing a project from the artifact.
 
 ### Development
 *   `axiom serve`: Boots the Axum-based local mock server.
 *   `axiom watch`: Starts the live HUD. Rebuilds the contract automatically on file save.
 *   `axiom diff <file1> <file2>`: Computes JSON-Atom diffs. Supports `--format changelog | semantic | text`.
 
+### Local control plane (`laxiom`)
+
+Use the normal `axiom` command for the production AxiomCore control plane. For
+end-to-end development against the backend and dashboard on your machine, build
+the CLI from this checkout and expose the included local wrapper as `laxiom`:
+
+```bash
+# From anywhere inside the AxiomCore checkout.
+AXIOMCORE_REPO="$(git rev-parse --show-toplevel)"
+cargo build --release --manifest-path "$AXIOMCORE_REPO/cli/Cargo.toml"
+"$AXIOMCORE_REPO/cli/scripts/install-laxiom"
+
+# Run this once if ~/.local/bin is not already on PATH.
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+The installer creates a stable `~/.local/bin/laxiom` symlink, so `laxiom`
+works from any application directory. It never depends on the directory from
+which you ran the setup command.
+
+In separate terminals, start the local services first:
+
+```bash
+cd axiom-backend && just serve-dev
+cd axiom-frontend && just serve-dashboard
+# Optional, but required to drain asynchronous releases and environments.
+cd axiom-backend && just worker-dev
+```
+
+Sign in to the local dashboard at `http://localhost:8080/auth`, then run:
+
+```bash
+laxiom login
+laxiom project list
+laxiom project link
+laxiom build --release
+```
+
+`laxiom login` opens `http://localhost:8000/device`. Because the dashboard
+session is an HttpOnly cookie for `localhost`, the approval page can bind the
+one-time CLI code to that local account without exposing any token to browser
+JavaScript.
+
+The wrapper sets `AXIOM_CLOUD_URL=http://localhost:8000`. This override is
+intentionally **local-only**: the CLI accepts `localhost`, `127.0.0.1`, or
+`::1`, rejects remote override origins and URL credentials, and stores its
+tokens, project links, and caches under
+`~/.config/axiom/local`. Your production `axiom` session is therefore never
+sent to or overwritten by a local service. To use a different loopback port,
+set `AXIOM_LOCAL_API_URL`, for example:
+
+```bash
+AXIOM_LOCAL_API_URL=http://127.0.0.1:9000 laxiom project list
+```
+
+`laxiom` does not require a separate installation update. Its stable symlink
+always launches this checkout's `cli/target/release/axiom-cli`. After changing
+CLI source, rebuild that binary and your next `laxiom` command uses it:
+
+```bash
+AXIOMCORE_REPO="$(git rev-parse --show-toplevel)"
+cargo build --release --manifest-path "$AXIOMCORE_REPO/cli/Cargo.toml"
+```
+
+You only need to rerun `install-laxiom` if you move or delete the checkout.
+Updating a separately installed production `axiom` binary does not change
+`laxiom`; rebuilding this local checkout does.
+
 ### Client Generation
-*   `axiom pull`: Downloads the latest `.axiom` contract from the cloud and generates the client SDK (Flutter, ATMX Web, React).
+
+`axiom pull` installs a signed `.axiom` contract, writes `AxiomDeps.toml`, and
+generates the client SDK (Flutter, ATMX Web, React). It accepts any of these
+sources:
+
+```bash
+# Existing local artifact or dependency config
+axiom pull ./api.axiom
+axiom pull ./AxiomDeps.toml
+
+# Active release channel, or an immutable release
+axiom pull default/first-project
+axiom pull default/first-project/v0.0.3
+
+# Either share URL form works; the CLI uses the reserved API namespace.
+axiom pull https://axiomcore.dev/default/first-project
+axiom pull https://axiomcore.dev/contracts/default/first-project/v0.0.3
+```
+
+The canonical share URL is
+`https://axiomcore.dev/contracts/<organization>/<project>[/<version>]`. The
+`/contracts` prefix is reserved so project names cannot collide with landing
+site paths. The shorter URL remains accepted by the CLI for convenience.
+
+Projects are private by default. Public projects can be pulled anonymously;
+private project access is checked by the API, not the CLI. If a signed-in
+account lacks access, the CLI names that account and offers an account switch
+and device login. An anonymous pull never reveals whether a private project
+exists.

@@ -51,7 +51,7 @@ Once you have access, the Axiom workflow is designed to be frictionless:
    ```
 4. **Pull (Frontend):** 
    ```bash
-   axiom pull
+   axiom pull <organization>/<project>
    ```
 
 Check out our **[Example Projects](./examples)** to see Axiom in action.

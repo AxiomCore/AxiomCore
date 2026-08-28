@@ -25,9 +25,16 @@ pub struct AuthData {
     pub projects: HashMap<PathBuf, String>,
 }
 
-fn get_config_dir() -> Result<PathBuf> {
+/// Return the directory that contains CLI sessions, project links, and caches.
+/// A loopback `AXIOM_CLOUD_URL` automatically receives its own profile, so a
+/// developer cannot accidentally use a production token or project link with a
+/// local control plane (or overwrite production state while testing locally).
+pub fn get_config_dir() -> Result<PathBuf> {
     let mut path = dirs::config_dir().context("Could not find config directory")?;
     path.push("axiom");
+    if axiom_cloud::uses_local_cloud()? {
+        path.push("local");
+    }
     fs::create_dir_all(&path)?;
     #[cfg(unix)]
     fs::set_permissions(&path, fs::Permissions::from_mode(0o700))
@@ -95,11 +102,7 @@ pub fn authenticated_cloud_client() -> Result<CloudClient> {
         anyhow::bail!("Not logged in. Run 'axiom login' first.");
     }
 
-    Ok(CloudClient::with_session(
-        data.access_token,
-        data.refresh_token,
-        get_auth_file_path()?,
-    ))
+    CloudClient::with_session(data.access_token, data.refresh_token, get_auth_file_path()?)
 }
 
 fn write_private_file(path: &Path, content: &[u8]) -> Result<()> {

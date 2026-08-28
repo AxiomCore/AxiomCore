@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tokio::fs;
@@ -13,14 +13,7 @@ pub struct AccessConfig {
 
 impl AccessConfig {
     fn get_path() -> Result<PathBuf> {
-        let mut path = directories::BaseDirs::new()
-            .context("Could not find home directory")?
-            .config_dir()
-            .to_path_buf();
-        path.push("axiom");
-        if !path.exists() {
-            std::fs::create_dir_all(&path)?;
-        }
+        let mut path = crate::auth_store::get_config_dir()?;
         path.push("access.json");
         Ok(path)
     }

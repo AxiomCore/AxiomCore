@@ -1,0 +1,8 @@
+framework = "atmx-web"
+
+[contracts]
+
+[contracts.first-project]
+source = "http://localhost:8000/contracts/default/first-project"
+signature = "jIb10vTMi1xEPxFPmb3iEta+Ykyi6t3lRD5AQ1ylBdeddt0nZ87MNIgQ6BlWWDsaNQQg0OsJOeuFvYKwAWjYAA=="
+public_key = "w7iC5GFG6O2kEUeE7U/wnH6IseQj2zLR91J4fYzci9w="

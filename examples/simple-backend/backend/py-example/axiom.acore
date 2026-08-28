@@ -1,6 +1,15 @@
-amends "axiom-fastapi:./main.py:app"
+amends "axiom-fastapi:main.py:app"
+
+observability {
+  enabled = true
+  telemetryUrl = "http://localhost:8000/v1/traces"
+  sampleRate = 1
+  headers = new Mapping {
+    ["x-axiom-telemetry-dsn"] = "axot_pmYlIhkzTgnvIhhJqiTpEogBKmYkjuukaAUHcERpA38"
+  }
+}
 
 project {
   id = "py-example"
-  version = "v0.0.1"
+  version = "v0.0.4"
 }

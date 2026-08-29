@@ -66,6 +66,10 @@ program
 
       multiIr[namespace] = normalizeIr(rawFile.ir);
 
+      // Domain Model v1 is carried inside `ir` and drives generated projection
+      // types. The immutable artifact remains the source of truth; the TOML
+      // file continues to contain only dependency and verification metadata.
+
       // ✨ NEW: Combine IR with TOML config for the SDK generator
       generatorPayload[namespace] = {
         ir: multiIr[namespace],

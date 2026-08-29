@@ -1,5 +1,5 @@
 import { AxiomIR, AxiomEndpoint, AxiomTypeRef } from "../types.js";
-import { camelCase } from "./utils.js";
+import { camelCase, pascalCase } from "./utils.js";
 
 export interface ContractPayload {
   ir: AxiomIR;
@@ -24,7 +24,8 @@ function moduleIdentifier(namespace: string): string {
 }
 
 // Helper to convert Axiom TypeRef to TypeScript Types
-function getTsType(namespace: string, typeRef?: AxiomTypeRef): string {
+function getTsType(namespace: string, typeRef?: AxiomTypeRef, projection?: string): string {
+  if (projection) return `models.${namespaceIdentifier(namespace)}.Domain.${pascalCase(projection)}`;
   if (!typeRef) return "any";
   if (typeRef.kind === "named") {
     return `models.${namespaceIdentifier(namespace)}.${typeRef.value}`;
@@ -139,8 +140,10 @@ export function generateSDKContent(
       const capFnName = fnName.charAt(0).toUpperCase() + fnName.slice(1);
 
       if (isReact) {
-        const tsType = getTsType(namespace, endpoint.returnType);
-        const decoder = getDecoder(namespace, endpoint.returnType);
+        const tsType = getTsType(namespace, endpoint.returnType, endpoint.responseProjection);
+        const decoder = endpoint.responseProjection
+          ? `(json: any) => json as ${tsType}`
+          : getDecoder(namespace, endpoint.returnType);
 
         content += `  get${capFnName}Def(\n`;
         content += `    args?: Record<string, any>,\n`;

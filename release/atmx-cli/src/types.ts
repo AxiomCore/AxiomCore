@@ -3,6 +3,7 @@ export interface AxiomIR {
   endpoints: AxiomEndpoint[];
   models: Record<string, AxiomModel>;
   enums: Record<string, AxiomEnum>;
+  domain?: AxiomDomainModel;
 }
 
 export interface AxiomEndpoint {
@@ -14,6 +15,8 @@ export interface AxiomEndpoint {
   returnType: AxiomTypeRef;
   returnIsOptional: boolean;
   isStream: boolean;
+  requestProjection?: string;
+  responseProjection?: string;
 }
 
 export interface AxiomParameter {
@@ -43,6 +46,24 @@ export interface AxiomField {
 export interface AxiomEnum {
   name: string;
   values: string[];
+}
+
+export interface AxiomDomainModel {
+  entities: Record<string, AxiomDomainEntity>;
+  projections: Record<string, AxiomDomainProjection>;
+}
+
+export interface AxiomDomainEntity {
+  id?: string;
+  model: string;
+  key: string[];
+}
+
+export interface AxiomDomainProjection {
+  id?: string;
+  entity: string;
+  fields: string[];
+  audience: string;
 }
 
 export interface AtmxContractConfig {

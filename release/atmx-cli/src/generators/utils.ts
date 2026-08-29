@@ -20,28 +20,22 @@ export function normalizeIr(obj: any): any {
       const camelKey = key.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
       newObj[camelKey] = normalizeIr(obj[key]);
     }
-    if (
-      newObj.endpoints &&
-      typeof newObj.endpoints === "object" &&
-      !Array.isArray(newObj.endpoints)
-    ) {
+    // Only the IR root owns endpoint/model/enum maps. A previous generic
+    // conversion treated *any* field named `endpoints` as an IR map, which
+    // corrupted valid model fields such as AgentSemanticView.endpoints into an
+    // array of field-property values. Keep the structural normalization tied
+    // to the actual IR shape.
+    const isIrRoot = typeof newObj.serviceName === "string";
+    if (isIrRoot && newObj.endpoints && typeof newObj.endpoints === "object" && !Array.isArray(newObj.endpoints)) {
       newObj.endpoints = Object.values(newObj.endpoints);
     }
-    if (
-      newObj.models &&
-      typeof newObj.models === "object" &&
-      !Array.isArray(newObj.models)
-    ) {
+    if (isIrRoot && newObj.models && typeof newObj.models === "object" && !Array.isArray(newObj.models)) {
       newObj.models = Object.values(newObj.models);
     }
-    if (
-      newObj.enums &&
-      typeof newObj.enums === "object" &&
-      !Array.isArray(newObj.enums)
-    ) {
+    if (isIrRoot && newObj.enums && typeof newObj.enums === "object" && !Array.isArray(newObj.enums)) {
       newObj.enums = Object.values(newObj.enums);
     }
-    if (Array.isArray(newObj.models)) {
+    if (isIrRoot && Array.isArray(newObj.models)) {
       newObj.models = newObj.models.map((model: any) => {
         if (
           model.fields &&

@@ -16,7 +16,9 @@ function moduleIdentifier(namespace) {
     return `${namespaceIdentifier(namespace)}Module`;
 }
 // Helper to convert Axiom TypeRef to TypeScript Types
-function getTsType(namespace, typeRef) {
+function getTsType(namespace, typeRef, projection) {
+    if (projection)
+        return `models.${namespaceIdentifier(namespace)}.Domain.${(0, utils_js_1.pascalCase)(projection)}`;
     if (!typeRef)
         return "any";
     if (typeRef.kind === "named") {
@@ -128,8 +130,10 @@ function generateSDKContent(contracts, isReact) {
             const fnName = endpoint.name.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
             const capFnName = fnName.charAt(0).toUpperCase() + fnName.slice(1);
             if (isReact) {
-                const tsType = getTsType(namespace, endpoint.returnType);
-                const decoder = getDecoder(namespace, endpoint.returnType);
+                const tsType = getTsType(namespace, endpoint.returnType, endpoint.responseProjection);
+                const decoder = endpoint.responseProjection
+                    ? `(json: any) => json as ${tsType}`
+                    : getDecoder(namespace, endpoint.returnType);
                 content += `  get${capFnName}Def(\n`;
                 content += `    args?: Record<string, any>,\n`;
                 content += `  ): AxiomQueryDef<${tsType}> {\n`;

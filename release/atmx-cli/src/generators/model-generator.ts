@@ -1,5 +1,5 @@
 // FILE: atmx-cli/src/generators/model-generator.ts
-import { AxiomEnum, AxiomModel, MultiIR } from "../types";
+import { AxiomDomainModel, AxiomEnum, AxiomModel, MultiIR } from "../types";
 import { pascalCase, camelCase, mapTypeToTs } from "./utils";
 
 export function generateModels(multiIr: MultiIR): string {
@@ -24,6 +24,7 @@ export function generateModels(multiIr: MultiIR): string {
     modelsList.forEach((model: any) =>
       sections.push(generateInterface(model, camelNs)),
     );
+    sections.push(generateDomainProjectionTypes(ir.domain, modelsList));
 
     sections.push(`}\n`);
   }
@@ -32,15 +33,37 @@ export function generateModels(multiIr: MultiIR): string {
   return sections.join("\n");
 }
 
+function generateDomainProjectionTypes(domain: AxiomDomainModel | undefined, models: any[]): string {
+  if (!domain?.projections || !domain?.entities) return "";
+  const entities = domain.entities || {};
+  const projections = domain.projections || {};
+  const availableModels = new Set(models.map((model) => String(model?.name || "")));
+  const lines = ["  export namespace Domain {"];
+  let count = 0;
+  for (const [name, projection] of Object.entries(projections)) {
+    const entity = entities[(projection as any).entity];
+    const model = entity?.model;
+    const fields = Array.isArray((projection as any).fields) ? (projection as any).fields : [];
+    if (!model || !availableModels.has(model) || fields.length === 0) continue;
+    const fieldUnion = fields.map((field: string) => JSON.stringify(camelCase(field))).join(" | ");
+    lines.push(`    export type ${pascalCase(name)} = Pick<${pascalCase(model)}, ${fieldUnion}>;`);
+    count += 1;
+  }
+  lines.push("  }");
+  return count ? lines.join("\n") : "";
+}
+
 function generateEnum(en: AxiomEnum): string {
   const name = pascalCase(en.name);
   const values = en.values.map((v) => `  ${pascalCase(v)}: "${v}"`).join(",\n");
-  return `
-  export const ${name} = {
-  ${values}
-  } as const;
-  export type ${name} = typeof ${name}[keyof typeof ${name}];
-  `;
+  return [
+    "",
+    `  export const ${name} = {`,
+    values,
+    "  } as const;",
+    `  export type ${name} = typeof ${name}[keyof typeof ${name}];`,
+    "",
+  ].join("\n");
 }
 
 function generateInterface(model: AxiomModel, ns: string): string {
@@ -52,11 +75,7 @@ function generateInterface(model: AxiomModel, ns: string): string {
     })
     .join("\n");
 
-  return `
-  export interface ${name} {
-${fields}
-  }
-  `;
+  return ["", `  export interface ${name} {`, fields, "  }", ""].join("\n");
 }
 
 function generateMappers(multiIr: MultiIR): string {

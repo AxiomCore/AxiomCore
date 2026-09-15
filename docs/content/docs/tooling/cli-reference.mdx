@@ -9,8 +9,8 @@ description: Exhaustive list of AxiomCore commands.
 *   `axiom join <email>`: Join the private alpha waitlist.
 
 ### Compilation & Cloud
-*   `axiom build <file>`: Compiles the backend and `.acore` into a signed `.axiom` binary. Generates a `.lockfile`.
-*   `axiom release`: Uploads the local `.axiom` binary to Axiom Cloud for distribution.
+*   `axiom build <file>`: Compiles backend `.acore` into an unsigned local `.axiom` contract and generates a `.lockfile`.
+*   `axiom release`: Sends the build to Axiom Cloud, the signing boundary, and publishes the signed contract.
 *   `axiom project create / link`: Creates or associates the current directory with a cloud project.
 
 For `axiom release` and `axiom build --release`, an existing directory link is
@@ -26,6 +26,46 @@ of guessing a project from the artifact.
 *   `axiom serve`: Boots the Axum-based local mock server.
 *   `axiom watch`: Starts the live HUD. Rebuilds the contract automatically on file save.
 *   `axiom diff <file1> <file2>`: Computes JSON-Atom diffs. Supports `--format changelog | semantic | text`.
+*   `axiom domain validate [axiom.acore]`: Validates the optional Domain Model v1 block and prints its canonical manifest hash. Add `--json` for CI.
+*   `axiom security check [axiom.acore]`: Runs optional Security Mode AXSEC analysis without writing an artifact. `--json` emits the signed-manifest shape and `--fail-on-warning` supports a CI ratchet. In strict mode, error findings exit non-zero.
+*   `axiom domain bootstrap <input> --source openapi|sql --output axiom.domain.acore`: Creates reviewable Domain Model suggestions from OpenAPI JSON or exported SQL DDL. It never overwrites a contract or connects to a live database.
+
+### Acore applications
+
+* `axiom run <main.acore> --target ios|android|web`: compiles, launches, and watches one application.
+* `axiom ui test <main.acore> --target ios|android|web`: runs compiler/session safety checks without launching a host.
+* `axiom ui build <main.acore> --target ios|android|web`: emits `dist/<module>-<target>.axiomapp` with the target payload, runtime configuration, assets, capability report, provenance, and checksums. Native archives include the verified host with Axiom Runtime statically embedded; web includes the host and Runtime WASM.
+* `axiom inspect <application.axiomapp>`: verifies both checksum layers and prints the application, available targets, mode, graph revision, and embedded host identity.
+* `axiom install <application.axiomapp>`: verifies and copies the intact archive into the content-addressed Axiom application cache. It does not unpack into the project or application cache.
+* `axiom package <ios.axiomapp> <android.axiomapp> <web.axiomapp> --out dist/application.axiomapp`: combines independently built targets for the same application into one deterministic multi-target envelope. Each nested target artifact remains byte-for-byte intact.
+* `axiom run <application.axiomapp> [--target ios|android|web]`: runs directly from the archive. A multi-target archive prompts in an interactive terminal when `--target` is omitted and requires the flag in non-interactive environments.
+
+Production-mode application builds reject unsigned local contracts. Use
+`--development` only for a local fixture; the resulting manifest records
+`mode: development` and lists every unsigned contract. `--out <path>` selects
+an explicit artifact path. A target-specific `.axiomapp` uses
+`axiom-application/v1`; `axiom package` wraps one or more of those artifacts in
+an `axiom-application-set/v1` envelope. The common extension identifies the
+verified Axiom application boundary, while each nested build remains
+platform-specific. Native execution materializes only the embedded host and
+bundle into Axiom's opaque cache because `simctl` and `adb` require filesystem
+paths; it never unpacks generated source into the developer workspace. These
+are not editable Xcode/Gradle projects. Physical-device/store distribution
+remains uncertified.
+
+Example release-development flow:
+
+```bash
+axiom ui build main.acore --target ios --development
+axiom ui build main.acore --target android --development
+axiom ui build main.acore --target web --development
+axiom package dist/*-ios.axiomapp dist/*-android.axiomapp dist/*-web.axiomapp \
+  --out dist/my-app.axiomapp
+axiom inspect dist/my-app.axiomapp
+axiom install dist/my-app.axiomapp
+axiom run dist/my-app.axiomapp       # prompts for a target
+axiom run dist/my-app.axiomapp --target web
+```
 
 ### Local control plane (`laxiom`)
 
@@ -70,7 +110,10 @@ session is an HttpOnly cookie for `localhost`, the approval page can bind the
 one-time CLI code to that local account without exposing any token to browser
 JavaScript.
 
-The wrapper sets `AXIOM_CLOUD_URL=http://localhost:8000`. This override is
+The wrapper sets `AXIOM_CLOUD_URL=http://localhost:8000` and, when present,
+uses this checkout's built `release/atmx-cli` generator for `laxiom pull`.
+This lets a local client/runtime change be exercised before publishing its npm
+companion. This override is
 intentionally **local-only**: the CLI accepts `localhost`, `127.0.0.1`, or
 `::1`, rejects remote override origins and URL credentials, and stores its
 tokens, project links, and caches under

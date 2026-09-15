@@ -1,12 +1,20 @@
+pub mod app;
+pub mod benchmark;
 pub mod cache;
+pub mod contract;
 pub mod deploy;
 pub mod diff;
+pub mod doctor;
+pub mod domain;
 pub mod init;
 pub mod install;
 pub mod join;
+pub mod onboard;
 pub mod project; // Add this
 pub mod pull;
 pub mod release;
+pub mod security;
 pub mod serve;
 pub mod test;
+pub mod ui;
 pub mod watch;

@@ -42,6 +42,51 @@ enum Commands {
         #[arg(long)]
         module: Option<String>,
     },
+    /// Inspect local prerequisites without changing files, logging in, or pulling a contract
+    Doctor {
+        /// Emit a stable machine-readable report for CI or support tickets
+        #[arg(long)]
+        json: bool,
+        /// Return a non-zero exit status when a required prerequisite fails
+        #[arg(long)]
+        strict: bool,
+    },
+    /// Detect a repository's role and print or apply the shortest supported first path
+    Onboard {
+        #[arg(long, value_enum)]
+        role: Option<commands::onboard::OnboardRole>,
+        /// Backend entrypoint, for example main.py:app
+        #[arg(long)]
+        entrypoint: Option<String>,
+        /// Extractor module, for example axiom-fastapi
+        #[arg(long)]
+        module: Option<String>,
+        /// Client target: flutter, dart, atmx-web, or atmx-react
+        #[arg(long)]
+        framework: Option<String>,
+        /// Contract source to pull for a frontend path
+        #[arg(long)]
+        contract: Option<String>,
+        /// Create the detected backend axiom.acore; no release is uploaded
+        #[arg(long)]
+        apply: bool,
+    },
+    /// Measure local contract build and artifact-load boundaries reproducibly
+    Benchmark {
+        /// The Acore contract source
+        #[arg(default_value = "axiom.acore")]
+        file: String,
+        #[arg(long)]
+        variant: Option<String>,
+        #[arg(long, default_value_t = 10)]
+        iterations: usize,
+        #[arg(long, default_value_t = 2)]
+        warmup: usize,
+        #[arg(long, default_value = "axiom-benchmark.json")]
+        output: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
     Login,
     /// Join the waitlist if you don't have a referral code
     Join {
@@ -51,11 +96,19 @@ enum Commands {
         #[command(subcommand)]
         action: CacheAction,
     },
+    /// Install an intact .axiomapp locally or an Acore compiler module
     Install {
         package: String,
         /// Installs an Acore/Axiom compiler extractor module
         #[arg(long)]
         module: bool,
+    },
+    /// Combine target-specific .axiomapp builds into one multi-target artifact
+    Package {
+        #[arg(required = true)]
+        artifacts: Vec<PathBuf>,
+        #[arg(short, long, default_value = "dist/application.axiomapp")]
+        out: PathBuf,
     },
     Eval {
         file: PathBuf,
@@ -117,7 +170,7 @@ enum Commands {
         #[arg(short, long, default_value = "CLI Deployment")]
         message: String,
     },
-    /// Inspect an .axiom file's IR and Policies
+    /// Inspect a contract .axiom or verify and describe an application .axiomapp
     Inspect {
         #[arg(default_value = "axiom.axiom")]
         path: PathBuf,
@@ -185,6 +238,245 @@ enum Commands {
         /// Specify the variant to evaluate before diffing
         #[arg(long)]
         variant: Option<String>,
+    },
+    /// Resolve and verify signed contract artifacts for a future Acore UI app
+    Contract {
+        #[command(subcommand)]
+        action: ContractAction,
+    },
+    /// Check an Acore UI module and lower it only into an in-memory graph
+    Ui {
+        #[command(subcommand)]
+        action: UiAction,
+    },
+    /// Run an authored Acore UI session or a packaged .axiomapp
+    Run {
+        /// A UI module such as apps/mobile/src/main.acore, or a .axiomapp
+        source: PathBuf,
+        #[arg(long, default_value = "axiom.ui.lock.json")]
+        lock: PathBuf,
+        /// Acore defaults to ios; multi-target .axiomapp files prompt when omitted
+        #[arg(long)]
+        target: Option<String>,
+        /// Compile once and exit; intended for CI and host-independent checks
+        #[arg(long)]
+        once: bool,
+    },
+    /// Validate or bootstrap the optional Domain Model v1 layer
+    Domain {
+        #[command(subcommand)]
+        action: DomainAction,
+    },
+    /// Inspect opt-in Phase 4 security policy, source evidence, and coverage
+    Security {
+        #[command(subcommand)]
+        action: SecurityAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum DomainAction {
+    /// Validate domain references and print the canonical manifest hash
+    Validate {
+        #[arg(default_value = "axiom.acore")]
+        file: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Create a reviewable domain block from OpenAPI JSON or exported SQL DDL
+    Bootstrap {
+        input: PathBuf,
+        #[arg(long, value_enum)]
+        source: commands::domain::DomainSource,
+        #[arg(long, default_value = "axiom.domain.acore")]
+        output: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum SecurityAction {
+    /// Analyze an Acore contract without producing an artifact
+    Check {
+        #[arg(default_value = "axiom.acore")]
+        file: PathBuf,
+        #[arg(long)]
+        json: bool,
+        /// Treat warnings as a non-zero result, suitable for a review-only CI job
+        #[arg(long)]
+        fail_on_warning: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum ContractAction {
+    /// Resolve AxiomDeps.toml contract artifacts into a deterministic lockfile
+    Resolve {
+        #[arg(long, default_value = "AxiomDeps.toml")]
+        deps: PathBuf,
+        #[arg(long, default_value = "axiom.ui.lock.json")]
+        lock: PathBuf,
+    },
+    /// Recompute and check every AxiomDeps.toml lock input without changing files
+    Verify {
+        #[arg(long, default_value = "AxiomDeps.toml")]
+        deps: PathBuf,
+        #[arg(long, default_value = "axiom.ui.lock.json")]
+        lock: PathBuf,
+    },
+    /// Show semantic changes between two UI contract locks
+    Diff { before: PathBuf, after: PathBuf },
+    /// Print read-only metadata for one future virtual facade
+    Facade {
+        alias: String,
+        #[arg(long, default_value = "axiom.ui.lock.json")]
+        lock: PathBuf,
+    },
+    /// Validate `use contract` declarations against only a committed lock
+    CheckSource {
+        source: PathBuf,
+        #[arg(long, default_value = "axiom.ui.lock.json")]
+        lock: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum UiAction {
+    /// Install or inspect the target UI Host used by Axiom run
+    Host {
+        #[command(subcommand)]
+        action: UiHostAction,
+    },
+    /// Create a small authored Acore UI starter without generated source
+    Init {
+        /// Empty directory that will become the application root
+        directory: PathBuf,
+        #[arg(long, default_value = "ios")]
+        target: String,
+    },
+    /// Parse, validate, and virtually lower a UI module without writing generated source
+    Check {
+        source: PathBuf,
+        #[arg(long, default_value = "axiom.ui.lock.json")]
+        lock: PathBuf,
+        #[arg(long, default_value = "ios")]
+        target: String,
+    },
+    /// Start the virtual compiler/watch loop. A native transport is required for device rendering.
+    Run {
+        source: PathBuf,
+        #[arg(long, default_value = "axiom.ui.lock.json")]
+        lock: PathBuf,
+        #[arg(long, default_value = "ios")]
+        target: String,
+        #[arg(long)]
+        once: bool,
+    },
+    /// Print a read-only compiler view tied to the current virtual graph revision
+    Inspect {
+        #[arg(value_enum)]
+        view: commands::ui::UiInspectView,
+        source: PathBuf,
+        #[arg(long, default_value = "axiom.ui.lock.json")]
+        lock: PathBuf,
+        #[arg(long, default_value = "ios")]
+        target: String,
+        /// Maximum semantic symbols for `context`; this is not a token budget
+        #[arg(long, default_value_t = 24)]
+        max_symbols: usize,
+    },
+    /// Return compiler-checked compact, redacted semantic context for AI tooling
+    Context {
+        source: PathBuf,
+        #[arg(long, default_value = "axiom.ui.lock.json")]
+        lock: PathBuf,
+        #[arg(long, default_value = "ios")]
+        target: String,
+        #[arg(long, default_value_t = 24)]
+        max_symbols: usize,
+    },
+    /// Validate an AI-proposed replacement without writing it to the workspace
+    AiCheck {
+        source: PathBuf,
+        proposed: PathBuf,
+        /// Graph revision on which the proposal was based
+        #[arg(long)]
+        base: String,
+        #[arg(long, default_value = "axiom.ui.lock.json")]
+        lock: PathBuf,
+        #[arg(long, default_value = "ios")]
+        target: String,
+    },
+    /// Diagnose UI compiler and target-host prerequisites without modifying the workspace
+    Doctor {
+        #[arg(long, default_value = "ios")]
+        target: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect the versioned Lynx/Acore capability registry for a target
+    Capabilities {
+        #[arg(long, default_value = "ios")]
+        target: String,
+        #[arg(long, value_enum)]
+        kind: Option<commands::ui::UiCapabilityKind>,
+        /// Case-insensitive match against capability ID, Lynx name, or Acore name
+        #[arg(long)]
+        query: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run deterministic compiler/session checks for one Acore UI module
+    Test {
+        source: PathBuf,
+        #[arg(long, default_value = "axiom.ui.lock.json")]
+        lock: PathBuf,
+        #[arg(long, default_value = "ios")]
+        target: String,
+    },
+    /// Build a deterministic, target-specific Axiom application artifact
+    Build {
+        source: PathBuf,
+        #[arg(long, default_value = "axiom.ui.lock.json")]
+        lock: PathBuf,
+        #[arg(long, default_value = "ios")]
+        target: String,
+        /// Artifact path; defaults to dist/<module>-<target>.axiomapp
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Permit unsigned local contracts and mark the artifact development-only
+        #[arg(long)]
+        development: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum UiHostAction {
+    /// Set up the selected UI Host outside the application workspace
+    Install {
+        #[arg(long, default_value = "ios")]
+        target: String,
+        /// Axiom UI Host release manifest produced by the Axiom-owned host pipeline
+        #[arg(long)]
+        release_manifest: Option<PathBuf>,
+        /// Platform variant from the release manifest (for example `simulator` or `device`)
+        #[arg(long)]
+        variant: Option<String>,
+        /// Existing host project directory; otherwise Axiom offers its local fixture default
+        #[arg(long)]
+        host_root: Option<PathBuf>,
+        /// Fail instead of prompting when host information is missing
+        #[arg(long)]
+        non_interactive: bool,
+    },
+    /// Show the selected UI Host's local setup state
+    Status {
+        #[arg(long, default_value = "ios")]
+        target: String,
+    },
+    /// Restart the installed development host and discard only stale delivery control records
+    Recover {
+        #[arg(long, default_value = "ios")]
+        target: String,
     },
 }
 
@@ -263,7 +555,27 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let local_cloud = uses_local_cloud()?;
-    let active_config = if local_cloud {
+    let local_application_command = match &cli.command {
+        Commands::Package { .. } => true,
+        Commands::Inspect { path } => commands::app::is_axiom_application(path),
+        Commands::Install { package, module } => {
+            !module && commands::app::is_axiom_application(Path::new(package))
+        }
+        _ => false,
+    };
+    let active_config = if local_cloud
+        || local_application_command
+        || matches!(
+            &cli.command,
+            Commands::Doctor { .. }
+                | Commands::Benchmark { .. }
+                // Acore UI development is local compiler work. It must not
+                // trigger a cloud-auth prompt before an empty-workspace
+                // starter, check, inspection, or virtual reload can run.
+                | Commands::Ui { .. }
+                | Commands::Run { .. }
+                | Commands::Lsp
+        ) {
         // The private-alpha referral gate and its telemetry only apply to the
         // public control plane. A loopback endpoint is an explicit developer
         // choice and uses an isolated local CLI profile, never production
@@ -350,10 +662,14 @@ async fn main() -> anyhow::Result<()> {
     // Extract command name for logging
     let cmd_name = match &cli.command {
         Commands::Init { .. } => "init",
+        Commands::Doctor { .. } => "doctor",
+        Commands::Onboard { .. } => "onboard",
+        Commands::Benchmark { .. } => "benchmark",
         Commands::Login => "login",
         Commands::Join { .. } => "join",
         Commands::Cache { .. } => "cache",
         Commands::Install { .. } => "install",
+        Commands::Package { .. } => "package",
         Commands::Build { .. } => "build",
         Commands::Inspect { .. } => "inspect",
         Commands::Release { .. } => "release",
@@ -361,6 +677,11 @@ async fn main() -> anyhow::Result<()> {
         Commands::Watch { .. } => "watch",
         Commands::Project { .. } => "project",
         Commands::Diff { .. } => "diff",
+        Commands::Contract { .. } => "contract",
+        Commands::Ui { .. } => "ui",
+        Commands::Run { .. } => "run",
+        Commands::Domain { .. } => "domain",
+        Commands::Security { .. } => "security",
         Commands::Serve { .. } => "serve",
         Commands::Deploy { .. } => "deploy",
         Commands::Test { .. } => "test",
@@ -378,10 +699,9 @@ async fn main() -> anyhow::Result<()> {
         Telemetry::track(
             active_config,
             cmd_name,
-            std::env::args().collect(),
             duration,
             success,
-            error_msg,
+            error_msg.as_deref(),
         )
         .await;
     }
@@ -392,6 +712,221 @@ async fn main() -> anyhow::Result<()> {
 // Helper to route commands (Refactored from original main)
 async fn execute_command(command: &Commands) -> anyhow::Result<()> {
     match command {
+        Commands::Doctor { json, strict } => commands::doctor::handle_doctor(*json, *strict).await,
+        Commands::Onboard {
+            role,
+            entrypoint,
+            module,
+            framework,
+            contract,
+            apply,
+        } => {
+            commands::onboard::handle_onboard(
+                role.clone(),
+                entrypoint.clone(),
+                module.clone(),
+                framework.clone(),
+                contract.clone(),
+                *apply,
+            )
+            .await
+        }
+        Commands::Benchmark {
+            file,
+            variant,
+            iterations,
+            warmup,
+            output,
+            json,
+        } => {
+            commands::benchmark::handle_benchmark(
+                file.clone(),
+                variant.clone(),
+                *iterations,
+                *warmup,
+                output.clone(),
+                *json,
+            )
+            .await
+        }
+        Commands::Domain { action } => match action {
+            DomainAction::Validate { file, json } => {
+                commands::domain::handle_validate(file.clone(), *json).await
+            }
+            DomainAction::Bootstrap {
+                input,
+                source,
+                output,
+            } => {
+                commands::domain::handle_bootstrap(input.clone(), source.clone(), output.clone())
+                    .await
+            }
+        },
+        Commands::Contract { action } => match action {
+            ContractAction::Resolve { deps, lock } => {
+                commands::contract::handle_resolve(deps.clone(), lock.clone()).await
+            }
+            ContractAction::Verify { deps, lock } => {
+                commands::contract::handle_verify(deps.clone(), lock.clone()).await
+            }
+            ContractAction::Diff { before, after } => {
+                commands::contract::handle_diff(before.clone(), after.clone()).await
+            }
+            ContractAction::Facade { alias, lock } => {
+                commands::contract::handle_facade(lock.clone(), alias.clone()).await
+            }
+            ContractAction::CheckSource { source, lock } => {
+                commands::contract::handle_check_source(source.clone(), lock.clone()).await
+            }
+        },
+        Commands::Ui { action } => match action {
+            UiAction::Host { action } => match action {
+                UiHostAction::Install {
+                    target,
+                    release_manifest,
+                    variant,
+                    host_root,
+                    non_interactive,
+                } => {
+                    commands::ui::handle_host_install(
+                        target.clone(),
+                        release_manifest.clone(),
+                        variant.clone(),
+                        host_root.clone(),
+                        *non_interactive,
+                    )
+                    .await
+                }
+                UiHostAction::Status { target } => {
+                    commands::ui::handle_host_status(target.clone()).await
+                }
+                UiHostAction::Recover { target } => {
+                    commands::ui::handle_host_recover(target.clone()).await
+                }
+            },
+            UiAction::Init { directory, target } => {
+                commands::ui::handle_init(directory.clone(), target.clone()).await
+            }
+            UiAction::Check {
+                source,
+                lock,
+                target,
+            } => commands::ui::handle_check(source.clone(), lock.clone(), target.clone()).await,
+            UiAction::Run {
+                source,
+                lock,
+                target,
+                once,
+            } => {
+                commands::ui::handle_run(source.clone(), lock.clone(), target.clone(), *once).await
+            }
+            UiAction::Inspect {
+                view,
+                source,
+                lock,
+                target,
+                max_symbols,
+            } => {
+                commands::ui::handle_inspect(
+                    view.clone(),
+                    source.clone(),
+                    lock.clone(),
+                    target.clone(),
+                    *max_symbols,
+                )
+                .await
+            }
+            UiAction::Context {
+                source,
+                lock,
+                target,
+                max_symbols,
+            } => {
+                commands::ui::handle_context(
+                    source.clone(),
+                    lock.clone(),
+                    target.clone(),
+                    *max_symbols,
+                )
+                .await
+            }
+            UiAction::AiCheck {
+                source,
+                proposed,
+                base,
+                lock,
+                target,
+            } => {
+                commands::ui::handle_ai_check(
+                    source.clone(),
+                    proposed.clone(),
+                    base.clone(),
+                    lock.clone(),
+                    target.clone(),
+                )
+                .await
+            }
+            UiAction::Doctor { target, json } => {
+                commands::ui::handle_doctor(target.clone(), *json).await
+            }
+            UiAction::Capabilities {
+                target,
+                kind,
+                query,
+                json,
+            } => {
+                commands::ui::handle_capabilities(target.clone(), *kind, query.clone(), *json).await
+            }
+            UiAction::Test {
+                source,
+                lock,
+                target,
+            } => commands::ui::handle_test(source.clone(), lock.clone(), target.clone()).await,
+            UiAction::Build {
+                source,
+                lock,
+                target,
+                out,
+                development,
+            } => {
+                commands::ui::handle_build(
+                    source.clone(),
+                    lock.clone(),
+                    target.clone(),
+                    out.clone(),
+                    *development,
+                )
+                .await
+            }
+        },
+        Commands::Run {
+            source,
+            lock,
+            target,
+            once,
+        } => {
+            if commands::app::is_axiom_application(source) {
+                if *once {
+                    anyhow::bail!("--once applies to authored .acore sessions, not packaged .axiomapp execution");
+                }
+                commands::app::handle_run(source.clone(), target.clone()).await
+            } else {
+                commands::ui::handle_run(
+                    source.clone(),
+                    lock.clone(),
+                    target.clone().unwrap_or_else(|| "ios".to_string()),
+                    *once,
+                )
+                .await
+            }
+        }
+        Commands::Security { action } => match action {
+            SecurityAction::Check {
+                file,
+                json,
+                fail_on_warning,
+            } => commands::security::handle_check(file.clone(), *json, *fail_on_warning).await,
+        },
         Commands::Test { file, tag } => {
             commands::test::handle_test(file.clone(), tag.clone()).await
         }
@@ -448,10 +983,15 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                 acore::package::install_tool(package)
                     .map_err(|e| anyhow::anyhow!(e.to_string()))?;
                 Ok(())
+            } else if commands::app::is_axiom_application(Path::new(package)) {
+                commands::app::handle_install(PathBuf::from(package)).await
             } else {
                 println!("Marketplace installation coming soon for '{}'", package);
                 Ok(())
             }
+        }
+        Commands::Package { artifacts, out } => {
+            commands::app::handle_package(artifacts.clone(), out.clone()).await
         }
 
         Commands::Build {
@@ -530,6 +1070,9 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             .await
         }
         Commands::Inspect { path } => {
+            if commands::app::is_axiom_application(path) {
+                return commands::app::handle_inspect(path.clone()).await;
+            }
             let artifact = if path.as_path() == Path::new("axiom.axiom") && !path.is_file() {
                 PathBuf::from(".axiom")
             } else {

@@ -19,54 +19,12 @@ TARGET_DIR="$RUNTIME_DIR/target"
 echo "🚀 Starting Universal Apple Build Process..."
 cd "$RUNTIME_DIR"
 
-# 1. Generate Static Headers
-echo "📝 Writing static C headers..."
+# 1. Generate the C ABI header from Rust. This is deliberately not a hand
+# maintained copy: a release must package the exact ABI it links.
+echo "📝 Generating C ABI header..."
 mkdir -p "$INCLUDE_DIR"
-cat <<EOF > "$INCLUDE_DIR/axiom.h"
-#ifndef AXIOM_RUNTIME_H
-#define AXIOM_RUNTIME_H
-#include <stdint.h>
-#include <stdbool.h>
-
-typedef struct { const uint8_t* ptr; uint64_t len; } AxiomString;
-typedef struct { uint8_t* ptr; uint64_t len; } AxiomBuffer;
-
-typedef enum {
-    Success = 0,
-    UnknownError = 1,
-    RequestParsingFailed = 2,
-    NetworkError = 3,
-    ResponseDeserializationFailed = 4,
-    UnknownEndpoint = 5,
-    InvalidContract = 10,
-    RuntimeTooOld = 11,
-    ContractNotLoaded = 12
-} FfiError;
-
-typedef struct {
-    uint64_t request_id;
-    int32_t error_code;
-    AxiomBuffer data;
-    AxiomBuffer error_message; // Added for updated FFI signature
-} AxiomResponseBuffer;
-
-typedef void (*AxiomCallback)(AxiomResponseBuffer* response);
-typedef void (*AxiomAuthCallback)(uint64_t request_id);
-
-void axiom_initialize(AxiomString base_url);
-int32_t axiom_load_contract(AxiomString namespace, AxiomString base_url, AxiomBuffer contract_buf, AxiomString signature, AxiomString public_key);
-void axiom_register_callback(AxiomCallback callback);
-void axiom_register_auth_provider(AxiomAuthCallback callback);
-void axiom_provide_auth_token(uint64_t request_id, AxiomString token);
-void axiom_free_buffer(AxiomBuffer buf);
-void axiom_process_responses();
-void axiom_call(uint64_t request_id, AxiomString namespace, uint32_t endpoint_id, AxiomString method, AxiomString path, AxiomString traceparent, AxiomString headers_json, AxiomBuffer input_buf);
-void axiom_set_auth_token(AxiomString namespace, AxiomString method_name, AxiomString token);
-void axiom_clear_auth_token(AxiomString namespace, AxiomString method_name);
-void axiom_send_stream_message(uint64_t request_id, AxiomBuffer payload_buf);
-
-#endif
-EOF
+command -v cbindgen >/dev/null || { echo "cbindgen is required to package AxiomRuntime" >&2; exit 1; }
+"$RUNTIME_DIR/scripts/generate-ffi-header.sh"
 
 cat <<EOF > "$INCLUDE_DIR/module.modulemap"
 module AxiomRuntime {

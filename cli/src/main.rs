@@ -170,10 +170,12 @@ enum Commands {
         #[arg(short, long, default_value = "CLI Deployment")]
         message: String,
     },
-    /// Inspect a contract .axiom or verify and describe an application .axiomapp
+    /// Inspect an application workspace or a legacy .axiom/.axiomapp artifact
     Inspect {
-        #[arg(default_value = "axiom.axiom")]
-        path: PathBuf,
+        #[command(subcommand)]
+        action: Option<commands::inspector::InspectorAction>,
+        /// Legacy artifact path; omitted when using an Inspector subcommand
+        path: Option<PathBuf>,
     },
     Release {
         /// Path to the .axiom file (defaults to axiom.axiom in the current directory)
@@ -758,7 +760,7 @@ async fn main() -> anyhow::Result<()> {
     let local_cloud = uses_local_cloud()?;
     let local_application_command = match &cli.command {
         Commands::Package { .. } => true,
-        Commands::Inspect { path } => commands::app::is_axiom_application(path),
+        Commands::Inspect { .. } => true,
         Commands::Install { package, module } => {
             !module && commands::app::is_axiom_application(Path::new(package))
         }
@@ -1453,8 +1455,24 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             )
             .await
         }
-        Commands::Inspect { path } => {
-            if commands::app::is_axiom_application(path) {
+        Commands::Inspect {
+            action: Some(action),
+            ..
+        } => commands::inspector::handle(action).await,
+        Commands::Inspect { path, .. } => {
+            let path = path.clone().unwrap_or_else(|| PathBuf::from("axiom.axiom"));
+            if path.is_dir()
+                || path.extension().and_then(|extension| extension.to_str()) == Some("acore")
+            {
+                return commands::inspector::handle(
+                    &commands::inspector::InspectorAction::Overview {
+                        path,
+                        format: commands::inspector::InspectorFormat::Human,
+                    },
+                )
+                .await;
+            }
+            if commands::app::is_axiom_application(&path) {
                 return commands::app::handle_inspect(path.clone()).await;
             }
             let artifact = if path.as_path() == Path::new("axiom.axiom") && !path.is_file() {

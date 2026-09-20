@@ -1,0 +1,78 @@
+---
+title: Releases and environments
+description: Immutable artifacts, durable release evidence, latest-channel activation, rollback, sandboxes, and tests.
+---
+
+<StatusNote status="alpha" title="Release control plane">
+  The service and dashboard implement the lifecycle described here. Managed
+  environment execution also requires its deployment-time Cloud Run resources
+  and can be disabled in a local control plane.
+</StatusNote>
+
+## Immutable release identity
+
+The server computes SHA-256 from uploaded `.axiom` bytes. A project/version
+pair is immutable: retrying the exact bytes can resolve to the existing
+artifact, while different bytes under the same version are rejected. A source
+URL is provenance metadata, not the stored artifact itself.
+
+```bash
+axiom build axiom.acore
+axiom release axiom.axiom --version 1.2.0
+```
+
+## Durable pipeline
+
+```text
+uploaded -> verifying -> verified -> testing -> deployable
+    \            \           \           \          \
+     +------------+-----------+-----------+--------> failed
+```
+
+The worker persists evidence for structural and signature verification,
+semantic analysis, sandbox state, declared tests, and release policy. A queued
+or skipped stage remains explicit; the dashboard must not present it as a
+success.
+
+`deployable` means the configured evidence and policy allow activation. It
+does not claim that an arbitrary backend binary or mobile application was
+deployed.
+
+## Latest channel
+
+The `latest` reference is a mutable pointer to an eligible immutable release.
+It returns no artifact before an eligible version is activated. Activation and
+rollback are owner operations protected by an idempotency key and a channel
+generation guard so stale decisions cannot overwrite newer ones.
+
+Rollback moves the pointer to an older eligible release; it does not edit
+either artifact.
+
+## Managed sandbox
+
+Where enabled, one project sandbox tracks a verified artifact and synthetic
+mock configuration. Provision, reset, expiry, deletion, health, and revision
+events are persisted. The stable environment can receive a new Cloud Run
+revision without creating a second ambiguous sandbox.
+
+Access-controlled sandboxes use `X-Axiom-Sandbox-Key`. Reveal that key only
+through the authorized connection action, keep it out of logs and local
+storage, and use only synthetic or developer-safe data. A sandbox is not a
+production data plane.
+
+## Contract tests
+
+Declared suites run against the ready sandbox for the same immutable artifact.
+Results are retained independently from the worker invocation. A missing suite
+is recorded as skipped; project policy decides whether that is allowed.
+
+| Evidence | Default release meaning |
+| --- | --- |
+| Declared test failure or executor expiry | Blocks the release attempt |
+| No declared suites | Recorded as skipped; allowed unless the project requires tests |
+| Risky or breaking semantic change | Warning by default; owner acknowledgement required for activation |
+| All required evidence passes | Eligible for automatic or explicit latest-channel activation |
+
+Use [Testing contracts](/workflows/testing-contracts) for authoring and local
+test guidance, and [Contract pull requests](/workflows/contract-pull-requests)
+for review workflow.

@@ -1,22 +1,60 @@
 ---
-title: Interactive TUIs
-description: Terminal User Interfaces built with Ratatui.
+title: Terminal interfaces
+description: Implemented keyboard interfaces for contract inspection, cache debugging, login, and project selection.
 ---
 
-AxiomCore embraces the terminal. Instead of dumping logs to `stdout`, Axiom uses highly interactive dashboards.
+Some Axiom CLI commands use a terminal user interface when attached to an
+interactive terminal. CI should use their headless or JSON alternatives where
+available.
 
-### `axiom inspect`
-Browse the compiled binary payload visually.
-*   **Endpoint Detail:** View parsed Path parameters, Cache TTLs, Retry Backoff strategies, and Extracted Validation YAMLs.
-*   **Model Browser:** Inspect the generated FlatBuffer and JSON representations of your backend models.
+## Contract inspector
 
-### `axiom watch`
-A persistent, split-pane dashboard for local development.
-*   **Top Pane:** Live connection status and last sync time.
-*   **Bottom Pane:** Real-time semantic diff. If you add an endpoint to FastAPI, the Watch HUD instantly displays `+ [NEW] /users` in green without requiring a manual rebuild.
+```bash
+axiom inspect api.axiom
+```
 
-### `axiom cache ls`
-View and manage the native `Sled` key-value database.
-*   Inspect exact payload sizes.
-*   View calculated Expiration times and TTLs.
-*   Manually evict (`[x]`) stale keys during debugging.
+The inspector has endpoint and model views. Use `Tab` to switch views,
+`j`/`k` or arrow keys to move the current selection, and `q` or `Esc` to exit.
+The endpoint pane shows the compiled endpoint detail; the model view includes
+models and enums present in the artifact.
+
+The current screen draws a search field, but text-search input is not part of
+the documented keyboard contract. Do not depend on it for validation.
+
+## Watch display
+
+```bash
+axiom watch --build
+```
+
+For a backend workspace with `axiom.acore`, the watch display shows rebuild
+state, last synchronization time, and semantic changes after recognized files
+change. Press `q` to stop it. The implementation watches the Acore file and a
+bounded amended source path; it is not a recursive, framework-independent
+development server.
+
+## Cache explorer
+
+```bash
+axiom cache ls
+```
+
+The cache explorer lists entries from the current CLI profile's Sled database.
+Use `j`/`k` or arrows to move, `x` to delete the selected key, and `q` or
+`Esc` to exit. `axiom cache get --key KEY` prints timestamps, TTL, headers,
+payload size, and JSON or byte payload in the normal terminal.
+
+Cached payloads can contain application data. Avoid pasting raw cache output
+into an issue or support channel without redaction.
+
+## Login and project selection
+
+`axiom login` displays the device authorization code and waits for the browser
+flow to complete. Project link/release flows can show an interactive project
+picker. In automation, authenticate through the supported environment and pass
+explicit project/version inputs rather than relying on a terminal selection.
+
+<StatusNote status="alpha" title="TUI stability">
+  Layout and key hints can change with the CLI. The command result and persisted
+  artifact or Cloud record are the durable boundary, not the terminal screen.
+</StatusNote>

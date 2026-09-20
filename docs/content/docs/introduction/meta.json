@@ -1,4 +1,11 @@
 {
   "title": "Introduction",
-  "pages": ["index", "why-axiom", "who-is-it-for"]
+  "pages": [
+    "index",
+    "what-is-acore",
+    "product-landscape",
+    "why-axiom",
+    "who-is-it-for",
+    "support-matrix"
+  ]
 }

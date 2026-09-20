@@ -1,0 +1,26 @@
+---
+title: Security review and release gates
+description: Review signed Security Mode changes through native contract pull requests.
+---
+
+Native AxiomCore pull requests compare immutable contract artifacts. When Security Mode is enabled, the PR compares the signed security manifest rather than a browser-generated scan.
+
+## Review flow
+
+1. Build/upload a candidate contract. The compiler records AXSEC findings, coverage, policy graph, and source evidence in the artifact.
+2. Open a native contract PR between immutable versions.
+3. Select the **Security** diff view. It separates policy changes from finding changes and marks altered safety boundaries for review.
+4. Record reviewer comments and approvals in the PR.
+5. Promote the reviewed artifact. `strict` rejects artifacts with blocking findings in the compiler and release processor.
+
+The contract page shows the mode, manifest hash, endpoint coverage, AXSEC remediation, evidence, and graph. Overview shows current posture. Client runtime traces carry the signed hash/mode and effective declared policy/auth/permission context. Trace detail links that endpoint to signed policy bindings, and explicitly labels it as declaration context—not a reconstructed server authorization decision.
+
+## Review questions
+
+- Is every reachable endpoint explicitly public or protected?
+- What relation proves a requester may access an ID-addressed resource?
+- Did a changed projection expose classified data to a new audience?
+- Are egress, uploads, paths, processes, CORS, cache, and logs constrained?
+- Is `declared_unproven` backed by a real trusted middleware/adapter?
+
+This provides governance and reproducibility. It does not replace threat modelling, code review, penetration testing, dependency scanning, or trusted runtime enforcement.

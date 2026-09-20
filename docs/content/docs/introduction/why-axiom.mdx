@@ -1,52 +1,42 @@
 ---
-title: The Non-Deterministic Gap
-description: Why Swagger, GraphQL, and tRPC aren't enough.
+title: Why contract-oriented software?
+description: Reduce behavioral drift without requiring one framework across the stack.
 ---
 
-import { Callout } from 'fumadocs-ui/components/callout';
-import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+API descriptions are valuable, but software teams also coordinate behavior:
+retry and cache policy, projections, validation, authentication expectations,
+streaming, package targets, UI contracts, and compatibility decisions. When
+those rules live only in application glue or prose, each client can interpret
+them differently.
 
-Modern app development is plagued by **"Glue Code"**. 
+## The coordination problem
 
-Tools like **OpenAPI (Swagger)**, **GraphQL**, and **tRPC** are fantastic at defining the *shape* of data (types). However, they completely fail to define the *behavior* of the API. 
+A backend change can require independent edits in web, mobile, mocks, tests,
+documentation, and release automation. Generated clients reduce typing work,
+but generated code still has to be reviewed and integrated, and it does not by
+itself establish one auditable behavioral boundary.
 
-### The Problem: Behavioral Drift
-If a backend developer wants an endpoint to be cached for 60 seconds, or to retry 3 times on a `502 Bad Gateway` error, they have no way to enforce this across clients. 
+## The AxiomCore approach
 
-The iOS team writes a retry loop in Swift. The Web team writes one in Axios/React Query. The Android team forgets to write one entirely. This results in **Behavioral Drift**—where the exact same API acts completely differently depending on the platform.
+AxiomCore builds a versioned artifact that tooling can inspect, lock, compare,
+test, mock, and consume. Thin framework integrations can delegate supported
+behavior to a shared runtime, while semantic diffs make important contract and
+package changes visible before an upgrade.
 
-### The Maintenance Tax of "Fat CodeGen"
-To solve integration, developers use Code Generators (like `openapi-generator`). But **generated code is still code**. 
+```text
+scattered assumptions                 contract-oriented boundary
 
-<Callout type="warn" title="The High Cost of Fat SDKs">
-A typical OpenAPI-generated SDK for a medium-sized project can exceed **10,000+ lines of Dart or TypeScript**. You are forced to compile, ship, and maintain massive serialization files, HTTP wrapper logic, and error-parsing blobs that you didn't even write.
-</Callout>
+backend ─┬─ web retry                 backend/extractor ─► .axiom
+         ├─ mobile cache                                  │
+         ├─ mock fixture                       ┌──────────┼──────────┐
+         └─ release notes                      ▼          ▼          ▼
+                                             clients     tests      review
+```
 
----
+## What this does not promise
 
-### The Axiom Paradigm: Thin SDKs + Generic Runtime
-
-AxiomCore solves this by replacing generated code with a **pre-compiled Generic Runtime** (Rust for native, Wasm for Web).
-
-Instead of generating HTTP fetch logic, Axiom generates a **Thin Proxy**. When you call `sdk.users.getUser()`, the SDK simply forwards an instruction to the native Runtime. The Runtime executes the network call, handles the retries, checks the embedded SQLite/Sled cache, validates the schema using `rod-rs`, and returns the exact data.
-
-<Tabs items={['Traditional Integration', 'AxiomCore Integration']}>
-  <Tab value="Traditional Integration">
-    1. Backend writes FastAPI.
-    2. Backend exports `swagger.json`.
-    3. Frontend generates 5,000 lines of Axios/Dio logic.
-    4. Frontend manually writes caching wrappers.
-    5. Frontend manually handles WebSockets and SSE.
-    6. **Result:** High maintenance, platform-specific bugs.
-  </Tab>
-  <Tab value="AxiomCore Integration">
-    1. Backend writes FastAPI or Go.
-    2. Axiom builds a signed `.axiom` binary.
-    3. Frontend pulls the contract.
-    4. The **Axiom Runtime** takes over all network, cache, and WebSocket logic autonomously.
-    5. **Result:** Zero API bugs. 100% deterministic behavior.
-  </Tab>
-</Tabs>
-
-### Cryptographic Trust
-Beyond behavior, Axiom enforces security. Every `.axiom` contract is cryptographically signed using Ed25519 keys via Axiom Cloud. If an attacker intercepts your API schema and attempts to modify validation rules, the Runtime will detect the broken signature and refuse to boot.
+A contract does not remove application design, backend enforcement, target
+testing, or operational responsibility. AxiomCore also does not require teams
+to abandon Flutter, React, Swift, Python, or Go. It provides an incremental
+boundary whose exact support is documented in the
+[availability matrix](/introduction/support-matrix).

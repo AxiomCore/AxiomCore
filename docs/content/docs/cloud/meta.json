@@ -1,7 +1,9 @@
 {
   "title": "Axiom Cloud",
   "pages": [
+    "index",
     "project-management",
+    "releases-and-environments",
     "deploying-mocks",
     "telemetry-and-observability"
   ]

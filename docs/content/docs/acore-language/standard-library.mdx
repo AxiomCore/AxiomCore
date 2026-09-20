@@ -1,27 +1,110 @@
 ---
-title: Standard Library
-description: Built-in functions and utilities in Acore.
+title: Standard library
+description: Modules, types, and native intrinsics exposed by the current Acore evaluator.
 ---
 
-Acore comes with several native modules to aid in dynamic configuration.
+The embedded resolver currently exposes a deliberately small standard library.
+Import a module with its `acore:` URI:
 
-### `acore.math`
-```pkl
+```acore
 import "acore:math"
-
-maxConnections = math.max(10, read_env("CONN_LIMIT").toInt())
+largest = math.max(12, 20)
 ```
 
-### `acore.json` and `acore.yaml`
-Parse raw strings at compile time.
-```pkl
+<StatusNote status="alpha" title="Public surface">
+  This page lists modules returned by the current embedded resolver, not every
+  `.acore` definition present in the source tree. Source-only definitions are
+  not public APIs until the resolver and native bindings expose them.
+</StatusNote>
+
+## Resolved modules
+
+| URI | Public surface |
+| --- | --- |
+| `acore:base` | Core value classes, collections, `Regex`, and Axiom contract schema classes. Loaded by contract tooling as the base schema. |
+| `acore:math` | `min`, `max`, `sqrt`, `log`, plus mathematical constants declared by the module. Native support currently guarantees `max` and `pi`; validate other members before depending on them. |
+| `acore:json` | `parse(source: String): Any`. |
+| `acore:yaml` | `parse(source: String): Any`. |
+| `acore:xml` | `Renderer { indent, rootElementName }` configuration. |
+| `acore:protobuf` | `Renderer { indent }` configuration. |
+| `acore:Project` | Package/dependency metadata used by Acore project resolution. |
+
+## Core scalar members
+
+### `String`
+
+| Member | Result |
+| --- | --- |
+| `length`, `lastIndex` | `Int` |
+| `isEmpty`, `isNotEmpty` | `Boolean` |
+| `getOrNull(index)` | `String?` |
+| `substring(start, exclusiveEnd)` | `String` |
+| `repeat(count)` | `String` |
+| `contains`, `startsWith`, `endsWith` | `Boolean` |
+| `toUpperCase`, `toLowerCase`, `trim` | `String` |
+| `toInt`, `toFloat`, `toBoolean` | Parsed scalar |
+| `split(pattern)` | `List` |
+| `replaceFirst`, `replaceAll` | `String` |
+
+### Numbers and Booleans
+
+- `Number`: `isPositive`, `isFinite`, `isInfinite`, `isNaN`, `isNonZero`.
+- `Int`: `isEven`, `isOdd`, `toFloat()`, `toRadixString(radix)`.
+- `Float`: `toInt()`.
+- `Boolean`: `xor(other)`, `implies(other)`.
+
+## Collections
+
+### `List` and `Set`
+
+Both expose `length`, `isEmpty`, `contains`, `map`, `filter`, `flatMap`,
+`fold`, and `join`. `List` also exposes `first` and `last`.
+
+```acore
+labels = ["one", "two"].map((value) -> value.toUpperCase())
+csv = labels.join(",")
+```
+
+### `Map`
+
+`Map` exposes `length`, `isEmpty`, `containsKey`, `mapKeys`, and `mapValues`.
+
+## Regex
+
+`Regex(pattern)` creates a compiled regular expression. A regex exposes its
+`pattern`, `findMatchesIn(input)`, and `matchEntire(input)`.
+
+```acore
+identifier = Regex("^[a-z][a-z0-9-]+$")
+valid = identifier.matchEntire("tasks-api")
+```
+
+Invalid patterns fail evaluation.
+
+## JSON and YAML parsing
+
+```acore
 import "acore:json"
+import "acore:yaml"
 
-local configData = json.parse(read("file://config.json"))
+jsonValue = json.parse("{\"enabled\":true}")
+yamlValue = yaml.parse("enabled: true")
 ```
 
-### `acore.base`
-The base library provides native String and Collection helpers.
-*   **Strings:** `toUpperCase()`, `trim()`, `replaceFirst()`, `split()`.
-*   **Lists/Maps:** `filter()`, `map()`, `fold()`, `minBy()`.
-*   **System:** `read_env("VAR_NAME")` to safely inject CI secrets into your contract before building.
+The parsers return Acore scalar, list, and map values. They do not validate the
+result against an Axiom contract automatically.
+
+## Axiom contract schema
+
+`acore:base` also declares the service contract API: `Config`, project/backend
+configuration, policies, models, endpoints, types, domain and security models,
+mocks, and tests. Those classes are catalogued in the
+[Acore schema reference](/reference/acore-schema-reference).
+
+## Defined but not currently resolved
+
+The repository contains definitions for semver, shell escaping, test helpers,
+platform/release metadata, benchmarking, reflection, and additional renderers.
+The embedded `get_stdlib_module` resolver does not currently return all of
+those modules. They are implementation work, not a supported import surface,
+and are intentionally excluded from runnable examples.

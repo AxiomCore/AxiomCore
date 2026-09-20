@@ -1,0 +1,68 @@
+---
+title: Acore UI application lifecycle
+description: Initialize, check, run, inspect, test, and build one authored UI across web, Android, and iOS.
+---
+
+## 1. Create or inspect a source-only app
+
+```bash
+axiom ui init my-app --target web
+cd my-app
+```
+
+The starter contains authored Acore, manifest, and tests. UI IR, virtual
+ReactLynx source, CSS, and source maps remain compiler-owned rather than
+editable generated project files.
+
+## 2. Check target capabilities
+
+```bash
+axiom ui doctor --target web
+axiom ui capabilities --target web
+axiom ui check src/main.acore --target web
+```
+
+Repeat with `android` and `ios`. A successful web check does not prove native
+capability parity.
+
+## 3. Run the development targets
+
+```bash
+axiom run src/main.acore --target web
+axiom run src/main.acore --target android
+axiom run src/main.acore --target ios
+```
+
+Native targets require an installed host plus a running emulator or simulator.
+Use `axiom ui host status --target android` or `ios` to inspect the host state.
+
+## 4. Validate behavior, not screenshots alone
+
+For each target, verify safe areas, text direction and wrapping, local assets,
+focus and text selection, scroll/list behavior, pointer/touch delivery,
+animation iteration/final state, and contract operation states. Record both a
+still image and the interaction outcome for motion or input behavior.
+
+```bash
+axiom ui test src/main.acore --target web
+axiom ui inspect ir src/main.acore --target web
+axiom ui inspect context src/main.acore --target web
+```
+
+Use `axiom ui inspect lowered` when investigating host output. `context` is a
+bounded, redacted semantic view for tooling, not the generated application
+source.
+
+## 5. Build and package
+
+```bash
+axiom ui build src/main.acore --target web
+axiom ui build src/main.acore --target android
+axiom ui build src/main.acore --target ios
+```
+
+Run the owning repository checks, inspect each `.axiomapp`, and combine intact
+target artifacts with `axiom package` only when a multi-target distributable is
+needed. Store signing and marketplace publication are separate future/product
+workflows.
+

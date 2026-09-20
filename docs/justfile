@@ -1,0 +1,26 @@
+set shell := ["bash", "-euo", "pipefail", "-c"]
+
+production_env := env_var_or_default("INFISICAL_PRODUCTION_ENV", "prod")
+preview_env := env_var_or_default("INFISICAL_PREVIEW_ENV", "staging")
+
+default:
+  @just --list
+
+check:
+  pnpm check
+
+static-check:
+  pnpm static:check
+
+preview port="8788":
+  pnpm static:check
+  pnpm exec wrangler pages dev out --port {{port}}
+
+deploy:
+  infisical run --env={{production_env}} -- bash scripts/deploy-cloudflare.sh production
+
+deploy-initial:
+  infisical run --env={{production_env}} -- bash scripts/deploy-cloudflare.sh initial
+
+deploy-preview branch:
+  infisical run --env={{preview_env}} -- bash scripts/deploy-cloudflare.sh preview {{branch}}

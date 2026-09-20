@@ -1,6 +1,8 @@
 {
   "title": "Core Concepts",
   "pages": [
+    "contracts-and-artifacts",
+    "sandboxed-extensions",
     "the-axiom-pipeline",
     "ghost-introspection",
     "the-generic-runtime",

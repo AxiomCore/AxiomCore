@@ -111,7 +111,7 @@ class _AuthTesterScreenState extends State<AuthTesterScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Phase 1 & 2 Streaming Tester")),
+      appBar: AppBar(title: const Text("Streaming and auth tester")),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(

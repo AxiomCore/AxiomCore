@@ -1,0 +1,130 @@
+---
+title: Values, types, and operators
+description: Acore literals, type expressions, null handling, operators, and expression evaluation.
+---
+
+## Runtime values
+
+| Family | Source form | Notes |
+| --- | --- | --- |
+| Null | `null` | The only null value. |
+| Boolean | `true`, `false` | Used by logical and conditional expressions. |
+| Integer | `42`, `-7` | Signed 64-bit integer in the current lexer. |
+| Float | `3.14`, `-0.5` | Double-precision evaluator value. |
+| String | `"hello"` | Double-quoted source string. |
+| List | `[1, 2]`, `Listing { 1 2 }` | Ordered values; contract schemas usually declare element types. |
+| Set | Typed standard-library values | Unique collection value supported by evaluator intrinsics. |
+| Map/object | `{ key = value }`, `Mapping { [key] = value }` | Named properties or evaluated key/value entries. |
+| Function | `(x) -> x + 1` | Lambda closure with lexical capture. |
+| Duration/DataSize | Standard-library values | Unit-aware primitives used by library APIs. |
+
+## Type expressions
+
+```acore
+name: String = "tasks"
+attempts: Int = 3
+enabled: Boolean = true
+handler: (String, Int) -> Boolean
+```
+
+### Nullable and union types
+
+```acore
+description: String? = null
+identifier: String | Int = "task-1"
+```
+
+### Parameterized and constrained types
+
+```acore
+tags: Listing<String> = Listing { "alpha" }
+sampleRate: Float(this >= 0.0 && this <= 1.0) = 0.5
+```
+
+Constraints are checked by the evaluator/schema path that owns the declaration.
+They are not arbitrary server-side authorization rules.
+
+### Literal types
+
+```acore
+typealias Mode = "audit" | "strict"
+```
+
+## Operators
+
+From lowest to highest binding precedence:
+
+| Precedence | Operators | Meaning |
+| --- | --- | --- |
+| 1 | <code>&#124;&gt;</code> | Pipe the left value into a callable expression. |
+| 2 | <code>&#124;&#124;</code> | Short-circuit logical OR. |
+| 3 | `&&` | Short-circuit logical AND. |
+| 4 | `==`, `!=` | Equality and inequality. |
+| 5 | `<`, `<=`, `>`, `>=` | Ordered comparison. |
+| 6 | `??` | Use the right operand when the left is null. |
+| 7 | `+`, `-` | Addition/subtraction; `+` also joins supported strings. |
+| 8 | `*`, `/` | Multiplication and division. `/` can produce a float. |
+| 9 | `**` | Exponentiation; right associative. |
+
+The lexer also recognizes `~/` and `%`; treat them as alpha until their parser
+path and conformance examples are covered consistently.
+
+Unary `-` negates a number and `!` negates a Boolean.
+
+```acore
+timeout = baseTimeout * 2
+label = configuredLabel ?? "Untitled"
+eligible = active && attempts < 3
+```
+
+## Member access and null handling
+
+```acore
+length = name.length
+safeName = account?.profile?.name
+requiredName = safeName!!
+```
+
+- `.` reads a member and fails when the receiver/member is invalid.
+- `?.` short-circuits member access when the receiver is null.
+- `!!` asserts non-null and raises an evaluation error otherwise.
+
+## Type checks and casts
+
+```acore
+isText = value is String
+text = value as String
+```
+
+`is` returns a Boolean. `as` returns the value when compatible and otherwise
+raises a type-mismatch diagnostic.
+
+## Conditionals
+
+```acore
+cacheSeconds = if (environment == "prod") 300 else 0
+```
+
+An omitted `else` evaluates to null, but explicit alternatives are clearer for
+typed contract properties.
+
+## Lambdas
+
+```acore
+double = (value: Int) -> value * 2
+doubled = [1, 2, 3].map(double)
+```
+
+Lambdas capture their lexical environment. Acore UI also supports the compact
+lambda form used by list keys; see the [UI profile](/acore-language/ui-profile).
+
+## Errors and reads
+
+```acore
+required = configured ?? throw("configured is required")
+template = read("./template.txt")
+```
+
+`throw(value)` stops evaluation with a diagnostic. `read("path")` goes through
+the evaluator's security manager. An Acore file does not gain unrestricted I/O
+merely by naming a path.

@@ -1,0 +1,85 @@
+---
+title: Glossary
+description: Canonical language for AxiomCore products, source, packages, runtimes, and workflows.
+---
+
+## Acore
+
+The independent declarative, contract-oriented language used to author
+`.acore` source. Acore includes its own parsing, evaluation, standard-library,
+diagnostic, and language-server implementation.
+
+## AxiomCore
+
+The wider contract platform and ecosystem: Acore, the CLI, build and package
+libraries, runtime and client integrations, UI/application tooling, tests,
+mocks, security analysis, and cloud services.
+
+## Axiom CLI
+
+The `axiom` command-line interface for local and connected workflows.
+
+## Contract
+
+A typed, versionable description of a software boundary. Depending on its
+profile it can include operations, data, behavior, selection, policy, domain,
+UI, package, and release metadata.
+
+## `.acore`
+
+Editable Acore source. It is authoring input, not a locked distribution format.
+
+## `.axiom`
+
+A canonical package artifact. It may be a service, theme, component library,
+database schema, extension-metadata, or application-policy package.
+
+## `.axiomapp`
+
+A built Acore UI application artifact for one or more targets.
+
+## Artifact lock
+
+A committed record of the exact dependency artifacts selected for a build,
+including integrity and selection metadata required for deterministic use.
+
+## Extractor
+
+A language/framework adapter that reads a supported existing service and emits
+neutral contract input. FastAPI is the primary documented path; Go is alpha.
+
+## Runtime
+
+The implementation that consumes a built contract to perform supported client
+or application behavior. Runtime features and parity vary by target.
+
+## Acore UI
+
+The alpha declarative UI profile and lowering/build pipeline within Acore. It is
+not the same thing as Axiom Studio.
+
+## Axiom Cloud Dashboard
+
+The implemented alpha web control plane for current account, project, release,
+and related cloud workflows.
+
+## Axiom Studio
+
+<StatusBadge status="coming-soon" /> A planned visual and collaborative
+workspace for building software on AxiomCore. It is not installable today.
+
+## Acode
+
+<StatusBadge status="coming-soon" /> A planned contract-aware IDE. Existing
+Acore language-server and editor-extension work is not the Acode product.
+
+## Axiom Marketplace
+
+<StatusBadge status="coming-soon" /> A planned catalog and distribution
+experience for Axiom packages. A supported marketplace workflow is not yet
+available.
+
+## Semantic diff
+
+A comparison that classifies the meaning and compatibility impact of contract
+or package changes rather than reporting bytes or lines alone.

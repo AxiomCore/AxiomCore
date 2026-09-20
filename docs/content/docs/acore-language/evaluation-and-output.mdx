@@ -1,0 +1,96 @@
+---
+title: Evaluation and output
+description: How Acore resolves modules, evaluates values, renders output, and constrains external access.
+---
+
+## Evaluation model
+
+Acore parses source into a spanned syntax tree, evaluates properties lazily in a
+lexical environment, then materializes the resulting value for the active
+compiler profile. Source order is not an imperative execution order.
+
+```text
+source → tokens → syntax tree → lazy evaluation → profile validation → output
+```
+
+Lazy properties are forced when referenced or rendered. The evaluator retains
+source spans so diagnostics and editor tools can point back to authored source.
+
+## Module resolution
+
+`import` evaluates another trusted Acore source module. The resolver supports
+local paths and explicitly authorized package/network forms. `read()` returns
+data rather than a module. Both operations pass through the active security
+manager.
+
+```acore
+import "./shared/policy.acore"
+message = read("./fixtures/message.txt")
+```
+
+A compiled `.axiom` is not source and cannot be imported or amended. Consume it
+through a manifest, committed lock, and the appropriate `use` declaration.
+
+## Authority boundary
+
+The evaluator's security manager controls file, network, environment, and
+package access. A path in source is a request for access—not proof of authority.
+Build tooling should grant the minimum roots and hosts required for the task.
+
+Declarative `.axiom` packages do not gain package-author execution authority.
+Extension packages carry metadata, requested capabilities, and a digest for
+separately distributed code; executing that code is a distinct host decision.
+
+## Materialization and output formats
+
+The core renderer can materialize evaluated values as:
+
+- PCF, the canonical internal representation used by the Acore toolchain;
+- JSON;
+- YAML;
+- XML;
+- Protocol Buffer-oriented output; and
+- Markdown through the implemented renderer.
+
+The command/profile decides which format is meaningful. An Axiom service build
+does not simply dump arbitrary JSON: it validates the contract schema and builds
+the canonical `.axiom` artifact. Acore UI compilation lowers to an in-memory UI
+graph and target bundle instead.
+
+## Variant filtering
+
+Materialization can apply one named service variant before output. Variant
+rules select endpoint and model names using include/exclude patterns, then
+prune unselected values from the rendered contract.
+
+```bash
+axiom build axiom.acore --variant mobile
+```
+
+Variant behavior is documented in [Variants and filtering](/acore-language/variants-and-filtering).
+
+## Errors
+
+The implementation distinguishes lexical/parse failures, evaluation failures,
+type mismatches, security denials, resolution errors, and profile/schema
+diagnostics. CLI commands add command-specific error codes for artifact,
+runtime, UI, package, and cloud boundaries.
+
+Use the narrowest non-mutating check before building:
+
+```bash
+axiom doctor --json
+axiom domain validate axiom.acore --json
+axiom security check axiom.acore --json
+axiom ui check apps/mobile/src/main.acore --target web
+```
+
+Not every source uses every check. See [Product flows](/workflows) for the
+correct validation sequence.
+
+## Determinism boundary
+
+Canonicalization makes an artifact reproducible only when source, resolved
+dependencies, compiler/toolchain version, target, and build mode are the same.
+Commit dependency locks and record build provenance; do not describe two builds
+as identical merely because their top-level source file matches.

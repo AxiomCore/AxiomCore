@@ -14,7 +14,7 @@ class AxiomDefaultConfig {
     contracts: {
       'rpc': AxiomContractConfig(
         baseUrl: 'http://localhost:8000',
-        assetPath: '/Users/yashmakan/AxiomCore/_axiom/AxiomCore/examples/rpc/.axiom',
+        assetPath: '../.axiom',
       ),
     },
   );
@@ -89,4 +89,3 @@ extension PersonRpc on models.Person {
     ));
   }
 }
-

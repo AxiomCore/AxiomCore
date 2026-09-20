@@ -1,0 +1,70 @@
+---
+title: Declarative package lifecycle
+description: Build, lock, inspect, diff, and consume independently versioned Axiom packages.
+---
+
+Typed `.axiom` packages can represent services, themes, component libraries,
+database schemas, extensions, and application policies. Package envelopes are
+declarative. Extension packages carry metadata and a digest for separately
+distributed code, not executable bytes.
+
+## Author and build
+
+Create a package source envelope that conforms to the selected kind, then build
+the canonical artifact:
+
+```bash
+axiom packages build package.json --out dist/package.axiom
+```
+
+Kind-specific validation checks exports, targets, and constraints before
+canonical encoding.
+
+## Declare and lock dependencies
+
+```toml
+[packages.theme]
+source = "./packages/theme.axiom"
+version = "1.0.0"
+kind = "theme"
+```
+
+```bash
+axiom packages resolve
+axiom packages verify
+axiom packages inspect theme
+```
+
+Commit `AxiomDeps.toml` and `AxiomPackages.lock` together. Verification
+re-resolves bytes and proofs without silently changing the lock.
+
+## Review an upgrade
+
+```bash
+axiom packages diff before.axiom after.axiom
+```
+
+The semantic diff classifies target reductions, required roles or properties,
+composition changes, and capability increases. Supply only the explicit
+`--approve` values required by the reported change; do not pre-approve unknown
+future changes.
+
+## Consume from Acore UI
+
+Package imports are checked against the lock, and the unchanged source is
+compiled for a concrete target:
+
+```bash
+axiom packages check-source main.acore --target web
+axiom packages run main.acore --target web --once
+```
+
+The compiler rejects kind mismatches, missing exports, target incompatibility,
+and lock/integrity failures. Catalog discovery and one-click installation are
+part of the planned [Axiom Marketplace](/workflows/using-the-marketplace), not
+this local package workflow.
+
+Executable extensions use an additional experimental signed-authority workflow
+because their Wasm bytes are separate from the declarative package envelope.
+Use [Executable extension lifecycle](/workflows/executable-extension-lifecycle)
+instead of treating an extension like an ordinary package-only dependency.

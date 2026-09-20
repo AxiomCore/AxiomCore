@@ -1,0 +1,105 @@
+// Safe security baseline. This is a self-contained contract fixture; a real
+// project normally receives Models/endpoints from the Go or Python extractor.
+module axiom.examples.security_mode_v1
+
+project { id = "security-mode-v1" version = "v0.1.0" }
+variants { ["default"] { include = Listing { "*" } } }
+
+models {
+  ["Customer"] = ModelDef {
+    name = "Customer"
+    fields = Mapping {
+      ["id"] = ModelField { name = "id" typeRef = TypeRefPrimitive { kind = "string" } }
+      ["email"] = ModelField { name = "email" typeRef = TypeRefPrimitive { kind = "string" } }
+      ["displayName"] = ModelField { name = "displayName" typeRef = TypeRefPrimitive { kind = "string" } }
+    }
+  }
+  ["Order"] = ModelDef {
+    name = "Order"
+    fields = Mapping {
+      ["id"] = ModelField { name = "id" typeRef = TypeRefPrimitive { kind = "string" } }
+      ["customerId"] = ModelField { name = "customerId" typeRef = TypeRefPrimitive { kind = "string" } }
+      ["status"] = ModelField { name = "status" typeRef = TypeRefPrimitive { kind = "string" } }
+    }
+  }
+}
+
+hidden Models = { Customer = TypeRefNamed { value = "Customer" } Order = TypeRefNamed { value = "Order" } }
+Entities = Entities {
+  customer = extend Models.Customer
+  order = extend Models.Order
+}
+
+domain {
+  entities = Entities
+  relationships = Relationships {
+    ["orderCustomer"] = DomainRelationship { from = Entities.order to = Entities.customer via = "customerId" required = true }
+  }
+  projections = Projections {
+    ["publicCustomer"] = DomainProjection { entity = Entities.customer fields = Listing { "id" "displayName" } audience = "public-web" }
+    ["memberOrder"] = DomainProjection { entity = Entities.order fields = Listing { "id" "customerId" "status" } audience = "workspaceMember" }
+  }
+}
+
+endpoints {
+  ["Health"] = EndpointDef { id = 1 name = "health" method = "GET" path = "/health" }
+  ["GetCustomer"] = EndpointDef {
+    id = 2 name = "get_customer" method = "GET" path = "/customers/{id}"
+    returnType = Entities.customer responseProjection = "publicCustomer"
+    parameters = Listing { EndpointParameter { name = "id" source = "path" typeRef = TypeRefPrimitive { kind = "string" } } }
+  }
+  ["UpdateOrder"] = EndpointDef {
+    id = 3 name = "update_order" method = "PATCH" path = "/orders/{id}"
+    returnType = Entities.order responseProjection = "memberOrder"
+    parameters = Listing { EndpointParameter { name = "id" source = "path" typeRef = TypeRefPrimitive { kind = "string" } } }
+  }
+}
+
+security {
+  mode = "audit"
+  principals { ["workspaceMember"] = SecurityPrincipal { roles = Listing { "member" } } }
+  auth {
+    ["browserSession"] = AuthenticationPolicy {
+      transport = "cookie" secure = true httpOnly = true sameSite = "lax" sessionRotation = true
+    }
+  }
+  permissions {
+    ["readCustomer"] = Permission {}
+    ["editOrder"] = Permission { requiresRateLimit = true requiresIdempotency = true requiresCsrf = true }
+  }
+  resources { ["order"] = ProtectedResource { entity = Entities.order } }
+  policies {
+    ["memberRead"] = SecurityPolicy { principals = Listing { "workspaceMember" } auth = "browserSession" }
+    ["orderEditor"] = SecurityPolicy {
+      principals = Listing { "workspaceMember" }
+      auth = "browserSession"
+      resource = "order"
+      permissions = Listing { "editOrder" }
+      relationship = "orderCustomer"
+      resourceBinding = "principal.customerId == resource.customerId"
+    }
+  }
+  defaultPolicy = "memberRead"
+  endpoints {
+    ["Health"] = EndpointGuard { public = true }
+    ["UpdateOrder"] = EndpointGuard {
+      policy = "orderEditor" resource = "order" permission = "editOrder"
+      rateLimit = "memberWrite" writableFields = Listing { "status" } idempotent = true
+    }
+  }
+  rateLimits { ["memberWrite"] = RateLimit { maxRequests = 60 windowSeconds = 60 key = "principal" } }
+  classifications {
+    ["customerEmail"] = SensitiveData {
+      target = "Customer.email" classification = "PII" audiences = Listing { "workspaceMember" } redact = true
+    }
+  }
+  csrf = CsrfPolicy { strategy = "double_submit" sameSite = "lax" secure = true httpOnly = true }
+  cors = CorsPolicy { origins = Listing { "https://app.example.test" } credentials = true methods = Listing { "GET" "PATCH" } }
+  cache = CacheSecurityPolicy { sharedAuthenticatedResponses = false requireVaryByPrincipal = true }
+  observability = ObservabilitySecurityPolicy { redactClasses = Listing { "PII" "Secret" } allowPayloads = false }
+  invariants {
+    ["allRoutesAuthorized"] = SecurityRequirement { kind = "require_authorization" target = "customer and order routes" }
+    ["memberWritesSafe"] = SecurityRequirement { kind = "require_idempotency" target = "editOrder" }
+    ["noSensitiveLogs"] = SecurityRequirement { kind = "no_secret_exposure" target = "logs and traces" }
+  }
+}

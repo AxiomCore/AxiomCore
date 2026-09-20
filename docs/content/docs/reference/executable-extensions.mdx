@@ -1,0 +1,180 @@
+---
+title: Executable extensions reference
+description: Experimental ABI, Rust SDK, authority, lifecycle, security, host support, and performance evidence for AxiomCore executable extensions.
+---
+
+## Status and compatibility
+
+Executable extensions are **Experimental**. The package payload is
+`axiom-extension/v2`; the current guest ABI is `axiom-extension-abi` version
+`1.0.0`; and the only supported guest SDK is Rust
+`axiom-extension-sdk`. The source-level command group is `axiom extensions`.
+Pin package, ABI, SDK, engine, broker, target policy, and host identities in
+the release provenance. None of these interfaces has a stable-major
+compatibility promise yet.
+
+The module media type is `application/wasm`. It is a separately distributed
+artifact whose SHA-256 and byte length must match the package, package lock,
+authority lock, and target host handoff.
+
+## ABI lifecycle
+
+The binary frame is canonical and starts with the `AXE1` magic value. It carries
+the ABI version and one typed message. The host validates frame size, magic,
+canonical encoding, request IDs, pointer ranges, and state transitions before
+accepting a message.
+
+```text
+host: Negotiate -> Initialize -> Invoke
+guest: Negotiated -> Initialized -> Completed | Yielded | Failed
+host: Resume | Cancel -> Drain -> Shutdown
+guest:            ... -> Drained -> Shutdown
+```
+
+A yielded invocation returns one bounded effect plan. The host validates and
+executes its allowed effects, then resumes the same request with ordered effect
+outcomes and event batches. A terminal response is accepted once. Invalid
+transitions, use after shutdown, malformed frames, version mismatch, oversize
+messages, and duplicate terminal replies fail closed.
+
+Generated Rust guests export memory and four core-Wasm functions:
+
+```text
+axiom_extension_abi_version() -> i32
+axiom_extension_alloc(length) -> pointer
+axiom_extension_dispatch(pointer, length) -> packed length/pointer
+axiom_extension_dealloc(pointer, length) -> 1 | 0
+```
+
+These are ABI details, not a native application API. Extension authors use the
+Rust SDK; they do not use JNI, Swift/Objective-C, or FFI pointers. Those
+bridges remain trusted host implementation details on Android and iOS.
+
+## Rust SDK model
+
+The SDK's `Extension` trait models initialization, invocation, resume,
+cancellation, and shutdown. `UiSelector`, `UiPatchBuilder`, `StoreSelector`,
+and `StoreTransactionBuilder` construct typed wire proposals; they do not
+mutate host state directly.
+
+```rust
+// Axiom generates this readable selector from AxiomDeps.toml.
+let discount = axiom_bindings::ui_checkout_write_discount_selector::<()>();
+
+let patch = axiom_extension_sdk::UiPatchBuilder::new("checkout", revision)
+    .set(&discount, axiom_extension_sdk::abi::Value::Unsigned(10))
+    .build();
+```
+
+The host applies the patch only when its declared paths, type checks,
+invariants, expected revision, effective authority, deadline, and lifecycle
+are valid. Store transaction proposals use the same model and apply atomically
+or return a conflict. SDK assertions protect generated selector consistency;
+untrusted input is still revalidated by the host.
+
+## Authority surface
+
+Authority is declared per exact imported namespace and operation. The host
+does not infer authority from source code. Every allowed action is included in
+the signed request, application grant, and target policy before it becomes
+effective.
+
+| Group | Declared capabilities |
+| --- | --- |
+| Contract runtime | Query, mutation, command, batch, and stream operations on named services and methods |
+| UI state | Read, write, dispatch, and subscribe on declared scope paths |
+| Backend store | Read, write, insert, remove, action, and subscribe on declared object fields |
+| Resources | HTTPS origin/method pairs, namespaced storage, rooted relative files, secret use, queues, logging, tracing, context, clocks, and secure random |
+
+Authority also includes host-call, read-byte, write-byte, mutation, event, and
+concurrent-stream budgets. A target policy can narrow a package request; it
+cannot add access the package did not request. Frontend profiles deny
+backend-store, secret, file, and private/internal-network authority unless an
+explicit host escalation and matching signed inputs allow it.
+
+## State, effects, and stream rules
+
+An invocation receives only authorized snapshots. It can return bounded
+effects, UI patches, backend transaction proposals, and emitted events. Patches
+support set, unset, increment, append, compare-and-set, and declared action
+dispatch. The host records the extension and resource identity, expected and
+resulting revision, paths, decision, and redacted details.
+
+Subscription handles are opaque and scoped to one application, extension
+instance, generation, and permission. Event delivery is ordered, bounded, and
+cancellable. The host may report dropped events or coalesce a subscription to
+its latest event; subscriptions do not grant unrelated reads or writes.
+
+## Security and lifecycle limits
+
+Native hosts use the Wasmi interpreter with no ambient WASI, no start function,
+no unreviewed imports, bounded memory and fuel, recursion limits, a bounded
+worker, and finite teardown. The browser host uses a dedicated Worker and
+terminates it on deadline or cancellation. Module identity, ABI version,
+application, extension, effective authority, target, engine, and limits are
+all part of the cache identity.
+
+The foreign-island path is deliberately different: a runtime-dependent Web UI
+bundle runs in an opaque-origin iframe with a private typed message channel. It
+is Web-only, visibly foreign, and cannot access the parent document, browser
+credentials, direct network APIs, or undeclared host methods. It is not a
+native mobile WebView feature.
+
+No sandbox proves a guest's business logic is correct. Review the semantic
+permission diff, application-level authorization, data invariants, release
+policy, and target deployment configuration in addition to module identity.
+
+## Source-authored application flow
+
+An application author maintains one Acore UI, one permission/dependency file,
+and normal Rust source in any safe project-relative folder:
+
+```text
+main.acore
+AxiomDeps.toml
+extension-code/interaction.rs
+```
+
+`AxiomDeps.toml` maps a stable alias to the source, exports, targets, explicitly
+shared source, and maximum requested authority. Axiom generates the private
+Cargo wrapper, readable typed bindings, core-Wasm module, package, signatures,
+package lock, authority lock, and target policies. Local signing keys are
+Axiom-managed, ignored, stored with restrictive permissions, and reused so an
+unchanged release is stable.
+
+```bash
+axiom extensions source-release checkout \
+  --deps AxiomDeps.toml \
+  --application example.phase5.checkout
+
+axiom run main.acore --target web
+axiom run main.acore --target android
+axiom run main.acore --target ios
+```
+
+Normal target runs consume the verified `AxiomExtensions.toml` workflow. They
+do not require an author-owned Cargo project, FFI adapter, package builder, or
+host glue.
+
+## Reproducible acceptance evidence
+
+The repository includes a repeatable, generated acceptance fixture for the
+current signed extension host. From the repository root:
+
+```bash
+cd examples/axiom-phase5-extensions
+just release
+just check
+```
+
+The gate creates and verifies the signed local release, checks the Acore source
+on web, Android, and iOS, exercises every inspection view, compiles two modules
+that share nested Rust source while requesting different capabilities, and
+proves a source path cannot escape the application. Interactive target behavior
+is validated separately with `just web`, `just android`, and `just ios`.
+
+The archived lower-level host fixture remains under `legacy-host-fixture/` for
+protocol and audit evidence. It is not the supported application-authoring
+walkthrough and does not replace the ordinary Acore target commands.
+
+For the review workflow, see [Executable extension lifecycle](/workflows/executable-extension-lifecycle).

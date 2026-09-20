@@ -1,34 +1,79 @@
 ---
-title: Trust & Security
-description: Cryptographic integrity for API Contracts.
+title: Artifact trust
+description: Hashes, detached signatures, locks, provenance, and runtime verification boundaries.
 ---
 
-import { Callout } from 'fumadocs-ui/components/callout';
+AxiomCore separates artifact integrity from release provenance. A SHA-256
+digest identifies exact bytes. A detached Ed25519 signature, verified with its
+paired public key, can prove that the digest was signed by the expected
+boundary.
 
-AxiomCore ensures that the frontend *only* executes verified behaviors.
-
-### Ed25519 Signatures
-
-When you deploy a contract using `axiom release`, Axiom Cloud generates an **Ed25519 cryptographic signature**. 
-
-The generated `.axiom` file contains:
-1. The XOR-obfuscated JSON Intermediate Representation (IR).
-2. The FlatBuffer schemas.
-3. The Base64 encoded signature.
-
-### Runtime Enforcement
-
-When your frontend application boots, the Generic Runtime executes a mandatory integrity check:
-
-```dart
-// The runtime will panic here if the contract was modified!
-await AxiomSdk.create(
-    config: AxiomDefaultConfig.config 
-);
+```text
+.axiom bytes ──SHA-256──► digest ──Ed25519 signature
+     │                       │              │
+     └──── lock hash ────────┘        retained public key
 ```
 
-The runtime compares the `.axiom` file against the `trust-axiom.json` public key distributed in your app. 
+The signature and public key are proof material associated with an artifact;
+they are not described as executable content embedded inside the contract.
+Both values must be present together.
 
-<Callout type="error" title="Mitigating Man-in-the-Middle Attacks">
-If a malicious actor intercepts the `.axiom` file and tries to disable an authentication requirement, modify an endpoint path, or inject a malicious WebSocket URL, the Ed25519 signature validation will fail. The Axiom Runtime will refuse to initialize network connections.
-</Callout>
+## Local and Cloud artifacts
+
+| Artifact path | Expected trust posture |
+| --- | --- |
+| Local `axiom build` | Exact-byte hash and lock validation; the artifact may be unsigned for development. |
+| Axiom Cloud release | Immutable stored bytes, server-computed digest, Cloud signature, and durable validation evidence. |
+| Pulled dependency | Pinned source/version plus retained proof and lock metadata used by the selected client workflow. |
+| Acore UI production build | Rejects unsigned local contract dependencies; development mode records every unsigned dependency in the application manifest. |
+
+Unsigned does not mean corrupted. It means provenance has not been established
+by the signing boundary. Keep unsigned artifacts inside explicitly marked local
+development workflows.
+
+## Verification sequence
+
+Consumers should fail initialization or installation cleanly when any required
+step fails:
+
+1. load the exact artifact bytes;
+2. compare their SHA-256 digest with the committed lock or manifest;
+3. when proof is declared, require both Base64 signature and public key;
+4. verify the Ed25519 signature over the artifact digest; and
+5. only then expose contract endpoints to the runtime.
+
+```bash
+axiom contract verify --deps AxiomDeps.toml --lock axiom.ui.lock.json
+```
+
+Do not catch an integrity failure and silently retry with an unpinned network
+copy. Surface it as a deployment or dependency error.
+
+## Executable extension boundary
+
+An experimental executable extension has an additional trust chain: its
+separate Wasm module, signed authority request, application grant, per-target
+policies, and resolved authority lock must agree before a target host loads it.
+The host applies the effective authority and resource limits for each call; a
+module digest or signature is not permission to access every host capability.
+
+See [Sandboxed executable extensions](/core-concepts/sandboxed-extensions) for
+the exact sandbox and target limits, and [Executable extension lifecycle](/workflows/executable-extension-lifecycle)
+for release review.
+
+## What verification does not prove
+
+A valid signature proves byte provenance relative to a key. It does not prove
+that the backend enforces authorization, that an extracted handler matches its
+business intent, that a release is free of breaking changes, or that client
+storage is appropriate for sensitive data. Pair trust verification with
+semantic diff, security analysis, tests, code review, and environment-specific
+release gates.
+
+## Secret boundary
+
+Private signing material belongs to the Cloud signing service or an explicitly
+controlled signing process. Applications receive only public verification
+material. Authentication tokens, database credentials, provider keys, and
+telemetry DSNs are operational secrets and must not be embedded in a contract
+to make them convenient for a client.

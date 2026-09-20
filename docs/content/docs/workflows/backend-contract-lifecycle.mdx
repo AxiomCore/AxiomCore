@@ -1,0 +1,80 @@
+---
+title: Backend contract lifecycle
+description: Extract, compose, build, inspect, test, diff, and release a backend contract.
+---
+
+This path keeps the existing service as executable authority. Acore composes
+extracted routes and models with authored behavior, domain, and security data.
+
+## 1. Diagnose and initialize
+
+```bash
+axiom doctor
+axiom init main.py:app --module axiom-fastapi
+```
+
+For Go, pass the supported Go entrypoint and extractor module selected by
+`axiom onboard`. Initialization creates authoring source; it does not upload a
+release.
+
+## 2. Review the authoring boundary
+
+The generated `axiom.acore` should name the backend entrypoint and can amend or
+import only reviewed sources. Add cache, retry, validation, mock, domain, or
+security declarations in Acore without moving application handlers into the
+configuration language.
+
+```acore
+backend = BackendConfig {
+  language = "python"
+  entrypoint = "main.py:app"
+}
+
+policies = PolicyConfig {
+  retry = RetryPolicy { maxAttempts = 3 }
+}
+```
+
+## 3. Build and inspect
+
+```bash
+axiom build axiom.acore
+axiom inspect axiom.axiom
+```
+
+The build produces the canonical contract artifact. Inspection reads the
+artifact; it does not run the backend.
+
+## 4. Validate behavior
+
+```bash
+axiom test axiom.acore
+axiom serve axiom.acore --port 8080 --debug
+```
+
+Contract tests can target a configured live/staging base URL. The mock server
+uses authored mock data and state; it is a development aid, not a production
+server replacement.
+
+## 5. Review change impact
+
+```bash
+axiom diff axiom.acore --format changelog
+axiom security check axiom.acore --fail-on-warning
+axiom domain validate axiom.acore
+```
+
+The one-file `diff` form compares evaluated source with the local lock state.
+Use a two-file form when reviewing two explicit sources.
+
+## 6. Release deliberately
+
+```bash
+axiom login
+axiom build axiom.acore --release --version 1.2.0
+```
+
+Alternatively release an already built artifact with `axiom release
+axiom.axiom`. A release is immutable; promote a new version instead of
+overwriting evidence.
+

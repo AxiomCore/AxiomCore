@@ -1,29 +1,53 @@
 ---
-title: Streaming & WebSockets
-description: Declaring persistent connections in your contract.
+title: Streaming and WebSockets
+description: Contract types for HTTP streams, server-sent events, WebSockets, and files.
 ---
 
-Axiom goes beyond REST. You can define endpoints as Streams, and the generated SDKs will expose them as reactive channels.
+Attach one `StreamingDef` subtype to an endpoint.
 
-```pkl
-endpoints {
-  [Routes.chat_socket] {
-    streaming = new WebSocketDef {
-      direction = "bidirectional"
-      reconnect = "auto"
-      
-      // Strongly type the WebSocket frames!
-      client = new WsMessageDef { model = Models.ChatMessage }
-      server = new WsMessageDef { model = Models.ChatResponse }
-    }
-  }
+## HTTP and server-sent streams
 
-  [Routes.download_report] {
-    streaming = new FileStreamDef {
-      disposition = "attachment"
-    }
-  }
+```acore
+streaming = HttpStreamDef {
+  responseType = Models.Event
+  framing = "event"
+  encoding = "json"
 }
 ```
 
-When pulled to the frontend, the SDK generates an `AxiomChannel` object for WebSockets, handling reconnects in Rust/Wasm automatically.
+`HttpStreamDef` supports framing values `chunk`, `event`, `message`, or `file`
+and encoding values `json`, `text`, or `binary`. `SseStreamDef` declares an SSE
+response type with its fixed `sse` kind.
+
+## WebSockets
+
+```acore
+streaming = WebSocketDef {
+  direction = "bidirectional"
+  reconnect = "auto"
+  client = WsMessageDef { model = Models.ChatMessage }
+  server = WsMessageDef { model = Models.ChatResponse }
+}
+```
+
+Directions are `server_to_client` and `bidirectional`. Reconnect intent is
+`auto`, `manual`, or `none`. Client/server message values are singular
+`WsMessageDef` objects, not lists.
+
+## File streams
+
+```acore
+streaming = FileStreamDef {
+  contentType = "application/pdf"
+  filename = "report.pdf"
+  disposition = "attachment"
+}
+```
+
+Disposition is `attachment` or `inline`.
+
+<StatusNote status="alpha" title="Target parity">
+  The schema is implemented, but transport lifecycle, reconnect behavior,
+  binary framing, cancellation, and backpressure must be validated on the
+  selected runtime/client. A declaration is not a cross-target parity claim.
+</StatusNote>

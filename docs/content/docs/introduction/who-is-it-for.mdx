@@ -1,23 +1,47 @@
 ---
-title: Who is Axiom for?
-description: How different roles utilize the AxiomCore platform.
+title: Who is AxiomCore for?
+description: Adoption paths for application, platform, backend, quality, and security teams.
 ---
 
-AxiomCore is a full lifecycle platform. Depending on your role, the tools you use will differ drastically.
+AxiomCore is for teams that need separately owned software parts to evolve
+without relying on undocumented integration assumptions.
 
-### 🎨 For Frontend Developers (React, Flutter, Vanilla Web)
-You no longer care about HTTP status codes, caching libraries, or WebSocket reconnection logic. 
-*   **Zero-JS Hydration (ATMX):** If you use Vanilla Web or React, the `atmx-web` engine hydrates cached DOM states instantly from `sessionStorage` before the Wasm network engine even boots. Zero loading flickers.
-*   **Reactive UI Elements:** Use `<AxQuery>` in React or `AxiomBuilder` in Flutter to bind directly to an API. Axiom manages `loading`, `error`, `success`, and `mutating` states automatically.
-*   **Offline First:** Out-of-the-box local database caching via Sled (Native) or IndexedDB (Web).
+## Application developers
 
-### ⚙️ For Backend Developers (Python, Go)
-You treat your backend as the absolute source of truth.
-*   **Ghost Introspection:** Axiom parses your `main.go` or `main.py` locally. You don't need a heavy Docker container or complex dependencies installed just to export a schema.
-*   **Behavioral Control:** Use the `.acore` language to attach `RetryPolicies` and `CacheStrategies` directly to your routes.
-*   **Variant Filtering:** Easily export different SDKs. Hide `admin_` routes from the mobile app variant using a single line of Acore configuration.
+Consume locked service contracts from an existing web, React, Flutter, or Swift
+codebase, or use the alpha Acore UI path to author a declarative interface.
+Target support differs, so validate against the
+[support matrix](/introduction/support-matrix).
 
-### 🧪 For QA and SDETs
-Axiom provides an enterprise-grade testing and mocking environment built directly into the CLI.
-*   **Axiom Mock Server:** Run `axiom serve`. It spins up an Axum server that reads your contract, providing stateful mocking (e.g., creating a user actually updates the mock store) and probabilistic fault injection (timeouts, connection resets).
-*   **Native Test Runner:** Write tests in Acore. `axiom test` executes network calls, captures variables, and runs assertions (`BodyQuantifierExpectation`) directly against your staging environments.
+## Backend developers
+
+Extract a supported FastAPI or Go service, then use Acore to add contract-level
+behavior, validation, variants, domain semantics, and reviewable security
+declarations. Backend application code remains responsible for trusted runtime
+authorization and business effects.
+
+## Platform and architecture teams
+
+Define package boundaries, lock dependencies, review semantic diffs, and keep
+service, theme, component, database-schema, extension, and policy artifacts
+versioned independently.
+
+## QA and reliability teams
+
+Use contract-driven mocks, tests, fault definitions, inspection, and benchmark
+workflows to create repeatable evidence around an integration boundary.
+
+## Security and governance teams
+
+Review declared authentication, authorization relations, sensitive-data
+classification, effects, integrity metadata, and release approvals. AxiomCore
+surfaces these decisions; it does not replace runtime enforcement or a security
+assessment.
+
+## Humans and agents
+
+The same readable source, canonical packages, locks, diagnostics, and semantic
+diffs can give both human contributors and software agents a narrower,
+auditable change surface. Planned collaborative products are described in the
+[product landscape](/introduction/product-landscape), with their current status
+made explicit.

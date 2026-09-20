@@ -1,77 +1,91 @@
 ---
 title: Mocking APIs
-description: Stateful, intelligent mock servers powered by Axum.
+description: Run deterministic static, conditional, stateful, and fault-injected responses from a contract.
 ---
 
-import { Callout } from 'fumadocs-ui/components/callout';
+The local mock server reads endpoint-level `MockConfig` declarations from an
+Acore contract. It is implemented in Rust and intended for development and
+contract tests.
 
-AxiomCore includes a high-performance **Mock Server** written in Rust (Axum). It reads your `.acore` file and spins up an intelligent, stateful API instantly.
+## Declare an endpoint response
 
-### Starting the Server
+```acore
+endpoints {
+  ["ListTasks"] = EndpointDef {
+    name = "list_tasks"
+    method = "GET"
+    path = "/tasks"
+    mock = MockConfig {
+      fallback = MockResponse {
+        status = 200
+        headers = { ["content-type"] = "application/json" }
+        data = StaticData { body = { tasks = [] } }
+      }
+    }
+  }
+}
+```
+
+Start the server with the contract as a positional argument:
 
 ```bash
-axiom serve --file axiom.acore --port 8080 --debug
+axiom serve axiom.acore --port 8080 --debug
 ```
 
-### 1. Templating and Faker Proxies
+## Conditional selection
 
-You can define dynamic responses directly in your `.acore` file using the `TemplateData` strategy. Axiom injects `faker` and `request` objects.
+`MockConfig.selectionStrategy` supports `first_match`, `random`, `sequential`,
+and `weighted`. Conditions can inspect headers, query/path values, body paths,
+or mock state and can be combined with all/any/not conditions.
 
-```pkl
-mock = new MockConfig {
-  responses = new Listing {
-    new MockResponse {
-      status = 200
-      data = new TemplateData {
-        body = new {
-          id = "{{ faker.uuid }}"
-          email = "{{ internet.email }}"
-          echoed_id = "{{ request.path.id }}"
-        }
-      }
-    }
+```acore
+responses = [
+  MockResponse {
+    label = "missing"
+    conditions = [
+      PathCondition { key = "id" op = "eq" value = "404" }
+    ]
+    status = 404
+  }
+]
+```
+
+## Stateful behavior
+
+```acore
+state = MockStateConfig {
+  initial = { tasks = [] }
+  onReceive = [
+    StoreMutation { type = "append" key = "tasks" value = { id = "1" } }
+  ]
+}
+```
+
+State changes run in declaration order. The more detailed `changes` form can
+match a selected response, mutate state, and append activity events. Restart or
+explicit reset behavior should be part of the test setup when isolation matters.
+
+## Fault injection
+
+```acore
+fault = FaultConfig {
+  errorRate = 0.1
+  errorResponse = MockResponse { status = 503 }
+  networkFault = NetworkFault {
+    type = "slow_response"
+    probability = 0.1
+    delayMs = 500
   }
 }
 ```
 
-### 2. Stateful Mocks (Store Mutations)
+Probabilities must be between 0 and 1. Fault injection demonstrates consumer
+handling; it does not estimate a production service's reliability.
 
-Mocks shouldn't just be static JSON. Axiom maintains an in-memory `Store`. You can mutate state when endpoints are hit!
+## Validation checklist
 
-```pkl
-// 1. Initial State
-mock = new MockConfig {
-  state = new MockStateConfig {
-    initial = new { users = new Listing {} }
-    // 2. On POST /users
-    onReceive = new Listing {
-      new StoreMutation {
-        type = "append"
-        key = "users"
-        value = new { id = "{{ faker.uuid }}", name = "{{ request.body.name }}" }
-      }
-    }
-  }
-}
-```
-Now, a `GET /users` endpoint can return `{{ store.users }}`, reflecting the actual data you POSTed during the session!
-
-### 3. Fault Injection
-
-Simulate catastrophic network conditions locally to see how your frontend UI handles it:
-
-```pkl
-mock = new MockConfig {
-  fault = new FaultConfig {
-    // 10% chance to simulate a hard connection reset
-    networkFault = new NetworkFault { type = "connection_reset", probability = 0.1 }
-    // 5% chance to return a 500 Server Error
-    errorRate = 0.05
-    errorResponse = new MockResponse { status = 500 }
-  }
-}
-```
-
-<Callout type="info">
-**Swagger UI Included:** The mock server automatically generates full OpenAPI docs. Access them in your browser at `http://localhost:8080/axdoc`.
-</Callout>
+- inspect the evaluated contract before starting the server;
+- test response selection and fallback explicitly;
+- reset state between tests that require isolation;
+- avoid real credentials in headers or templates; and
+- run the same client suite against the real backend before release.

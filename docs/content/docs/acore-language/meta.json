@@ -1,12 +1,20 @@
 {
   "title": "Acore Language",
   "pages": [
+    "index",
     "syntax-overview",
+    "values-types-and-operators",
+    "objects-classes-and-functions",
+    "imports-and-contracts",
     "amends-and-merging",
+    "evaluation-and-output",
+    "standard-library",
+    "ui-profile",
     "policies-and-behavior",
     "streaming-and-websockets",
     "variants-and-filtering",
     "validation",
-    "standard-library"
+    "domain-model-v1",
+    "security-model-v1"
   ]
 }

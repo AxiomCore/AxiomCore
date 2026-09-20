@@ -1,45 +1,124 @@
-# docs
+# AxiomCore documentation
 
-This is a Next.js application generated with
-[Create Fumadocs](https://github.com/fuma-nama/fumadocs).
+This directory contains the public AxiomCore documentation application. It is
+built with Next.js and Fumadocs from MDX content in `content/docs`.
 
-Run development server:
+## Local development
+
+Requirements:
+
+- the Node.js version supported by the current Next.js release;
+- Corepack or pnpm; and
+- Corepack/pnpm and the committed `pnpm-lock.yaml`.
 
 ```bash
-npm run dev
-# or
+corepack enable
+pnpm install --frozen-lockfile
 pnpm dev
-# or
-yarn dev
 ```
 
-Open http://localhost:3000 with your browser to see the result.
+Open `http://localhost:3000`.
 
-## Explore
+## Required validation
 
-In the project, you can see:
+```bash
+pnpm check
+```
 
-- `lib/source.ts`: Code for content source adapter, [`loader()`](https://fumadocs.dev/docs/headless/source-api) provides the interface to access your content.
-- `lib/layout.shared.tsx`: Shared options for layouts, optional but preferred to keep.
+`check` enforces content policy and navigation, compiles MDX and TypeScript,
+builds the production application, writes a reproducible release manifest, and
+starts the result briefly to audit public HTML, processed MDX, Open Graph,
+sitemap, robots, LLM-reader, health, version, security, and failure routes.
 
-| Route                     | Description                                            |
-| ------------------------- | ------------------------------------------------------ |
-| `app/(home)`              | The route group for your landing page and other pages. |
-| `app/docs`                | The documentation layout and pages.                    |
-| `app/api/search/route.ts` | The Route Handler for search.                          |
+Use focused checks while editing:
 
-### Fumadocs MDX
+```bash
+pnpm lint:content
+pnpm types:check
+pnpm build
+pnpm release:manifest
+pnpm test:routes
+```
 
-A `source.config.ts` config file has been included, you can customise different options like frontmatter schema.
+Before merging a content change, also confirm:
 
-Read the [Introduction](https://fumadocs.dev/docs/mdx) for further details.
+1. every new public capability appears in `CONTENT_EVIDENCE.md`;
+2. its status follows `DOCUMENTATION_CONTRACT.md`;
+3. internal Markdown links resolve;
+4. runnable commands exist in the current CLI or owning repository;
+5. examples contain no private paths, credentials, or internal milestone
+   names; and
+6. the affected page renders in light and dark appearance at desktop and
+   narrow widths.
 
-## Learn More
+## Content structure
 
-To learn more about Next.js and Fumadocs, take a look at the following
-resources:
+| Path | Purpose |
+| --- | --- |
+| `content/docs/introduction` | Product definition, landscape, audience, and support |
+| `content/docs/getting-started` | Installation and first local paths |
+| `content/docs/guides` | End-to-end tutorials, CI, migration, and release readiness |
+| `content/docs/core-concepts` | Artifacts, pipeline, extraction, runtime, and trust |
+| `content/docs/acore-language` | Acore language manual and schema-backed concepts |
+| `content/docs/clients` | Existing frontend integrations |
+| `content/docs/workflows` | Contract, package, UI, review, test, mock, and release lifecycles |
+| `content/docs/tooling` | CLI and local developer tools |
+| `content/docs/cloud` | Implemented connected control-plane capabilities |
+| `content/docs/reference` | Exact schemas, errors, security rules, diagnostics, and glossary |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js
-  features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-- [Fumadocs](https://fumadocs.dev) - learn about Fumadocs
+Navigation order lives in each directory's `meta.json`. All public pages need
+`title` and `description` frontmatter.
+
+## Editorial rules
+
+- Use **AxiomCore** for the platform and **Acore** for the language.
+- Do not imply that Acore is required for existing backend or frontend code.
+- Attach availability to a precise capability and target.
+- Mark Axiom Studio, Acode, and Axiom Marketplace as **Coming soon**.
+- Never publish internal workstream or numbered milestone names.
+- Describe extraction, runtime, trust, and Cloud boundaries as implemented;
+  avoid universal or “zero” claims.
+- Do not publish runnable instructions for a coming-soon product.
+
+The complete editorial contract is in `DOCUMENTATION_CONTRACT.md`.
+
+The preview, promotion, monitoring, incident, and rollback procedure is in
+`DEPLOYMENT.md`. The repository documentation workflow validates a release
+candidate but intentionally does not hold production deployment authority.
+URL compatibility is governed by `MIGRATION.md`, recurring ownership and review
+by `MAINTENANCE.md`, and cutover acceptance by `LAUNCH_CHECKLIST.md`.
+Static Cloudflare Pages build, preview, deployment, domain, and verification
+instructions are in `CLOUDFLARE_PAGES.md`.
+
+## Machine-readable documentation
+
+- `/llms.txt` lists every page with an absolute canonical URL and description.
+- `/llms-full.txt` contains processed text for the full public documentation.
+- In the server build, `/docs/<path>.mdx` rewrites to the MDX-reader route.
+  In the Cloudflare static build, the same URLs are materialized as build-time
+  MDX assets from the authored documentation.
+- `/sitemap.xml` and `/robots.txt` are generated by the application.
+- `/api/health` reports a minimal, non-cached service health document.
+- `/version.json` reports the public documentation release identity.
+- `/.well-known/security.txt` publishes the private vulnerability-reporting
+  channel and security-policy location.
+
+These outputs contain public documentation only. Internal evidence and planning
+files remain outside the MDX collection.
+
+## Publication and maintenance
+
+The repository workflow in `.github/workflows/docs.yml` runs `pnpm check` for
+documentation, example, and documentation-policy changes. It does not publish
+the site; deployment remains a separately authorized environment operation.
+The workflow retains `artifacts/docs-release-manifest.json` as release evidence.
+
+Public lifecycle guidance is maintained under:
+
+- `/reference/versioning-and-deprecation`;
+- `/reference/support-and-feedback`; and
+- `/reference/documentation-contributions`.
+
+Update `CONTENT_EVIDENCE.md` and `RELEASE_READINESS.md` only after the matching
+implementation and the full documentation gate have been reviewed together.
+The content gate requires a complete evidence review at least every 120 days.

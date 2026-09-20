@@ -1,4 +1,4 @@
-amends "axiom-fastapi:/Users/yashmakan/AxiomCore/_axiom/AxiomCore/examples/observability-and-auth/test_server.py:app"
+amends "axiom-fastapi:./test_server.py:app"
 
 local Routes = module.Routes
 
@@ -13,7 +13,7 @@ variants {
   }
 }
 
-// === PHASE 1: OBSERVABILITY ===
+// Runtime observability
 observability {
   enabled = true
   // Example Jaeger local OTLP collector
@@ -21,24 +21,26 @@ observability {
   sampleRate = 1.0
 }
 
-// === PHASE 2: AUTHENTICATION RULES ===
+// Authentication rules
 endpoints {
 
   // 1. JWT with Scopes
   [Routes.protected_jwt] {
-    auth = new EndpointAuth {
+    auth = EndpointAuth {
       required = true
-      scopes = new Listing { "items:read" }
-      methods = new Listing {
-        new AuthMethodDef {
+      scopes = Listing { "items:read" }
+      methods = Listing {
+        AuthMethodDef {
           type = "bearer";
           name = "Authorization";
           scheme = "Bearer";
           location = "header";
           // VALIDATED LOCALLY IN RUST!
-          validation = new AuthValidationDef {
+          validation = AuthValidationDef {
             strategy = "jwt";
-            secret = "my_super_secret_key";
+            // Fixture-only placeholder. Production validation material belongs
+            // in a runtime secret provider, not a committed contract.
+            secret = "development-only-placeholder";
             alg = "HS256"
           }
         }
@@ -48,10 +50,10 @@ endpoints {
 
   // 2. API Key Header
   [Routes.protected_api_key_header] {
-    auth = new EndpointAuth {
+    auth = EndpointAuth {
       required = true
-      methods = new Listing {
-        new AuthMethodDef {
+      methods = Listing {
+        AuthMethodDef {
           type = "api_key";
           name = "x-api-key";
           location = "header"
@@ -62,10 +64,10 @@ endpoints {
 
   // 3. API Key Query
   [Routes.protected_api_key_query] {
-    auth = new EndpointAuth {
+    auth = EndpointAuth {
       required = true
-      methods = new Listing {
-        new AuthMethodDef {
+      methods = Listing {
+        AuthMethodDef {
           type = "api_key";
           name = "api_key";
           location = "query"
@@ -76,12 +78,12 @@ endpoints {
 
   // 4. Multi Auth (OR Condition)
   [Routes.protected_multi] {
-    auth = new EndpointAuth {
+    auth = EndpointAuth {
       required = true
       condition = "or" // Only needs ONE of these to pass
-      methods = new Listing {
-        new AuthMethodDef { type = "bearer"; name = "Authorization"; location = "header" };
-        new AuthMethodDef { type = "api_key"; name = "x-api-key"; location = "header" }
+      methods = Listing {
+        AuthMethodDef { type = "bearer"; name = "Authorization"; location = "header" };
+        AuthMethodDef { type = "api_key"; name = "x-api-key"; location = "header" }
       }
     }
   }

@@ -3,4 +3,4 @@ framework = "atmx-react"
 [contracts]
 
 [contracts.realtime-chat]
-source = "/Users/yashmakan/AxiomCore/AxiomCore/examples/realtime-chat/frontend/atmx-react/../../backend/go-chat/.axiom"
+source = "../../backend/go-chat/.axiom"

@@ -224,6 +224,9 @@ fn get_default_project_name() -> String {
 }
 
 fn write_acore_file(module: &str, entrypoint: &str, project_name: &str) -> Result<()> {
+    if Path::new("axiom.acore").exists() {
+        anyhow::bail!("axiom.acore already exists. Review it or remove it explicitly before running `axiom init` again.");
+    }
     let content = format!(
         r#"amends "{}:{}"
 

@@ -1,0 +1,65 @@
+---
+title: Support and availability
+description: Current implementation boundaries by language, framework, artifact, and target.
+---
+
+This matrix separates an implemented path from the broader AxiomCore product
+direction. It was last reviewed against the local repositories on
+**September 18, 2026**.
+
+## Status definitions
+
+| Status | Meaning |
+| --- | --- |
+| **Available** | Implemented, documented, and usable on the stated path. It does not imply a stable major release or universal production certification. |
+| **Alpha** | Implemented and testable, but APIs or workflows can change. |
+| **Experimental** | A bounded implementation exists; parity, compatibility, or distribution is incomplete. |
+| **Coming soon** | Planned or in development, with no supported user workflow today. |
+
+## Language, contracts, and packages
+
+<CapabilityTable rows={[
+  { capability: 'Acore language toolchain', status: 'alpha', scope: 'Parser, evaluator, standard library, diagnostics, and language-server foundations.' },
+  { capability: '.axiom service contracts', status: 'alpha', scope: 'Build, inspect, semantic diff, local test/mock, release, pull, and runtime workflows.' },
+  { capability: 'Typed package envelope', status: 'alpha', scope: 'Service, theme, component-library, database-schema, extension, and application-policy kinds with canonical encoding and validation.' },
+  { capability: 'Theme and component packages', status: 'alpha', scope: 'Typed exports, targets, roles/props/slots/composition constraints, lock resolution, and semantic change classification.' },
+  { capability: 'Executable extensions', status: 'experimental', scope: 'Rust WebAssembly guest SDK, signed authority locks, bounded broker, and separate module identity. This is source-level and pre-stable.' },
+]} />
+
+## Backend and schema inputs
+
+<CapabilityTable rows={[
+  { capability: 'Python / FastAPI', status: 'available', scope: 'Primary extraction and local contract-build path. The service dependencies must be installed in the build environment.' },
+  { capability: 'Go', status: 'alpha', scope: 'Route and type extraction exists; review the extracted surface before release.' },
+  { capability: 'OpenAPI input', status: 'experimental', scope: 'Bounded composition/domain bootstrap path. It is not full parity with every Acore behavior.' },
+  { capability: 'SQL schema input', status: 'experimental', scope: 'Bounded domain bootstrap path, not a complete database runtime or management UI.' },
+  { capability: 'Other backend languages', status: 'coming-soon', scope: 'No supported first-party extractor is documented today. Custom integration work is required.' },
+]} />
+
+## Frontend and application targets
+
+<CapabilityTable rows={[
+  { capability: 'Vanilla web / ATMX', status: 'available', scope: 'Generated client and web runtime path. Validate target browsers and application CORS policy.' },
+  { capability: 'React / ATMX', status: 'alpha', scope: 'Bindings exist; validate bundler integration and application boot order.' },
+  { capability: 'Flutter / Dart', status: 'alpha', scope: 'Bindings and runtime path exist; validate platform storage and consumer release builds.' },
+  { capability: 'Swift / Apple platforms', status: 'experimental', scope: 'Runtime distribution exists; full binding and lifecycle parity is not claimed.' },
+  { capability: 'Acore UI hosts', status: 'alpha', scope: 'Browser, Android Emulator, and iOS Simulator development paths, including assets, interaction, diagnostics, and hot reload.' },
+  { capability: 'Extension hosts', status: 'experimental', scope: 'Server/headless, Chromium Worker, Android Emulator, and iOS Simulator conformance. Physical-device, durable-store, and broad browser-engine certification are not claimed.' },
+  { capability: 'Runtime-dependent foreign UI islands', status: 'experimental', scope: 'Sandboxed, visibly foreign Web iframe with typed bridge. Android and iOS are deliberately unsupported.' },
+  { capability: '.axiomapp', status: 'alpha', scope: 'Target-specific and multi-target builds plus inspect/install/package/run workflows. App-store signing and publishing are outside this boundary.' },
+  { capability: 'Physical-device certification', status: 'coming-soon', scope: 'Current documentation does not claim a certified physical-device or store-distribution matrix.' },
+]} />
+
+## Cloud and applications
+
+<CapabilityTable rows={[
+  { capability: 'Cloud accounts, projects, releases, and pull', status: 'alpha', scope: 'Connected workflows require a live account and configured control plane.' },
+  { capability: 'Axiom Cloud Dashboard', status: 'alpha', scope: 'Implemented control-plane views; the broader collaborative vision is not all shipped.' },
+  { capability: 'Axiom Studio', status: 'coming-soon', scope: 'Planned visual and collaborative software workspace; not installable today.' },
+  { capability: 'Acode', status: 'coming-soon', scope: 'Planned contract-aware IDE; existing language-server/editor foundations are not the product.' },
+  { capability: 'Axiom Marketplace', status: 'coming-soon', scope: 'The package format exists, but catalog browsing and supported installation do not.' },
+]} />
+
+Before adopting an alpha or experimental path, add an end-to-end example for
+your application, run the owning repositories' checks in CI, and inspect the
+semantic diff for every contract or package upgrade.

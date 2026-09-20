@@ -9,6 +9,8 @@
 /.next/
 /out/
 /build
+/artifacts
+/.wrangler
 *.tsbuildinfo
 
 # misc

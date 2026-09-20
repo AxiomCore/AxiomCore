@@ -1,0 +1,52 @@
+---
+title: Production-readiness checklist
+description: Review contract proof, consumers, security, configuration, observability, rollback, and operational ownership before promotion.
+---
+
+Passing `axiom build` is necessary but not sufficient for production. Use this
+checklist for the exact backend, consumer, target, and environment being
+promoted.
+
+## Contract and provenance
+
+- [ ] The authoritative input is identified and reviewable.
+- [ ] CLI, extractor, and package versions are pinned for the release job.
+- [ ] Contract and package locks are committed and verified.
+- [ ] The candidate artifact digest matches the artifact tested by consumers.
+- [ ] The semantic diff from the accepted version has an explicit owner.
+- [ ] Production policy requires the intended signature/proof boundary.
+
+## Behavior and consumers
+
+- [ ] Contract tests cover representative success, validation, auth, and error paths.
+- [ ] At least one test reaches the real backend, not only `axiom serve`.
+- [ ] Every generated client is rebuilt from the candidate artifact.
+- [ ] Web CORS/CSP and browser support are verified.
+- [ ] Flutter or native consumers are tested in their release configuration.
+- [ ] Loading, empty, retry, cancellation, cache, and reconnect behavior is owned.
+
+## Security and data
+
+- [ ] `axiom security check` policy matches the intended enforcement mode.
+- [ ] Public routes are explicit; protected routes have the expected guard.
+- [ ] Secrets come from the deployment environment and do not appear in source, locks, artifacts, examples, logs, or CI evidence.
+- [ ] Sandbox and test data are synthetic and isolated from production.
+- [ ] Sensitive fields and telemetry attributes are redacted or excluded.
+
+## Operations
+
+- [ ] Environment endpoints, timeouts, retry policy, and credential transport are reviewed.
+- [ ] Logs, traces, traffic metrics, alert ownership, and retention are configured for the deployed path.
+- [ ] A release health signal is defined before promotion.
+- [ ] The previous immutable artifact and dependency lock remain available.
+- [ ] Rollback has been rehearsed without resolving new dependencies.
+- [ ] Backend, contract, frontend, and control-plane ownership is recorded.
+
+## Platform boundary
+
+Do not use a **Coming soon** product as a release dependency. Axiom Studio,
+Acode, and Axiom Marketplace are product direction, not supported production
+workflows today. Acore UI hosts are alpha development paths; physical-device
+certification and app-store publishing are not claimed. Check the
+[support matrix](/introduction/support-matrix) again when the CLI or runtime
+version changes.

@@ -1,0 +1,143 @@
+---
+title: Executable extension lifecycle
+description: Review and release a Rust WebAssembly extension through signed authority, deterministic locks, target checks, and host audit evidence.
+---
+
+Use an executable extension only when declarative Acore behavior and ordinary
+application integration are not the right fit. This is an **Experimental**
+workflow: it is source-level and Rust-only, and it requires target-specific
+validation before a release.
+
+## What the application author prepares
+
+The source-authored path starts with application files, not a handwritten Wasm
+package or host integration:
+
+```text
+main.acore
+AxiomDeps.toml
+logic/checkout.rs      # the folder name is author-selected
+```
+
+The Acore source imports a stable extension alias. `AxiomDeps.toml` registers
+the Rust entry file, exports, targets, explicitly shared Rust files, and the
+module's maximum permissions. Rust is the only supported guest language in the
+current experimental source driver.
+
+Generate or update the complete local release workflow with:
+
+```bash
+axiom extensions source-release checkout \
+  --deps AxiomDeps.toml \
+  --application example.checkout
+```
+
+Axiom owns the generated Cargo crate, ABI wrapper, typed bindings, Wasm module,
+package draft, signatures, and locks. The author reviews and commits the
+generated workflow/release inputs, but never edits those files to introduce
+authority. Ignored Axiom-managed local keys keep repeat generation stable.
+
+## Generated release inputs
+
+The command produces separate, content-addressed inputs:
+
+1. A Rust WebAssembly module built against the Axiom extension SDK.
+2. An `axiom-extension/v2` package that declares the ABI, SDK identity,
+   exported operations, imported operations, execution limits, provenance, and
+   module digest.
+3. A signed authority request, an application grant, and a signed policy for
+   every target that will execute it.
+4. A canonical authority lock and a package lock committed with the
+   application manifest.
+
+The package envelope is declarative metadata. The module remains separate and
+its exact SHA-256 digest and byte length must match the package and locks.
+
+After generation, ordinary commands load the verified source binding:
+
+```bash
+axiom run main.acore --target web
+axiom run main.acore --target android
+axiom run main.acore --target ios
+```
+
+## Verify before a host can load the module
+
+From an application checkout with the experimental extension command available,
+the release-facing checks are:
+
+```bash
+axiom extensions verify --manifest AxiomExtensions.toml
+axiom extensions inspect pricing --manifest AxiomExtensions.toml
+axiom extensions permissions pricing --manifest AxiomExtensions.toml
+axiom extensions graph --manifest AxiomExtensions.toml
+axiom extensions diff before.authority.lock.json after.authority.lock.json
+```
+
+`verify` is offline: it rechecks package/module identity, signatures, the
+authority lock, target policies, and release-only requirements without fetching
+replacement bytes. `inspect`, `permissions`, and `graph` expose requested,
+application-granted, and effective authority plus provenance and dependency
+origins. A permission increase must be explicitly approved by the release
+workflow; it is not silently accepted because the package version changed.
+
+The command group and manifest format are experimental. Pin the exact Axiom
+CLI revision in CI and retain its JSON outputs with the release evidence.
+
+## Bind and invoke at a coarse boundary
+
+Bind an extension to one declared frontend or backend operation. Give it one
+meaningful input and authorized snapshots. Prefer one returned result, patch,
+or transaction proposal over many tiny host calls.
+
+```text
+UI event or backend workflow
+          |
+  authorized snapshots + input
+          |
+      Wasm invocation
+          |
+result + effect plan + atomic patch/transaction proposal
+          |
+host policy, revision, invariant, and cancellation checks
+          |
+       normal application update and audit record
+```
+
+For streams, select a bounded batch size and coalescing policy. Do not use an
+extension as a layout callback, animation-frame handler, per-character loop, or
+row-by-row database adapter. Those patterns create avoidable boundary crossings
+and can exceed the declared deadline or quota.
+
+## Test the right host
+
+Run the same signed package and authority lock on every intended target. The
+current reproducible conformance evidence covers server/headless, Chromium
+Worker, Android Emulator, and iOS Simulator. It does not certify physical
+mobile devices, app-store distribution, durable production-store adapters, or
+all browser engines.
+
+If the user interface needs framework runtime behavior, declare a Web-only
+foreign island rather than treating it as translated Axiom UI. Its bundle,
+typed bridge, accessibility metadata, host methods, navigation paths, resource
+limits, fallback, mount/update/unmount lifecycle, and Web-only target are all
+review inputs.
+
+## Operate and update safely
+
+Keep these artifacts together for each release:
+
+- package and module digests, signatures, package lock, authority lock, and
+  target policy digests;
+- the requested, granted, and effective authority reports;
+- semantic permission diff and recorded approval for each increase;
+- target conformance and performance reports; and
+- host and broker audit records, including denied, cancelled, conflicted, and
+  successful work.
+
+An invalid update must not replace the last known-good host. On cancellation,
+navigation, request completion, component removal, process loss, or shutdown,
+the host drains or retires the instance, invalidates handles, and rejects late
+work. See [Artifact trust](/core-concepts/trust-and-security) and the
+[Executable extensions reference](/reference/executable-extensions) for the
+underlying checks and error model.

@@ -1,69 +1,98 @@
 ---
-title: React (ATMX)
-description: React bindings for the ATMX WebAssembly Engine.
+title: React with ATMX
+description: Initialize the browser runtime with a provider, hooks, and generated query definitions.
 ---
 
-import { Callout } from 'fumadocs-ui/components/callout';
+<StatusNote status="alpha" title="React bindings">
+  Provider, hooks, query-state management, and declarative components are
+  implemented. Validate bundler handling of the Wasm asset, startup order,
+  server rendering behavior, and browser support in your application.
+</StatusNote>
 
-`atmx-react` brings the power of the Axiom WebAssembly engine into React using custom hooks and Context-aware wrapper components.
+## Generate the client
 
-### 1. Provider Setup
-Wrap your app in the `<AxiomProvider>`. This automatically downloads and instantiates the `axiom_runtime.wasm` engine.
+```bash
+axiom pull --contract organization/project/1.2.0 --framework atmx-react
+```
+
+Use the generated config and query definitions rather than hand-writing
+endpoint IDs.
+
+## Establish the runtime boundary
+
+`AxiomProvider` accepts an in-memory `config` or a `configUrl`, initializes the
+Wasm engine once, and renders its fallback until ready.
 
 ```tsx
-import { AxiomProvider } from "atmx-react";
-import { AxiomDefaultConfig } from "./generated/sdk";
+import { AxiomProvider } from 'atmx-react';
+import { AxiomDefaultConfig } from './generated/sdk';
 
-export default function App() {
+export function App() {
   return (
-    <AxiomProvider config={AxiomDefaultConfig} fallback={<p>Booting Wasm...</p>}>
+    <AxiomProvider
+      config={AxiomDefaultConfig}
+      fallback={<p>Starting data runtime…</p>}
+    >
       <Dashboard />
     </AxiomProvider>
   );
 }
 ```
 
-### 2. The Magic Proxy
-The generated SDK uses a Javascript `Proxy` object. When you call `sdk.users.getUser`, you are not executing JS fetch logic. The proxy captures the path and arguments, allocs memory, and triggers the Wasm engine via `axiom_wasm_call()`.
+An initialization error is rendered by the current provider. Add an
+application error boundary if you need custom recovery or diagnostics.
+
+## Query with a hook
+
+`useAxiomQuery` takes a generated `AxiomQueryDef`, not an arbitrary function.
+It returns `data`, `isLoading`, `isFetching`, `source`, `error`, the raw state,
+and `refetch`.
 
 ```tsx
-import { sdk } from "./generated/sdk";
+import { useAxiomQuery } from 'atmx-react';
+import { sdk } from './generated/sdk';
 
-function Profile() {
-  const { data, isLoading, error } = sdk.users.useGetUser({ id: 42 });
+function Profile({ id }: { id: number }) {
+  const query = useAxiomQuery(sdk.users.getUser({ id }));
 
-  if (isLoading) return <Spinner />;
-  return <h1>{data.name}</h1>;
+  if (query.isLoading) return <p>Loading…</p>;
+  if (query.error) return <p>{query.error.message}</p>;
+  if (!query.data) return null;
+
+  return <h2>{query.data.name}</h2>;
 }
 ```
 
-### 3. Declarative Components
-For rapid development, ATMX provides Context-inheriting UI components that eliminate hook boilerplate.
+The precise generated factory may differ with the contract and generator
+version. TypeScript output is authoritative.
+
+## Compose query state
+
+`AxQuery` supplies its state to nested ATMX components and also supports a
+render function:
 
 ```tsx
-import { AxQuery, AxWhen } from "atmx-react";
-import { sdk } from "./generated/sdk";
-
-function Profile() {
-  return (
-    <AxQuery call={sdk.users.getProfileDef()}>
-      <AxWhen is="loading">
-        <Spinner />
-      </AxWhen>
-      
-      <AxWhen is="data">
-        {/* Child components can access data via `useAxiomData()` */}
-        <UserProfileCard /> 
-      </AxWhen>
-      
-      <AxWhen is="error">
-        <ErrorAlert />
-      </AxWhen>
-    </AxQuery>
-  );
-}
+<AxQuery call={sdk.users.getUser({ id: 42 })}>
+  {({ data, state, refetch }) => (
+    <section>
+      {state.status === 'error' && <p>{state.error?.message}</p>}
+      {data && <h2>{data.name}</h2>}
+      <button onClick={refetch}>Refresh</button>
+    </section>
+  )}
+</AxQuery>
 ```
 
-<Callout type="info" title="Zero-JS Hydration">
-If a query result is stored in the local `sessionStorage` cache, `atmx-react` instantly hydrates the component with data *synchronously* on the first render frame, avoiding React's typical double-render flash.
-</Callout>
+## Browser and security checks
+
+- serve the Wasm asset and contract from origins allowed by your application;
+- configure backend CORS for the browser origin;
+- provide paired signature and public-key proof when the config declares a
+  signed contract;
+- keep bearer or API tokens in application-controlled memory or secure session
+  handling, not generated source; and
+- test hydration with an empty and populated `sessionStorage` cache.
+
+Do not describe Wasm as a security sandbox for untrusted generated JavaScript.
+Application code, the ATMX layer, and the browser origin remain part of the
+client trust boundary.

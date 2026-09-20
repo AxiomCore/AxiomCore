@@ -1,0 +1,70 @@
+---
+title: Product landscape
+description: How the implemented AxiomCore tools and planned product experiences fit together.
+---
+
+The AxiomCore name covers a language, local toolchain, runtime ecosystem, and
+cloud services. The larger product direction also includes visual and
+collaborative applications that are not yet available.
+
+## Available and testable today
+
+<CapabilityTable
+  rows={[
+    { capability: 'Acore', status: 'alpha', scope: 'Declarative language, evaluator, standard library, diagnostics, and language-server foundations.' },
+    { capability: 'Axiom CLI', status: 'alpha', scope: 'Local authoring, build, inspection, diff, testing, mocking, package, UI/app, security, and connected cloud commands.' },
+    { capability: 'Axiom contracts and runtime', status: 'alpha', scope: 'Canonical packages, resolution locks, semantic checks, native/web runtime paths, and framework integrations.' },
+    { capability: 'Acore UI and application artifacts', status: 'alpha', scope: 'Declarative frontend authoring and .axiomapp builds validated on browser, Android Emulator, and iOS Simulator paths.' },
+    { capability: 'Axiom Cloud Dashboard', status: 'alpha', scope: 'Implemented account, project, and release control-plane experiences. It is not yet the full collaborative software workspace described below.' },
+  ]}
+/>
+
+## Product direction
+
+<StatusNote status="coming-soon" title="Axiom Studio">
+  A planned visual workspace for building software on AxiomCore: visual frontend
+  composition, backend/API management, database views, task and Kanban views,
+  human/agent collaboration, chat, and a contract-aware audit journey. There is
+  no installable Studio application today.
+</StatusNote>
+
+<StatusNote status="coming-soon" title="Acode">
+  A planned contract-aware code editor for source, semantic contract diffs, and
+  ordinary imperative modules. Acore has editor and language-server foundations,
+  including an existing editor extension, but those are not the Acode IDE.
+</StatusNote>
+
+<StatusNote status="coming-soon" title="Axiom Marketplace">
+  A planned unified catalog for contracts such as UI components, themes,
+  service/API integrations, database schemas, extensions, and policies. The
+  typed package envelope exists, but there is no supported marketplace browsing
+  or installation workflow today.
+</StatusNote>
+
+## Intended relationship
+
+```text
+                         ┌─────────────────────────┐
+                         │ Axiom Cloud Dashboard   │
+                         │ projects and releases   │
+                         └───────────┬─────────────┘
+                                     │
+        ┌────────────────────────────┼─────────────────────────┐
+        │                            │                         │
+┌───────▼────────┐          ┌────────▼────────┐       ┌────────▼────────┐
+│ Axiom Studio   │          │ Axiom CLI       │       │ Acode           │
+│ coming soon    │          │ alpha           │       │ coming soon     │
+└───────┬────────┘          └────────┬────────┘       └────────┬────────┘
+        └────────────────────────────┼─────────────────────────┘
+                                     ▼
+                         Acore + versioned packages
+                          runtimes, tests, and apps
+                                     ▲
+                                     │
+                         Axiom Marketplace
+                              coming soon
+```
+
+This diagram communicates product direction, not current interoperability
+guarantees. Use the [support matrix](/introduction/support-matrix) for runnable
+paths.

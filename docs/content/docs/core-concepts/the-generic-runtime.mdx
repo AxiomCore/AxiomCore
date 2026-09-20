@@ -1,33 +1,78 @@
 ---
-title: The Generic Runtime
-description: The Rust and WebAssembly engine powering your app.
+title: Contract runtime
+description: Native and browser execution, request lifecycle, caching, authentication, and events.
 ---
 
-import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+The Axiom Runtime consumes compiled contract data and executes declared client
+behavior. It resolves endpoint identity, builds and validates requests, applies
+authentication and cache policy, performs transport, validates responses, and
+returns structured events or errors to the framework binding.
 
-The **Generic Runtime** is the core execution engine that lives inside your frontend application. It guarantees that a mobile app and a web app will execute an API call identically.
+<StatusNote status="alpha" title="Shared semantics, platform-specific lifecycle">
+  Native and browser runtimes consume the same contract concepts. They do not
+  have identical storage engines, networking APIs, startup behavior, or
+  framework integration. Validate each shipping target independently.
+</StatusNote>
 
-### Architecture
+## Runtime targets
 
-<Tabs items={['Native (Mobile/Desktop)', 'Web (Wasm)']}>
-  <Tab value="Native (Mobile/Desktop)">
-    Written in **Rust**, the runtime connects to Flutter and Swift via **FFI (Foreign Function Interface)**. 
-    *   **Network:** Managed by highly optimized native HTTP pools (`reqwest`).
-    *   **Cache:** Powered by **Sled**, an embedded, high-performance Key-Value database.
-    *   **Speed:** Near-zero overhead. Memory is shared safely across the FFI boundary using byte buffers.
-  </Tab>
-  <Tab value="Web (Wasm)">
-    Compiled to **WebAssembly** via `wasm-bindgen`. 
-    *   **Network:** Plugs directly into the browser's native `fetch` and `WebSocket` APIs.
-    *   **Cache:** Synchronizes with `sessionStorage` and `IndexedDB`.
-    *   **Zero-JS Hydration:** The ATMX DOM scanner reads the JS cache *before* Wasm is fully downloaded, rendering the UI instantly without loading flickers.
-  </Tab>
-</Tabs>
+| Target | Engine and bridge | Network | Local cache boundary |
+| --- | --- | --- | --- |
+| Flutter/Dart | Rust runtime through native bindings | Native HTTP client | Optional Sled database configured by the application |
+| Browser/ATMX | Rust compiled to Wasm plus the ATMX JavaScript layer | Browser fetch and WebSocket facilities | ATMX query snapshots in `sessionStorage` for the current browser session |
+| Swift/Apple | Native runtime distribution foundations | Native runtime transport | Experimental binding and lifecycle surface |
 
-### The Execution Flow
+The browser cache is not documented as an IndexedDB durability guarantee, and
+the native cache is not automatically shared with a browser or another app.
 
-1.  **Intercept:** You call `sdk.users.get()`. The proxy converts this to an Endpoint ID and a byte payload.
-2.  **Lookup:** The runtime checks its routing table and policies.
-3.  **Cache Check:** If the policy is `CacheFirst` or `StaleWhileRevalidate`, the runtime reads from the local DB.
-4.  **Transport:** The runtime serializes the data (JSON or FlatBuffers) and executes the network request.
-5.  **Event Stream:** The runtime streams events (`CacheHit`, `NetworkSuccess`, `Error`) back to the UI framework over a broadcast channel.
+## Request lifecycle
+
+```text
+generated call
+  -> contract and endpoint lookup
+  -> request construction
+  -> request validation
+  -> optional cache read
+  -> authentication and transport
+  -> response validation and decoding
+  -> optional cache write
+  -> framework state/event
+```
+
+Failures retain their stage, category, symbolic code, retryability, and safe
+details when available. This lets an application distinguish a missing
+contract from request validation, authentication, timeout, HTTP status,
+decoding, or cache failure. See [Runtime errors](/reference/error-codes).
+
+## Cache behavior
+
+Cache behavior comes from the compiled endpoint policy and target runtime. A
+query can emit cached data and remain in a fetching state while the network
+refresh proceeds. Mutations and invalidation should be tested together: a
+successful mutation does not imply that every related query is automatically
+invalidated unless the generated client or application declares that link.
+
+ATMX exposes targeted invalidation, cache reads and writes, namespace clearing,
+and a full session-cache purge. Native applications choose a database path
+when they require persistence. Cache entries are application data: apply the
+same privacy and logout-clearing policy you would use for any client store.
+
+## Authentication
+
+Contracts describe how credentials are attached; applications remain
+responsible for obtaining and protecting them. ATMX accepts method,
+namespace, or global in-memory tokens and does not persist those token values.
+Cookie sessions use browser cookie behavior when the contract declares a
+cookie session. Native bindings expose runtime token APIs so the application
+can restore a token from its platform-secure store.
+
+Never put a production credential in Acore source, a generated config, a
+contract artifact, or a committed mock.
+
+## Tracing
+
+The native runtime can accept incoming W3C `traceparent` context and attach it
+to runtime spans. Runtime OTLP export is configuration-dependent; it is not an
+automatic promise that every request reaches a hosted observability service.
+Keep runtime tracing separate from the CLI's optional, aggregate adoption
+telemetry.

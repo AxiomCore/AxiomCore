@@ -48,6 +48,19 @@ pub fn get_auth_file_path() -> Result<PathBuf> {
     Ok(path)
 }
 
+/// Resolve the active profile's token path without creating the profile
+/// directory. Diagnostics use this so `axiom doctor` can honestly be a
+/// non-mutating command in a brand-new repository and on a new machine.
+pub fn get_existing_auth_file_path() -> Result<PathBuf> {
+    let mut path = dirs::config_dir().context("Could not find config directory")?;
+    path.push("axiom");
+    if axiom_cloud::uses_local_cloud()? {
+        path.push("local");
+    }
+    path.push(TOKEN_FILE);
+    Ok(path)
+}
+
 pub fn save_tokens(access_token: &str, refresh_token: &str, expires_in: u64) -> Result<()> {
     if access_token.trim().is_empty() || refresh_token.trim().is_empty() {
         anyhow::bail!("AxiomCore returned an incomplete CLI session");
@@ -84,6 +97,17 @@ pub fn load_auth_data() -> Result<AuthData> {
     }
 
     anyhow::bail!("Failed to read auth file after retries");
+}
+
+/// Read an existing session without creating a configuration directory.
+/// `Ok(None)` means the developer has not logged in to this profile yet.
+pub fn load_auth_data_if_present() -> Result<Option<AuthData>> {
+    let path = get_existing_auth_file_path()?;
+    match fs::read_to_string(&path) {
+        Ok(content) => Ok(Some(serde_json::from_str(&content)?)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
 }
 
 fn write_auth_data(data: &AuthData) -> Result<()> {
@@ -137,6 +161,13 @@ fn write_private_file(path: &Path, content: &[u8]) -> Result<()> {
 pub fn get_project_id(path: &Path) -> Result<Option<String>> {
     let data = load_auth_data().unwrap_or_default();
     // Normalize path to absolute
+    let abs_path = fs::canonicalize(path).unwrap_or(path.to_path_buf());
+    Ok(data.projects.get(&abs_path).cloned())
+}
+
+/// Non-mutating counterpart used by `axiom doctor`.
+pub fn get_project_id_if_present(path: &Path) -> Result<Option<String>> {
+    let data = load_auth_data_if_present()?.unwrap_or_default();
     let abs_path = fs::canonicalize(path).unwrap_or(path.to_path_buf());
     Ok(data.projects.get(&abs_path).cloned())
 }

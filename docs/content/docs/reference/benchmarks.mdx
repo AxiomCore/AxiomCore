@@ -1,17 +1,86 @@
 ---
-title: Benchmarks
-description: Performance metrics for the Generic Runtime.
+title: Reproducible Benchmarks
+description: The reproducible benchmark protocol and report format.
 ---
 
-*Note: Benchmarks are updated periodically during the Private Alpha.*
+AxiomCore does not publish unrepeatable “typical” runtime numbers. A benchmark
+claim is useful only when it includes the contract fixture, command, machine
+class, CLI version, warm-up, sample count, and resulting report.
 
-| Metric | Wasm (Web) | FFI (macOS / iOS) |
-| :--- | :--- | :--- |
-| **Engine Initialization** | ~40ms (Browser compilation) | ~5ms |
-| **Cache Read (sessionStorage / Sled)** | ~1ms | < 1ms |
-| **DOM Hydration (ATMX)** | 0ms (Sync SessionStorage) | N/A |
-| **Memory Footprint** | ~2MB (Wasm Heap) | ~8MB (Rust Shared) |
-| **FlatBuffers Decoding** | N/A | < 1ms (Zero-copy) |
+## Run the local contract benchmark
 
-### Codec Note
-WebAssembly currently utilizes the highly optimized `serde_json` implementation for messaging. Native environments (Flutter/Swift) can opt-in to `flatbuffers` in the `BackendConfig` to achieve true zero-copy memory parsing across the FFI boundary.
+Run from a backend directory containing `axiom.acore`:
+
+```bash
+axiom benchmark --iterations 20 --warmup 3 --output axiom-benchmark.json
+```
+
+The command measures:
+
+| Metric | What it measures | Why it matters |
+| --- | --- | --- |
+| `build_ms` | Acore evaluation, extraction, policy assembly, and artifact packaging | Contract author feedback loop. |
+| `artifact_decode_ms` | Loading and decoding the compiled contract | Runtime contract-load boundary. |
+| `artifact_bytes` | Compiled artifact size | Distribution and browser cache cost. |
+| `endpoints` | Contract size context | Prevents comparing a one-route fixture to a large API. |
+
+It performs warm-up runs, reports min/median/p95/max, writes a versioned JSON
+schema, and restores the prior `axiom.axiom` on completion or failure. It does
+not upload anything.
+
+Attach the generated report to a pull request or store it in a dedicated
+benchmark-results repository. It is evidence, not a pass/fail performance
+gate: shared CI runner timing is too noisy for an honest regression threshold.
+Set thresholds only after collecting a stable baseline on dedicated hardware.
+
+Use `--json` for a machine-readable stdout result. The written report is better
+for a pull-request artifact:
+
+```json
+{
+  "schema_version": 1,
+  "cli_version": "0.135.0",
+  "iterations": 20,
+  "build_ms": { "min": 11.2, "median": 12.1, "p95": 14.8, "max": 14.8 },
+  "artifact_decode_ms": { "min": 0.1, "median": 0.1, "p95": 0.2, "max": 0.2 },
+  "artifact_bytes": 8124,
+  "endpoints": 9
+}
+```
+
+The values above illustrate the schema only; they are not published AxiomCore
+performance claims.
+
+## Protocol for published comparisons
+
+1. Pin the CLI revision and fixture commit. Do not compare different contract
+   sizes without reporting endpoint count and artifact bytes.
+2. Use a release build of the CLI and an otherwise idle machine.
+3. Run at least 3 warm-up and 20 measured iterations for a published claim.
+4. Report median and p95, not only the fastest sample.
+5. Track regressions separately for build, decode, artifact size, browser
+   runtime initialization, and request overhead. Do not combine them into one
+   misleading “Axiom overhead” number.
+6. Treat browser benchmarks as a separate suite: record browser version,
+   network conditions, cache state, contract size, and whether WebAssembly is
+   cold or warm.
+
+## Next benchmark suites
+
+The CLI benchmark makes the compiler/artifact boundary reproducible today.
+The broader acceptance suite should additionally publish:
+
+- Web runtime cold and warm initialization, including Wasm download/compile.
+- Request overhead against a loopback fixture at p50/p95/p99.
+- Cache hit/miss latency and memory behavior under a fixed workload.
+- Compatibility-analysis time for additive and breaking contract changes.
+
+Each suite needs an executable fixture and a report artifact before its numbers
+belong in the README.
+
+The experimental executable-extension boundary has a separate reproducible
+hardening record for server/headless, Chromium Worker, Android Emulator, and
+iOS Simulator. It reports cold load, warm invocation p99, cancellation,
+teardown, worker recovery, and bounded stream behavior; see [Executable
+extensions reference](/reference/executable-extensions). Those measurements do
+not certify physical mobile devices or all browser engines.

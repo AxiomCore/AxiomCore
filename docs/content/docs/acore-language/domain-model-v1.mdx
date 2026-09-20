@@ -1,0 +1,194 @@
+---
+title: Domain Model v1
+description: Add optional, signed application semantics to an endpoint-first Axiom contract without duplicating extracted models.
+---
+
+Domain Model v1 is the optional semantic layer on top of Axiom’s extracted
+models and endpoints. It describes application concepts, not another copy of
+your schema. A FastAPI or Go extractor discovers models, field validation, and
+association candidates; authors promote the concepts that matter to their
+application.
+
+The compiler owns all semantic IDs. It also selects conventional `id`/`uuid`
+keys, resolves promoted entities, folds extractor relationship candidates into
+the manifest, and signs the resulting canonical payload as part of the normal
+release artifact.
+
+## The authoring model
+
+`Models` is populated from the backend source. `Entities` is a separate,
+autocomplete-friendly vocabulary. Promote a model with `extend Models.Name`,
+then use the resulting `Entities.name` value in every semantic boundary.
+
+```acore
+// The import is supplied by the FastAPI or Go extractor.
+amends "axiom-fastapi:./main.py:app"
+
+Entities = Entities {
+  customer = extend Models.Customer {
+    doc = "A purchaser with a durable account."
+  }
+  order = extend Models.Order
+}
+
+domain {
+  entities = Entities
+
+  // Customer.orders <-> Order.customer is discovered from the source model.
+  // No domain ID, model name, cardinality, or ownership is repeated here.
+  invariants = Invariants {
+    ["orderTotal"] = DomainInvariant {
+      scope = Entities.order
+      expression = "total_cents >= 0"
+      fields = Listing { "total_cents" }
+    }
+  }
+
+  projections = Projections {
+    ["publicCustomer"] = DomainProjection {
+      entity = Entities.customer
+      fields = Listing { "id" "email" }
+      // `audience` is intentionally optional.
+    }
+  }
+}
+
+endpoints {
+  ["get_customer"] = EndpointDef {
+    // Either extracted Models.* or promoted Entities.* may be used in an
+    // endpoint type. Relationships, invariants, and projections accept only
+    // Entities.*.
+    returnType = Entities.customer
+    responseProjection = "publicCustomer"
+  }
+}
+```
+
+There is no `new` keyword in ACore. `Foo { ... }` creates a typed value and
+`{ ... }` creates a plain dynamic object.
+
+### Identity and model changes
+
+The extension target supplies the model; never write `model = "Customer"` or
+a domain `id`. A key is inferred from `id`, `uuid`, or a case-insensitive
+equivalent. Only an unconventional durable key needs an override:
+
+```acore
+Entities = Entities {
+  invoice = extend Models.Invoice {
+    key = Listing { "invoice_number" }
+  }
+}
+```
+
+`extend` can also add documentation or future entity-level metadata, without
+making a second model declaration.
+
+### Relationships and enums
+
+Python and Go extractors recognize direct model fields and model collections.
+Bidirectional associations become one relationship candidate with `via` and
+`inverse`. A candidate is included only after both models are promoted to
+entities. This avoids creating accidental domain concepts from every DTO.
+
+If an association cannot be inferred, use `Entities.*` and the built-in enum
+helpers rather than remembering raw wire values:
+
+```acore
+relationships = Relationships {
+  ["orderCustomer"] = DomainRelationship {
+    from = Entities.order
+    to = Entities.customer
+    via = "customer_id"
+    cardinality = Cardinality.manyToOne
+    ownership = Ownership.reference
+  }
+}
+```
+
+The compiler validates `via` on the source entity and `inverse` on the target.
+It defaults omitted ownership to `reference` and derives cardinality from a
+collection field when possible. These descriptions never execute a database
+migration or change runtime ownership.
+
+### Invariants and Rod rules
+
+An invariant is evidence for review, generation, and impact analysis—not
+arbitrary executable code. It can be a bounded readable expression, a
+structured Rod validation rule, or both.
+
+```acore
+invariants = Invariants {
+  ["validShippingAddress"] = DomainInvariant {
+    scope = Entities.order
+    fields = Listing { "shipping_address" }
+    rules = {
+      type = "object"
+      properties = {
+        postal_code = { type = "string" min = 3 max = 16 }
+      }
+      required = Listing { "postal_code" }
+    }
+  }
+}
+```
+
+Field validation extracted from Pydantic/Rod-compatible schemas is normalized
+into inferred `*.rod` invariants whenever its model is promoted. Rule objects
+are bounded (depth, property, and collection limits) and allow only the
+supported Rod kinds, so a contract cannot use validation as an arbitrary-code
+execution channel.
+
+## Compile, sign, and generate
+
+`axiom build` validates the resolved domain and embeds an
+`axiom-domain-manifest/v1` in the `.axiom` artifact. The manifest is
+canonicalized before its hash is calculated, and normal cloud release signing
+covers those exact immutable bytes.
+
+```bash
+axiom domain validate axiom.acore
+axiom build axiom.acore --variant default
+```
+
+ATMX generated clients retain transport models and emit typed projection
+aliases. A response bound to `publicCustomer` uses its allow-list while the
+runtime continues to validate the signed transport contract.
+
+## Review and impact
+
+The dashboard stores the compiled semantic manifest beside the signed release.
+Native Axiom pull requests classify entity, relationship, invariant,
+projection, and binding changes. The impact view follows the dependency graph
+to affected endpoints and routes and then attaches observed consumer telemetry
+for the source release.
+
+The bounded, member-only semantic endpoint is:
+
+```text
+GET /api/v1/projects/{project_slug}/contracts/{version}/semantic-view
+```
+
+It requires project access even for public projects and excludes raw contract
+bytes, source code, credentials, and runtime payloads.
+
+## Bootstrap from an existing schema
+
+OpenAPI JSON and SQL DDL can produce a reviewable promotion suggestion:
+
+```bash
+axiom domain bootstrap openapi.json --source openapi --output axiom.domain.acore
+axiom domain bootstrap schema.sql --source sql --output axiom.domain.acore
+```
+
+The command never overwrites a file or inspects a live database. Its output
+uses `extend Models.*`, `Entities.*`, and inferred defaults; it assumes matching
+extracted model symbols exist in the contract. Review projections and any
+unconventional key override before release.
+
+## Runnable fixture
+
+`examples/domain-inference-fastapi` is the compact source-to-manifest fixture.
+It includes Pydantic validation and a bidirectional `Customer`/`Order`
+association, but the ACore file promotes only the two entities. See its README
+for the exact local commands.

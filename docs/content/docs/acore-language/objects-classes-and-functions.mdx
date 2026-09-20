@@ -1,0 +1,118 @@
+---
+title: Objects, classes, and functions
+description: Declare reusable shapes, construct values, and understand Acore scope.
+---
+
+## Dynamic and typed objects
+
+```acore
+metadata = {
+  owner = "platform"
+  ["x-contract-version"] = "1"
+}
+
+retry = RetryPolicy {
+  maxAttempts = 4
+  backoff = ExponentialBackoff { initialDelay = "250ms" }
+}
+```
+
+The class supplies defaults and constraints. Acore does not use `new`.
+
+## Class declarations
+
+```acore
+open class BaseService {
+  enabled: Boolean = true
+  timeoutSeconds: Int(this > 0) = 30
+}
+
+class BillingService extends BaseService {
+  endpoint: String
+}
+```
+
+The parser supports optional class bodies, type parameters, and one `extends`
+type. A class describes a value shape; it does not execute a constructor.
+
+## Type aliases
+
+```acore
+typealias Environment = "development" | "staging" | "production"
+typealias StringMap = Mapping<String, String>
+```
+
+The current evaluator is structurally typed in several contract positions, so
+profile-specific schema validation remains authoritative.
+
+## Dynamic property names
+
+Bracketed expressions can produce a property name:
+
+```acore
+headerName = "x-contract-version"
+metadata = { [headerName] = "1" }
+```
+
+The evaluator contains internal generator nodes, but the current source parser
+does not expose `for` or `when` object-member syntax. Do not use those forms in
+portable Acore source.
+
+## Scope: `this`, `outer`, and `super`
+
+- `this` refers to the object currently being evaluated.
+- `outer` refers to the enclosing object.
+- `super` refers to inherited context where supported.
+
+```acore
+service = {
+  base = 10
+  nested = { total = outer.base + 5 }
+}
+```
+
+Properties are lazily evaluated. Cycles result in evaluation errors rather than
+mutable execution.
+
+## Functions and external members
+
+The standard library uses `external` declarations to bind trusted native
+implementations:
+
+```acore
+external function parse(source: String): Any
+
+class Parser {
+  external function render(value: Any): String
+}
+```
+
+`external` does not permit arbitrary package code. A host must provide the
+native binding. For portable transformations, use lambdas and implemented
+collection intrinsics:
+
+```acore
+upper = (value: String) -> value.toUpperCase()
+labels = ["one", "two"].map(upper)
+```
+
+## Annotations
+
+```acore
+@deprecated { replacement = "currentName" }
+oldName: String = "legacy"
+```
+
+An annotation is data for tooling. It has no effect unless the active compiler
+profile recognizes it.
+
+## Inheritance versus composition
+
+| Syntax | Purpose |
+| --- | --- |
+| `class Child extends Parent` | Class/type inheritance |
+| `extend Models.Customer` | Promote an extracted model into a domain entity |
+| `amends "./base.acore"` | Compose authoring input before a build |
+| `import "./shared.acore"` | Evaluate trusted source as a module |
+
+Continue with [Imports, contracts, and composition](/acore-language/imports-and-contracts).

@@ -4,7 +4,6 @@
 // You only need this once during the transition to the fixed store.rs.
 // After all clients have the fix deployed you can remove this block.
 
-import 'dart:js_interop';
 import 'package:web/web.dart' as web;
 
 void clearStaleAxiomAuthTokens() {

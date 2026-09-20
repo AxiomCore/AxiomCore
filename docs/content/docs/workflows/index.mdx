@@ -1,0 +1,27 @@
+---
+title: Product workflows
+description: Choose an adoption path and carry contracts, applications, packages, tests, and releases through reviewable lifecycles.
+---
+
+AxiomCore can enter a system at more than one boundary. You can describe an
+existing backend, consume a contract from an existing frontend, author a
+portable Acore UI, or publish declarative package content. These workflows keep
+those paths separate and show where locks, tests, and human review belong.
+
+```text
+backend source / Acore source
+            │
+            ▼
+      contract build ───► inspect + semantic diff ───► immutable release
+            │                                             │
+            ├──► mock + contract tests                     ├──► existing UI client
+            │                                             └──► Acore UI app
+            └──► signed domain/security evidence                    │
+                                                                  ▼
+                                                        target .axiomapp build
+```
+
+Start with [Choose an adoption path](/workflows/choose-an-adoption-path). The
+[support matrix](/introduction/support-matrix) remains authoritative for
+maturity and target boundaries.
+

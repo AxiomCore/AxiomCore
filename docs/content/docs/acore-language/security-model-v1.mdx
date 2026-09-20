@@ -1,0 +1,153 @@
+---
+title: Security Model v1
+description: Opt-in deterministic security declarations compiled into a signed security manifest.
+---
+
+Security Model v1 is an optional Acore layer for authorization, authentication,
+data boundaries, side effects, and application-wide security requirements. Go
+and Python extractors may report evidence without adding an SDK to an
+application, but only a contract can declare a policy.
+
+The compiler canonicalizes declarations, AXSEC findings, coverage, the policy
+graph, and extractor facts into `axiom-security-manifest/v1`. The normal
+`.axiom` artifact signs it with the rest of the contract. The manifest never
+contains a token, cookie value, API key, or request payload.
+
+## Opt in deliberately
+
+- `audit` reports every finding and still builds/releases, so teams can form a
+  useful baseline.
+- `strict` rejects a build/release with blocking AXSEC findings.
+- Structural errors, such as an unknown policy reference, always stop
+  compilation because the declaration would be ambiguous.
+
+```text
+security {
+  mode = "audit"
+  principals {
+    ["workspaceMember"] = SecurityPrincipal { roles = Listing { "member" "owner" } }
+  }
+  auth {
+    ["browserSession"] = AuthenticationPolicy {
+      transport = "cookie"
+      secure = true
+      httpOnly = true
+      sameSite = "lax"
+      sessionRotation = true
+    }
+  }
+  permissions {
+    ["editDocument"] = Permission {
+      requiresRateLimit = true
+      requiresIdempotency = true
+      requiresCsrf = true
+    }
+  }
+  resources { ["document"] = ProtectedResource { entity = Entities.document } }
+  policies {
+    ["documentEditor"] = SecurityPolicy {
+      principals = Listing { "workspaceMember" }
+      auth = "browserSession"
+      resource = "document"
+      permissions = Listing { "editDocument" }
+      relationship = "workspaceDocument"
+      resourceBinding = "principal.workspaceId == resource.workspaceId"
+    }
+  }
+  endpoints {
+    ["UpdateDocument"] = EndpointGuard {
+      policy = "documentEditor"
+      resource = "document"
+      permission = "editDocument"
+      writableFields = Listing { "title" "body" }
+      idempotent = true
+    }
+  }
+  rateLimits { ["memberWrite"] = RateLimit { maxRequests = 60 windowSeconds = 60 key = "principal" } }
+  csrf = CsrfPolicy { strategy = "double_submit" sameSite = "lax" secure = true httpOnly = true }
+}
+```
+
+Principal, permission, policy, authentication-profile, resource, and
+rate-limit names are application-owned. AxiomCore does not maintain a growing
+hard-coded list of business action types.
+
+## Authorization and authentication
+
+`ProtectedResource.entity` accepts an `Entities.*` domain reference. The
+compiler resolves it to the promoted model and compiler-managed entity ID in
+the signed manifest. A route with a resource parameter should bind a policy
+and state `resourceBinding`; AXSEC-014 makes missing IDOR evidence visible.
+
+`defaultPolicy` is a reviewable project-wide fallback. Every public endpoint
+must set `public = true`; neither a missing security block nor an undeclared
+endpoint is silently considered protected.
+
+Authentication profiles are transport-oriented rather than provider-specific:
+
+- `bearer` requires an issuer and audience.
+- `cookie` requires valid `sameSite`; the analyzer reports missing
+  `secure`/`httpOnly` flags and CSRF coverage for browser mutations.
+- `mTLS` and adapter-specific transports are allowed where a trusted server
+  adapter verifies them. Server secrets remain outside the contract.
+
+Attach a profile to a `SecurityPolicy` for a reusable default or to an
+`EndpointGuard` for a route-specific override.
+
+## Data and output boundaries
+
+Use `classifications` to label extracted model fields without repeating
+schemas. `audiences` is optional, but required when a projection intentionally
+exposes classified data.
+
+```text
+classifications {
+  ["accountEmail"] = SensitiveData {
+    target = "Account.email"
+    classification = "PII"
+    audiences = Listing { "workspaceMember" }
+    redact = true
+  }
+}
+```
+
+For an endpoint returning a model with classified data, bind a domain
+response projection. AXSEC-081 reports an unprojected return; AXSEC-082
+reports a classified projection field with no audience. This is an allowlist
+boundary, not runtime response inspection.
+
+## Declared side effects
+
+Effects make sensitive sinks reviewable without embedding imperative code:
+
+```text
+services { ["billing"] = NetworkService { origin = "https://api.example.com" } }
+effects { ["createCharge"] = SecurityEffect { kind = "network" service = "billing" } }
+uploads {
+  ["avatar"] = UploadPolicy {
+    maxBytes = 5242880
+    mediaTypes = Listing { "image/jpeg" "image/png" }
+    inspectContent = true
+    generatedFilename = true
+    privateStorage = true
+    executable = false
+  }
+}
+```
+
+Supported effect kinds are `network`, `html_output`, `upload`,
+`filesystem_read`, `filesystem_write`, `process`, `log`, `analytics`,
+`cache`, and `response`. Network, upload, filesystem, and process effects are
+bound to declared policies instead of user-controlled destinations.
+
+## Whole-application requirements
+
+`invariants` use bounded deterministic kinds, not an arbitrary expression
+language: `require_authorization`, `require_rate_limit`,
+`require_idempotency`, `require_csrf`, `no_secret_exposure`,
+`declared_network_only`, `no_public_cache`, and
+`declared_projection_only`. Their application-owned `target` is signed and
+diffed with the same AXSEC rule families.
+
+See [Security rules](/reference/security-rules) for the complete catalog,
+extractor evidence, and enforcement boundary.

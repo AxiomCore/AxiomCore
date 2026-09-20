@@ -1,0 +1,210 @@
+{
+  "axiom": "1.0",
+  "backend": {
+    "codec": "json",
+    "entrypoint": "app",
+    "language": "python"
+  },
+  "domain": {
+    "entities": {
+      "customer": {
+        "doc": "A purchaser with a durable account.",
+        "kind": "named",
+        "model": "Customer",
+        "value": "Customer"
+      },
+      "order": {
+        "kind": "named",
+        "model": "Order",
+        "value": "Order"
+      }
+    },
+    "format": "axiom-domain/v1",
+    "invariants": {
+      "orderTotal": {
+        "expression": "total_cents >= 0",
+        "fields": [
+          "total_cents"
+        ],
+        "inferred": false,
+        "scope": {
+          "kind": "named",
+          "model": "Order",
+          "value": "Order"
+        },
+        "severity": "error"
+      }
+    },
+    "projections": {
+      "publicCustomer": {
+        "audience": "",
+        "entity": {
+          "doc": "A purchaser with a durable account.",
+          "kind": "named",
+          "model": "Customer",
+          "value": "Customer"
+        },
+        "fields": [
+          "id",
+          "email"
+        ]
+      }
+    },
+    "relationships": {
+      "Customer_orders": {
+        "cardinality": "",
+        "from": "Customer",
+        "inferred": true,
+        "inverse": "customer",
+        "ownership": "",
+        "required": false,
+        "to": "Order",
+        "via": "orders"
+      }
+    }
+  },
+  "endpoints": {
+    "get_customer": {
+      "id": 2,
+      "method": "GET",
+      "name": "get_customer",
+      "parameters": [
+        {
+          "isOptional": false,
+          "name": "customer_id",
+          "source": "path",
+          "typeRef": {
+            "kind": "string"
+          }
+        }
+      ],
+      "path": "/customers/{customer_id}",
+      "responseProjection": "publicCustomer",
+      "returnIsOptional": false,
+      "returnType": {
+        "doc": "A purchaser with a durable account.",
+        "kind": "named",
+        "model": "Customer",
+        "value": "Customer"
+      }
+    },
+    "get_order": {
+      "id": 1,
+      "method": "GET",
+      "name": "get_order",
+      "parameters": [
+        {
+          "isOptional": false,
+          "name": "order_id",
+          "source": "path",
+          "typeRef": {
+            "kind": "string"
+          }
+        }
+      ],
+      "path": "/orders/{order_id}",
+      "returnIsOptional": false,
+      "returnType": {
+        "kind": "named",
+        "value": "Order"
+      }
+    }
+  },
+  "models": {
+    "Customer": {
+      "fields": {
+        "email": {
+          "isOptional": false,
+          "name": "email",
+          "typeRef": {
+            "kind": "string"
+          },
+          "validate": {
+            "max": 320,
+            "min": 3,
+            "type": "string"
+          }
+        },
+        "id": {
+          "isOptional": false,
+          "name": "id",
+          "typeRef": {
+            "kind": "string"
+          },
+          "validate": {
+            "type": "string"
+          }
+        },
+        "orders": {
+          "isOptional": true,
+          "name": "orders",
+          "typeRef": {
+            "kind": "list",
+            "value": {
+              "kind": "named",
+              "value": "Order"
+            }
+          },
+          "validate": {
+            "items": {
+              "ref": "Order",
+              "type": "object"
+            },
+            "type": "array"
+          }
+        }
+      },
+      "name": "Customer"
+    },
+    "Order": {
+      "fields": {
+        "customer": {
+          "isOptional": false,
+          "name": "customer",
+          "typeRef": {
+            "kind": "named",
+            "value": "Customer"
+          },
+          "validate": {
+            "ref": "Customer",
+            "type": "object"
+          }
+        },
+        "id": {
+          "isOptional": false,
+          "name": "id",
+          "typeRef": {
+            "kind": "string"
+          },
+          "validate": {
+            "type": "string"
+          }
+        },
+        "total_cents": {
+          "isOptional": false,
+          "name": "total_cents",
+          "typeRef": {
+            "kind": "int64"
+          },
+          "validate": {
+            "int": true,
+            "min": 0,
+            "type": "number"
+          }
+        }
+      },
+      "name": "Order"
+    }
+  },
+  "project": {
+    "id": "domain-inference-fastapi",
+    "version": "v0.1.0"
+  },
+  "variants": {
+    "default": {
+      "include": [
+        "*"
+      ]
+    }
+  }
+}

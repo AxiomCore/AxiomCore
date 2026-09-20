@@ -1,20 +1,36 @@
 ---
-title: Swift (iOS & macOS)
-description: Using AxiomCore natively in Apple ecosystems.
+title: Swift and Apple platforms
+description: Current status of native Apple runtime distribution and Swift bindings.
 ---
 
-AxiomCore compiles the Generic Runtime into a Universal `AxiomRuntime.xcframework` supporting iOS, iOS Simulators, and macOS.
+<StatusNote status="experimental" title="Swift integration">
+  The repository contains Apple runtime distribution and native binding
+  foundations, including XCFramework build work. A stable public Swift package,
+  generated API surface, and lifecycle parity are not documented as available.
+</StatusNote>
 
-### Swift Package Manager (SPM)
+Do not copy a release URL or checksum from an example into `Package.swift`.
+Binary-target checksums are release-specific and must come from a published,
+verified distribution manifest.
 
-Add the Axiom SDK repository to your Xcode project. The `Package.swift` automatically downloads the pre-compiled, checksum-verified binary framework from the Axiom release hub.
+## What can be evaluated today
 
-```swift
-.binaryTarget(
-    name: "AxiomRuntime",
-    url: "https://github.com/AxiomCore/AxiomCore/releases/download/v0.107.0/AxiomRuntime.xcframework.zip",
-    checksum: "15614e..."
-)
-```
+- building the native runtime for supported Apple architectures;
+- producing and inspecting the local XCFramework through the repository's
+  release tooling;
+- validating the C/FFI contract in an integration fixture; and
+- tracking parity requirements against the Flutter and browser runtime APIs.
 
-*(Swift bindings are currently in active development. Please use the Flutter or Web SDKs for complete feature parity).*
+## What remains before a supported application workflow
+
+- a versioned Swift package and release-specific checksum source;
+- generated Swift endpoint and model bindings;
+- documented initialization, authentication, query, mutation, stream, cache,
+  and shutdown lifecycles;
+- simulator, device, archive, and application-store validation; and
+- an explicit compatibility matrix for Swift, Xcode, iOS, and macOS versions.
+
+Use Flutter for the currently documented cross-platform native client path, or
+call the backend using your existing Swift networking stack while using
+AxiomCore for contract review and tests. This page will add runnable Swift
+installation instructions only after the distribution boundary is published.

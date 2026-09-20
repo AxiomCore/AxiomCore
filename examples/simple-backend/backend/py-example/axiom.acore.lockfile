@@ -263,6 +263,25 @@
           "name": "description",
           "typeRef": {
             "kind": "string"
+          },
+          "validate": {
+            "inner": {
+              "type": "string"
+            },
+            "type": "optional"
+          }
+        },
+        "dodo": {
+          "isOptional": true,
+          "name": "dodo",
+          "typeRef": {
+            "kind": "string"
+          },
+          "validate": {
+            "inner": {
+              "type": "string"
+            },
+            "type": "optional"
           }
         },
         "id": {
@@ -270,6 +289,9 @@
           "name": "id",
           "typeRef": {
             "kind": "string"
+          },
+          "validate": {
+            "type": "string"
           }
         },
         "owner_id": {
@@ -277,6 +299,9 @@
           "name": "owner_id",
           "typeRef": {
             "kind": "string"
+          },
+          "validate": {
+            "type": "string"
           }
         },
         "title": {
@@ -284,6 +309,9 @@
           "name": "title",
           "typeRef": {
             "kind": "string"
+          },
+          "validate": {
+            "type": "string"
           }
         }
       },
@@ -296,6 +324,12 @@
           "name": "description",
           "typeRef": {
             "kind": "string"
+          },
+          "validate": {
+            "inner": {
+              "type": "string"
+            },
+            "type": "optional"
           }
         },
         "title": {
@@ -303,6 +337,9 @@
           "name": "title",
           "typeRef": {
             "kind": "string"
+          },
+          "validate": {
+            "type": "string"
           }
         }
       },
@@ -315,6 +352,9 @@
           "name": "access_token",
           "typeRef": {
             "kind": "string"
+          },
+          "validate": {
+            "type": "string"
           }
         },
         "token_type": {
@@ -322,6 +362,9 @@
           "name": "token_type",
           "typeRef": {
             "kind": "string"
+          },
+          "validate": {
+            "type": "string"
           }
         }
       },
@@ -341,6 +384,9 @@
           "name": "id",
           "typeRef": {
             "kind": "string"
+          },
+          "validate": {
+            "type": "string"
           }
         },
         "role": {
@@ -348,6 +394,9 @@
           "name": "role",
           "typeRef": {
             "kind": "string"
+          },
+          "validate": {
+            "type": "string"
           }
         }
       },
@@ -367,6 +416,9 @@
           "name": "password",
           "typeRef": {
             "kind": "string"
+          },
+          "validate": {
+            "type": "string"
           }
         }
       },
@@ -376,14 +428,14 @@
   "observability": {
     "enabled": true,
     "headers": {
-      "x-axiom-telemetry-dsn": "axot_pmYlIhkzTgnvIhhJqiTpEogBKmYkjuukaAUHcERpA38"
+      "x-axiom-telemetry-dsn": "development-only-placeholder"
     },
     "sampleRate": 1,
     "telemetryUrl": "http://localhost:8000/v1/traces"
   },
   "project": {
     "id": "py-example",
-    "version": "v0.0.3"
+    "version": "v0.0.5"
   },
   "variants": {
     "default": {

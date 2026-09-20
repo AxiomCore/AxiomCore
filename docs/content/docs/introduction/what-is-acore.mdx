@@ -1,0 +1,65 @@
+---
+title: What is Acore?
+description: The declarative, contract-oriented language at the center of AxiomCore.
+---
+
+Acore is an independent declarative language for describing software contracts.
+Its implementation includes a lexer, parser, evaluator, standard library,
+diagnostics, and language-server support. A `.acore` file is source code; it is
+not the distributable artifact that a consumer locks and runs.
+
+<StatusNote status="alpha" title="Language maturity">
+  Acore is implemented and testable, but its language and standard-library
+  surfaces are still evolving. Commit generated locks and review semantic diffs
+  when upgrading.
+</StatusNote>
+
+## What Acore can describe
+
+- backend service routes, models, caching, retry, authentication, validation,
+  streaming, and mock behavior;
+- durable domain entities, relationships, invariants, projections, and security
+  declarations;
+- Acore UI trees, typed text and layout, interactions, effects, assets, and
+  target-specific application builds;
+- typed theme and component-library package consumption;
+- versioned package boundaries for services, themes, component libraries,
+  database schemas, extensions, and application policies.
+
+Not every kind exposes the same authoring or runtime surface yet. The
+[support matrix](/introduction/support-matrix) gives the current boundary.
+
+## Source, package, and application are different artifacts
+
+| Form | Purpose | May be changed by a consumer? |
+| --- | --- | --- |
+| `.acore` | Human- and agent-authored declarative source | Yes, inside the source owner's build |
+| `.axiom` | Canonical versioned contract/package | No; select a version and lock it |
+| `.axiomapp` | Built UI application for one or more targets | No; rebuild from source and dependencies |
+
+## Composition keywords
+
+```text
+import "./shared.acore"
+amends "axiom-fastapi:./app.py:app"
+use contract Billing from "billing" audience "mobile"
+use theme AppTheme from "design-system" export "default"
+```
+
+- `import` reuses trusted source within a build.
+- `amends` composes an Acore or supported extractor input before building.
+- `use contract` consumes a compiled service contract selected by a committed
+  dependency lock.
+- `use theme` and `use component` bind verified exports from typed packages.
+- `extend` inherits or promotes a declared value; it does not load a file.
+
+See [Imports, contracts, and composition](/acore-language/imports-and-contracts)
+for ownership and trust boundaries.
+
+## Acore is optional at integration edges
+
+You do not have to rewrite an entire application. Existing Python and Go
+services can participate through supported extractors. Existing web, React,
+Flutter, and Swift applications can use their current integration paths. Acore
+becomes the common contract layer where declarative behavior and auditable
+composition are valuable.

@@ -1,16 +1,213 @@
 ---
-title: Acore Schema Reference
-description: The complete API surface of the Acore Standard Library.
+title: Acore base schema reference
+description: Implemented contract, behavior, domain, security, mock, and test classes exposed by acore.base.
 ---
 
-When writing `.acore` files, you interact with the global `Config` class. Below are the primary objects available in the `acore.base` standard library.
+This page maps the public configuration surface declared in
+`acore/src/stdlib/base.acore`. It complements the [language manual](/acore-language):
+the manual explains syntax and evaluation, while this reference describes the
+contract schema consumed by AxiomCore.
 
-| Class | Properties | Description |
-| :--- | :--- | :--- |
-| **`Config`** | `project`, `backend`, `frontend`, `variants`, `policies`, `models`, `endpoints` | The top-level root configuration object. |
-| **`BackendConfig`** | `language` (String), `entrypoint` (String), `codec` (CodecType) | Defines introspection targets and codec formats (`json`, `flatbuffers`). |
-| **`CachePolicy`** | `strategy` (CacheStrategy), `ttlSeconds` (Int) | Local DB caching behavior. Strategies: `network_only`, `cache_first`, `network_first`, `stale_while_revalidate`. |
-| **`RetryPolicy`** | `maxAttempts` (Int), `backoff` (Backoff), `retryOnCodes` (List), `retryOnTimeout` (Bool) | Fault tolerance configuration. |
-| **`WebSocketDef`** | `direction` (WebSocketDirection), `client` (WsMessageDef), `server` (WsMessageDef) | Configures a persistent Ws/Wss connection. |
-| **`EndpointAuth`** | `required` (Bool), `condition` (AuthCondition), `methods` (List) | Associates authentication strategies (`bearer`, `oauth2`) with specific routes. |
-| **`NetworkFault`** | `type` (String), `probability` (Float), `delayMs` (Int) | Used in Mocking to inject chaos (`timeout`, `connection_reset`, `slow_response`). |
+Fields without a displayed default are required unless their type is nullable
+(`?`). `Listing<T>` and `Mapping<K, V>` are typed list and mapping shapes.
+
+## Root configuration
+
+### `Config`
+
+| Field | Type / default | Purpose |
+| --- | --- | --- |
+| `axiom` | `String = "1.0"` | Source schema version |
+| `project` | `ProjectConfig?` | Project identity and version |
+| `backend` | `BackendConfig?` | Extractor language, entrypoint, and codec |
+| `frontend` | `FrontendConfig?` | Framework and optional output directory |
+| `observability` | `ObservabilityConfig?` | Telemetry URL, sampling, and headers |
+| `variants` | `Mapping<String, VariantConfig>` | Named selection profiles; includes `default` |
+| `policies` | `PolicyConfig?` | Default cache and retry behavior |
+| `serviceName` | `String?` | Service label |
+| `offlineConfig` | `OfflineConfig?` | Local database and synchronization selection |
+| `models` / `enums` | typed mappings | Extracted or authored data shapes |
+| `endpoints` | `Mapping<String, EndpointDef>` | Operation surface |
+| `domain` | `DomainModel? = null` | Optional promoted business semantics |
+| `security` | `SecurityConfig? = null` | Optional security declarations and gates |
+| `securityEvidence` | `ExtractedSecurityEvidence?` | Extractor-owned evidence, normally not authored |
+| `authMethods` | `Mapping<String, AuthMethodDef>` | Reusable endpoint authentication methods |
+
+### Project, backend, and frontend
+
+| Class | Fields |
+| --- | --- |
+| `ProjectConfig` | required `id: String`, `version: String` |
+| `BackendConfig` | required `language`, `entrypoint`; `codec = "json"` (`json` or `flatbuffers`) |
+| `FrontendConfig` | required `framework`; nullable `outputDir` |
+| `ObservabilityConfig` | `enabled = false`, nullable `telemetryUrl`, `sampleRate = 1.0` constrained to 0…1, `headers = {}` |
+| `OfflineConfig` | `enableLocalDb = false`; required `syncStrategy` |
+
+## Models and endpoint types
+
+| Class | Implemented members |
+| --- | --- |
+| `ModelDef` | required `name`; `fields = {}`, dynamic `rpcs`, nullable `doc` |
+| `ModelField` | required `name`, `typeRef`; `isOptional = false`, nullable `doc`, nullable `validate`, `extraConstraints = {}` |
+| `EnumDef` | required `name`; `values = []`, nullable `doc` |
+| `EndpointParameter` | required `name`, `typeRef`, `source`; `isOptional = false` |
+| `RpcMethod` | `endpoint = ""`, dynamic `arguments` and `resolver` |
+
+`EndpointParameter.source` is `path`, `query`, `body`, or `header`. HTTP methods
+are `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, and `WS`.
+
+### Type references
+
+`TypeRef` is a union of primitive, named, list, and map references.
+
+| Class | Members |
+| --- | --- |
+| `TypeRefPrimitive` | `kind`, default `void`; supports string, numeric, boolean, bytes, date-time, void, and JSON kinds |
+| `TypeRefNamed` / `ContractTypeRef` | `kind = "named"`, model name in `value` |
+| `TypeRefList` | `kind = "list"`, item type reference in `value` |
+| `TypeRefMap` | `kind = "map"`, key/value references in the two-item `value` list |
+
+Promoted `DomainEntity` values share the named-type shape, so they can be used
+in endpoint type positions after domain validation.
+
+## `EndpointDef`
+
+| Field | Type / default |
+| --- | --- |
+| `id` | `Int = 0` |
+| `name`, `path`, `method` | required |
+| `parameters` | `Listing<EndpointParameter> = []` |
+| `returnType` | type reference, default `void` |
+| `returnIsOptional` | `Boolean = false` |
+| `streaming`, `auth`, `mock` | nullable typed configuration |
+| `cache`, `validate`, `retry` | nullable endpoint policy overrides |
+| `requestProjection`, `responseProjection` | nullable domain projection names |
+| `cacheIdentity` | nullable readable UI cache identity |
+| `invalidates`, `errors` | string lists, default empty |
+| `doc` | nullable documentation |
+
+`EndpointOverride` exposes the six overrideable behavior fields: `cache`,
+`validate`, `retry`, `streaming`, `auth`, and `mock`.
+
+## Cache, retry, and streaming
+
+| Class | Members |
+| --- | --- |
+| `PolicyConfig` | nullable `cache` and `retry` defaults |
+| `CachePolicy` | required `strategy` and `ttlSeconds` |
+| `RetryPolicy` | `maxAttempts = 3`, exponential `backoff`, retry codes 502/503/504, `retryOnTimeout = true` |
+| `FixedBackoff` | fixed delay; defaults inherited from `Backoff` |
+| `LinearBackoff` | `step = "1s"` |
+| `ExponentialBackoff` | `multiplier = 2.0` |
+
+Cache strategies are `network_only`, `cache_first`, `network_first`, and
+`stale_while_revalidate`.
+
+| Stream class | Members |
+| --- | --- |
+| `HttpStreamDef` | nullable `responseType`; `framing = "chunk"`; `encoding = "json"` |
+| `SseStreamDef` | nullable `responseType` |
+| `WebSocketDef` | `direction = "bidirectional"`; nullable singular `client` and `server` messages; `reconnect = "auto"` |
+| `WsMessageDef` | required named-model or dynamic `model` |
+| `FileStreamDef` | nullable content type and filename; `disposition = "attachment"` |
+
+See [Streaming and WebSockets](/acore-language/streaming-and-websockets) for
+legal enum values and examples.
+
+## Authentication
+
+| Class | Members |
+| --- | --- |
+| `AuthMethodDef` | required `type`; nullable scheme, location, name, OAuth flows, and validation |
+| `AuthValidationDef` | required `strategy`; nullable secret reference and algorithm |
+| `EndpointAuth` | required `required`; `condition = "and"`, scopes/methods empty, `confidence = "high"` |
+
+Authentication declarations describe the contract. Secret material and trusted
+server-side enforcement remain outside Acore evaluation.
+
+## Variants
+
+`VariantConfig` provides nullable `include`, `exclude`, `includeModels`,
+`excludeModels`, and `cache`. Patterns select endpoint/model names during
+evaluation; they do not create a runtime feature flag. See
+[Variants and filtering](/acore-language/variants-and-filtering).
+
+## Domain schema
+
+| Class | Required members | Defaults / optional members |
+| --- | --- | --- |
+| `DomainModel` | — | format, empty entities, relationships, invariants, projections |
+| `DomainEntity` | `model` (injected by `extend`) | key list, nullable doc; do not author model/ID manually |
+| `DomainRelationship` | `from`, `to` | cardinality, ownership, via, inverse, required, inferred, doc |
+| `DomainInvariant` | `scope` | expression, fields, nullable rules, severity, inferred, doc |
+| `DomainProjection` | `entity` | fields, audience, doc |
+
+Domain invariants are signed, reviewable evidence. AxiomCore does not execute
+their expressions as application business logic.
+
+## Security schema
+
+`SecurityConfig` defaults to `mode = "audit"` and owns named mappings for
+principals, permissions, resources, policies, authentication profiles,
+endpoint guards, data classifications, effects, services, rate limits,
+uploads, paths, processes, and invariants. CORS, CSRF, cache security, and
+observability security are optional singleton policies.
+
+| Class | Key members |
+| --- | --- |
+| `SecurityPrincipal` | roles and documentation |
+| `Permission` | required rate-limit, idempotency, and CSRF safeguards |
+| `ProtectedResource` | required promoted domain entity |
+| `SecurityPolicy` | resource, permissions, principals/roles, auth, relationship, resource binding |
+| `EndpointGuard` | public/protected decision, bindings, effects, writable fields, CSRF exemption, idempotency |
+| `AuthenticationPolicy` | transport plus issuer/audience, expiry, rotation, secure/httpOnly/sameSite settings |
+| `SensitiveData` | required target and classification; audiences and redaction |
+| `SecurityEffect` | effect kind and bounded service/upload/path/process/input reference |
+| `NetworkService` | origin, private-network and redirect policy |
+| `RateLimit` | required maximum, window, and key |
+| `CorsPolicy` / `CsrfPolicy` | transport controls |
+| `UploadPolicy` | size, media types, inspection, storage, filename, executable policy |
+| `PathPolicy` / `ProcessPolicy` | filesystem root or executable and allowed input boundary |
+| `CacheSecurityPolicy` | authenticated-response sharing and principal variance |
+| `ObservabilitySecurityPolicy` | redacted classes and payload policy |
+
+`audit` reports findings; `strict` gates error findings during supported build
+and release paths. Declarations do not replace trusted runtime authorization.
+
+## Mock schema
+
+`MockConfig` selects responses with `first_match`, `random`, `sequential`, or
+`weighted`; it can carry fault injection, state, and a fallback response.
+
+| Family | Implemented role |
+| --- | --- |
+| Conditions | header, query, path, body, state, and expression matching |
+| Data strategies | static, template, collection, echo, and store query |
+| Faults | latency, network fault, malformed body, partial response, or configured status behavior |
+| State | initial store, mutations, emitted events, and reset behavior |
+| `MockResponse` | conditions, status, headers, data, delay/jitter, weight, label |
+
+Use [Mocking APIs](/workflows/mocking-apis) for a supported lifecycle. Mock
+behavior is a development/test boundary, not proof of production behavior.
+
+## Test schema
+
+| Class | Members |
+| --- | --- |
+| `TestConfig` | suites plus optional defaults |
+| `TestDefaults` | timeout, retry count, continue-on-failure, headers |
+| `TestSuite` | name, base URL, timeout, headers, hooks, checks, continuation, tags |
+| `CheckDef` | route or URL, request inputs, retry, expectations, captures, skip, timeout, label |
+| `LifecycleHook` | timing plus a typed hook action |
+| `ResponseCapture` | response path, binding name, extraction type |
+
+Expectations cover status, duration, schema, body values/quantifiers, headers,
+and grouped assertions. Run all configured suites with `axiom test axiom.acore`
+or filter them with `--tag`.
+
+## Source of truth and stability
+
+This reference documents the checked-in base schema, not every Rust internal
+type. Profile compilers perform additional semantic checks. For exact target UI
+support, use `axiom ui capabilities`; for the current maturity boundary, use
+[Support and availability](/introduction/support-matrix).

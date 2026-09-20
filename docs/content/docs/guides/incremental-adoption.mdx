@@ -1,0 +1,82 @@
+---
+title: Adopt AxiomCore incrementally
+description: Introduce a typed contract boundary into an existing backend or frontend while preserving its language and framework.
+---
+
+AxiomCore does not require a rewrite. The safest adoption unit is one service,
+one audience projection, and one consumer whose behavior you can verify.
+
+## 1. Choose authority
+
+Record which input owns each fact before generating anything:
+
+| Existing authority | AxiomCore entry point | Boundary |
+| --- | --- | --- |
+| FastAPI application | `axiom init … --module axiom-fastapi` | Extraction imports the module and needs its dependencies. |
+| Go service | Go extractor module | Review route and type parity before release. |
+| OpenAPI document | `axiom domain bootstrap … --source openapi` | Produces reviewable domain suggestions, not runtime parity. |
+| SQL DDL | `axiom domain bootstrap … --source sql` | Produces reviewable domain suggestions; it does not connect to a database. |
+| Existing `.axiom` artifact | `axiom pull … --framework …` | The artifact is the consumer boundary. |
+
+Do not let generated Acore and the original framework silently become two
+authorities. Use `extend`, explicit policy, or a reviewed projection only for
+facts that Acore is intended to own.
+
+## 2. Diagnose without changing the project
+
+```bash
+axiom doctor
+axiom onboard
+```
+
+`doctor` reports prerequisites. `onboard` prints a plan and does not apply it
+unless you pass `--apply`. Review the detected entrypoint and module before
+allowing a file write.
+
+## 3. Build a local proof
+
+For a configured `axiom.acore`:
+
+```bash
+axiom eval axiom.acore
+axiom domain validate axiom.acore
+axiom security check axiom.acore
+axiom test axiom.acore
+axiom build axiom.acore
+axiom inspect axiom.axiom
+```
+
+Only run the domain or security command when the source declares that optional
+model. A successful build proves that input could be evaluated and packaged;
+it does not prove production backend behavior.
+
+## 4. Prove one consumer
+
+Pull from the immutable local artifact first:
+
+```bash
+axiom pull ./axiom.axiom --framework atmx-web --out ./web/axiom
+```
+
+Then start the existing backend or `axiom serve axiom.acore` and test the real
+application boundary: base URL, CORS, credentials, request validation, error
+mapping, cache behavior, and one representative success and failure.
+
+## 5. Make change review deterministic
+
+Commit source and the lock that belongs to it. Compare the release candidate
+with the previous accepted input:
+
+```bash
+axiom diff previous.acore axiom.acore --format semantic
+```
+
+Review audience-visible removals, validation changes, auth changes, and
+package dependency changes separately. Do not resolve an unpinned `latest`
+during the build that creates release evidence.
+
+## 6. Expand only after the boundary is stable
+
+Add another consumer, target, or declarative package only after the first path
+has a repeatable CI gate and rollback artifact. Moving an existing frontend to
+Acore UI is a separate decision, not a prerequisite for contract adoption.

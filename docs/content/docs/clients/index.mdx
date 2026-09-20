@@ -1,0 +1,50 @@
+---
+title: Client integration
+description: Choose a generated client or Acore UI without coupling the contract to one frontend framework.
+---
+
+AxiomCore contracts can be consumed from an existing application or from an
+Acore UI application. You do not need to replace Flutter, React, or an
+HTML-first frontend to adopt the contract and runtime boundary.
+
+<CapabilityTable rows={[
+  { capability: 'Vanilla web / ATMX', status: 'available', scope: 'Browser Wasm runtime, imperative API, and declarative DOM integration.' },
+  { capability: 'React / ATMX', status: 'alpha', scope: 'Provider, hooks, query-state manager, and declarative components.' },
+  { capability: 'Flutter / Dart', status: 'alpha', scope: 'Generated Dart surface, native runtime, streams, and Flutter builders.' },
+  { capability: 'Swift / Apple', status: 'experimental', scope: 'Native runtime distribution foundations; public generated-binding and lifecycle parity remain incomplete.' },
+  { capability: 'Acore UI', status: 'alpha', scope: 'Declarative UI compiled for browser, Android Emulator, and iOS Simulator development hosts.' },
+]} />
+
+## Integration boundary
+
+All client paths need four pieces:
+
+1. a pinned `.axiom` artifact and its dependency proof;
+2. a target-specific generated or declarative client surface;
+3. runtime configuration for contract location and backend base URL; and
+4. application-owned authentication, error UI, cache privacy, and startup.
+
+The contract is portable; the lifecycle is not. A browser uses Wasm,
+`sessionStorage`, browser CORS, and cookie rules. Flutter uses the native
+runtime, application assets, and an optional database path. Test every target
+you ship, including a release build and an integrity failure.
+
+## Generate for an existing frontend
+
+```bash
+axiom pull --contract ../backend/axiom.axiom --framework atmx-web
+axiom pull --contract ../backend/axiom.axiom --framework atmx-react
+axiom pull --contract ../backend/axiom.axiom --framework flutter
+```
+
+Use the generated files as the source of truth for endpoint names and model
+signatures. The examples in these guides intentionally use placeholders such
+as `sdk.users.getUser`; replace them with the symbols emitted for your
+contract.
+
+## Use another framework or language
+
+An unsupported framework can still call your backend normally. You can use
+the `.axiom` artifact for review, mocks, tests, and change control without
+routing production calls through an Axiom runtime. A first-party client bridge
+for additional stacks is not implied by the existence of the artifact format.

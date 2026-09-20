@@ -6,13 +6,16 @@ pub mod deploy;
 pub mod diff;
 pub mod doctor;
 pub mod domain;
+pub mod extensions;
 pub mod init;
 pub mod install;
 pub mod join;
 pub mod onboard;
+pub mod packages;
 pub mod project; // Add this
 pub mod pull;
 pub mod release;
+pub mod run;
 pub mod security;
 pub mod serve;
 pub mod test;

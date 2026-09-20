@@ -1,28 +1,37 @@
 ---
-title: Variants & Filtering
-description: Managing multiple API surfaces for different clients.
+title: Variants and filtering
+description: Produce bounded endpoint and model surfaces from one service contract source.
 ---
 
-You often don't want to expose every backend route to every client. Variants let you slice your API.
+Variants select names during contract materialization. The default base schema
+includes a `default` variant that includes `*`.
 
-```pkl
-variants = new Mapping {
-  ["mobile_app"] = new VariantConfig {
-    include = new Listing { "*" }
-    exclude = new Listing { "admin_*", "internal_metrics" }
-    
-    cache = new CachePolicy { strategy = "network_first"; ttlSeconds = 60 }
+```acore
+variants = Mapping {
+  ["mobile"] = VariantConfig {
+    include = Listing { "public_*" "profile" }
+    exclude = Listing { "admin_*" }
+    includeModels = Listing { "User" "Profile" }
+    cache = CachePolicy { strategy = "network_first" ttlSeconds = 60 }
   }
 
-  ["web_dashboard"] = new VariantConfig {
-    include = new Listing { "public_*", "admin_*" }
-    cache = new CachePolicy { strategy = "network_only" }
+  ["operations"] = VariantConfig {
+    include = Listing { "admin_*" "internal_metrics" }
+    cache = CachePolicy { strategy = "network_only" ttlSeconds = 0 }
   }
 }
 ```
 
-When building, instruct the CLI which variant to compile:
+Build one selected variant:
+
 ```bash
-axiom build axiom.acore --variant mobile_app
+axiom build axiom.acore --variant mobile
 ```
-The resulting `.axiom` file will completely exclude the routes and models that aren't needed, shrinking the FlatBuffers schema and improving client security.
+
+`include`/`exclude` apply to endpoint names;
+`includeModels`/`excludeModels` apply to model names. Exclusion narrows an
+included surface. A variant can also override cache policy.
+
+Variants reduce what is emitted to a consumer; they are not authorization.
+Protect the backend independently and use signed audience/security declarations
+for reviewable access boundaries.

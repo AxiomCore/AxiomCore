@@ -1,5 +1,8 @@
 use anyhow::{bail, Context, Result};
+use axiom_build::core::extension_source::{build_rust_source_extension, SourceBuildOptions};
+use axiom_extension_host::HostProfile;
 use axiom_lib::ui_contract::{read_lock, verify_locked_artifact_bytes, UiOperationKind};
+use axiom_lib::{extension_workflow::load_verified_extension_target, package::PackageTarget};
 use axiom_ui::{
     capability_registry::{
         phase2_capability_registry, AcoreSupportStatus, CapabilityKind,
@@ -8,8 +11,8 @@ use axiom_ui::{
         PHASE2_LYNX_UI_VERSION, PHASE2_PINNED_LYNX_COMMIT,
     },
     compact_semantic_context, compile_ui_source, native_reload_directive, HotReloadEvent,
-    HotReloadOutcome, NativeReloadDirective, SafeEditStatus, UiCompilation, UiCompileOptions,
-    UiDevelopmentSession, UiTarget, VirtualReactLynxBuild,
+    HotReloadOutcome, NativeReloadDirective, SafeEditStatus, UiActionStep, UiCompilation,
+    UiCompileOptions, UiDevelopmentSession, UiTarget, VirtualReactLynxBuild,
 };
 use axum::{
     body::Body,
@@ -28,7 +31,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::IsTerminal;
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
@@ -73,6 +76,9 @@ pub enum UiInspectView {
     Lowered,
     Facade,
     Context,
+    /// Trace source-level extension imports through their exact action
+    /// bindings without executing a guest module.
+    Extensions,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -285,6 +291,7 @@ const ANDROID_HOST_BUNDLE_ID: &str = "dev.axiomcore.uihost";
 const ANDROID_HOST_ACTIVITY_COMPONENT: &str =
     "dev.axiomcore.uihost/com.axiom.uihost.AxiomHostActivity";
 const HOST_ARTIFACT_MARKER: &str = "axiom.host.artifact.sha256";
+const NATIVE_RUNTIME_CONFIG_MARKER: &str = "axiom.runtime.config.sha256";
 // Host protocol v3 retains the v2 delivery acknowledgement and adds a bounded,
 // graph-bound Lynx diagnostic channel. Older hosts can render bundles but
 // cannot provide the error visibility required by `axiom run`.
@@ -339,9 +346,29 @@ pub async fn handle_check(source: PathBuf, lock: PathBuf, target: String) -> Res
 /// in the workspace; the adapter uses a permission-private cache because the
 /// pinned ReactLynx compiler requires filesystem inputs.
 pub async fn handle_run(source: PathBuf, lock: PathBuf, target: String, once: bool) -> Result<()> {
+    handle_run_internal(source, lock, target, once, None).await
+}
+
+pub async fn handle_run_with_packages(
+    source: PathBuf,
+    lock: PathBuf,
+    package_lock: PathBuf,
+    target: String,
+    once: bool,
+) -> Result<()> {
+    handle_run_internal(source, lock, target, once, Some(package_lock)).await
+}
+
+async fn handle_run_internal(
+    source: PathBuf,
+    lock: PathBuf,
+    target: String,
+    once: bool,
+    package_lock: Option<PathBuf>,
+) -> Result<()> {
     let target = parse_target(&target)?;
     if target == UiTarget::Web && !once {
-        return handle_run_web(source, lock).await;
+        return handle_run_web(source, lock, package_lock).await;
     }
     // `--once` is the non-interactive compiler/CI form. A normal development
     // session owns the friendly UI Host installation prompt.
@@ -360,15 +387,19 @@ pub async fn handle_run(source: PathBuf, lock: PathBuf, target: String, once: bo
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."))
         .to_path_buf();
-    let mut session = UiDevelopmentSession::new(UiCompileOptions {
+    let options = UiCompileOptions {
         target,
         lock_path: lock.clone(),
         asset_root: Some(asset_root.clone()),
-    });
+    };
+    let mut session = match package_lock {
+        Some(package_lock) => UiDevelopmentSession::new_with_package_lock(options, package_lock),
+        None => UiDevelopmentSession::new(options),
+    };
     let initial = apply_path(&mut session, &source)?;
     report_reload(&initial);
     if let Some(host) = host.as_ref() {
-        deliver_last_good(&session, host, &initial, &lock, &asset_root)?;
+        deliver_last_good(&session, host, &initial, &source, &lock, &asset_root)?;
     }
     if once {
         return Ok(());
@@ -398,6 +429,12 @@ pub async fn handle_run(source: PathBuf, lock: PathBuf, target: String, once: bo
     if !same_path(nonempty_parent(&lock), &asset_root) {
         watch_parent(&mut watcher, &lock)?;
     }
+    let dependency_paths = if crate::commands::run::is_managed_development_lock(&lock) {
+        crate::commands::run::frontend_dependency_paths(&source)?
+    } else {
+        Vec::new()
+    };
+    watch_frontend_dependency_paths(&mut watcher, &dependency_paths, &asset_root)?;
 
     if ui_debug_enabled() {
         println!(
@@ -428,18 +465,28 @@ pub async fn handle_run(source: PathBuf, lock: PathBuf, target: String, once: bo
                 }
             }
             event = event_rx.recv() => match event {
-                Some(Ok(event)) if event.paths.iter().any(|path| same_path(path, &source) || same_path(path, &lock) || declared_asset_path(&session, &asset_root, path)) => {
+                Some(Ok(event)) if event.paths.iter().any(|path| same_path(path, &source) || same_path(path, &lock) || frontend_dependency_changed(path, &dependency_paths) || declared_asset_path(&session, &asset_root, path)) => {
+                    let dependency_changed = event.paths.iter().any(|path| frontend_dependency_changed(path, &dependency_paths));
+                    if dependency_changed {
+                        if let Err(error) = crate::commands::run::prepare_frontend(&source, None, false).await {
+                            eprintln!("Could not prepare the changed frontend dependency: {error}");
+                            continue;
+                        }
+                    }
                     match apply_path(&mut session, &source) {
                         Ok(update) => {
-                            if !observe_graph_revision(
+                            let graph_changed = observe_graph_revision(
                                 &mut last_observed_graph_revision,
                                 &update.graph_revision,
-                            ) {
+                            );
+                            if !graph_changed && !dependency_changed {
                                 continue;
                             }
-                            report_reload(&update);
+                            if graph_changed {
+                                report_reload(&update);
+                            }
                             if let Some(host) = host.as_ref() {
-                                if let Err(error) = deliver_last_good(&session, host, &update, &lock, &asset_root) {
+                                if let Err(error) = deliver_last_good(&session, host, &update, &source, &lock, &asset_root) {
                                     if ui_debug_enabled() {
                                         eprintln!("AXIOM_UI_DELIVERY: {error:#}");
                                     } else {
@@ -469,6 +516,7 @@ pub async fn handle_run(source: PathBuf, lock: PathBuf, target: String, once: bo
 struct WebHostState {
     app: Arc<RwLock<Vec<u8>>>,
     files: Arc<HashMap<String, Vec<u8>>>,
+    extension_files: Arc<RwLock<BTreeMap<String, Vec<u8>>>>,
     asset_root: PathBuf,
     declared_assets: Arc<RwLock<HashSet<String>>>,
     reload: broadcast::Sender<String>,
@@ -494,6 +542,45 @@ async fn web_static(
     AxumPath(path): AxumPath<String>,
 ) -> impl IntoResponse {
     web_static_response(&state, &path)
+}
+
+async fn web_extension(
+    State(state): State<WebHostState>,
+    AxumPath(path): AxumPath<String>,
+) -> Response<Body> {
+    if path.is_empty()
+        || !Path::new(&path)
+            .components()
+            .all(|part| matches!(part, Component::Normal(_)))
+    {
+        return Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(Body::empty())
+            .unwrap();
+    }
+    let full_path = format!("runtime/extensions/{path}");
+    let bytes = state
+        .extension_files
+        .read()
+        .expect("extension artifact lock poisoned")
+        .get(&full_path)
+        .cloned();
+    let Some(bytes) = bytes else {
+        return Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(Body::empty())
+            .unwrap();
+    };
+    Response::builder()
+        .header(
+            header::CONTENT_TYPE,
+            mime_guess::from_path(&full_path)
+                .first_or_octet_stream()
+                .as_ref(),
+        )
+        .header(header::CACHE_CONTROL, "no-store")
+        .body(Body::from(bytes))
+        .unwrap()
 }
 
 fn web_static_response(state: &WebHostState, path: &str) -> Response<Body> {
@@ -633,7 +720,15 @@ fn extract_web_host(host: &UiHostInstallation) -> Result<HashMap<String, Vec<u8>
         let name = entry.name().to_string();
         if !matches!(
             name.as_str(),
-            "index.html" | "host.css" | "host.js" | "axiom_runtime.js" | "axiom_runtime_bg.wasm"
+            "index.html"
+                | "host.css"
+                | "host.js"
+                | "foreign-island.js"
+                | "axiom-extension-browser-kernel.mjs"
+                | "axiom-extension-worker.mjs"
+                | "wasm-policy.mjs"
+                | "axiom_runtime.js"
+                | "axiom_runtime_bg.wasm"
         ) {
             continue;
         }
@@ -641,21 +736,77 @@ fn extract_web_host(host: &UiHostInstallation) -> Result<HashMap<String, Vec<u8>
         std::io::Read::read_to_end(&mut entry, &mut bytes)?;
         files.insert(name, bytes);
     }
-    for required in [
-        "index.html",
-        "host.css",
-        "host.js",
-        "axiom_runtime.js",
-        "axiom_runtime_bg.wasm",
-    ] {
-        if !files.contains_key(required) {
-            bail!("web UI Host archive is missing {required}");
+    for required in web_host_required_files() {
+        if !files.contains_key(*required) {
+            bail!(
+                "AXIOM_UI_HOST_WEB_INCOMPATIBLE: verified web UI Host archive is missing {required}; install a host release built with the current browser extension runtime"
+            );
         }
     }
     Ok(files)
 }
 
+fn web_host_required_files() -> &'static [&'static str] {
+    &[
+        "index.html",
+        "host.css",
+        "host.js",
+        "foreign-island.js",
+        "axiom-extension-browser-kernel.mjs",
+        "axiom-extension-worker.mjs",
+        "wasm-policy.mjs",
+        "axiom_runtime.js",
+        "axiom_runtime_bg.wasm",
+    ]
+}
+
+/// Confirm that a signed browser host archive actually carries the runtime
+/// files claimed by its protocol version. Version metadata alone cannot prove
+/// that an older release asset was built after a host-file addition.
+fn web_host_archive_is_current(host: &UiHostInstallation) -> Result<bool> {
+    if host.target != "web" {
+        return Ok(true);
+    }
+    let artifact = match &host.artifact {
+        Some(artifact) => artifact,
+        None => return Ok(false),
+    };
+    let archive_path = host.host_root.join(&artifact.file);
+    let bytes = match std::fs::read(&archive_path) {
+        Ok(bytes) => bytes,
+        Err(_) => return Ok(false),
+    };
+    if sha256_bytes(&bytes) != artifact.sha256 {
+        return Ok(false);
+    }
+    let mut archive = match zip::ZipArchive::new(std::io::Cursor::new(bytes)) {
+        Ok(archive) => archive,
+        Err(_) => return Ok(false),
+    };
+    for required in web_host_required_files() {
+        let Ok(entry) = archive.by_name(required) else {
+            return Ok(false);
+        };
+        if entry.size() == 0 {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 fn web_model(compilation: &UiCompilation, lock_path: &Path, hot_reload: bool) -> Result<Vec<u8>> {
+    web_model_with_runtime_config(
+        compilation,
+        hot_reload,
+        build_verified_runtime_config_value(compilation, lock_path)?,
+    )
+}
+
+fn web_model_with_runtime_config(
+    compilation: &UiCompilation,
+    hot_reload: bool,
+    runtime_config: serde_json::Value,
+) -> Result<Vec<u8>> {
     let ir = compilation
         .ir
         .as_ref()
@@ -672,7 +823,7 @@ fn web_model(compilation: &UiCompilation, lock_path: &Path, hot_reload: bool) ->
         "graphRevision": compilation.context.graph_revision,
         "ir": ir,
         "stylesheet": stylesheet,
-        "runtimeConfig": build_verified_runtime_config_value(compilation, lock_path)?,
+        "runtimeConfig": runtime_config,
     }))?)
 }
 
@@ -710,28 +861,44 @@ pub(crate) fn open_application_browser(url: &str) -> Result<()> {
     open_default_browser(url)
 }
 
-async fn handle_run_web(source: PathBuf, lock: PathBuf) -> Result<()> {
+async fn handle_run_web(
+    source: PathBuf,
+    lock: PathBuf,
+    package_lock: Option<PathBuf>,
+) -> Result<()> {
     let host = ensure_ui_host(UiTarget::Web).await?;
     let asset_root = source
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."))
         .to_path_buf();
-    let mut session = UiDevelopmentSession::new(UiCompileOptions {
+    let options = UiCompileOptions {
         target: UiTarget::Web,
         lock_path: lock.clone(),
         asset_root: Some(asset_root.clone()),
-    });
+    };
+    let mut session = match package_lock {
+        Some(package_lock) => UiDevelopmentSession::new_with_package_lock(options, package_lock),
+        None => UiDevelopmentSession::new(options),
+    };
     let initial = apply_path(&mut session, &source)?;
     report_reload(&initial);
     let compilation = session.last_good().ok_or_else(|| {
         anyhow::anyhow!("web UI was not launched because the initial source did not compile")
     })?;
+    let initial_extensions = assemble_verified_extensions(&source, compilation, UiTarget::Web)?;
+    let initial_runtime_config =
+        build_application_runtime_config_value(compilation, &lock, &initial_extensions)?;
     let (reload, _) = broadcast::channel(16);
     let (diagnostic_tx, mut diagnostic_rx) = mpsc::unbounded_channel();
     let state = WebHostState {
-        app: Arc::new(RwLock::new(web_model(compilation, &lock, true)?)),
+        app: Arc::new(RwLock::new(web_model_with_runtime_config(
+            compilation,
+            true,
+            initial_runtime_config,
+        )?)),
         files: Arc::new(extract_web_host(&host)?),
+        extension_files: Arc::new(RwLock::new(initial_extensions.files)),
         asset_root: asset_root.clone(),
         declared_assets: Arc::new(RwLock::new(web_declared_assets(compilation))),
         reload,
@@ -743,6 +910,7 @@ async fn handle_run_web(source: PathBuf, lock: PathBuf) -> Result<()> {
         .route("/__axiom/events", get(web_events))
         .route("/__axiom/diagnostics", post(web_diagnostic))
         .route("/__axiom/assets/*path", get(web_asset))
+        .route("/runtime/extensions/*path", get(web_extension))
         .route("/*path", get(web_static))
         .with_state(state.clone());
     let requested_port = std::env::var("AXIOM_UI_WEB_PORT")
@@ -762,6 +930,7 @@ async fn handle_run_web(source: PathBuf, lock: PathBuf) -> Result<()> {
 
     let source = canonical_or_original(&source);
     let lock = canonical_or_original(&lock);
+    let extension_workflow = canonical_or_original(&asset_root.join("AxiomExtensions.toml"));
     let mut last_observed_graph_revision = initial.graph_revision;
     let (event_tx, mut event_rx) = mpsc::unbounded_channel();
     let mut watcher = RecommendedWatcher::new(
@@ -774,6 +943,12 @@ async fn handle_run_web(source: PathBuf, lock: PathBuf) -> Result<()> {
     if !same_path(nonempty_parent(&lock), &asset_root) {
         watch_parent(&mut watcher, &lock)?;
     }
+    let dependency_paths = if crate::commands::run::is_managed_development_lock(&lock) {
+        crate::commands::run::frontend_dependency_paths(&source)?
+    } else {
+        Vec::new()
+    };
+    watch_frontend_dependency_paths(&mut watcher, &dependency_paths, &asset_root)?;
     println!(
         "Watching {} for web changes. Press Ctrl-C to stop.",
         source.display()
@@ -786,21 +961,44 @@ async fn handle_run_web(source: PathBuf, lock: PathBuf) -> Result<()> {
                 else { eprintln!("UI {} {}: {}", diagnostic.severity, diagnostic.code, diagnostic.message); }
             }
             event = event_rx.recv() => match event {
-                Some(Ok(event)) if event.paths.iter().any(|path| same_path(path, &source) || same_path(path, &lock) || declared_asset_path(&session, &asset_root, path)) => {
+                Some(Ok(event)) if event.paths.iter().any(|path| same_path(path, &source) || same_path(path, &lock) || same_path(path, &extension_workflow) || frontend_dependency_changed(path, &dependency_paths) || declared_asset_path(&session, &asset_root, path)) => {
+                    let dependency_changed = event.paths.iter().any(|path| frontend_dependency_changed(path, &dependency_paths));
+                    if dependency_changed {
+                        if let Err(error) = crate::commands::run::prepare_frontend(&source, None, false).await {
+                            eprintln!("Could not prepare the changed frontend dependency: {error}");
+                            continue;
+                        }
+                    }
+                    let extension_changed = dependency_changed || event.paths.iter().any(|path| same_path(path, &extension_workflow));
                     match apply_path(&mut session, &source) {
-                        Ok(update) if observe_graph_revision(&mut last_observed_graph_revision, &update.graph_revision) => {
-                            report_reload(&update);
+                        Ok(update) => {
+                            let graph_changed = observe_graph_revision(&mut last_observed_graph_revision, &update.graph_revision);
+                            if graph_changed {
+                                report_reload(&update);
+                            }
                             if !matches!(update.outcome, HotReloadOutcome::RejectedLastGood { .. }) {
-                                if let Some(compilation) = session.last_good() {
-                                    *state.app.write().expect("web app lock poisoned") = web_model(compilation, &lock, true)?;
-                                    *state.declared_assets.write().expect("asset lock poisoned") = web_declared_assets(compilation);
-                                    let preserve_state = matches!(update.outcome, HotReloadOutcome::AppliedStatePreserved);
-                                    let _ = state.reload.send(serde_json::json!({"graphRevision": update.graph_revision, "preserveState": preserve_state}).to_string());
-                                    println!("Updated browser.");
+                                if graph_changed || extension_changed {
+                                    if let Some(compilation) = session.last_good() {
+                                    match assemble_verified_extensions(&source, compilation, UiTarget::Web)
+                                        .and_then(|assembly| {
+                                            let config = build_application_runtime_config_value(compilation, &lock, &assembly)?;
+                                            let app = web_model_with_runtime_config(compilation, true, config)?;
+                                            Ok((assembly, app))
+                                        }) {
+                                        Ok((assembly, app)) => {
+                                            *state.app.write().expect("web app lock poisoned") = app;
+                                            *state.extension_files.write().expect("extension artifact lock poisoned") = assembly.files;
+                                            *state.declared_assets.write().expect("asset lock poisoned") = web_declared_assets(compilation);
+                                            let preserve_state = !extension_changed && matches!(update.outcome, HotReloadOutcome::AppliedStatePreserved);
+                                            let _ = state.reload.send(serde_json::json!({"graphRevision": update.graph_revision, "preserveState": preserve_state}).to_string());
+                                            println!("Updated browser.");
+                                        }
+                                        Err(error) => eprintln!("Verified extension update rejected; the prior last-good extension set remains active: {error}"),
+                                    }
+                                    }
                                 }
                             }
                         }
-                        Ok(_) => {}
                         Err(error) => eprintln!("Could not apply the UI edit: {error}"),
                     }
                 }
@@ -994,8 +1192,65 @@ pub async fn handle_inspect(
         UiInspectView::Context => {
             print_json(&compact_semantic_context(&result.context, max_symbols))
         }
+        UiInspectView::Extensions => print_json(&extension_binding_inspection(&result)),
     }
     Ok(())
+}
+
+/// A compact, source-first inspection view for executable extension bindings.
+/// It deliberately contains only authored spans, static import metadata, and
+/// compiler-derived action identities. Runtime evidence is collected by
+/// `axiom extensions run --audit-out` after package verification.
+fn extension_binding_inspection(result: &UiCompilation) -> serde_json::Value {
+    let Some(ir) = result.ir.as_ref() else {
+        return serde_json::json!({
+            "format": "axiom-ui-extension-bindings/v1",
+            "status": "invalid-source",
+        });
+    };
+    let mut invocations = Vec::new();
+    for page in &ir.pages {
+        for action in &page.actions {
+            for step in &action.steps {
+                let UiActionStep::ExtensionInvoke {
+                    local_name,
+                    alias,
+                    export,
+                    interface_sha256,
+                    abi_symbol,
+                    state_scope,
+                    input,
+                    span,
+                } = step
+                else {
+                    continue;
+                };
+                invocations.push(serde_json::json!({
+                    "page": page.name,
+                    "pageSemanticId": page.semantic_id,
+                    "action": action.name,
+                    "actionSemanticId": action.semantic_id,
+                    "localName": local_name,
+                    "alias": alias,
+                    "export": export,
+                    "interfaceSha256": interface_sha256,
+                    "abiSymbol": abi_symbol,
+                    "stateScope": state_scope,
+                    "inputExpression": input,
+                    "sourceSpan": span,
+                }));
+            }
+        }
+    }
+    serde_json::json!({
+        "format": "axiom-ui-extension-bindings/v1",
+        "status": "compiled",
+        "module": ir.module,
+        "target": ir.target,
+        "graphRevision": result.virtual_build.as_ref().map(|build| &build.graph_revision),
+        "imports": ir.extension_imports,
+        "invocations": invocations,
+    })
 }
 
 pub async fn handle_context(
@@ -1385,7 +1640,9 @@ fn assemble_application_artifact(
         .virtual_build
         .as_ref()
         .context("valid application build has no virtual Lynx input")?;
-    let runtime_config = build_verified_runtime_config_value(compilation, lock_path)?;
+    let extension_assembly = assemble_verified_extensions(source, compilation, target)?;
+    let runtime_config =
+        build_application_runtime_config_value(compilation, lock_path, &extension_assembly)?;
     let contracts = runtime_config["contracts"]
         .as_array()
         .cloned()
@@ -1427,11 +1684,24 @@ fn assemble_application_artifact(
         "runtime/config.json",
         deterministic_json(&runtime_config)?,
     )?;
+    for (path, bytes) in &extension_assembly.files {
+        add_artifact_file(&mut files, path, bytes.clone())?;
+    }
+    add_artifact_file(
+        &mut files,
+        "runtime/extensions/extension-lock.json",
+        deterministic_json(&extension_assembly.lock)?,
+    )?;
     let capabilities = serde_json::json!({
         "format": "axiom-app-capabilities/v1",
         "networkOrigins": contracts.iter().filter_map(|value| value["baseUrl"].as_str()).collect::<Vec<_>>(),
         "contracts": contracts.iter().map(|value| serde_json::json!({
             "name": value["localName"], "verified": value["verified"], "operations": value["operations"]
+        })).collect::<Vec<_>>(),
+        "extensions": extension_assembly.runtime_entries.iter().map(|value| serde_json::json!({
+            "name": value["extension"], "exports": value["exports"], "target": value["target"],
+            "verified": value["verified"], "moduleSha256": value["moduleSha256"],
+            "effectiveAuthority": value["effectiveAuthority"],
         })).collect::<Vec<_>>(),
         "frontendProfile": {
             "registryVersion": PHASE2_CAPABILITY_REGISTRY_VERSION,
@@ -1506,7 +1776,7 @@ fn assemble_application_artifact(
         add_artifact_file(
             &mut files,
             "__axiom/app.json",
-            web_model(compilation, lock_path, false)?,
+            web_model_with_runtime_config(compilation, false, runtime_config.clone())?,
         )?;
         for asset in &ir.assets {
             let bytes = std::fs::read(asset_root.join(&asset.path))?;
@@ -1532,7 +1802,7 @@ fn assemble_application_artifact(
             },
             host_bytes,
         )?;
-        let runtime_config_source = build_verified_runtime_config(compilation, lock_path)?;
+        let runtime_config_source = runtime_config_source(&runtime_config)?;
         let bundle =
             compile_virtual_lynx_bundle(build, &runtime_config_source, asset_root, target)?;
         add_artifact_file(
@@ -1555,6 +1825,8 @@ fn assemble_application_artifact(
         "uiIrFormat": ir.format,
         "host": { "version": host_artifact.version, "variant": host_artifact.variant, "sha256": host_artifact.sha256 },
         "unsignedContracts": unsigned,
+        "extensionLock": "runtime/extensions/extension-lock.json",
+        "extensions": extension_assembly.runtime_entries.clone(),
     });
     add_artifact_file(&mut files, "manifest.json", deterministic_json(&manifest)?)?;
     let provenance = serde_json::json!({
@@ -1576,6 +1848,7 @@ fn assemble_application_artifact(
             }
         },
         "hostArtifactSha256": host_artifact.sha256,
+        "extensionLockSha256": sha256_bytes(&deterministic_json(&extension_assembly.lock)?),
     });
     add_artifact_file(
         &mut files,
@@ -1783,6 +2056,39 @@ fn watch_parent(watcher: &mut RecommendedWatcher, path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn watch_frontend_dependency_paths(
+    watcher: &mut RecommendedWatcher,
+    dependencies: &[PathBuf],
+    asset_root: &Path,
+) -> Result<()> {
+    let asset_root = canonical_or_original(asset_root);
+    let mut watched = HashSet::new();
+    for dependency in dependencies {
+        let dependency = canonical_or_original(dependency);
+        if dependency.starts_with(&asset_root) {
+            continue;
+        }
+        let (path, mode) = if dependency.is_dir() {
+            (dependency, RecursiveMode::Recursive)
+        } else {
+            (
+                nonempty_parent(&dependency).to_path_buf(),
+                RecursiveMode::NonRecursive,
+            )
+        };
+        if watched.insert(path.clone()) {
+            watcher.watch(&path, mode)?;
+        }
+    }
+    Ok(())
+}
+
+fn frontend_dependency_changed(path: &Path, dependencies: &[PathBuf]) -> bool {
+    dependencies.iter().any(|dependency| {
+        same_path(path, dependency) || (dependency.is_dir() && path.starts_with(dependency))
+    })
+}
+
 fn nonempty_parent(path: &Path) -> &Path {
     path.parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -1865,6 +2171,7 @@ fn deliver_last_good(
     session: &UiDevelopmentSession,
     host: &UiHostInstallation,
     event: &HotReloadEvent,
+    source: &Path,
     lock_path: &Path,
     asset_root: &Path,
 ) -> Result<()> {
@@ -1891,13 +2198,16 @@ fn deliver_last_good(
     let build = compilation.virtual_build.as_ref().ok_or_else(|| {
         anyhow::anyhow!("the last-good UI compilation has no virtual ReactLynx build")
     })?;
-    let runtime_config_value = build_verified_runtime_config_value(compilation, lock_path)?;
-    let runtime_config = runtime_config_source(&runtime_config_value)?;
     let target = compilation
         .ir
         .as_ref()
         .expect("valid native delivery has UI IR")
         .target;
+    let extension_assembly = assemble_verified_extensions(source, compilation, target)?;
+    let runtime_config_value =
+        build_application_runtime_config_value(compilation, lock_path, &extension_assembly)?;
+    let runtime_config_fingerprint = sha256_bytes(&deterministic_json(&runtime_config_value)?);
+    let runtime_config = runtime_config_source(&runtime_config_value)?;
     let bundle = compile_virtual_lynx_bundle(build, &runtime_config, asset_root, target)?;
     let acknowledgement = match host.target.as_str() {
         "ios" => deliver_ios_simulator_bundle(
@@ -1905,13 +2215,17 @@ fn deliver_last_good(
             &bundle,
             event,
             matches!(event.outcome, HotReloadOutcome::InitialLoad),
+            &runtime_config_fingerprint,
+            &extension_assembly.files,
         )?,
         "android" => deliver_android_emulator_bundle(
             host,
             &bundle,
             event,
             matches!(event.outcome, HotReloadOutcome::InitialLoad),
+            &runtime_config_fingerprint,
             &android_loopback_base_urls(&runtime_config_value),
+            &extension_assembly.files,
         )?,
         other => bail!("AXIOM_UI_TARGET_UNSUPPORTED: no native delivery adapter for {other}"),
     };
@@ -1983,6 +2297,11 @@ pub(crate) fn run_packaged_native_application(
     let bundle_path = cache.join("main.lynx.bundle");
     std::fs::write(&host_path, host_bytes)?;
     std::fs::write(&bundle_path, bundle_bytes)?;
+    let extension_files = files
+        .iter()
+        .filter(|(path, _)| path.starts_with("runtime/extensions/"))
+        .map(|(path, bytes)| (path.clone(), bytes.clone()))
+        .collect::<BTreeMap<_, _>>();
     let host = UiHostInstallation {
         format: "axiom-ui-host/v1".into(),
         target: target.as_str().into(),
@@ -2012,7 +2331,20 @@ pub(crate) fn run_packaged_native_application(
         diagnostics: Vec::new(),
     };
     let acknowledgement = if target == UiTarget::Ios {
-        deliver_ios_simulator_bundle(&host, &bundle_path, &event, true)?
+        let runtime_config: serde_json::Value = serde_json::from_slice(
+            files
+                .get("runtime/config.json")
+                .context("AXIOM_APP_CONTENT: missing runtime/config.json")?,
+        )?;
+        let runtime_config_fingerprint = sha256_bytes(&deterministic_json(&runtime_config)?);
+        deliver_ios_simulator_bundle(
+            &host,
+            &bundle_path,
+            &event,
+            true,
+            &runtime_config_fingerprint,
+            &extension_files,
+        )?
     } else {
         let runtime_config: serde_json::Value = serde_json::from_slice(
             files
@@ -2025,7 +2357,16 @@ pub(crate) fn run_packaged_native_application(
             .flatten()
             .filter_map(|contract| contract["baseUrl"].as_str().map(str::to_string))
             .collect::<Vec<_>>();
-        deliver_android_emulator_bundle(&host, &bundle_path, &event, true, &base_urls)?
+        let runtime_config_fingerprint = sha256_bytes(&deterministic_json(&runtime_config)?);
+        deliver_android_emulator_bundle(
+            &host,
+            &bundle_path,
+            &event,
+            true,
+            &runtime_config_fingerprint,
+            &base_urls,
+            &extension_files,
+        )?
     };
     let reset = matches!(
         acknowledgement,
@@ -2137,7 +2478,264 @@ fn build_verified_runtime_config_value(
             }));
         }
     }
-    Ok(serde_json::json!({ "contracts": contracts }))
+    // The virtual compiler output has no artifact bytes or authority lock.
+    // Application assembly replaces this empty list with verified, embedded
+    // extension facts. Keeping the source-only default empty means a direct
+    // virtual graph can never accidentally grant a sandbox invocation.
+    Ok(serde_json::json!({ "contracts": contracts, "extensions": [] }))
+}
+
+#[derive(Clone)]
+struct VerifiedExtensionAssembly {
+    runtime_entries: Vec<serde_json::Value>,
+    files: BTreeMap<String, Vec<u8>>,
+    lock: serde_json::Value,
+}
+
+fn package_target(target: UiTarget) -> PackageTarget {
+    match target {
+        UiTarget::Android => PackageTarget::Android,
+        UiTarget::Ios => PackageTarget::Ios,
+        UiTarget::Web => PackageTarget::Web,
+    }
+}
+
+fn frontend_profile(target: UiTarget) -> axiom_extension_host::HostProfile {
+    match target {
+        UiTarget::Android => HostProfile::android(),
+        UiTarget::Ios => HostProfile::ios(),
+        UiTarget::Web => HostProfile::web(),
+    }
+}
+
+/// Resolve every imported extension only from a signed release workflow and
+/// stage content-addressed bytes for one application target. A local Rust
+/// source build is permitted only as a reproducibility check: its module hash
+/// must equal the separately signed release selected by the workflow. Building
+/// source never creates authority, a release signature, or an executable
+/// fallback.
+fn assemble_verified_extensions(
+    source: &Path,
+    compilation: &UiCompilation,
+    target: UiTarget,
+) -> Result<VerifiedExtensionAssembly> {
+    let ir = compilation
+        .ir
+        .as_ref()
+        .context("valid extension assembly requires compiled UI IR")?;
+    if ir.extension_imports.is_empty() {
+        return Ok(VerifiedExtensionAssembly {
+            runtime_entries: Vec::new(),
+            files: BTreeMap::new(),
+            lock: serde_json::json!({
+                "format": "axiom-application-extension-lock/v1",
+                "target": target.as_str(),
+                "extensions": [],
+            }),
+        });
+    }
+    let root = source
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let workflow = root.join("AxiomExtensions.toml");
+    if !workflow.is_file() {
+        let aliases = ir
+            .extension_imports
+            .iter()
+            .map(|value| value.alias.as_str())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>()
+            .join(", ");
+        bail!(
+            "AXIOM_EXTENSION_WORKFLOW_MISSING: {} imports extension(s) {aliases}, but {} is absent. Build/sign/resolve the release workflow before target assembly",
+            source.display(),
+            workflow.display(),
+        );
+    }
+    let target_package = package_target(target);
+    let profile = frontend_profile(target);
+    let mut selected = BTreeMap::<String, Vec<&axiom_ui::UiExtensionImport>>::new();
+    for import in &ir.extension_imports {
+        selected
+            .entry(import.alias.clone())
+            .or_default()
+            .push(import);
+    }
+    let mut runtime_entries = Vec::new();
+    let mut files = BTreeMap::new();
+    let mut lock_entries = Vec::new();
+    for (alias, imports) in selected {
+        // AxiomDeps.toml is the only source registry. Rebuild/reuse its
+        // content-addressed development cache first, then require it to match
+        // the signed release workflow exactly. This gives `axiom run` a normal
+        // source-edit loop without allowing an unsigned cache artifact to
+        // cross the target boundary.
+        let source_build = build_rust_source_extension(&SourceBuildOptions {
+            deps: root.join("AxiomDeps.toml"),
+            alias: alias.clone(),
+            output_root: PathBuf::from(".axiom/extensions"),
+            target: target_package,
+            clean: false,
+        })
+        .with_context(|| {
+            format!("AXIOM_EXTENSION_SOURCE_BUILD: build or reuse registered source for `{alias}`")
+        })?;
+        let loaded = load_verified_extension_target(&workflow, &alias, target_package)
+            .with_context(|| {
+                format!(
+                    "AXIOM_EXTENSION_ASSEMBLY: resolve `{alias}` for {}",
+                    target.as_str()
+                )
+            })?;
+        if source_build.module_sha256 != loaded.report.provenance.module_sha256 {
+            bail!(
+                "AXIOM_EXTENSION_SOURCE_RELEASE_MISMATCH: `{alias}` source builds to {}, but the signed release workflow selects {}. Sign/resolve a release for the current source; the unsigned development cache is never embedded",
+                source_build.module_sha256,
+                loaded.report.provenance.module_sha256,
+            );
+        }
+        let effective_authority = axiom_lib::extension_authority::EffectiveTargetAuthority {
+            permissions: loaded.effective.permissions.clone(),
+            budgets: loaded.effective.budgets.clone(),
+        };
+        profile
+            .validate_authority(&effective_authority)
+            .with_context(|| {
+                format!(
+                    "AXIOM_EXTENSION_PROFILE: `{alias}` is not permitted in the {} frontend host",
+                    target.as_str()
+                )
+            })?;
+        for import in &imports {
+            if import.interface_sha256 != loaded.report.provenance.interface_sha256 {
+                bail!(
+                    "AXIOM_EXTENSION_INTERFACE_MISMATCH: `{alias}` source binding {} does not match the signed package interface",
+                    import.local_name
+                );
+            }
+        }
+        let exports = imports
+            .iter()
+            .map(|import| import.export.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let mut bindings = Vec::new();
+        let mut seen_bindings = BTreeSet::new();
+        for page in &ir.pages {
+            for action in &page.actions {
+                for step in &action.steps {
+                    let axiom_ui::UiActionStep::ExtensionInvoke {
+                        alias: step_alias,
+                        export,
+                        interface_sha256,
+                        abi_symbol,
+                        state_scope,
+                        ..
+                    } = step
+                    else {
+                        continue;
+                    };
+                    if step_alias != &alias {
+                        continue;
+                    }
+                    if !exports.contains(export)
+                        || interface_sha256 != &loaded.report.provenance.interface_sha256
+                    {
+                        bail!("AXIOM_EXTENSION_BINDING_MISMATCH: `{alias}` action binding disagrees with its verified export interface");
+                    }
+                    if !seen_bindings.insert(action.semantic_id.value.clone()) {
+                        bail!(
+                            "AXIOM_EXTENSION_BINDING_DUPLICATE: action `{}` invokes `{alias}` more than once; split it into separately named actions so each sandbox event has one exact-once identity",
+                            action.name,
+                        );
+                    }
+                    bindings.push(serde_json::json!({
+                        "actionSemanticId": action.semantic_id.value,
+                        "export": export,
+                        "interfaceSha256": interface_sha256,
+                        "abiSymbol": abi_symbol,
+                        "stateScope": state_scope,
+                    }));
+                }
+            }
+        }
+        bindings.sort_by(|left, right| {
+            left["actionSemanticId"]
+                .as_str()
+                .cmp(&right["actionSemanticId"].as_str())
+        });
+        let module_sha256 = loaded.report.provenance.module_sha256.clone();
+        let package_sha256 = sha256_bytes(&loaded.package_bytes);
+        let authority_sha256 = sha256_bytes(&loaded.authority_lock_bytes);
+        let package_lock_sha256 = sha256_bytes(&loaded.package_lock_bytes);
+        let module_path = format!("runtime/extensions/modules/{module_sha256}/module.wasm");
+        let package_path = format!("runtime/extensions/packages/{package_sha256}.axiom");
+        let authority_path = format!("runtime/extensions/authority/{authority_sha256}.json");
+        let package_lock_path = format!("runtime/extensions/locks/{package_lock_sha256}.json");
+        for (path, bytes) in [
+            (module_path.clone(), loaded.module_bytes),
+            (package_path.clone(), loaded.package_bytes),
+            (authority_path.clone(), loaded.authority_lock_bytes),
+            (package_lock_path.clone(), loaded.package_lock_bytes),
+        ] {
+            match files.get(&path) {
+                Some(existing) if existing == &bytes => {}
+                Some(_) => bail!("AXIOM_EXTENSION_ASSEMBLY: conflicting content-addressed extension artifact `{path}`"),
+                None => {
+                    files.insert(path, bytes);
+                }
+            }
+        }
+        let entry = serde_json::json!({
+            "extension": alias,
+            "application": loaded.application,
+            "exports": exports,
+            "interfaceSha256": loaded.report.provenance.interface_sha256,
+            "target": target.as_str(),
+            "verified": true,
+            "moduleSha256": module_sha256,
+            "packageSha256": package_sha256,
+            "authoritySha256": authority_sha256,
+            "packageLockSha256": package_lock_sha256,
+            "packageSignerSha256": loaded.report.provenance.package_signer_sha256,
+            "limitsSha256": loaded.report.provenance.limits_sha256,
+            "modulePath": module_path,
+            "packagePath": package_path,
+            "authorityLockPath": authority_path,
+            "packageLockPath": package_lock_path,
+            "effectiveAuthority": loaded.effective,
+            "bindings": bindings,
+            "runtime": {
+                "engine": loaded.report.provenance.engine,
+                "broker": loaded.report.provenance.broker,
+                "host": loaded.report.provenance.host,
+            },
+        });
+        lock_entries.push(entry.clone());
+        runtime_entries.push(entry);
+    }
+    Ok(VerifiedExtensionAssembly {
+        runtime_entries,
+        files,
+        lock: serde_json::json!({
+            "format": "axiom-application-extension-lock/v1",
+            "target": target.as_str(),
+            "extensions": lock_entries,
+        }),
+    })
+}
+
+fn build_application_runtime_config_value(
+    compilation: &UiCompilation,
+    lock_path: &Path,
+    assembly: &VerifiedExtensionAssembly,
+) -> Result<serde_json::Value> {
+    let mut config = build_verified_runtime_config_value(compilation, lock_path)?;
+    config["extensions"] = serde_json::Value::Array(assembly.runtime_entries.clone());
+    Ok(config)
 }
 
 fn build_verified_runtime_config(compilation: &UiCompilation, lock_path: &Path) -> Result<String> {
@@ -2668,6 +3266,8 @@ fn deliver_ios_simulator_bundle(
     bundle: &Path,
     event: &HotReloadEvent,
     initial_delivery: bool,
+    runtime_config_fingerprint: &str,
+    extension_files: &BTreeMap<String, Vec<u8>>,
 ) -> Result<IosDeliveryAcknowledgement> {
     let artifact = host.artifact.as_ref().ok_or_else(|| {
         anyhow::anyhow!("native iOS delivery requires an installed signed UI Host release")
@@ -2748,6 +3348,22 @@ fn deliver_ios_simulator_bundle(
             format!("{}\n", artifact.sha256),
         )?;
     }
+    let prior_runtime_config =
+        std::fs::read_to_string(support.join(NATIVE_RUNTIME_CONFIG_MARKER)).ok();
+    let restart_required = native_runtime_restart_required(
+        initial_delivery,
+        installed_now,
+        prior_runtime_config.as_deref().map(str::trim),
+        runtime_config_fingerprint,
+    );
+    // The native runtime deliberately refuses to replace verified contracts in
+    // a live process. Stop it before staging a changed revision so the old host
+    // cannot acknowledge the new files with its stale runtime configuration.
+    if restart_required && !installed_now {
+        let _ = Command::new("xcrun")
+            .args(["simctl", "terminate", &device, IOS_HOST_BUNDLE_ID])
+            .output()?;
+    }
     let (delivery_mode, fallback_reason) = ios_delivery_plan(event);
     let base_graph_revision = previous_ios_graph_revision(&support);
     // UiDevelopmentSession sequence numbers restart with every CLI process.
@@ -2757,6 +3373,7 @@ fn deliver_ios_simulator_bundle(
     // acknowledgement for the same graph revision.
     let delivery_sequence = next_ios_delivery_sequence(&support, event.sequence);
     let _ = std::fs::remove_file(support.join("axiom.app.diagnostic.json"));
+    stage_extension_files(&support, extension_files)?;
     atomic_copy(bundle, &support.join("axiom.app.lynx.bundle"))?;
     atomic_json(
         &support.join("axiom.app.revision.json"),
@@ -2768,7 +3385,7 @@ fn deliver_ios_simulator_bundle(
             "fallbackReason": fallback_reason,
         }),
     )?;
-    if initial_delivery || installed_now {
+    if restart_required {
         require_success(
             "Axiom UI Host launch",
             &Command::new("xcrun")
@@ -2776,7 +3393,22 @@ fn deliver_ios_simulator_bundle(
                 .output()?,
         )?;
     }
-    wait_for_ios_acknowledgement(&support, delivery_sequence, &event.graph_revision)
+    let acknowledgement =
+        wait_for_ios_acknowledgement(&support, delivery_sequence, &event.graph_revision)?;
+    std::fs::write(
+        support.join(NATIVE_RUNTIME_CONFIG_MARKER),
+        format!("{runtime_config_fingerprint}\n"),
+    )?;
+    Ok(acknowledgement)
+}
+
+fn native_runtime_restart_required(
+    initial_delivery: bool,
+    installed_now: bool,
+    previous_fingerprint: Option<&str>,
+    next_fingerprint: &str,
+) -> bool {
+    initial_delivery || installed_now || previous_fingerprint != Some(next_fingerprint)
 }
 
 /// Android mirrors the iOS fixed-file protocol, but transport goes through
@@ -2788,7 +3420,9 @@ fn deliver_android_emulator_bundle(
     bundle: &Path,
     event: &HotReloadEvent,
     initial_delivery: bool,
+    runtime_config_fingerprint: &str,
     loopback_base_urls: &[String],
+    extension_files: &BTreeMap<String, Vec<u8>>,
 ) -> Result<IosDeliveryAcknowledgement> {
     let artifact = host.artifact.as_ref().ok_or_else(|| {
         anyhow::anyhow!("native Android delivery requires an installed signed UI Host release")
@@ -2812,10 +3446,7 @@ fn deliver_android_emulator_bundle(
             "Installing Axiom UI Host {} on the Android Emulator...",
             artifact.version
         ));
-        let installation = require_success(
-            "Axiom UI Host Android Emulator install",
-            &adb_command(&device, ["install", "-r", apk.to_string_lossy().as_ref()]).output()?,
-        );
+        let installation = install_android_host(&device, &apk);
         install_progress.finish_and_clear();
         installation?;
     }
@@ -2830,6 +3461,26 @@ fn deliver_android_emulator_bundle(
         std::fs::write(&marker, format!("{}\n", artifact.sha256))?;
         android_push_private_file(&device, &marker, HOST_ARTIFACT_MARKER)?;
     }
+    let prior_runtime_config = android_private_text(&device, NATIVE_RUNTIME_CONFIG_MARKER);
+    let restart_required = native_runtime_restart_required(
+        initial_delivery,
+        installed_now,
+        prior_runtime_config.as_deref().map(str::trim),
+        runtime_config_fingerprint,
+    );
+    // Like iOS, Android's verified bridge refuses to replace contract inputs
+    // inside a live process. Stop it before staging the next revision so a
+    // stale Java/native runtime cannot acknowledge the new template first.
+    if restart_required && !installed_now {
+        require_success(
+            "Axiom UI Host Android Emulator stop",
+            &adb_command(
+                &device,
+                ["shell", "am", "force-stop", ANDROID_HOST_BUNDLE_ID],
+            )
+            .output()?,
+        )?;
+    }
     let (delivery_mode, fallback_reason) = ios_delivery_plan(event);
     let base_graph_revision = previous_android_graph_revision(&device);
     let delivery_sequence = next_android_delivery_sequence(&device, event.sequence);
@@ -2841,11 +3492,13 @@ fn deliver_android_emulator_bundle(
     });
     let local_bundle = support.join("axiom.app.lynx.bundle");
     let local_revision = support.join("axiom.app.revision.json");
+    stage_extension_files(&support, extension_files)?;
     atomic_copy(bundle, &local_bundle)?;
     atomic_json(&local_revision, &revision)?;
     android_push_private_file(&device, &local_bundle, "axiom.app.lynx.bundle")?;
     android_push_private_file(&device, &local_revision, "axiom.app.revision.json")?;
-    if initial_delivery || installed_now {
+    android_push_private_extension_files(&device, &support, extension_files)?;
+    if restart_required {
         require_success(
             "Axiom UI Host Android Emulator launch",
             &adb_command(
@@ -2861,7 +3514,47 @@ fn deliver_android_emulator_bundle(
             .output()?,
         )?;
     }
-    wait_for_android_acknowledgement(&device, delivery_sequence, &event.graph_revision)
+    let acknowledgement =
+        wait_for_android_acknowledgement(&device, delivery_sequence, &event.graph_revision)?;
+    let marker = support.join(NATIVE_RUNTIME_CONFIG_MARKER);
+    std::fs::write(&marker, format!("{runtime_config_fingerprint}\n"))?;
+    android_push_private_file(&device, &marker, NATIVE_RUNTIME_CONFIG_MARKER)?;
+    Ok(acknowledgement)
+}
+
+/// Development host builds can be signed with a fresh local key. Android
+/// correctly refuses an in-place update when that key changes. This host uses
+/// a fixed Axiom-owned development package ID, so it is safe to remove only
+/// that package and retry; no user application package is touched.
+fn install_android_host(device: &str, apk: &Path) -> Result<()> {
+    let output = adb_command(device, ["install", "-r", apk.to_string_lossy().as_ref()]).output()?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let diagnostic = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    if !android_signature_conflict(&diagnostic) {
+        return require_success("Axiom UI Host Android Emulator install", &output);
+    }
+    println!(
+        "Replacing the stale Axiom development UI Host on the Android Emulator because its signing identity changed."
+    );
+    require_success(
+        "Axiom UI Host Android Emulator stale-host removal",
+        &adb_command(device, ["uninstall", ANDROID_HOST_BUNDLE_ID]).output()?,
+    )?;
+    require_success(
+        "Axiom UI Host Android Emulator reinstall",
+        &adb_command(device, ["install", apk.to_string_lossy().as_ref()]).output()?,
+    )
+}
+
+fn android_signature_conflict(output: &str) -> bool {
+    output.contains("INSTALL_FAILED_UPDATE_INCOMPATIBLE")
+        || output.contains("signatures do not match")
 }
 
 /// Keep localhost contract URLs target-neutral. On Android, adb reverse makes
@@ -3010,6 +3703,42 @@ fn android_push_private_file(device: &str, source: &Path, name: &str) -> Result<
         "Axiom UI Host Android temporary-file cleanup",
         &adb_command(device, ["shell", "rm", "-f", &remote]).output()?,
     )?;
+    Ok(())
+}
+
+fn android_push_private_extension_files(
+    device: &str,
+    root: &Path,
+    files: &BTreeMap<String, Vec<u8>>,
+) -> Result<()> {
+    for (relative, bytes) in files {
+        validate_extension_artifact_path(relative)?;
+        let source = root.join(relative);
+        if !source.is_file() || sha256_file(&source)? != sha256_bytes(bytes) {
+            bail!("AXIOM_UI_EXTENSION_DELIVERY: staged artifact `{relative}` changed before Android delivery");
+        }
+        let parent = Path::new(relative)
+            .parent()
+            .expect("validated extension artifact has a parent");
+        let remote_name = format!("axiom-ui-extension-{}", sha256_bytes(bytes));
+        let remote = format!("/data/local/tmp/{remote_name}");
+        require_success(
+            "Axiom UI Host Android extension transfer",
+            &adb_command(device, ["push", source.to_string_lossy().as_ref(), &remote]).output()?,
+        )?;
+        android_run_as(
+            device,
+            &format!("mkdir -p files/axiom-ui-host/{}", parent.display()),
+        )?;
+        android_run_as(
+            device,
+            &format!("cp {remote} files/axiom-ui-host/{relative}"),
+        )?;
+        require_success(
+            "Axiom UI Host Android extension temporary-file cleanup",
+            &adb_command(device, ["shell", "rm", "-f", &remote]).output()?,
+        )?;
+    }
     Ok(())
 }
 
@@ -3262,6 +3991,40 @@ fn atomic_copy(source: &Path, destination: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Stage only compiler-owned, content-addressed extension facts below the
+/// private host directory. A module update receives a new digest path, so an
+/// old running bundle can never observe partially replaced bytes.
+fn stage_extension_files(root: &Path, files: &BTreeMap<String, Vec<u8>>) -> Result<()> {
+    for (relative, bytes) in files {
+        validate_extension_artifact_path(relative)?;
+        let destination = root.join(relative);
+        let parent = destination
+            .parent()
+            .expect("validated extension artifact has a parent");
+        std::fs::create_dir_all(parent)?;
+        let temporary = destination.with_extension("extension.tmp");
+        std::fs::write(&temporary, bytes)?;
+        std::fs::rename(&temporary, &destination)?;
+        if sha256_file(&destination)? != sha256_bytes(bytes) {
+            bail!("AXIOM_UI_EXTENSION_DELIVERY: staged artifact `{relative}` did not retain its verified digest");
+        }
+    }
+    Ok(())
+}
+
+fn validate_extension_artifact_path(path: &str) -> Result<()> {
+    let relative = Path::new(path);
+    if !path.starts_with("runtime/extensions/")
+        || relative.is_absolute()
+        || !relative
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
+    {
+        bail!("AXIOM_UI_EXTENSION_DELIVERY: unsafe extension artifact path `{path}`");
+    }
+    Ok(())
+}
+
 fn atomic_json(path: &Path, value: &serde_json::Value) -> Result<()> {
     let temporary = path.with_extension("json.tmp");
     std::fs::write(&temporary, serde_json::to_vec(value)?)?;
@@ -3311,12 +4074,18 @@ export default defineConfig({
 
 async fn ensure_ui_host(target: UiTarget) -> Result<UiHostInstallation> {
     let existing = read_ui_host(target)?;
+    let web_archive_is_current = existing
+        .as_ref()
+        .map(web_host_archive_is_current)
+        .transpose()?
+        .unwrap_or(false);
     let needs_replacement = matches!(
         existing.as_ref().and_then(|host| host.artifact.as_ref()),
         Some(artifact) if artifact.version == "0.0.0-validation"
     ) || existing
         .as_ref()
-        .is_some_and(|host| !host_supports_delivery(host));
+        .is_some_and(|host| !host_supports_delivery(host))
+        || (target == UiTarget::Web && !web_archive_is_current);
     if let Some(host) = existing.as_ref().filter(|_| !needs_replacement) {
         return Ok(host.clone());
     }
@@ -3353,6 +4122,11 @@ async fn ensure_ui_host(target: UiTarget) -> Result<UiHostInstallation> {
             .map(|value| value.version.as_str())
             .unwrap_or("local development host");
         bail!("AXIOM_UI_HOST_UPGRADE_REQUIRED: installed UI Host {version} does not implement the current delivery and rendering contract. Publish and install Axiom UI Host {} or later.", host_protocol_minimum(target));
+    }
+    if target == UiTarget::Web && !web_host_archive_is_current(&installed)? {
+        bail!(
+            "AXIOM_UI_HOST_WEB_INCOMPATIBLE: the installed web UI Host release does not contain the current browser extension runtime. Install a newly built signed web host release before running this application."
+        );
     }
     Ok(installed)
 }
@@ -3858,6 +4632,35 @@ all compiler output in memory.
 mod tests {
     use super::*;
 
+    #[test]
+    fn native_runtime_restart_tracks_verified_configuration_lifecycle() {
+        assert!(native_runtime_restart_required(
+            true,
+            false,
+            Some("same"),
+            "same"
+        ));
+        assert!(native_runtime_restart_required(
+            false,
+            true,
+            Some("same"),
+            "same"
+        ));
+        assert!(native_runtime_restart_required(false, false, None, "next"));
+        assert!(native_runtime_restart_required(
+            false,
+            false,
+            Some("previous"),
+            "next"
+        ));
+        assert!(!native_runtime_restart_required(
+            false,
+            false,
+            Some("same"),
+            "same"
+        ));
+    }
+
     fn asset(target: &str, variant: &str, file: &str) -> UiHostReleaseAsset {
         UiHostReleaseAsset {
             target: target.to_string(),
@@ -3941,6 +4744,19 @@ mod tests {
         assert_eq!(loopback_port("http://localhost/tasks"), Some(80));
         assert_eq!(loopback_port("https://localhost"), Some(443));
         assert_eq!(loopback_port("https://api.example.com"), None);
+    }
+
+    #[test]
+    fn android_signature_conflicts_are_the_only_install_failures_that_replace_the_dev_host() {
+        assert!(android_signature_conflict(
+            "Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE: Existing package signatures do not match]"
+        ));
+        assert!(android_signature_conflict(
+            "signatures do not match newer version"
+        ));
+        assert!(!android_signature_conflict(
+            "Failure [INSTALL_FAILED_INSUFFICIENT_STORAGE]"
+        ));
     }
 
     #[test]
@@ -4053,6 +4869,13 @@ mod tests {
             ("index.html".to_string(), b"<main id=app></main>".to_vec()),
             ("host.css".to_string(), b"body{}".to_vec()),
             ("host.js".to_string(), b"// static host".to_vec()),
+            ("foreign-island.js".to_string(), b"export {}".to_vec()),
+            (
+                "axiom-extension-browser-kernel.mjs".to_string(),
+                b"export {}".to_vec(),
+            ),
+            ("axiom-extension-worker.mjs".to_string(), b"void 0".to_vec()),
+            ("wasm-policy.mjs".to_string(), b"export {}".to_vec()),
             ("axiom_runtime.js".to_string(), b"// wasm glue".to_vec()),
             ("axiom_runtime_bg.wasm".to_string(), b"\0asm".to_vec()),
         ]);
@@ -4103,6 +4926,10 @@ mod tests {
             "reports/frontend-support.json",
             "index.html",
             "host.js",
+            "foreign-island.js",
+            "axiom-extension-browser-kernel.mjs",
+            "axiom-extension-worker.mjs",
+            "wasm-policy.mjs",
             "axiom_runtime_bg.wasm",
             "__axiom/app.json",
         ] {

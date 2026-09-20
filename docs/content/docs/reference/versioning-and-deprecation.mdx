@@ -1,0 +1,84 @@
+---
+title: Versioning and deprecation
+description: Distinguish tool, source-schema, artifact, package, release, protocol, and documentation versions before upgrading an AxiomCore system.
+---
+
+AxiomCore has several independent compatibility boundaries. A version change in
+one does not automatically upgrade the others.
+
+## Version boundaries
+
+| Boundary | Where to inspect it | Current contract |
+| --- | --- | --- |
+| Axiom CLI | `axiom --version` | Pre-stable tool release. Pin the exact version used by CI and release jobs. |
+| Acore source schema | Top-level `axiom` value and imported modules | Language/schema compatibility; do not infer CLI compatibility from a source version alone. |
+| Contract release | `project.version`, Cloud release, or pinned pull reference | Immutable project/version bytes after release. The current CLI accepts letters, numbers, `.`, `_`, `-`, and `+`; it does not require semantic versioning. |
+| `.axiom` envelope | Artifact header and manifest | Runtime/package compatibility, including minimum runtime requirements where present. |
+| Package dependency | Dependency manifest and committed lock | Exact package identity, version/source, digest, and proof selected for a consumer. |
+| `.axiomapp` and UI host | Application and host manifests | Target, build mode, host version, graph revision, and runtime protocol compatibility. |
+| Machine-readable output | `schema_version` in the individual JSON output | Compatibility for that command's JSON shape, not for every CLI output. |
+| Documentation | Current site and repository revision | Documents the current reviewed implementation; historical versioned docs are not published today. |
+
+<StatusNote status="alpha" title="No stable-major compatibility promise yet">
+  The CLI, Acore language, package format, UI application workflow, and Cloud
+  APIs remain pre-stable unless a narrower page says otherwise. Pin all
+  participating versions and test the complete consumer path before upgrading.
+</StatusNote>
+
+## Choose release identifiers deliberately
+
+Use a monotonically understandable scheme such as `0.8.2` or
+`2026.09.16.1`, but treat that as team policy rather than compiler-enforced
+SemVer. A Cloud project/version pair is immutable: the same bytes can be
+retried, while different bytes must use a different version.
+
+Do not overwrite an accepted artifact to make a version appear unchanged.
+Create a new version, preserve the old artifact and lock, and review:
+
+```bash
+axiom diff previous.acore candidate.acore --format semantic
+axiom test candidate.acore
+axiom build candidate.acore
+```
+
+The current semantic classifier is review evidence, not a universal proof of
+consumer compatibility. Field projection, authorization, validation, default,
+error, stream, cache, and target behavior still require owner review.
+
+## Deprecate before removing
+
+Acore accepts `@deprecated` metadata on supported declarations. Use it to
+record intent near the authored surface:
+
+```acore
+@deprecated { replacement = "currentName" }
+legacyName = "compatibility-value"
+```
+
+A useful deprecation change includes:
+
+1. the replacement and migration path;
+2. the first release carrying the notice;
+3. known consumers or an explicit statement that discovery is incomplete;
+4. a test proving old and new behavior during the overlap; and
+5. a later, separately reviewed removal diff.
+
+There is no platform-wide deprecation duration guarantee today. Teams must set
+and communicate their own removal window. An annotation also does not force an
+arbitrary runtime or generated client to display a warning; verify the selected
+toolchain's output.
+
+## Upgrade safely
+
+Upgrade one boundary at a time where practical:
+
+1. record the current CLI, extractor, runtime, host, and client versions;
+2. preserve the accepted source, artifacts, and dependency locks;
+3. update the chosen tool or dependency and resolve deliberately;
+4. inspect semantic and lock changes;
+5. run local contract/security tests and real consumer tests; and
+6. promote a new immutable release only after the rollback input is retained.
+
+Use the [release and upgrade workflow](/workflows/release-and-upgrade) for the
+artifact lifecycle and the [support matrix](/introduction/support-matrix) for
+the current maturity of each integration.

@@ -1,54 +1,100 @@
 ---
-title: Vanilla Web (ATMX)
-description: Framework-less, HTML-first API integration.
+title: Vanilla web with ATMX
+description: Start the Wasm runtime explicitly and use imperative or HTML-first browser integration.
 ---
 
-For server-rendered apps (Django, Flask, PHP) or Alpine.js sites, `atmx-web` allows you to bind APIs entirely via HTML attributes. **No build step required.**
+<StatusNote status="available" title="ATMX web client">
+  The browser runtime, imperative API, DOM scanner, and generated web client
+  path are implemented. Browser compatibility, CSP, CORS, and application
+  release integration remain your responsibility.
+</StatusNote>
 
-### Initialization
-Load the ES module and config directly in your `<head>`:
+## Start before mounting application code
+
+Treat startup as asynchronous. `atmx.init` is idempotent and concurrent calls
+share one initialization. Check its structured result before code issues a
+query.
+
+```ts
+import { atmx } from '@axiomcore/atmx';
+import { sdk, AxiomDefaultConfig } from './generated/sdk';
+
+const result = await atmx.init(AxiomDefaultConfig);
+if (!result.ok) {
+  throw new Error(result.error?.message ?? 'Axiom runtime failed to start');
+}
+
+mountApplication({ sdk });
+```
+
+Separately loaded code can await `atmx.whenReady()`. Calling it before any
+initialization has started rejects rather than silently booting an unknown
+configuration.
+
+## Configuration
+
+Each contract config provides `contractUrl` and `baseUrl`. A signature and
+public key are optional only as a pair. `wasmUrl` lets an application self-host
+the engine and pin it with the JavaScript facade.
+
+```ts
+const config = {
+  contracts: {
+    service: {
+      contractUrl: '/contracts/service.axiom',
+      baseUrl: 'https://api.example.com',
+      contractSignature: releaseProof.signature,
+      contractPublicKey: releaseProof.publicKey,
+    },
+  },
+  wasmUrl: '/assets/axiom_runtime.wasm',
+  debug: false,
+};
+```
+
+Use generated configuration where possible so endpoint metadata and proof
+material stay aligned.
+
+## Imperative operations
+
+The public ATMX facade includes `query`, `mutate`, `mutateBytes`, targeted
+`invalidate`, `getCachedQueryData`, `setQueryData`, namespace cache clearing,
+and full cache purging. It also exposes stream connect, disconnect, and send
+operations where the contract declares a compatible endpoint.
+
+```ts
+const profile = await atmx.query('service.users.getUser', { id: 42 });
+await atmx.mutate('service.users.updateUser', { id: 42 }, { name: 'Ada' });
+atmx.invalidate('service.users.getUser', { id: 42 });
+```
+
+Route strings and payload shapes above are illustrative; use generated symbols
+for your contract.
+
+## Declarative HTML
+
+The DOM scanner recognizes `ax-query` and `ax-mutate` scopes, observes added
+nodes, and connects state-aware descendants. Install the temporary SDK
+placeholder before a declarative framework hydrates if the generated module
+loads asynchronously.
 
 ```html
+<script src="/assets/atmx.umd.js"></script>
+<script>atmx.installSDKPlaceholder()</script>
 <script type="module">
-  import { atmx } from "https://atmx.axiomcore.dev/latest/atmx.es.js";
-  import { AxiomDefaultConfig } from "/generated/sdk.js";
-
-  await atmx.init(AxiomDefaultConfig);
+  import { AxiomDefaultConfig } from '/generated/sdk.js';
+  const result = await atmx.init(AxiomDefaultConfig);
+  if (!result.ok) console.error(result.error);
 </script>
 ```
 
-### HTML-First Data Binding
-The ATMX `MutationObserver` scans the DOM for `ax-` attributes and links them to the Wasm engine autonomously.
+Some declarative argument expressions are evaluated by the ATMX integration.
+Treat authored attributes as application code, enforce a suitable Content
+Security Policy, and never render untrusted strings into `ax-*` attributes.
 
-```html
-<div ax-query="sdk.billing.getInvoices()">
-  
-  <p ax-when="loading">Loading invoices...</p>
-  
-  <div ax-when="data">
-    <!-- List Rendering -->
-    <ul ax-for="invoice in $data">
-      <li ax-text="invoice.amount + ' - ' + invoice.status"></li>
-    </ul>
-  </div>
+## Authentication and cache
 
-</div>
-```
-
-### Forms and Mutations
-Binding forms is automatic. ATMX intercepts the submit event, serializes the `FormData`, and executes the Wasm mutation.
-
-```html
-<!-- ax-invalidates tells Wasm to refetch the users list upon success -->
-<form ax-mutate="sdk.users.createUser()" ax-invalidates="sdk.users.getUsers()">
-  <input name="email" type="email" />
-  
-  <!-- Automatic field-level error messages -->
-  <span ax-error-for="email" class="text-red-500"></span>
-
-  <button type="submit">
-    <span ax-when="idle">Create</span>
-    <span ax-when="mutating">Creating...</span>
-  </button>
-</form>
-```
+Use `setAuthToken`, `setNamespaceAuthToken`, or `setGlobalAuthToken` for
+in-memory credentials, then clear them on logout. Cookie sessions follow
+browser cookie and same-site policy. ATMX query snapshots use
+`sessionStorage`; purge sensitive namespaces as part of session teardown.

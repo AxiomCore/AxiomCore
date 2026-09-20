@@ -1,0 +1,65 @@
+---
+title: Doctor and Onboarding
+description: Start a supported AxiomCore integration and diagnose it without reading source code.
+---
+
+## `axiom onboard`
+
+Run this from an application root before creating files:
+
+```bash
+axiom onboard
+```
+
+It identifies a backend, frontend, or full-stack repository and prints the
+shortest supported path. It does not log in, release, or pull a contract unless
+you explicitly supply the action that needs it.
+
+| Goal | Command |
+| --- | --- |
+| Create a detected FastAPI/Go contract source | `axiom onboard --role backend --apply` |
+| Specify a FastAPI entrypoint | `axiom onboard --role backend --entrypoint main.py:app --module axiom-fastapi --apply` |
+| Plan client integration | `axiom onboard --role frontend --framework atmx-web` |
+| Pull and generate a client in one explicit step | `axiom onboard --role frontend --contract org/project --framework atmx-web` |
+
+`--apply` only creates `axiom.acore`. It refuses to overwrite an existing
+contract source. Releasing is always an explicit later command:
+
+```bash
+axiom build
+axiom login
+axiom build --release
+```
+
+## `axiom doctor`
+
+`doctor` is a non-mutating local diagnostic. It checks the active control
+plane profile, Cloud session presence without revealing credentials, contract
+source, compiled artifact validity, dependency manifest, directory project
+link, and toolchain prerequisites relevant to the detected app.
+
+```bash
+axiom doctor
+axiom doctor --json
+axiom doctor --json --strict > axiom-doctor.json
+```
+
+Warnings are actionable but do not fail strict mode; failures are prerequisites
+such as an invalid `AxiomDeps.toml`, unreadable artifact, or a missing runtime
+tool required by the current project. Every result includes a next command or
+fix when one is available.
+
+The JSON schema is intentionally small and stable:
+
+```json
+{
+  "schema_version": 1,
+  "control_plane": "https://api.axiomcore.dev",
+  "project_root": "/path/to/app",
+  "checks": [{ "id": "artifact", "status": "pass", "summary": "…" }]
+}
+```
+
+Do not include the report in public bug reports without reviewing
+`project_root`; it contains a local path for support usefulness, but never
+includes tokens, keys, or contract contents.

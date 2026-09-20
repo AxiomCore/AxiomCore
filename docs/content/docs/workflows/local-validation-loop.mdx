@@ -1,0 +1,38 @@
+---
+title: Local and CI validation loop
+description: Apply the same deterministic checks before review and in automation.
+---
+
+Use the smallest check for the artifact you changed, then run the consumer
+boundary that can reveal integration failures.
+
+| Change | Fast check | Consumer check |
+| --- | --- | --- |
+| Contract source | `axiom eval axiom.acore` | `axiom build`, `axiom test`, semantic diff |
+| Domain semantics | `axiom domain validate axiom.acore` | build and domain review |
+| Security semantics | `axiom security check axiom.acore` | strict build/release gate where enabled |
+| Acore UI | `axiom ui check main.acore --target …` | `axiom ui test` and target host run |
+| Contract lock | `axiom contract verify` | `axiom contract check-source main.acore` |
+| Package lock | `axiom packages verify` | package-backed source check/build |
+
+## Host-independent UI CI
+
+```bash
+axiom run main.acore --target web --once
+axiom run main.acore --target android --once
+axiom run main.acore --target ios --once
+```
+
+`--once` validates compilation and exits. It does not replace an emulator,
+simulator, or browser interaction test.
+
+## Review artifacts
+
+Preserve the source, dependency manifest, committed lock, semantic diff, and
+test result that belong to the same candidate. Reject a pipeline that pulls an
+unpinned latest package between checking and building.
+
+For environment-specific failure, attach `axiom doctor --json` after reviewing
+its local project path. Do not attach credentials or secret-bearing runtime
+configuration.
+

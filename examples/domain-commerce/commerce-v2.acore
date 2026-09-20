@@ -1,0 +1,77 @@
+module axiom.examples.domain_commerce
+
+project {
+  id = "domain-commerce"
+  version = "v1.1.0"
+}
+
+variants { ["default"] { include = Listing { "*" } } }
+
+models {
+  ["Customer"] = ModelDef {
+    name = "Customer"
+    fields = Mapping {
+      ["id"] = ModelField { name = "id" typeRef = TypeRefPrimitive { kind = "string" } }
+      ["email"] = ModelField { name = "email" typeRef = TypeRefPrimitive { kind = "string" } }
+      ["displayName"] = ModelField { name = "displayName" typeRef = TypeRefPrimitive { kind = "string" } }
+      ["loyaltyTier"] = ModelField { name = "loyaltyTier" typeRef = TypeRefPrimitive { kind = "string" } isOptional = true }
+    }
+  }
+  ["Order"] = ModelDef {
+    name = "Order"
+    fields = Mapping {
+      ["id"] = ModelField { name = "id" typeRef = TypeRefPrimitive { kind = "string" } }
+      ["customerId"] = ModelField { name = "customerId" typeRef = TypeRefPrimitive { kind = "string" } }
+      ["totalCents"] = ModelField { name = "totalCents" typeRef = TypeRefPrimitive { kind = "int64" } }
+      ["status"] = ModelField { name = "status" typeRef = TypeRefPrimitive { kind = "string" } }
+    }
+  }
+}
+
+hidden Models = {
+  Customer = TypeRefNamed { value = "Customer" }
+  Order = TypeRefNamed { value = "Order" }
+}
+
+Entities = Entities {
+  customer = extend Models.Customer { doc = "A purchaser with a durable account." }
+  order = extend Models.Order { doc = "A completed or in-progress purchase." }
+}
+
+domain {
+  entities = Entities
+  relationships = Relationships {
+    ["orderCustomer"] = DomainRelationship { from = Entities.order to = Entities.customer via = "customerId" required = true }
+  }
+  invariants = Invariants {
+    ["orderCustomerRequired"] = DomainInvariant { scope = Entities.order expression = "customerId != null" fields = Listing { "customerId" } }
+    ["orderTotalNonNegative"] = DomainInvariant { scope = Entities.order expression = "totalCents >= 0" fields = Listing { "totalCents" } }
+  }
+  projections = Projections {
+    // Removing an exposed field is intentionally consumer-breaking. The
+    // semantic diff identifies this projection path for human classification.
+    ["publicCustomer"] = DomainProjection { entity = Entities.customer fields = Listing { "id" } audience = "public-web" }
+    ["customerReceipt"] = DomainProjection { entity = Entities.order fields = Listing { "id" "totalCents" "status" } audience = "customer-web" }
+  }
+}
+
+endpoints {
+  ["get_customer"] = EndpointDef {
+    id = 1
+    name = "get_customer"
+    method = "GET"
+    path = "/customers/{id}"
+    returnType = Entities.customer
+    responseProjection = "publicCustomer"
+    parameters = Listing { EndpointParameter { name = "id" source = "path" typeRef = TypeRefPrimitive { kind = "string" } } }
+  }
+  ["get_order_receipt"] = EndpointDef {
+    id = 2
+    name = "get_order_receipt"
+    method = "GET"
+    path = "/orders/{id}/receipt"
+    returnType = Entities.order
+    responseProjection = "customerReceipt"
+    parameters = Listing { EndpointParameter { name = "id" source = "path" typeRef = TypeRefPrimitive { kind = "string" } } }
+  }
+}

@@ -1,0 +1,39 @@
+---
+title: Release and upgrade
+description: Promote immutable contracts and applications without losing semantic review evidence.
+---
+
+## Contract release
+
+1. Build and inspect the local `.axiom`.
+2. Run contract, domain, and security checks applicable to the project.
+3. Review the semantic diff from the previous immutable version.
+4. Release a new version with `axiom build --release --version …` or
+   `axiom release axiom.axiom --version …`.
+5. Open a contract review in the Cloud control plane when team approval is
+   required.
+
+## Consumer upgrade
+
+1. Change the contract/package source to the exact candidate version.
+2. Resolve a new lock.
+3. Inspect and diff the locked artifact.
+4. Run the existing frontend or Acore UI consumer suite.
+5. Commit source intent and the lock atomically.
+
+## Application release
+
+Build `.axiomapp` once per target, inspect each artifact, and package them only
+after target validation. Current application artifacts do not imply Apple or
+Google signing, store submission, or physical-device certification.
+
+## Rollback
+
+Rollback means selecting a previously reviewed immutable release or rebuilding
+from a reviewed source/lock pair. Never rewrite an existing artifact version:
+that would detach audit evidence from the bytes it approved.
+
+See [Contract pull requests](/workflows/contract-pull-requests) for the Cloud
+review record and [Security review and release gates](/workflows/security-review-and-release-gates)
+for security-specific evidence.
+

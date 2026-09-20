@@ -1,170 +1,189 @@
 ---
-title: CLI Reference
-description: Exhaustive list of AxiomCore commands.
+title: CLI reference
+description: Public Axiom CLI commands for contracts, packages, clients, applications, and Cloud projects.
 ---
 
-### Project Setup
-*   `axiom init`: Launches the TUI wizard to scaffold `axiom.acore`.
-*   `axiom install <extractor> --module`: Installs a backend schema extractor into `~/.axiom/plugins/`.
-*   `axiom join <email>`: Join the private alpha waitlist.
+<StatusNote status="alpha" title="Axiom CLI">
+  These commands are implemented in the current CLI, but names, flags, output
+  schemas, and connected-service requirements can change before a stable major
+  release. Use `axiom --help` and `axiom <command> --help` for the installed
+  version.
+</StatusNote>
 
-### Compilation & Cloud
-*   `axiom build <file>`: Compiles backend `.acore` into an unsigned local `.axiom` contract and generates a `.lockfile`.
-*   `axiom release`: Sends the build to Axiom Cloud, the signing boundary, and publishes the signed contract.
-*   `axiom project create / link`: Creates or associates the current directory with a cloud project.
+## Diagnose and begin
 
-For `axiom release` and `axiom build --release`, an existing directory link is
-used without prompting. On the first release from an unlinked directory, the
-CLI loads the signed-in account's projects and shows an arrow-key picker with
-**Create a new project** first. Selecting an existing project links it before
-the artifact is uploaded. Creating one collects name, lowercase slug, and an
-optional description, then links and deploys in the same release command.
-If the CLI is not signed in, it stops with `axiom login` instructions instead
-of guessing a project from the artifact.
+| Command | Purpose |
+| --- | --- |
+| `axiom doctor [--json] [--strict]` | Read-only prerequisite report. Strict mode returns non-zero when a required check fails. |
+| `axiom onboard` | Detect a backend or frontend role and print the shortest supported path. Use `--apply` only to create the detected backend starter. |
+| `axiom init [entrypoint] [--module MODULE]` | Create `axiom.acore` for a supported backend/extractor path. |
+| `axiom login` | Start the Cloud device authorization flow. |
+| `axiom join EMAIL` | Request access where the installed CLI still uses the alpha access gate. |
+| `axiom install PACKAGE --module` | Install a compiler/extractor module. |
 
-### Development
-*   `axiom serve`: Boots the Axum-based local mock server.
-*   `axiom watch`: Starts the live HUD. Rebuilds the contract automatically on file save.
-*   `axiom diff <file1> <file2>`: Computes JSON-Atom diffs. Supports `--format changelog | semantic | text`.
-*   `axiom domain validate [axiom.acore]`: Validates the optional Domain Model v1 block and prints its canonical manifest hash. Add `--json` for CI.
-*   `axiom security check [axiom.acore]`: Runs optional Security Mode AXSEC analysis without writing an artifact. `--json` emits the signed-manifest shape and `--fail-on-warning` supports a CI ratchet. In strict mode, error findings exit non-zero.
-*   `axiom domain bootstrap <input> --source openapi|sql --output axiom.domain.acore`: Creates reviewable Domain Model suggestions from OpenAPI JSON or exported SQL DDL. It never overwrites a contract or connects to a live database.
-
-### Acore applications
-
-* `axiom run <main.acore> --target ios|android|web`: compiles, launches, and watches one application.
-* `axiom ui test <main.acore> --target ios|android|web`: runs compiler/session safety checks without launching a host.
-* `axiom ui build <main.acore> --target ios|android|web`: emits `dist/<module>-<target>.axiomapp` with the target payload, runtime configuration, assets, capability report, provenance, and checksums. Native archives include the verified host with Axiom Runtime statically embedded; web includes the host and Runtime WASM.
-* `axiom inspect <application.axiomapp>`: verifies both checksum layers and prints the application, available targets, mode, graph revision, and embedded host identity.
-* `axiom install <application.axiomapp>`: verifies and copies the intact archive into the content-addressed Axiom application cache. It does not unpack into the project or application cache.
-* `axiom package <ios.axiomapp> <android.axiomapp> <web.axiomapp> --out dist/application.axiomapp`: combines independently built targets for the same application into one deterministic multi-target envelope. Each nested target artifact remains byte-for-byte intact.
-* `axiom run <application.axiomapp> [--target ios|android|web]`: runs directly from the archive. A multi-target archive prompts in an interactive terminal when `--target` is omitted and requires the flag in non-interactive environments.
-
-Production-mode application builds reject unsigned local contracts. Use
-`--development` only for a local fixture; the resulting manifest records
-`mode: development` and lists every unsigned contract. `--out <path>` selects
-an explicit artifact path. A target-specific `.axiomapp` uses
-`axiom-application/v1`; `axiom package` wraps one or more of those artifacts in
-an `axiom-application-set/v1` envelope. The common extension identifies the
-verified Axiom application boundary, while each nested build remains
-platform-specific. Native execution materializes only the embedded host and
-bundle into Axiom's opaque cache because `simctl` and `adb` require filesystem
-paths; it never unpacks generated source into the developer workspace. These
-are not editable Xcode/Gradle projects. Physical-device/store distribution
-remains uncertified.
-
-Example release-development flow:
+`doctor` does not log in, pull a contract, or edit the workspace. Prefer its
+JSON form in CI and support reports:
 
 ```bash
-axiom ui build main.acore --target ios --development
-axiom ui build main.acore --target android --development
+axiom doctor --json --strict
+```
+
+## Evaluate, validate, and build
+
+| Command | Purpose |
+| --- | --- |
+| `axiom eval FILE [--format FORMAT] [--variant NAME]` | Evaluate Acore and render the selected output. |
+| `axiom test [FILE] [--tag TAG]` | Run declared Acore test suites, optionally filtered by tag. |
+| `axiom build [FILE] [--variant NAME]` | Build a local `.axiom` artifact. |
+| `axiom build --release [--project ID_OR_SLUG] [--version VERSION]` | Build and send the result through the connected Cloud release path. |
+| `axiom benchmark [FILE]` | Measure local build and artifact-load boundaries with warmup/iteration controls and a JSON report. |
+| `axiom diff FILE1 [FILE2]` | Diff two inputs, or one input against its lock, using `text`, `semantic`, `atom`, or `changelog` output. |
+| `axiom inspect [PATH]` | Open the contract inspector, or verify and describe an `.axiomapp`. |
+| `axiom domain validate [FILE] [--json]` | Validate Domain Model references and print the canonical manifest hash. |
+| `axiom domain bootstrap INPUT --source SOURCE` | Write reviewable domain suggestions with `SOURCE` set to `openapi` or `sql`, without modifying the input or connecting to a live database. |
+| `axiom security check [FILE] [--json] [--fail-on-warning]` | Analyze the optional security model without writing an artifact. |
+
+`benchmark` defaults to 10 measured iterations, 2 warmups, and
+`axiom-benchmark.json`. Results describe that machine and checkout; use the
+same inputs and environment when comparing reports.
+
+## Local development
+
+| Command | Purpose |
+| --- | --- |
+| `axiom run BACKEND.acore [--mode service\|mock]` | Run backend source. Service is the default; contract-only Acore services currently share the deterministic runtime implementation with mock mode. A declared Python or Go `BackendConfig` launches that real entrypoint. |
+| `axiom serve [FILE] [--port 8080] [--debug]` | Start the local mock server from a contract. Without a file, the connected path may resolve saved Cloud mock configuration. |
+| `axiom watch --build` | Watch `axiom.acore` and the single amended backend source recognized by the current watcher, show semantic changes, and rebuild on change. |
+| `axiom watch` | Pull the current consumer configuration, then watch `project.axiom` for contract changes. |
+| `axiom repl` | Start the Acore REPL. |
+| `axiom lsp` | Start the Acore language server over its configured transport. |
+
+The current watcher is not a general recursive source watcher. Confirm that
+your extractor entrypoint is among the watched paths; use the explicit build
+and test commands in CI.
+
+## Pull a client
+
+`axiom pull` accepts one source through the positional argument or
+`--contract`: a local `.axiom`, dependency config, AxiomCore URL, or
+`organization/project[/version]` reference.
+
+```bash
+axiom pull ../backend/axiom.axiom --framework atmx-web
+axiom pull organization/project/1.2.0 --framework flutter --out lib/axiom
+axiom pull --contract-config AxiomDeps.toml --framework atmx-react
+```
+
+Useful flags are `--framework`, `--name`, `--out`, `--contract`, and
+`--contract-config`. Project privacy is enforced by the service. Do not infer
+that an anonymous `not found` response proves whether a private project exists.
+
+## Contract dependency locks
+
+These commands explicitly manage reviewed contract locks for CI and release
+workflows. Normal development through `axiom run FRONTEND.acore` discovers the
+manifest and maintains an internal lock under `.axiom/dev` automatically:
+
+| Command | Purpose |
+| --- | --- |
+| `axiom contract resolve` | Resolve manifest entries, show changes, and write the deterministic lock. |
+| `axiom contract verify` | Re-resolve and verify locked bytes and proof without changing files. |
+| `axiom contract diff BEFORE AFTER` | Show semantic lock changes. |
+| `axiom contract facade ALIAS` | Print read-only virtual-facade metadata for a locked alias. |
+| `axiom contract check-source SOURCE` | Validate `use contract` declarations against the committed lock. |
+
+All accept their documented `--deps` or `--lock` overrides where applicable.
+Unsigned local entries produce a development warning.
+
+## Typed frontend packages
+
+| Command | Purpose |
+| --- | --- |
+| `axiom packages build SOURCE --out FILE` | Validate and canonically encode a package envelope. |
+| `axiom packages resolve` | Resolve package dependencies into `AxiomPackages.lock`. |
+| `axiom packages verify` | Re-resolve locked bytes and proof. |
+| `axiom packages inspect ALIAS` | Print one verified locked envelope. |
+| `axiom packages diff BEFORE AFTER [--approve CHANGE]` | Classify package changes and enforce explicit approvals. |
+| `axiom packages check-source SOURCE --target TARGET` | Validate imports and compile the unchanged source for a target. |
+| `axiom packages run SOURCE --target TARGET [--once]` | Run package-backed source through the normal target session. |
+
+Marketplace discovery and installation are not provided by these commands.
+They consume explicit package files and locks.
+
+## Acore UI applications
+
+| Command | Purpose |
+| --- | --- |
+| `axiom ui init DIRECTORY --target TARGET` | Create a small authored Acore UI starter in an empty directory. |
+| `axiom ui check SOURCE --target TARGET` | Parse, validate, and lower to an in-memory graph. |
+| `axiom ui run SOURCE --target TARGET [--once]` | Start the target development session. |
+| `axiom run SOURCE --target TARGET [--once]` | Run authored source, automatically building stale local contracts, maintaining the development lock, and preparing registered sandbox extensions. |
+| `axiom ui inspect VIEW SOURCE --target TARGET` | Print a read-only compiler view for the selected graph revision. |
+| `axiom ui context SOURCE --target TARGET` | Emit bounded, redacted semantic context for tooling. |
+| `axiom ui ai-check SOURCE --target TARGET` | Run the compiler-backed AI safety check. |
+| `axiom ui doctor --target TARGET [--json]` | Inspect target-host prerequisites. |
+| `axiom ui capabilities --target TARGET` | Print the installed target capability registry. |
+| `axiom ui test SOURCE --target TARGET` | Run compiler and session safety checks without launching a host. |
+| `axiom ui build SOURCE --target TARGET` | Build a target-specific `.axiomapp`. |
+
+Target values currently used by the application workflow are `web`,
+`android`, and `ios`. Native availability depends on an installed Axiom UI
+Host and local emulator/simulator prerequisites.
+
+Use `--frozen` when a run must consume reviewed locks and signed extension
+workflows without development regeneration. `--lock` remains an advanced
+override and is not required for the normal source-first workflow.
+
+### UI Host commands
+
+`axiom ui host install`, `status`, and `recover` install or inspect the
+development host and recover stale delivery-control state. Installation can
+use a verified release manifest/variant or an explicit host fixture accepted
+by the current development workflow.
+
+### Application artifacts
+
+```bash
 axiom ui build main.acore --target web --development
-axiom package dist/*-ios.axiomapp dist/*-android.axiomapp dist/*-web.axiomapp \
-  --out dist/my-app.axiomapp
-axiom inspect dist/my-app.axiomapp
-axiom install dist/my-app.axiomapp
-axiom run dist/my-app.axiomapp       # prompts for a target
-axiom run dist/my-app.axiomapp --target web
+axiom inspect dist/my-app-web.axiomapp
+axiom install dist/my-app-web.axiomapp
+axiom run dist/my-app-web.axiomapp --target web
 ```
 
-### Local control plane (`laxiom`)
+`axiom install FILE.axiomapp` verifies and copies the intact artifact to the
+local content-addressed application cache. `axiom package` combines compatible
+target artifacts into one multi-target envelope. A production-mode build
+rejects unsigned local contract dependencies; `--development` records them in
+the manifest. Physical-device certification and store publishing are not part
+of this CLI contract today.
 
-Use the normal `axiom` command for the production AxiomCore control plane. For
-end-to-end development against the backend and dashboard on your machine, build
-the CLI from this checkout and expose the included local wrapper as `laxiom`:
+## Cloud projects and releases
 
-```bash
-# From anywhere inside the AxiomCore checkout.
-AXIOMCORE_REPO="$(git rev-parse --show-toplevel)"
-cargo build --release --manifest-path "$AXIOMCORE_REPO/cli/Cargo.toml"
-"$AXIOMCORE_REPO/cli/scripts/install-laxiom"
+| Command | Purpose |
+| --- | --- |
+| `axiom project list` | List accessible Cloud projects. |
+| `axiom project create` | Create a project and optionally link a directory. |
+| `axiom project link` | Link the current directory to a selected or explicit project. |
+| `axiom project rotate-key --project SLUG` | Rotate the active project signing key while retaining old public verification keys. |
+| `axiom release [FILE]` | Upload a compiled artifact to the linked or explicitly selected project/version. |
+| `axiom deploy mock-server [FILE]` | Evaluate local Acore and save its mock configuration for the linked Cloud project. |
 
-# Run this once if ~/.local/bin is not already on PATH.
-export PATH="$HOME/.local/bin:$PATH"
-```
+Project operations require authentication, membership, and a reachable
+control plane. Releasing is not the same as immediate production deployment;
+Cloud validation, policy, channel, and environment state determine the durable
+outcome.
 
-The installer creates a stable `~/.local/bin/laxiom` symlink, so `laxiom`
-works from any application directory. It never depends on the directory from
-which you ran the setup command.
+## CLI cache
 
-In separate terminals, start the local services first:
+`axiom cache ls`, `axiom cache get --key KEY`, and `axiom cache clear` inspect
+the CLI profile's local Sled cache. The list UI can delete the selected entry
+with `x`. These commands do not claim to clear every Flutter application or
+browser session cache.
 
-```bash
-cd axiom-backend && just serve-dev
-cd axiom-frontend && just serve-dashboard
-# Optional, but required to drain asynchronous releases and environments.
-cd axiom-backend && just worker-dev
-```
+## Exit behavior and automation
 
-Sign in to the local dashboard at `http://localhost:8080/auth`, then run:
-
-```bash
-laxiom login
-laxiom project list
-laxiom project link
-laxiom build --release
-```
-
-`laxiom login` opens `http://localhost:8000/device`. Because the dashboard
-session is an HttpOnly cookie for `localhost`, the approval page can bind the
-one-time CLI code to that local account without exposing any token to browser
-JavaScript.
-
-The wrapper sets `AXIOM_CLOUD_URL=http://localhost:8000` and, when present,
-uses this checkout's built `release/atmx-cli` generator for `laxiom pull`.
-This lets a local client/runtime change be exercised before publishing its npm
-companion. This override is
-intentionally **local-only**: the CLI accepts `localhost`, `127.0.0.1`, or
-`::1`, rejects remote override origins and URL credentials, and stores its
-tokens, project links, and caches under
-`~/.config/axiom/local`. Your production `axiom` session is therefore never
-sent to or overwritten by a local service. To use a different loopback port,
-set `AXIOM_LOCAL_API_URL`, for example:
-
-```bash
-AXIOM_LOCAL_API_URL=http://127.0.0.1:9000 laxiom project list
-```
-
-`laxiom` does not require a separate installation update. Its stable symlink
-always launches this checkout's `cli/target/release/axiom-cli`. After changing
-CLI source, rebuild that binary and your next `laxiom` command uses it:
-
-```bash
-AXIOMCORE_REPO="$(git rev-parse --show-toplevel)"
-cargo build --release --manifest-path "$AXIOMCORE_REPO/cli/Cargo.toml"
-```
-
-You only need to rerun `install-laxiom` if you move or delete the checkout.
-Updating a separately installed production `axiom` binary does not change
-`laxiom`; rebuilding this local checkout does.
-
-### Client Generation
-
-`axiom pull` installs a signed `.axiom` contract, writes `AxiomDeps.toml`, and
-generates the client SDK (Flutter, ATMX Web, React). It accepts any of these
-sources:
-
-```bash
-# Existing local artifact or dependency config
-axiom pull ./api.axiom
-axiom pull ./AxiomDeps.toml
-
-# Active release channel, or an immutable release
-axiom pull default/first-project
-axiom pull default/first-project/v0.0.3
-
-# Either share URL form works; the CLI uses the reserved API namespace.
-axiom pull https://axiomcore.dev/default/first-project
-axiom pull https://axiomcore.dev/contracts/default/first-project/v0.0.3
-```
-
-The canonical share URL is
-`https://axiomcore.dev/contracts/<organization>/<project>[/<version>]`. The
-`/contracts` prefix is reserved so project names cannot collide with landing
-site paths. The shorter URL remains accepted by the CLI for convenience.
-
-Projects are private by default. Public projects can be pulled anonymously;
-private project access is checked by the API, not the CLI. If a signed-in
-account lacks access, the CLI names that account and offers an account switch
-and device login. An anonymous pull never reveals whether a private project
-exists.
+- use `--json` only where the command explicitly supports it;
+- use non-interactive flags and pinned inputs in CI;
+- treat a non-zero exit as the command result, not a guarantee that no remote
+  state was written before a later stage failed; and
+- avoid parsing human-oriented TUI or styled output as an API.

@@ -1,17 +1,29 @@
 ---
-title: Using the Marketplace
-description: Seamlessly importing third-party API contracts.
+title: Axiom Marketplace
+description: Planned discovery and installation for reusable Axiom packages.
 ---
 
-*The Axiom Marketplace is currently in active development.*
+<StatusNote status="coming-soon" title="No supported marketplace workflow yet">
+  Axiom Marketplace is a product direction. There is currently no public
+  catalog or supported command for browsing and installing marketplace
+  packages. Examples on this page are conceptual, not runnable instructions.
+</StatusNote>
 
-**The Concept:**
-Integrating APIs like Stripe, Twilio, or SendGrid usually means reading extensive documentation, installing fat NPM packages, and handling their specific retry edge-cases.
+The planned Marketplace will provide one discovery surface for independently
+versioned Axiom packages, including:
 
-With AxiomCore, verified `.axiom` contracts for major providers are hosted on the Hub. You can pull them directly into your frontend app:
+- service/API contracts;
+- themes and component libraries;
+- database-schema packages;
+- extension metadata and capability requirements; and
+- application-policy packages.
 
-```bash
-axiom pull --name stripe-v1
-```
+The package foundation already exists: `.axiom` envelopes carry a kind,
+identity, version, targets, canonical payload, and integrity data, and local
+resolution can produce a committed dependency lock. Marketplace work will add
+catalog, publisher, trust, review, and supported installation experiences on
+top of that foundation.
 
-Because `.axiom` is a generic artifact, the Axiom Runtime automatically knows how to handle Stripe's rate limits and pagination logic natively. You get a fully typed SDK for Stripe in Flutter or React, powered entirely by your local Wasm/Rust engine.
+Until then, use only the local or connected package-resolution workflows that
+are explicitly documented elsewhere. Do not depend on a provider package by
+name unless you control and verify its artifact and lock.

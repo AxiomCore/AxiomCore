@@ -1,42 +1,143 @@
 ---
-title: Syntax Overview
-description: Understanding the object-oriented configuration engine.
+title: Syntax overview
+description: The implemented lexical and structural rules of an Acore module.
 ---
 
-Acore is a statically-typed configuration language built on top of Apple's PKL. It allows you to declare JSON-like structures but with inheritance, functions, and strong validation.
+An Acore module is a sequence of declarations, properties, imports, and object
+members. Newlines and spaces separate tokens but are not statement terminators.
+Semicolons are not part of the current source grammar.
 
-### Object Definitions
+## Module declaration
 
-```pkl
-class ProjectConfig {
-  id: String
-  version: String
+Use a dotted module name when a profile needs a stable source identity:
+
+```acore
+module commerce.orders
+```
+
+The generic evaluator accepts modules without this declaration. Acore UI source
+requires it because the module identity participates in the graph and artifact.
+
+## Comments
+
+Line comments begin with `//` and continue to the end of the line.
+
+```acore
+// Contract policy shared by all endpoints.
+policies {
+  cache = CachePolicy { strategy = "network_first" ttlSeconds = 60 }
 }
+```
 
-project = new ProjectConfig {
-  id = "my-service"
+Block comments are not part of the current lexer.
+
+## Properties
+
+A property can have a value, a type, or both:
+
+```acore
+name = "orders"
+port: Int = 8080
+optionalLabel: String? = null
+```
+
+The block shorthand creates a dynamic object assigned to the property:
+
+```acore
+project {
+  id = "orders-api"
   version = "1.0.0"
 }
 ```
 
-### Modifiers
+Use a typed object expression when a value must instantiate a declared class:
 
-Acore supports modifiers to control visibility and immutability:
-*   `local`: Variable is available in scope but won't be exported to the `.axiom` binary.
-*   `hidden`: Property is invisible to final serialization (useful for helper objects).
-*   `open` / `abstract`: Allow a class to be extended by other classes.
-
-```pkl
-hidden helperValue = 42
-local tempString = "Do not export me"
+```acore
+cache = CachePolicy {
+  strategy = "cache_first"
+  ttlSeconds = 300
+}
 ```
 
-### Control Flow
+There is no `new` keyword. `new CachePolicy {}` is invalid Acore.
 
-Acore supports late-binding and conditionals:
+## Objects and dynamic keys
 
-```pkl
-isProduction = read_env("ENV") == "prod"
+Plain braces create a dynamic object. Bracketed keys are evaluated at runtime:
 
-cacheTTL = if (isProduction) 3600 else 60
+```acore
+headers = {
+  contentType = "application/json"
+  ["x-request-id"] = "example"
+}
 ```
+
+Contract maps commonly use typed mapping objects:
+
+```acore
+variants = Mapping {
+  ["mobile"] = VariantConfig {
+    include = Listing { "public_*" }
+  }
+}
+```
+
+## Collections
+
+Square brackets create a list expression. Commas are optional:
+
+```acore
+codes = [502, 503, 504]
+names = ["tasks" "users"]
+```
+
+Contract schemas also use typed collection objects such as `Listing {}` and
+`Mapping {}` because their class constraints are part of `acore.base`:
+
+```acore
+retryOnCodes = Listing { 502 503 504 }
+writableFields = Listing { "title" "status" }
+```
+
+## Strings and numbers
+
+The current parser accepts double-quoted strings, signed integers, and decimal
+floats:
+
+```acore
+message = "contract ready"
+attempts = 3
+sampleRate = 0.25
+```
+
+Escapes are lexed inside double-quoted strings. Triple-quoted and hash-delimited
+tokens are reserved by the lexer but are not part of the documented evaluated
+surface yet; use ordinary strings in portable source.
+
+## Annotations and modifiers
+
+Annotations precede a member and may carry an object body. Modifiers precede
+properties, classes, type aliases, functions, or modules where supported:
+
+```acore
+@deprecated { reason = "Use currentEndpoint" }
+hidden oldEndpoint = "legacy"
+
+open class BasePolicy {
+  enabled: Boolean = true
+}
+```
+
+Implemented modifier tokens are `local`, `hidden`, `fixed`, `const`,
+`abstract`, `open`, and `external`. Their effect depends on the declaration and
+compiler profile; do not use them as a security boundary.
+
+## Identifiers
+
+Identifiers begin with an ASCII letter or underscore and continue with letters,
+digits, or underscores. Dots are member access except inside a module name.
+Names are case-sensitive.
+
+## Next
+
+Continue with [Values, types, and operators](/acore-language/values-types-and-operators).

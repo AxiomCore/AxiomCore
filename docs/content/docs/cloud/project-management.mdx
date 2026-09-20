@@ -1,21 +1,78 @@
 ---
-title: Project Management
-description: Syncing local environments to cloud namespaces.
+title: Workspaces and projects
+description: Identity, roles, project links, signing keys, and the local-to-Cloud boundary.
 ---
 
-Axiom Cloud acts as the central hub for your API contracts, providing Ed25519 signing and cross-team version distribution.
+A workspace groups members and projects. A project owns contracts, signing-key
+history, release channels, mocks, managed environments, tests, and operational
+evidence.
 
-### Authentication
-Authenticate your machine using `axiom login`. Tokens are stored locally in `~/.config/axiom/auth.json`.
+## Authentication paths
 
-### Linking Projects
-To release a contract, the local directory must be linked to a cloud project ID.
+- The dashboard uses an authenticated browser session.
+- The CLI uses a device login and stores its session in the active Axiom CLI
+  profile.
+- Runtime ingestion and managed sandboxes use narrowly scoped credentials,
+  not browser or CLI tokens.
+
 ```bash
+axiom login
+axiom project list
+```
+
+Do not copy a browser cookie into the CLI or put a CLI token in an application
+contract.
+
+## Create and link
+
+```bash
+axiom project create --name "Payments API" --slug payments-api
 axiom project link
 ```
-This command opens a fuzzy-finder (via `fuzzy-matcher` and Ratatui). Type to filter your available Axiom Cloud projects and hit Enter to link the current working directory.
 
-### Project Lifecycle
-1.  Backend dev runs `axiom release`. The compiled `.axiom` file is pushed to the linked Cloud Project.
-2.  Cloud signs the file with the Project's Private Key.
-3.  Frontend dev runs `axiom pull`. Axiom fetches the signed binary and generates the localized SDK.
+The link associates the current directory with a project. It is local CLI
+configuration, not a declaration inside the `.axiom` artifact. Run
+`axiom project list` before release when you work across multiple accounts or
+workspaces.
+
+## Roles
+
+The current release and environment control plane distinguishes three project
+roles:
+
+| Capability | Reader | Maintainer | Owner |
+| --- | :---: | :---: | :---: |
+| View artifacts, diffs, checks, and environment state | Yes | Yes | Yes |
+| Upload/import/sign/retry artifacts | No | Yes | Yes |
+| Configure mocks or managed sandboxes | No | Yes | Yes |
+| Activate or roll back the `latest` channel | No | No | Yes |
+| Rotate keys and manage sensitive project settings | No | No | Yes |
+
+Workspace membership and project membership are enforced by the service; a
+valid browser session alone does not grant project access.
+
+## Rotate a signing key
+
+```bash
+axiom project rotate-key --project payments-api
+```
+
+Rotation replaces the active signing key while retaining prior public keys so
+existing releases remain verifiable. It does not re-sign or mutate immutable
+artifact bytes.
+
+## Project privacy and pulls
+
+Projects are private unless the service explicitly exposes a public contract
+reference. Private pulls require membership. Clients should handle an
+unauthorized or not-found response without revealing resource existence in
+their own UI or logs.
+
+## Release hygiene
+
+- use an immutable version for every release;
+- keep the local directory link out of portable build assumptions;
+- inspect the candidate artifact and semantic diff before upload;
+- record the release attempt and channel generation used for activation; and
+- rotate credentials through their owning service rather than editing
+  generated config.

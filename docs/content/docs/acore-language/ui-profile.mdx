@@ -1,0 +1,232 @@
+---
+title: Acore UI profile
+description: Author portable UI modules, bind locked contracts, inspect capabilities, and target web, Android, and iOS.
+---
+
+<StatusNote status="alpha" title="Implemented development path">
+  The browser, Android Emulator, and iOS Simulator paths are implemented and
+  testable. Physical-device certification and store publishing are not yet a
+  supported promise.
+</StatusNote>
+
+The UI profile is a declarative layer compiled from authored `.acore` into a
+versioned UI intermediate representation and a read-only virtual ReactLynx
+graph. Generated framework source is not added to the application workspace,
+and application source has no JavaScript escape hatch.
+
+## Smallest application
+
+```acore
+module example.app.ui
+
+app Example { route "/" => Home }
+
+page Home {
+  state message: String = "Hello from Acore"
+
+  action reset() {
+    message = "Hello from Acore"
+  }
+
+  view {
+    SafeArea {
+      View {
+        Text(message)
+        Button(label: "Reset", on_press: reset)
+      }
+    }
+  }
+}
+```
+
+`app` maps paths to pages. A `page` owns state, operation bindings, actions,
+and a view tree. `SafeArea` applies the host's platform insets; use it at the
+outer edge of a screen that must avoid a status bar or display cutout.
+
+## State, derived values, and effects
+
+```acore
+page Search {
+  state query: String = ""
+  derived normalized = query.trim()
+  effect refresh when normalized {
+  }
+
+  view {
+    Input(value: query, placeholder: "Search")
+    Text(normalized)
+  }
+}
+```
+
+State assignments are allowed inside actions. Derived declarations describe a
+value computed from state. Effects declare a trigger for compiler/runtime
+handling; they are not an arbitrary imperative callback.
+
+## Locked service operations
+
+```acore
+use contract Tasks from "tasks" audience "mobile"
+
+page Home {
+  state draft: String = ""
+  query tasks = Tasks.list_tasks()
+  mutation create = Tasks.create_task(title: draft)
+
+  action submit() {
+    create.run()
+    draft = ""
+  }
+
+  view {
+    View {
+      Input(value: draft, placeholder: "Add a task")
+      Button(label: "Add", on_press: submit)
+      if tasks.pending { Text("Loading…") }
+      else if tasks.error { Text("Could not load tasks") }
+      else {
+        List(items: tasks.data, key: |task| task.id) {
+          task => Text(task.title)
+        }
+      }
+    }
+  }
+}
+```
+
+The alias, audience, operation, kind, arguments, and artifact digest must match
+the committed `axiom.ui.lock.json`. UI compilation does not discover a live
+backend as a fallback.
+
+## Actions
+
+The compiled action model supports these bounded steps:
+
+| Source intent | Effect |
+| --- | --- |
+| `operation.run()` | Run a declared query or mutation binding |
+| `stateName = expression` | Update page-owned state |
+| `navigate("/path")` | Navigate to a declared route |
+| `back()` | Return through host navigation |
+| `invoke("semantic-id", method, named: arguments)` | Invoke a supported method on a semantic UI node |
+
+An action cannot evaluate package-author code or inject framework source.
+
+## Elements and components
+
+Portable primitives currently include layout and content (`View`, `Text`,
+`Image`, `Svg`, `SafeArea`), scrolling and collections (`ScrollView`, `List`,
+`ViewPager`, refresh and coordinator elements), text entry (`Input`,
+`TextArea`), media and surfaces (`Video`, `WebView`, `Overlay`, `BlurView`),
+interaction (`Button`, `Pressable`), and a larger typed component family for
+dialogs, forms, popovers, sheets, selection, swipe, sorting, and switches.
+
+Do not treat that summary as a target-compatibility guarantee. Query the
+versioned registry used by your installed CLI:
+
+```bash
+axiom ui capabilities --target web
+axiom ui capabilities --target android --kind element
+axiom ui capabilities --target ios --query safe-area --json
+```
+
+The compiler rejects an unsupported capability instead of silently changing
+the view.
+
+## Assets, themes, and styles
+
+Local assets use safe paths relative to the source package, for example
+`images/mark.svg`. Absolute paths and traversal are rejected. The compiler
+records an asset digest and the CLI verifies it before copying the asset to an
+opaque cache.
+
+Theme tokens and stylesheets are parsed into typed UI records. Their supported
+properties, selectors, at-rules, and datatypes are also exposed by
+`axiom ui capabilities`; browser CSS should not be assumed portable.
+
+### Responsive layouts
+
+Acore uses three target-neutral viewport classes measured in logical pixels:
+
+| Class | Logical viewport width |
+| --- | --- |
+| `compact` | Below 600 |
+| `regular` | 600 through 1023 |
+| `wide` | 1024 and above |
+
+Put presentation changes inside typed `viewport` blocks. These are not raw
+CSS media queries: the compiler retains the viewport class in UI IR, and each
+host derives the same class from its logical viewport.
+
+```acore
+styles {
+  .catalog { gap: 12px }
+
+  viewport compact {
+    .catalog { gap: 8px }
+    .actions { flex-direction: column }
+    .primary, .secondary { width: 100% }
+  }
+
+  viewport regular {
+    .actions { flex-direction: row }
+  }
+
+  viewport wide {
+    .catalog { gap: 16px }
+  }
+}
+```
+
+Structural integer properties can use the matching typed value form. All
+three named values are required, and each value is validated against the
+property's normal range.
+
+```acore
+List(
+  items: products.data,
+  key: |product| product.id,
+  list_type: "flow",
+  span_count: responsive(compact: 1, regular: 2, wide: 3)
+) { product =>
+  Text(product.name)
+}
+```
+
+Viewport changes preserve normal page state. Web listens for browser resizes;
+iOS and Android consume logical dimensions from their native hosts. Arbitrary
+breakpoint expressions and target-specific media-query strings remain outside
+the portable Acore UI profile.
+
+## Check, inspect, test, and run
+
+```bash
+axiom ui doctor --target web
+axiom ui check main.acore --target web
+axiom ui inspect ir main.acore --target web
+axiom ui inspect lowered main.acore --target web
+axiom ui test main.acore --target web
+axiom run main.acore --target web
+```
+
+Replace `web` with `android` or `ios`. `axiom run` starts the authored session;
+native targets require the corresponding verified UI Host. `--once` compiles
+and exits for CI without opening a host.
+
+## Build an application artifact
+
+```bash
+axiom ui build main.acore --target web
+axiom ui build main.acore --target android
+axiom ui build main.acore --target ios
+axiom package \
+  dist/example.app.ui-web.axiomapp \
+  dist/example.app.ui-android.axiomapp \
+  dist/example.app.ui-ios.axiomapp \
+  --out dist/example.axiomapp
+```
+
+Target-specific builds are deterministic `.axiomapp` artifacts. Packaging
+combines intact target builds; it does not perform app-store signing.
+
+Continue with the [Acore UI application lifecycle](/workflows/acore-ui-application-lifecycle).

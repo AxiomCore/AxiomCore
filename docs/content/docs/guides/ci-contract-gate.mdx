@@ -1,0 +1,71 @@
+---
+title: Add a contract gate to CI
+description: Turn diagnostics, evaluation, domain and security analysis, tests, artifact construction, and semantic diff into reviewable checks.
+---
+
+A useful gate answers separate questions with separate commands. Keep the
+commands explicit so a parser failure cannot be confused with a test or policy
+failure.
+
+## Recommended sequence
+
+```bash
+set -euo pipefail
+export CI=1
+
+axiom doctor --json --strict
+axiom eval axiom.acore
+axiom domain validate axiom.acore --json
+axiom security check axiom.acore --json --fail-on-warning
+axiom test axiom.acore
+axiom build axiom.acore
+```
+
+Remove the domain or security line when that optional model is not part of the
+source. Run the job in an environment containing the same extractor and
+application dependencies used locally. For FastAPI, remember that extraction
+imports the module.
+
+## Review semantic changes
+
+Materialize the accepted base input or artifact as a pinned file, then compare
+it with the candidate:
+
+```bash
+axiom diff ./ci/base.acore ./axiom.acore --format semantic
+```
+
+Store the output as review evidence. A diff is an aid to approval, not an
+automatic compatibility promise: review target audience, validation,
+authorization, defaults, errors, and generated-client behavior.
+
+## Verify dependency locks
+
+If the source consumes contract or package dependencies, add the corresponding
+verification before build:
+
+```bash
+axiom contract verify
+axiom contract check-source main.acore
+
+axiom packages verify
+axiom packages check-source main.acore --target web
+```
+
+Use only the block that matches the project. Commit the relevant lock and
+reject unexpected lock changes. Verification can require authenticated access
+to private dependencies.
+
+## Preserve evidence safely
+
+Retain:
+
+- CLI version and coarse environment information;
+- source revision, source contract, and committed lock;
+- machine-readable domain/security results when used;
+- test result and the exact built artifact; and
+- semantic diff and explicit human approval for breaking changes.
+
+Do not publish credentials, raw authorization headers, cookies, sandbox keys,
+private source, or developer home-directory paths as CI artifacts. Release to
+Cloud in a distinct authorized job after the local gate has passed.

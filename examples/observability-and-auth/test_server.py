@@ -5,7 +5,8 @@ from fastapi import FastAPI, Header, HTTPException, Query
 
 app = FastAPI()
 
-SECRET_KEY = "my_super_secret_key"
+# Local fixture value only. Never reuse this value outside this example.
+SECRET_KEY = "development-only-placeholder"
 ALGORITHM = "HS256"
 
 
@@ -29,14 +30,14 @@ def protected_jwt(authorization: str = Header(None)):
 
 @app.get("/protected/api-key-header")
 def protected_api_key_header(x_api_key: str = Header(None)):
-    if x_api_key != "secret-key-123":
+    if x_api_key != "development-only-api-key":
         raise HTTPException(status_code=403, detail="Invalid API Key")
     return {"message": "You accessed an API Key Header protected route"}
 
 
 @app.get("/protected/api-key-query")
 def protected_api_key_query(api_key: str = Query(None)):
-    if api_key != "secret-key-123":
+    if api_key != "development-only-api-key":
         raise HTTPException(status_code=403, detail="Invalid API Key")
     return {"message": "You accessed an API Key Query protected route"}
 

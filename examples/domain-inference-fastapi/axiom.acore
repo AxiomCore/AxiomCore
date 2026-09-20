@@ -1,0 +1,46 @@
+// Models and relationship candidates are extracted from main.py. This file
+// only promotes application concepts and chooses client-facing boundaries.
+amends "axiom-fastapi:./main.py:app"
+
+project {
+  id = "domain-inference-fastapi"
+  version = "v0.1.0"
+}
+
+// `extend` is the only promotion step. It infers the backing model from
+// Models.Customer/Models.Order and the compiler owns every semantic ID/key.
+Entities = Entities {
+  customer = extend Models.Customer {
+    doc = "A purchaser with a durable account."
+  }
+  order = extend Models.Order
+}
+
+domain {
+  entities = Entities
+
+  // Customer.orders and Order.customer were extracted from Python. No
+  // relationship declaration, cardinality, ownership, or ID is needed here.
+  invariants = Invariants {
+    ["orderTotal"] = DomainInvariant {
+      scope = Entities.order
+      expression = "total_cents >= 0"
+      fields = Listing { "total_cents" }
+    }
+  }
+
+  projections = Projections {
+    ["publicCustomer"] = DomainProjection {
+      entity = Entities.customer
+      fields = Listing { "id" "email" }
+      // audience is intentionally optional.
+    }
+  }
+}
+
+endpoints {
+  ["get_customer"] = EndpointDef {
+    returnType = Entities.customer
+    responseProjection = "publicCustomer"
+  }
+}

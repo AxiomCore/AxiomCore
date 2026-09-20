@@ -29,7 +29,12 @@ Both macOS and Linux are supported natively. Windows users should use WSL2.
 Verify the installation:
 ```bash
 axiom --version
+axiom doctor
 ```
+
+`axiom doctor` is safe in any directory: it does not write files, log in, pull
+contracts, or expose credentials. Use `axiom doctor --json --strict` in CI or
+when attaching a machine-readable support report.
 
 ---
 
@@ -43,8 +48,11 @@ axiom join you@yourcompany.com
 
 ---
 
-### 3. Install Backend Extractors
-Axiom uses specialized, decoupled binary extractors to parse your backend code (Ghost Introspection) without needing massive local environments.
+### 3. Install backend extractors
+Axiom uses separately installed extractors for supported backend frameworks.
+Each extractor has its own execution boundary. The current FastAPI path imports
+the selected application module, so install its required Python dependencies
+and keep module initialization safe for a build environment.
 
 Depending on your backend language, install the required extractor plugin. Axiom will automatically download the correct binary for your OS and Architecture (e.g., `macos-arm64`) into `~/.axiom/plugins/`.
 
@@ -62,5 +70,21 @@ Depending on your backend language, install the required extractor plugin. Axiom
 </Tabs>
 
 <Callout type="info">
-The `axiom install` command allows Axiom to support new backend frameworks without requiring you to update the main CLI tool.
+The `axiom install` command keeps extractor distribution separate from the
+main CLI. It does not make backend source static or side-effect free. Read the
+[backend extraction boundary](/core-concepts/ghost-introspection) before using
+an extractor in CI.
 </Callout>
+
+### 4. Start with an explicit plan
+
+From your application repository:
+
+```bash
+axiom onboard
+```
+
+The command detects a backend, frontend, or full-stack repository and prints
+the shortest supported path. It makes no changes by default. For a detected
+FastAPI or Go backend, add `--apply` to create `axiom.acore`; it never logs in
+or uploads a release on your behalf.

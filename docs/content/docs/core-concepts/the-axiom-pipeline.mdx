@@ -1,25 +1,94 @@
 ---
-title: The Axiom Pipeline
-description: How backend code transforms into a deterministic frontend runtime.
+title: Contract pipeline
+description: How source declarations become reviewable artifacts, generated clients, and runtime behavior.
 ---
 
-import { Steps } from 'fumadocs-ui/components/steps';
+The AxiomCore pipeline turns backend evidence and Acore declarations into a
+versioned contract boundary. It includes extraction, compilation, packaging,
+client generation, and runtime consumption; it is not one indivisible build
+step.
 
-AxiomCore is not a code generator; it is a **compiled execution pipeline**. Understanding how data flows from your backend source code to your user's device is critical.
+```text
+backend source or schema                     existing frontend or Acore UI
+          │                                              ▲
+          ▼                                              │
+  extractor / bootstrap ──► Acore source ──► .axiom ──► pull / runtime
+                                  │             │
+                                  └── tests ────┴── inspect · diff · release
+```
 
-<Steps>
-### 1. Ghost Introspection
-Axiom does not execute your backend code. Instead, the CLI uses decoupled binary extractors (e.g., `axiom-fastapi`, `axiom-go-extractor`) to statically analyze your routes and models. It extracts a neutral Intermediate Representation (IR).
+## 1. Establish the source boundary
 
-### 2. The Acore Compilation
-You write an `axiom.acore` file that `amends` the extracted IR. Here, you inject behavioral policies like Caching Strategies, Retry Logic, and WebSockets definitions. The Acore compiler merges this into a unified AST (Abstract Syntax Tree).
+You can author a service contract directly in Acore, amend supported backend
+source, or bootstrap a reviewable domain model from OpenAPI JSON or SQL DDL.
+These paths have different support levels. In particular, FastAPI extraction
+imports the selected application module, so its Python dependencies must be
+installed and module initialization must be safe in a build environment.
 
-### 3. Packaging & FlatBuffers
-The compiler generates a `.axiom` artifact. If your backend supports it, Axiom automatically translates your models into **FlatBuffer schemas** and compiles them into the binary to ensure ultra-fast memory mapping on the client.
+See [Backend extraction](/core-concepts/ghost-introspection) for the exact
+execution boundary.
 
-### 4. SDK Generation
-The frontend runs `axiom pull`. Axiom reads the binary and generates a **Thin Proxy SDK** (e.g., Dart for Flutter, or TypeScript for React). This SDK contains *zero network logic*.
+## 2. Evaluate and validate Acore
 
-### 5. Native Execution
-Inside the app, the **Generic Runtime** (Rust FFI or Wasm) intercepts the SDK calls. The runtime handles the heavy lifting: checking the local database for cache hits, establishing WebSockets, handling exponential backoff, and returning the exact data to the UI.
-</Steps>
+The Acore lexer, parser, evaluator, standard library, and validators produce a
+typed in-memory representation. `amends` composes extracted or imported input
+with authored declarations; it does not make the imported source inherently
+trusted. Run the domain and security checks required by your repository before
+building.
+
+```bash
+axiom domain validate axiom.acore
+axiom security check axiom.acore
+axiom test axiom.acore
+```
+
+## 3. Build the contract artifact
+
+`axiom build` writes a local `.axiom` artifact and lock information. The
+artifact contains evaluated contract data consumed by tooling and runtimes. It
+is a data boundary, not a bundle of backend author code.
+
+```bash
+axiom build axiom.acore
+axiom inspect axiom.axiom
+```
+
+A local build can be unsigned. A Cloud release adds provenance and durable
+release evidence; it does not turn an unchecked source change into a trusted
+release by itself.
+
+## 4. Review change and provenance
+
+Use semantic diff before updating consumers. Artifact hashes bind a lock to
+exact bytes, while a paired Ed25519 signature and public key can prove Cloud
+provenance. See [Artifact trust](/core-concepts/trust-and-security).
+
+```bash
+axiom diff previous.axiom candidate.axiom --format semantic
+axiom contract verify candidate.axiom --lock axiom.acore.lockfile
+```
+
+## 5. Pull a client surface
+
+`axiom pull` resolves a local artifact, dependency configuration, share URL,
+or release reference and generates the selected framework surface. Generated
+code carries endpoint identity and typed model information; the runtime still
+owns contract loading, validation, transport policy, caching, and structured
+events for the capabilities implemented by that target.
+
+```bash
+axiom pull --contract organization/project/1.2.0 --framework atmx-web
+```
+
+## 6. Execute on the selected target
+
+Native clients use the Rust runtime through their binding layer. Browser
+clients use the Wasm runtime and ATMX JavaScript integration. They consume the
+same contract model, but storage, network APIs, initialization, and framework
+lifecycle differ by platform. Test those boundaries in the real application.
+
+<StatusNote status="alpha" title="Pipeline stability">
+  The complete contract pipeline is implemented and testable, but its CLI,
+  artifact, and generated-client surfaces remain pre-stable. Pin releases and
+  commit locks rather than depending on a moving output format.
+</StatusNote>

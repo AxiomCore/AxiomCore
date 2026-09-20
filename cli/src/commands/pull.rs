@@ -64,6 +64,16 @@ pub struct AxiomDeps {
     pub contracts: Vec<ContractEntry>,
 }
 
+/// Read the single dependency manifest used by a client project. This is
+/// public for `axiom doctor`; callers never need a sidecar JSON file to learn
+/// the selected framework or installed contract references.
+pub fn read_axiom_deps(path: &Path) -> Result<AxiomDeps> {
+    Ok(AxiomDeps {
+        framework: read_framework_from_deps(path)?,
+        contracts: read_contracts_from_deps(path)?,
+    })
+}
+
 // ==========================================
 // ENTRY POINT
 // ==========================================
@@ -748,10 +758,11 @@ async fn run_codegen_atmx(
         println!("📄 Static asset written → static/axiom/.axiom");
     }
 
-    // 3. Trigger the project-pinned generator when present. Otherwise use the
-    // exact companion CLI version instead of inheriting an arbitrary global
-    // `atmx` executable from PATH. This keeps generated SDK syntax compatible
-    // with the Axiom CLI that invoked it.
+    // 3. Trigger the project-pinned generator when present. `laxiom` supplies
+    // a repository-local generator path so local CLI/source changes can be
+    // tested before publication. Production falls back to the exact companion
+    // package version instead of inheriting an arbitrary global `atmx` from
+    // PATH, keeping generated SDK syntax compatible with the Axiom CLI.
     #[cfg(target_os = "windows")]
     let local_atmx = project_root
         .join("node_modules")
@@ -760,8 +771,13 @@ async fn run_codegen_atmx(
     #[cfg(not(target_os = "windows"))]
     let local_atmx = project_root.join("node_modules").join(".bin").join("atmx");
 
+    let local_atmx_override = std::env::var_os("AXIOM_LOCAL_ATMX_PATH").map(PathBuf::from);
     let mut cmd = if local_atmx.is_file() {
         tokio::process::Command::new(&local_atmx)
+    } else if let Some(generator) = local_atmx_override.filter(|path| path.is_file()) {
+        let mut command = tokio::process::Command::new("node");
+        command.arg(generator);
+        command
     } else {
         #[cfg(target_os = "windows")]
         let npx_cmd = "npx.cmd";

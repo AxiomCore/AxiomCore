@@ -1,0 +1,92 @@
+---
+title: Sandboxed executable extensions
+description: Add bounded Rust and WebAssembly behavior to an AxiomCore application without handing it ambient application authority.
+---
+
+Executable extensions let an application use imperative logic for work that is
+not practical to express declaratively—for example, a bounded pricing rule,
+format conversion, or a domain workflow step. They are an **Experimental**
+source-level capability. Rust is the only supported guest language today.
+
+An extension is not ordinary application code running inside the host process.
+It is a separately distributed WebAssembly module with a declared interface,
+signed authority inputs, a resolved lock, and a target host that enforces its
+limits.
+
+## Where an extension fits
+
+```text
+signed extension package + exact Wasm bytes
+                    |
+         authority request, application grant,
+                 and target policy lock
+                    |
+          target-specific Axiom extension host
+                    |
+       bounded Wasm invocation and effect plan
+                    |
+  validated result, state patch, or store transaction proposal
+```
+
+The effective authority is always the intersection of what the package
+requests, what the application grants, and what the active target permits.
+The host checks this intersection when it loads a module and again for every
+requested operation.
+
+Normal Acore rendering and normal backend handling do not enter this boundary.
+Only an explicitly bound extension invocation crosses into Wasm.
+
+## What the module can and cannot do
+
+The guest receives a typed input, authorized state or store snapshots, and a
+deadline. It may return a typed output, one bounded effect plan, revision-
+checked UI patches, or a revision-checked backend transaction proposal. The
+host validates those proposals before it commits anything.
+
+The guest does not receive:
+
+- a mutable application object, database connection, ORM session, or native
+  pointer;
+- ambient network, filesystem, environment, process, or WebAssembly system
+  interface access;
+- an arbitrary field path, service name, URL, or host method; or
+- authority granted to another extension instance.
+
+This means an extension proposes changes; the Axiom host remains responsible
+for type checks, invariants, authorization, revision conflicts, audit records,
+subscriber notification, cancellation, and teardown.
+
+## State, durable store, and streams
+
+Generated Rust selectors identify one declared UI path or backend-store field.
+They are used to create host-validated effects and patches rather than to
+obtain a reference to host memory. UI patches and store transactions include an
+expected revision and commit atomically or fail with a conflict.
+
+Subscriptions are host-owned. A guest receives a typed, ordered event batch
+for an approved subscription. The host bounds buffers, reports dropped events,
+can retain only the latest event for a coalesced subscription, and invalidates
+the handle during cancellation or teardown.
+
+## Target support
+
+| Target or boundary | Current experimental evidence | Important limit |
+| --- | --- | --- |
+| Server/headless | Shared Rust host, signed-load, broker, state/store, lifecycle, and release checks | Durable production-store adapters are not certified by this boundary. |
+| Web | Dedicated Chromium Worker host and a separate sandboxed foreign-island host | This is not a claim for every browser or deployment topology. |
+| Android | Shared Rust host exercised on Android Emulator | Physical Android devices are not certified. |
+| iOS | Shared Rust host exercised on iOS Simulator | Physical Apple devices are not certified. |
+| Rust guest SDK | First and only supported guest language | Other guest languages are not supported yet. |
+
+Runtime-dependent React, Vue, or DOM UI is a separate, visibly foreign,
+Web-only iframe island. It cannot share the application document or native
+targets. In contrast, a small static HTML, literal JSX, or Vue-template subset
+can be translated at build time into ordinary Axiom UI; that path does not run
+a framework runtime.
+
+## Next steps
+
+Use [Executable extension lifecycle](/workflows/executable-extension-lifecycle)
+to review, lock, and verify an extension. See [Executable extensions reference](/reference/executable-extensions)
+for the ABI, Rust SDK surface, authority model, lifecycle, security limits, and
+measured evidence.

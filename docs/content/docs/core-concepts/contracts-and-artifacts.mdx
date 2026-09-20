@@ -1,0 +1,76 @@
+---
+title: Contracts and artifacts
+description: How Acore source becomes locked packages and runnable applications.
+---
+
+AxiomCore deliberately separates editable source, distributable packages,
+dependency decisions, and runnable applications. That separation makes changes
+reviewable and prevents a dependency from silently becoming new source code in
+the consumer's build.
+
+## Artifact map
+
+```text
+*.acore ── evaluate/build ──► *.axiom
+ source                       canonical package
+                                  │
+                                  ├── resolve ──► AxiomDeps.toml + lock
+                                  │                   pinned dependency set
+                                  │
+                                  ├── inspect / diff / test / mock
+                                  │
+                                  └── consume in UI build ──► *.axiomapp
+                                                              runnable app artifact
+```
+
+## `.acore`: authoring source
+
+A `.acore` file is editable declarative source. It can import trusted source,
+amend supported build inputs, declare behavior and policy, or author an Acore UI
+tree. Source stays on the authoring side of a package boundary.
+
+## `.axiom`: contract and package
+
+A `.axiom` file is a canonical, versioned package. Current package kinds are:
+
+| Kind | Payload boundary |
+| --- | --- |
+| Service | Compiled service contract |
+| Theme | Typed theme exports and target metadata |
+| Component library | Typed component exports, props, slots, and composition constraints |
+| Database schema | Declarative exports |
+| Extension | Metadata, capabilities, and a digest for separately distributed code; no executable bytes in the package |
+| Application policy | Declarative exports |
+
+Declarative packages cannot contain executable package-author code. An
+extension identifies separately distributed bytes that require a distinct
+capability and sandbox review. The current experimental extension payload is
+`axiom-extension/v2`: its package and locks record the exact Wasm digest,
+interface, SDK, limits, provenance, and requested authority. See [Sandboxed
+executable extensions](/core-concepts/sandboxed-extensions) for the host and
+target boundary.
+
+## Manifests and locks
+
+A manifest states the dependency intent. A committed lock records the exact
+artifact, version, digest, kind, and relevant selection used by the build. The
+consumer imports through a stable alias; resolution must not fall back to live
+backend discovery or package-author source.
+
+## `.axiomapp`: built application
+
+An `.axiomapp` is a deterministic application artifact for one or more supported
+targets. It carries the lowered UI payload and build metadata needed by the host.
+It is distinct from a `.axiom` package and does not imply app-store signing or
+distribution.
+
+## Semantic change review
+
+Byte changes alone cannot explain contract impact. AxiomCore's package diff
+classifies changes such as target reduction, breaking component changes, new
+required theme roles, and permission increases so a release workflow can ask for
+the appropriate explicit approval.
+
+See [Imports, contracts, and composition](/acore-language/imports-and-contracts)
+for the source syntax and [Support and availability](/introduction/support-matrix)
+for current maturity.

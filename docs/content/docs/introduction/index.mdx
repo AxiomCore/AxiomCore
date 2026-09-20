@@ -1,82 +1,67 @@
 ---
-title: Welcome to AxiomCore
-description: The deterministic API lifecycle platform. Rust-powered runtimes, Zero-JS hydration, and Write-Once contracts.
+title: What is AxiomCore?
+description: A contract platform for building, connecting, testing, and evolving software systems.
 ---
 
-import { Card, Cards } from 'fumadocs-ui/components/card';
-import { Layers, Rocket, ShieldCheck, Zap, Server, Activity } from 'lucide-react';
+AxiomCore makes software contracts executable enough to guide tooling and
+precise enough to review. A contract can describe types and operations, but it
+can also carry bounded behavior, policy, domain meaning, UI packages, target
+support, and release metadata.
 
-# AxiomCore
+The goal is not to replace every framework. It is to give separately owned
+parts of a system a deterministic, versioned boundary that humans and agents
+can inspect before a change reaches users.
 
-AxiomCore is a **deterministic behavioral layer** that completely eliminates manual API integration. Instead of writing fragile network requests, caching logic, and error handlers in your frontend, AxiomCore embeds a high-performance **Generic Runtime** (powered by Rust and WebAssembly) directly into your app.
+## The platform in four layers
 
-You write your backend in **FastAPI** or **Go**. Axiom extracts it, wraps it in a behavioral contract (`.acore`), and executes it identically across Flutter, React, iOS, and Vanilla Web.
+1. **Authoring and extraction.** Write `.acore` source, reuse trusted modules,
+   or extract supported information from existing backend projects.
+2. **Contracts and packages.** Build canonical `.axiom` artifacts, resolve
+   versions into committed locks, and classify semantic changes.
+3. **Execution and development.** Consume contracts through runtimes and
+   framework bindings, author Acore UI, run mocks, and execute contract tests.
+4. **Coordination.** Publish and pull releases through implemented cloud
+   workflows. Richer visual building, collaboration, and discovery products are
+   clearly marked as coming soon.
 
-### The Axiom Workflow
+```text
+┌──────────────── authoring ────────────────┐
+│ Acore source │ FastAPI │ Go │ bounded imports │
+└────────────────────┬──────────────────────┘
+                     ▼
+          canonical contract packages
+             (.axiom + committed lock)
+                     │
+        ┌────────────┼─────────────┐
+        ▼            ▼             ▼
+     runtime      test/mock     UI/app build
+        │                          (.axiomapp)
+        └────────────┬─────────────┘
+                     ▼
+              application behavior
+```
 
-AxiomCore replaces OpenAPI (Swagger) and GraphQL with a cryptographically signed binary artifact (`.axiom`). This artifact dictates exactly *how* the API behaves, not just what the data looks like.
+## Acore is the language, not the whole platform
 
-<Cards>
-  <Card
-    icon={<Zap />}
-    title="The Generic Runtime"
-    description="Native Rust (Mobile/Desktop) and Wasm (Web) engines handle retries, caching, WebSockets, and state-sync autonomously."
-  />
-  <Card
-    icon={<Layers />}
-    title="Thin, Smart SDKs"
-    description="Zero boilerplate. The React/ATMX and Flutter SDKs are just thin Proxies. The Heavy lifting happens natively."
-  />
-  <Card
-    icon={<Server />}
-    title="Stateful Local Mocking"
-    description="The built-in Axum mock server simulates network faults, connection resets, and stateful mutations instantly."
-  />
-  <Card
-    icon={<Activity />}
-    title="Native Test Runner"
-    description="A built-in test runner validating headers, bodies, JSON paths, and WebSocket streams natively."
-  />
-</Cards>
+[Acore](/introduction/what-is-acore) is an independent declarative language.
+AxiomCore is the larger ecosystem that compiles, packages, resolves, executes,
+tests, distributes, and audits the contracts Acore can express.
 
----
+## Contracts are incremental
 
-## 🚀 Ecosystem Status
+- Keep an existing FastAPI or Go backend and extract its supported surface.
+- Keep a Flutter, web, React, or Swift client and consume a contract through the
+  target's current integration path.
+- Author UI in Acore when the alpha Acore UI profile fits the application.
+- Publish typed themes or component libraries without giving packages authority
+  to execute package-author code.
 
-AxiomCore is currently in **Private Alpha**. We provide first-class support for the following stacks:
+The [support matrix](/introduction/support-matrix) is the source of truth for
+which of these paths is available, alpha, experimental, or coming soon.
 
-| Layer | Supported Tech | Status |
-| :--- | :--- | :--- |
-| **Backend Extractors** | Python (FastAPI), Go (Native) | Alpha |
-| **Contract Language** | Acore (PKL-based) | Alpha |
-| **Mobile / Desktop** | Flutter, Swift (SPM), macOS, iOS | Alpha |
-| **Web (ATMX)** | React, Vanilla HTML/JS, Alpine.js | Alpha |
+## Continue reading
 
-### What's New?
-*   **ATMX Web Engine:** Instant DOM hydration before Wasm even boots using `sessionStorage` caching.
-*   **Axiom Marketplace:** Pull third-party API contracts (Stripe, Twilio) directly into your app without reading their docs.
-*   **JSON-Atom Diffing:** Mathematical changelogs and terminal GUI diffs for API updates.
-
----
-
-## Ready to dive in?
-
-Choose your path to get started with AxiomCore.
-
-<Cards>
-  <Card
-    title="Install the CLI"
-    href="/getting-started/installation"
-    description="Get the Axiom CLI via Homebrew or curl."
-  />
-  <Card
-    title="Backend Quickstart"
-    href="/getting-started/quickstart-backend"
-    description="Extract your API and build your first behavioral contract."
-  />
-  <Card
-    title="Frontend Quickstart"
-    href="/getting-started/quickstart-frontend"
-    description="Pull the contract and build a reactive UI in minutes."
-  />
-</Cards>
+- [What is Acore?](/introduction/what-is-acore)
+- [Product landscape](/introduction/product-landscape)
+- [Contracts and artifacts](/core-concepts/contracts-and-artifacts)
+- [Installation](/getting-started/installation)

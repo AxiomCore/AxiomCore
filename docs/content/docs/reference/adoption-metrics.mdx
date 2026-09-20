@@ -1,0 +1,62 @@
+---
+title: Adoption measurement
+description: The metrics AxiomCore collects, excludes, and uses to validate its contract-runtime wedge.
+---
+
+AxiomCore adoption should be judged by evidence of reduced integration work, not by raw
+install count. AxiomCore measures the funnel at three layers.
+
+| Question | Evidence | Metric |
+| --- | --- | --- |
+| Can a developer start? | CLI command outcomes | Onboarding completion, build success rate, time from first `init`/`onboard` to first successful build. |
+| Does a team connect both sides? | Release and pull outcomes | Time from first successful build to first release, then first pull. |
+| Does the runtime provide value? | Contract and runtime evidence | Runtime calls through the contract, releases per active project, compatibility issues caught before promotion, and trace availability. |
+
+## CLI data minimization
+
+For registered private-alpha installations, the CLI sends these fields:
+
+- a stable installation identifier;
+- command name;
+- success/failure;
+- duration in milliseconds;
+- CLI version and OS family; and
+- one of the bounded failure categories: `authentication`, `network`, `input`,
+  `build`, or `other`.
+
+It never sends raw command arguments, repository names, project names, paths,
+URLs, contract contents, headers, tokens, credentials, or raw error messages.
+The wire-compatible `args` field contains only `{"schema_version":1}`.
+
+Developers can disable this collection for the CLI process:
+
+```bash
+AXIOM_TELEMETRY=0 axiom build
+```
+
+Runtime telemetry is separate. It is configured by a signed contract’s scoped
+OTLP source and is used for a project’s request evidence; it is not reused for
+CLI installation analytics.
+
+## Adoption scorecard
+
+Publish the following only after defining the date range, cohort, and exclusion
+rules:
+
+1. **Activation:** percentage of new installations completing a successful
+   `init`/`onboard → build → release → pull` path within seven days.
+2. **Integration time:** median time from the first project action to a
+   consumer’s first successful pull, annotated with human-assisted sessions.
+3. **Reliability:** success rate and p95 duration for build, release, pull, and
+   runtime calls.
+4. **Drift prevention:** number and rate of breaking/risky semantic changes
+   found before promotion.
+5. **Adoption depth:** weekly active projects with a successful release or a
+   runtime call; report projects rather than individual developers where
+   possible.
+6. **Maintenance removed:** qualitative case-study evidence plus a counted
+   before/after inventory of duplicated auth/retry/cache/client code.
+
+Never claim that a command invocation is a production customer. A credible
+adoption criterion requires independent applications using a meaningful
+production API path.

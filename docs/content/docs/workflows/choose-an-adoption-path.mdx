@@ -1,0 +1,45 @@
+---
+title: Choose an adoption path
+description: Match AxiomCore's implemented entry points to the software you already have.
+---
+
+| Starting point | First supported path | You keep |
+| --- | --- | --- |
+| FastAPI service | Extract and build a service contract | Python application and framework runtime |
+| Go service | Extract, review, and build a service contract | Go application and framework runtime |
+| OpenAPI or SQL DDL | Bootstrap bounded domain input for review | Existing schema authority and runtime |
+| Web, React, or Flutter app | Pull a contract for the selected client target | Existing UI framework and application code |
+| New portable UI | Author the Acore UI profile and run a target host | Authored `.acore`; generated host graph stays opaque |
+| Reusable design/API/schema content | Build a typed `.axiom` package and lock it in consumers | Independently versioned package source |
+
+Run the non-mutating diagnostic and onboarding planner first:
+
+```bash
+axiom doctor
+axiom onboard
+```
+
+Use explicit flags in automation:
+
+```bash
+axiom onboard --role backend --entrypoint main.py:app --module axiom-fastapi
+axiom onboard --role frontend --contract organization/project --framework atmx-web
+```
+
+Add `--apply` only when you want backend onboarding to create `axiom.acore`.
+Onboarding does not silently release a contract.
+
+## Boundaries to decide early
+
+- **Authority:** identify whether backend code, OpenAPI, SQL, or authored Acore
+  owns each fact. Do not duplicate ownership casually.
+- **Audience:** choose the frontend projection before locking a contract.
+- **Runtime:** decide whether the existing UI framework or Acore UI owns the
+  screen. Both can consume Axiom contracts; neither requires rewriting the
+  backend in Acore.
+- **Maturity:** add an end-to-end test for every alpha or experimental path in
+  your own CI.
+
+For a backend, continue with [Backend contract lifecycle](/workflows/backend-contract-lifecycle).
+For an existing UI, use [Existing frontend integration](/workflows/existing-frontend-integration).
+

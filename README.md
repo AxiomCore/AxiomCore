@@ -1,95 +1,156 @@
-
 <p align="center">
-  <img src="./static/banner.png" width="100%" alt="Axiom Core Logo" />
+  <img src="./static/banner.png" width="100%" alt="AxiomCore" />
 </p>
 
-<h1 align="center">Axiom Core</h1>
-
-<h3 align="center">
-  <strong>Deterministic API Contracts. Signed. Typed. Runtime-Enforced.</strong>
-</h3>
+<h1 align="center">AxiomCore</h1>
 
 <p align="center">
-  <a href="https://discord.gg/Fvv7ufN2DK"><img src="https://img.shields.io/discord/1234567890?color=7289da&label=Discord&logo=discord&logoColor=white" alt="Discord"></a>
-  <a href="https://axiomcore.dev"><img src="https://img.shields.io/badge/Website-axiomcore.dev-orange" alt="Website"></a>
-  <a href="https://docs.axiomcore.dev"><img src="https://img.shields.io/badge/Docs-Read-blue" alt="Documentation"></a>
+  Build, connect, test, and evolve software through typed, auditable contracts.
 </p>
 
-## What is Axiom Core?
+<p align="center">
+  <a href="https://axiomcore.dev">Website</a> ·
+  <a href="https://docs.axiomcore.dev">Documentation</a> ·
+  <a href="https://discord.gg/Fvv7ufN2DK">Community</a>
+</p>
 
-Axiom Core is a **deterministic behavioral layer** for API consumption. It replaces fragile, maintenance-heavy "Fat SDKs" with a **Thin Type Layer** and a **Native Rust Runtime**. 
+## What AxiomCore is
 
-It exists to solve the "Non-Deterministic Gap" where backend changes break apps because of inconsistent retry logic, caching strategies, and validation rules. With Axiom, the behavior is defined once in an Acore contract and enforced natively on the client.
+AxiomCore is a contract platform for software boundaries. It connects the
+**Acore** authoring language, versioned `.axiom` artifacts, semantic diff,
+tests and mocks, generated client integrations, native and browser runtimes,
+declarative UI tooling, and a connected Cloud control plane.
 
-## 🚀 Private Alpha Phase
+Adoption is incremental. A FastAPI or Go service can remain ordinary backend
+code. A Flutter, React, or HTML-first application can remain in its existing
+framework. Acore can describe the contract between them and, when useful, can
+also author a declarative user interface.
 
-Axiom Core is currently in **Private Alpha**. We are validating the architecture with a select group of developers before moving to an **Open Core** model. To join, email **contact@yashmakan.com**. You will receive a response within 24 hours.
-
-### Join the Waitlist
-You can join the waitlist directly from your terminal:
-```bash
-curl https://axiomcore.dev/join/your-email@example.com
+```text
+backend source or Acore
+          │
+          ▼
+ extract · evaluate · validate
+          │
+          ▼
+ versioned .axiom artifact ──► inspect · diff · test · mock · release
+          │
+          ├──────────────────► existing framework client
+          └──────────────────► Acore UI application (.axiomapp)
 ```
 
-### Immediate CLI Access
-If you are an engineer working on high-scale Python/Flutter apps and want to provide feedback, email **contact@yashmakan.com**. You will receive a response within 24 hours.
+## Current availability
 
----
+AxiomCore is an alpha ecosystem. Availability is attached to a specific
+capability rather than inherited by the entire platform.
 
-## 🛠 Quick Start
+| Capability | Status | Current boundary |
+| --- | --- | --- |
+| FastAPI extraction | Available | Primary backend extraction path; module initialization executes in the build environment. |
+| Go extraction | Alpha | Route and type extraction; review output for each service. |
+| Contract build, inspect, diff, test, and mock | Alpha | Implemented local workflow with pre-stable artifact and CLI surfaces. |
+| Vanilla web / ATMX | Available | Browser Wasm runtime and generated client path. |
+| React / ATMX and Flutter / Dart | Alpha | Implemented bindings; validate application startup and release builds. |
+| Swift / Apple integration | Experimental | Runtime distribution foundations without full public binding parity. |
+| Acore UI and `.axiomapp` | Alpha | Browser, Android Emulator, and iOS Simulator development workflows. |
+| Axiom Cloud Dashboard | Alpha | Accounts, projects, contracts, release evidence, environments, tests, reviews, and observability. |
+| Axiom Studio, Acode, and Axiom Marketplace | Coming soon | Product direction only; no supported installation workflow today. |
 
-Once you have access, the Axiom workflow is designed to be frictionless:
+Read the [full support matrix](./docs/content/docs/introduction/support-matrix.mdx)
+before selecting a production integration path.
 
-1. **Initialize (Backend):** 
-   ```bash
-   axiom init
-   ```
-2. **Define Behavior:** Update `axiom.acore` with your caching/retry policies.
-3. **Release:** 
-   ```bash
-   axiom build --release
-   ```
-4. **Pull (Frontend):** 
-   ```bash
-   axiom pull <organization>/<project>
-   ```
+## Start locally
 
-Check out our **[Example Projects](./examples)** to see Axiom in action.
+Install the Axiom CLI using the
+[current installation guide](./docs/content/docs/getting-started/installation.mdx),
+then inspect the repository before changing it:
 
----
+```bash
+axiom doctor
+axiom onboard
+```
 
-## 🗺 Roadmap & Ecosystem
+For a FastAPI service:
 
-We are currently operating as a "Source Available" project during Alpha, but we are committed to Open Source.
+```bash
+axiom install axiom-fastapi --module
+axiom init ./main.py:app --module axiom-fastapi
+axiom build axiom.acore
+axiom inspect axiom.axiom
+axiom test axiom.acore
+```
 
-### Current Public Repositories
-- [**Rod**](https://github.com/AxiomCore/rod): The Write-Once, Validate-Anywhere Schema Library.
-- [**Axiom SDK (Dart)**](https://github.com/AxiomCore/axiom-sdk): The generated interface layer for Flutter.
-- [**Homebrew Tap**](https://github.com/AxiomCore/homebrew-tap): Official CLI distribution.
+FastAPI extraction imports the selected application module. Install its
+dependencies and keep import-time initialization safe for a build environment.
 
-### Upcoming Open Source Transitions (Post-Alpha)
-After internal testing and PoC validation, we will be open-sourcing the following core components:
-- `axiom-runtime`: The native Rust execution engine.
-- `axiom-build`: The artifact compilation logic.
-- `axiom-cli`: The primary developer tool.
+For an existing frontend:
 
----
+```bash
+axiom pull --contract ../backend/axiom.axiom --framework atmx-web
+```
 
-## 💡 Our Ideology
+Current framework paths and startup requirements are documented under
+[Client integration](./docs/content/docs/clients/index.mdx).
 
-Contributions from the community are our lifeblood. We believe that critical infrastructure should be:
-1. **Transparent:** All architectural choices and security models will be documented and open for discussion.
-2. **Deterministic:** We prioritize predictable, native execution over non-deterministic AI generation.
-3. **Secure:** Every contract pull is cryptographically verified to prevent tampering.
+## Release through Axiom Cloud
 
-We invite you to join our **[Discord Community](https://discord.gg/Fvv7ufN2DK)** to participate in architectural discussions and stay updated on our progress toward Open Core.
+Connected workflows require an account, project membership, and a reachable
+control plane:
 
----
+```bash
+axiom login
+axiom project link
+axiom build --release --version 1.2.0
+```
 
-## 🛡 Security & Conduct
+A Cloud release stores immutable artifact bytes, signs their digest, and
+retains pipeline evidence. Release upload is not equivalent to deploying an
+arbitrary backend or mobile application. See
+[Releases and environments](./docs/content/docs/cloud/releases-and-environments.mdx).
 
-- **Security:** If you discover a vulnerability, please do not open a public issue. Email **contact@yashmakan.com** privately. See [SECURITY.md](./SECURITY.md).
-- **Conduct:** We are committed to a welcoming environment. See [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md).
+## Repository map
 
----
-<p align="center">Built with 🦀 in Rust for a more stable developer experience across</p>
+| Path | Responsibility |
+| --- | --- |
+| `cli/` | Public `axiom` command-line interface |
+| `docs/` | Next.js/Fumadocs documentation application and editorial evidence |
+| `examples/` | Contract and integration fixtures documented by `examples/README.md` |
+| `release/` | Distribution scripts and release assets |
+
+The surrounding AxiomCore workspace contains independent repositories for the
+Acore language, artifact libraries, runtime, extractors, SDKs, UI compiler and
+host, Cloud backend, and dashboard. Their APIs have different maturity
+boundaries; the documentation evidence ledger names the owning implementation
+for public claims.
+
+## Documentation and examples
+
+- [Documentation home](./docs/content/docs/index.mdx)
+- [Acore language manual](./docs/content/docs/acore-language/index.mdx)
+- [Workflows](./docs/content/docs/workflows/index.mdx)
+- [Guides](./docs/content/docs/guides/index.mdx)
+- [CLI reference](./docs/content/docs/tooling/cli-reference.mdx)
+- [Troubleshooting](./docs/content/docs/reference/troubleshooting.mdx)
+- [Versioning and deprecation](./docs/content/docs/reference/versioning-and-deprecation.mdx)
+- [Support and feedback](./docs/content/docs/reference/support-and-feedback.mdx)
+- [Example catalog](./examples/README.md)
+
+Documentation claims follow
+[`docs/DOCUMENTATION_CONTRACT.md`](./docs/DOCUMENTATION_CONTRACT.md) and are
+anchored to implementation evidence in
+[`docs/CONTENT_EVIDENCE.md`](./docs/CONTENT_EVIDENCE.md).
+
+## Contributing and security
+
+Run the owning repository's tests and the documentation gates appropriate to
+your change. Documentation contributors can use:
+
+```bash
+cd docs
+pnpm install --frozen-lockfile
+pnpm check
+```
+
+Report security vulnerabilities privately using [SECURITY.md](./SECURITY.md).
+Do not include credentials, signing keys, telemetry DSNs, sandbox keys,
+private contract URLs, or sensitive payloads in public issues.

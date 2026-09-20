@@ -8,10 +8,10 @@ project {
 endpoints {
   ["handleConnections"] {
     method = "WS"
-    streaming = new WebSocketDef {
+    streaming = WebSocketDef {
       direction = "bidirectional"
       reconnect = "auto"
     }
-    returnType = new TypeRefNamed { value = "ChatMessage" }
+    returnType = TypeRefNamed { value = "ChatMessage" }
   }
 }

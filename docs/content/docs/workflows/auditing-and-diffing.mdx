@@ -1,44 +1,45 @@
 ---
-title: Auditing & Diffing
-description: Tracking behavioral API changes over time.
+title: Auditing and semantic diffing
+description: Compare authored contracts, locked dependencies, and typed packages at their semantic boundary.
 ---
 
-import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+Text diffs show source edits. Axiom semantic diffs describe the resulting
+contract or package impact after evaluation and normalization.
 
-Because AxiomCore compiles your API into a deterministic object, you can mathematically diff changes between commits using `axiom diff`.
+## Contract source and lock
 
-### How it works
+```bash
+axiom diff axiom.acore --format changelog
+axiom diff before.acore after.acore --format semantic
+```
 
-When you run `axiom build`, the CLI generates a `.lockfile` alongside your `.axiom` contract. This acts as a snapshot of your exact API state.
+Supported output formats are `changelog`, `semantic`, `text`, and `atom`. The
+one-source form compares with the local lock state; the two-source form compares
+explicit inputs.
 
-If a backend developer modifies a FastAPI route, running `axiom diff` compares the new code against the lockfile using the **JSON-Atom** spec.
+## Locked UI contracts
 
-### Output Formats
+```bash
+axiom contract diff before.ui.lock.json after.ui.lock.json
+axiom contract verify
+```
 
-<Tabs items={['Changelog (Default)', 'Semantic Terminal', 'Text (Git-style)']}>
-  <Tab value="Changelog (Default)">
-    Generates a human-readable Markdown summary categorized by impact.
-    ```bash
-    axiom diff axiom.acore --format changelog
-    ```
-    **Output:**
-    *   🚨 **Breaking Changes:** Parameter `userId` on **`getUser`** is now **Required**.
-    *   🚀 **New Features:** Added new endpoint: **`processPayment`**.
-    *   ⚙️ **Configuration:** Updated `cache` policy for **`getProducts`**.
-  </Tab>
-  <Tab value="Semantic Terminal">
-    Provides a colorized, tree-like JSON-Atom diff view. Perfect for deep debugging.
-    ```bash
-    axiom diff axiom.acore --format semantic
-    ```
-  </Tab>
-  <Tab value="Text (Git-style)">
-    Standard line-by-line file diff with inline character highlighting.
-    ```bash
-    axiom diff axiom.acore --format text
-    ```
-  </Tab>
-</Tabs>
+Contract lock review is the right boundary for operation, audience, projection,
+and artifact-integrity changes consumed by an Acore UI.
 
-### Array Identity Diffing
-The underlying `acore-diff` engine is incredibly smart. If you re-order parameters in your backend, it doesn't see it as a "delete and insert". It uses Key-Based Array Identity (matching by `name` or `id`) to detect that a parameter simply moved or mutated.
+## Typed packages
+
+```bash
+axiom packages diff before.axiom after.axiom
+```
+
+Package diff classifies kind-specific changes such as target reduction, required
+theme roles, component prop/slot changes, and capability increases. Breaking or
+permission-increasing changes can require an explicit approval named by the
+diff result.
+
+## Review evidence
+
+Keep the before/after immutable identities, semantic output, approvals, and test
+results together. A diff is evidence about declared semantics; it is not proof
+that arbitrary backend code or separately distributed extension bytes are safe.

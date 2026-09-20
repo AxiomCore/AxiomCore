@@ -1,47 +1,48 @@
 ---
-title: Backend Quickstart
-description: Extract your API and compile your first behavioral contract.
+title: Backend quickstart
+description: Extract an existing service and compile a first reviewable contract.
 ---
 
-import { Steps } from 'fumadocs-ui/components/steps';
+This quickstart keeps FastAPI or Go as the executable backend and adds an
+Axiom contract boundary around it.
 
-Turn your FastAPI or Go application into a deterministic, compiled contract ready for frontend consumption.
+## Diagnose and plan
 
-<Steps>
-### Initialize the Project
-Navigate to the root of your backend repository and run:
 ```bash
-axiom init
+axiom doctor
+axiom onboard --role backend
 ```
-This launches the **Interactive TUI Wizard**. Axiom will automatically scan your folder for `main.go` or `requirements.txt` and suggest the correct language.
 
-1.  Select your Language (Python or Go).
-2.  Provide a Project Name.
-3.  Confirm your Entrypoint (e.g., `./main.py:app` or `./main.go`).
+Review the detected entrypoint and extractor. To create source explicitly for
+a FastAPI app:
 
-Axiom will generate an `axiom.acore` file linking your backend to the Acore compiler.
+```bash
+axiom init main.py:app --module axiom-fastapi
+```
 
-### Build the Contract
-Compile your backend types, routes, and Acore behavioral policies into a unified binary artifact:
+## Build and inspect
 
 ```bash
 axiom build axiom.acore
+axiom inspect axiom.axiom
 ```
-**Outcome:** A `.axiom` file is generated. A `.lockfile` is also created to help you track state changes in the future using `axiom diff`.
 
-### (Optional) Inspect the Contract
-Before sharing the contract with the frontend team, you can browse it via the terminal interface:
+The build evaluates Acore, invokes the configured extractor, validates the
+result, and writes a canonical `.axiom` artifact. It does not replace or deploy
+the backend.
+
+## Exercise the development boundary
 
 ```bash
-axiom inspect .axiom
+axiom test axiom.acore
+axiom run axiom.acore
+axiom run axiom.acore --mode mock --debug
 ```
-*Use the arrow keys to browse your extracted Endpoints, Schemas, and the automatically generated Normalized Validation YAMLs.*
 
-### Deploy a Local Mock Server
-Want to give the frontend team something to test against immediately? Boot the native Axiom mock engine:
+Service mode is the default. A contract-only Acore backend currently executes
+through the same deterministic engine as mock mode, while an extracted
+`BackendConfig` launches its declared service entrypoint. Explicit mock mode
+uses authored mock data and state and can enable verbose request diagnostics.
 
-```bash
-axiom serve --file axiom.acore --port 8080 --debug
-```
-Your contract is now hosted as a live API. It includes an auto-generated Swagger documentation page accessible at `http://localhost:8080/axdoc`.
-</Steps>
+Next, follow the full [Backend contract lifecycle](/workflows/backend-contract-lifecycle)
+for semantic review and immutable release.

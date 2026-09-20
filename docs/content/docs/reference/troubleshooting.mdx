@@ -1,0 +1,125 @@
+---
+title: Troubleshooting
+description: Diagnose extraction, build, pull, runtime, native host, browser, and Cloud failures.
+---
+
+Start with the narrowest boundary and preserve the first structured error. A
+later framework exception often hides the extraction, artifact, or runtime
+condition that caused it.
+
+## Collect a safe report
+
+```bash
+axiom doctor --json --strict > axiom-doctor.json
+axiom ui doctor --target web --json > axiom-ui-web.json
+```
+
+Before sharing output, remove access tokens, DSNs, sandbox keys, request
+bodies, private contract URLs, local usernames, and cache payloads. The doctor
+report is designed for support; arbitrary debug logs are not automatically
+safe.
+
+## Extraction fails
+
+**Symptoms:** Python import errors, a missing FastAPI application, extractor
+module errors, or the process tries to connect to infrastructure.
+
+1. import the selected service module in the same environment;
+2. install the service dependencies needed at module initialization;
+3. confirm the module and application object passed to `axiom init`;
+4. move database connections, migrations, and worker startup out of import
+   time; and
+5. rerun `axiom build` with the smallest reproducible module.
+
+FastAPI extraction imports and executes module initialization. It is not a
+static-AST-only path.
+
+## Build or lock verification fails
+
+Run the checks separately:
+
+```bash
+axiom eval axiom.acore
+axiom domain validate axiom.acore --json
+axiom security check axiom.acore --json
+axiom test axiom.acore
+axiom build axiom.acore
+axiom contract verify --deps AxiomDeps.toml --lock axiom.ui.lock.json
+```
+
+If proof fails, do not replace the lock with whatever the network currently
+returns. Confirm the intended immutable version, resolve deliberately, inspect
+the diff, and commit the dependency and lock together.
+
+## Pull or generated-client failure
+
+- use exactly one source form and an explicit framework;
+- confirm the account can access a private project;
+- pin a release version instead of relying on a moving channel in CI;
+- remove hand-edited generated files and regenerate into a clean directory;
+- check that contract, signature, and public-key proof belong to the same
+  release; and
+- compile the consuming application before committing the generated change.
+
+## Browser runtime does not start
+
+1. await `atmx.init` and inspect its `InitResult`;
+2. confirm the contract URL, Wasm URL, and backend base URL in the network tab;
+3. serve the correct content types and configure CORS for the frontend origin;
+4. ensure signature and public key are both present or both intentionally
+   absent in a local-development path;
+5. check CSP if Wasm or declarative expression evaluation is blocked; and
+6. clear the affected ATMX session cache only after recording the failure.
+
+Do not mount code that queries the SDK before initialization completes.
+
+## Flutter runtime does not start
+
+- confirm every generated `assetPath` is declared in the Flutter bundle;
+- verify native runtime libraries are present for the chosen platform and
+  architecture;
+- use an application-writable `dbPath`, or omit it while isolating a cache
+  problem;
+- initialize before mounting querying widgets; and
+- test both emulator/simulator and a release-mode build for the target.
+
+Swift distribution remains experimental; a local XCFramework build does not
+establish a supported Swift package integration.
+
+## Acore UI host problems
+
+```bash
+axiom ui doctor --target ios --json
+axiom ui host status --target ios
+axiom ui test main.acore --target ios
+```
+
+Use `axiom ui host recover --target TARGET` only to restart the installed
+development host and discard stale delivery-control records. It does not repair
+an invalid source file, missing asset, or failed platform toolchain.
+
+## Cloud release stays queued or fails
+
+Separate these states:
+
+- **upload failure:** authentication, project membership, version collision, or
+  artifact validation;
+- **queued/running:** durable work exists but a worker or provider operation has
+  not completed;
+- **failed:** inspect the recorded stage and attempt rather than retrying the
+  whole workflow blindly;
+- **warning:** review semantic or policy evidence and use the owner
+  acknowledgement path if appropriate; and
+- **deployable but not latest:** activation policy or channel generation still
+  requires action.
+
+A managed environment can be disabled even when contract storage and release
+verification are working. Likewise, a saved mock configuration does not mean a
+sandbox is ready.
+
+## Escalation checklist
+
+Provide CLI/runtime version, target, OS, exact command, sanitized structured
+error, doctor report, artifact SHA-256, release version/attempt ID, and the
+smallest reproducible contract. Never attach signing private keys, bearer
+tokens, cookies, DSNs, sandbox credentials, or raw sensitive payloads.

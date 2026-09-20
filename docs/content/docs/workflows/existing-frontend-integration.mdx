@@ -1,0 +1,56 @@
+---
+title: Existing frontend integration
+description: Consume an Axiom contract from web, React, Flutter, or another explicit client path without adopting Acore UI.
+---
+
+Your frontend can remain ordinary framework code. The contract artifact and
+runtime bindings provide the integration boundary; Acore UI is optional.
+
+## 1. Select a contract source and target
+
+Supported sources include a local `.axiom`, an explicit URL, dependency config,
+or an organization/project release reference.
+
+```bash
+axiom pull --contract ../backend/axiom.axiom --framework atmx-web
+axiom pull --contract organization/project/1.2.0 --framework flutter
+```
+
+Current named target paths include `atmx-web`, `atmx-react`, `flutter`, and
+`dart`. Consult [Support and availability](/introduction/support-matrix) before
+committing to an alpha or experimental target.
+
+## 2. Commit dependency intent
+
+`AxiomDeps.toml` records the source under a stable alias:
+
+```toml
+[contracts.tasks]
+source = "../backend/axiom.axiom"
+```
+
+Commit the generated lock or pinned artifact metadata expected by that target.
+Do not fall back from a missing lock to live backend introspection in a release
+build.
+
+## 3. Integrate the generated surface
+
+Use the files and initialization instructions emitted by the selected target.
+The exact APIs differ between ATMX and Flutter/Dart and may change while those
+paths are alpha. Generated output is derived from the contract and should not
+become a second hand-maintained schema.
+
+## 4. Test the real application boundary
+
+At minimum, test:
+
+- runtime initialization and artifact integrity failure;
+- one successful query and one declared error;
+- authentication/header injection without embedding secrets in the contract;
+- cache identity and mutation invalidation where declared;
+- streaming lifecycle if the selected target supports the declared mode; and
+- application release builds, not only development hot reload.
+
+When upgrading, pull the new immutable version, inspect the semantic diff, run
+the consumer suite, and commit the dependency change and lock together.
+

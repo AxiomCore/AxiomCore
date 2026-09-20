@@ -1,0 +1,33 @@
+---
+title: Security check
+description: Run deterministic AXSEC analysis locally, in CI, and before a release.
+---
+
+Run the same compiler analysis locally and in CI:
+
+```bash
+axiom security check axiom.acore
+axiom security check axiom.acore --json > security-report.json
+axiom build axiom.acore
+```
+
+`security check` does not write an artifact. It renders the manifest shape a build will embed: mode, findings, coverage, graph, source evidence, and canonical hash. `--json` is suitable for CI annotations.
+
+## Exit behavior
+
+- No `security` block exits successfully and explains that Security Mode is not enabled.
+- `audit` exits successfully after reporting findings, including errors that would block strict mode. This makes baseline adoption safe.
+- `strict` exits non-zero on error findings. `axiom build` uses the same rule.
+- `--fail-on-warning` lets CI make audit warnings non-zero once a team agrees on its baseline.
+- Invalid Acore or invalid policy references always exit non-zero.
+
+## Recommended rollout
+
+1. Run a Go or Python extractor and review its advisory facts.
+2. Add `security { mode = "audit" }`, explicit public routes, and policies.
+3. Classify sensitive fields and add response projections.
+4. Declare network, upload, path, process, cache, CORS, and logging controls only for boundaries the service actually owns.
+5. Review each security change in a native contract PR.
+6. Move to `strict` after a trusted server adapter enforces the declarations.
+
+Security checks do not read secret values. Put policy-safe identifiers such as origins and issuers in Acore, and keep credentials in deployment secrets.

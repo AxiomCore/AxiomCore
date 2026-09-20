@@ -1,0 +1,81 @@
+---
+title: Acore language
+description: Author typed, declarative software contracts and Acore UI applications.
+---
+
+Acore is the declarative language at the center of AxiomCore. The implementation
+has its own lexer, parser, lazy evaluator, renderer, standard-library bridge,
+diagnostics, and language server. It is not Pkl source and does not require a
+Pkl runtime.
+
+<StatusNote status="alpha" title="Language surface">
+  The documented grammar is implemented and testable, but it is pre-stable.
+  Contract-specific classes and the Acore UI profile evolve independently from
+  the core expression language. Review semantic diffs and pin artifacts when
+  upgrading.
+</StatusNote>
+
+## Read the manual in this order
+
+1. [Syntax overview](/acore-language/syntax-overview) — modules, properties,
+   typed objects, collections, and comments.
+2. [Values, types, and operators](/acore-language/values-types-and-operators) —
+   literals, nullable and union types, expressions, and precedence.
+3. [Objects, classes, and functions](/acore-language/objects-classes-and-functions)
+   — declarations, modifiers, dynamic members, lambdas, and scope.
+4. [Imports, contracts, and composition](/acore-language/imports-and-contracts)
+   — the ownership boundary between `import`, `amends`, `use`, and `extend`.
+5. [Evaluation and output](/acore-language/evaluation-and-output) — lazy
+   evaluation, security boundaries, rendering, variants, and errors.
+6. [Standard library](/acore-language/standard-library) — the modules and
+   intrinsics that the embedded resolver currently exposes.
+7. [Acore UI profile](/acore-language/ui-profile) — applications, pages, state,
+   actions, service bindings, and target compilation.
+
+## Contract profiles
+
+The language syntax is shared, but a compiler profile determines which
+top-level declarations are meaningful:
+
+| Profile | Primary declarations | Output |
+| --- | --- | --- |
+| Service contract | `project`, `backend`, `models`, `endpoints`, `policies`, `domain`, `security`, `testConfig` | `.axiom` service package |
+| Declarative package | Package envelope plus kind-specific exports | `.axiom` theme, component-library, database-schema, extension-metadata, or application-policy package |
+| Acore UI | `module`, `use`, `app`, `page`, state/query/mutation/action, `view` | In-memory UI graph or `.axiomapp` |
+
+Do not assume that a declaration accepted by one profile is available in
+another. The CLI selects the compiler path from the command and source.
+
+## Minimal service source
+
+```acore
+amends "axiom-fastapi:./main.py:app"
+
+project {
+  id = "tasks-api"
+  version = "0.1.0"
+}
+
+policies {
+  retry = RetryPolicy { maxAttempts = 3 }
+}
+```
+
+## Minimal Acore UI source
+
+```acore
+module example.hello.ui
+
+app Hello { route "/" => Home }
+
+page Home {
+  view {
+    SafeArea {
+      Text("Hello from Acore")
+    }
+  }
+}
+```
+
+Use the [Acore schema reference](/reference/acore-schema-reference) for
+contract-specific classes and defaults.

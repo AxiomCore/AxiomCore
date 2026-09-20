@@ -1,4 +1,19 @@
 {
   "title": "Reference & Appendix",
-  "pages": ["acore-schema-reference", "error-codes", "benchmarks", "faqs"]
+  "pages": [
+    "index",
+    "acore-schema-reference",
+    "executable-extensions",
+    "security-rules",
+    "error-codes",
+    "troubleshooting",
+    "versioning-and-deprecation",
+    "support-and-feedback",
+    "documentation-contributions",
+    "documentation-site-privacy",
+    "benchmarks",
+    "adoption-metrics",
+    "glossary",
+    "faqs"
+  ]
 }

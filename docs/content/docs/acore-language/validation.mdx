@@ -1,43 +1,36 @@
 ---
 title: Validation
-description: Cross-platform deterministic validation with Rod.
+description: How extracted field rules, Acore constraints, runtime validation, and domain invariants differ.
 ---
 
-import { Callout } from 'fumadocs-ui/components/callout';
+AxiomCore has several validation layers. They are related but not interchangeable.
 
-Axiom Core uses **Rod** for all schema validations. Rod is a high-performance, cross-platform validation library built by Axiom Core that ensures your data is valid before it ever leaves the client or enters your application logic.
+| Layer | Purpose | Enforcement boundary |
+| --- | --- | --- |
+| Acore type/constraint | Validate authored values during evaluation | Compiler/evaluator |
+| Extracted model validation | Preserve supported source-schema constraints | Contract build and supported runtime paths |
+| Endpoint `validate` | Enable/override response/request validation intent | Selected runtime path |
+| Domain invariant | Reviewable business-semantic evidence | Signed manifest/tooling; not arbitrary code execution |
+| Security rule | Report/gate declared coverage and unsafe combinations | Analyzer/build/release according to mode |
 
-<Callout type="info" title="Rod Documentation">
-  This page covers how to use validation inside Acore. For a deep dive into the Rod engine, visit [rod.axiomcore.dev](https://rod.axiomcore.dev) or check the [source on GitHub](https://github.com/AxiomCore/rod).
-</Callout>
+## Field validation
 
-### The "Write-Once, Validate-Anywhere" Model
+`ModelField.validate` carries normalized structured rules. Extractors normally
+produce it from supported source-framework metadata:
 
-Traditionally, validation logic is duplicated across the Backend (Python) and Frontend (Flutter). This leads to **Schema Drift**. 
-
-Axiom solves this by moving validation into the **Shared Rust Core**. You define the validation rules once in your `axiom.acore` file, and the **Generic Runtime** enforces them natively on the client device.
-
-### Defining Validations in Acore
-
-Validation is applied at the model level. You reference the model and field discovered during introspection and attach a `validate` block.
-
-```pkl
-local User = Models.User
-
+```acore
 models {
-  [User._model] {
-    fields {
-      [User.email] {
-        validate {
+  ["User"] = ModelDef {
+    name = "User"
+    fields = Mapping {
+      ["email"] = ModelField {
+        name = "email"
+        typeRef = TypeRefPrimitive { kind = "string" }
+        validate = {
           type = "string"
-          email = true
-        }
-      }
-      [User.age] {
-        validate {
-          type = "number"
-          minimum = 18
-          int = true
+          min = 3
+          max = 254
+          format = "email"
         }
       }
     }
@@ -45,22 +38,36 @@ models {
 }
 ```
 
-### How it Works: RodSpec
+No validation block should serialize as an ambient empty object; a field with
+no normalized rules uses `null`.
 
-Acore's validation syntax maps 1-to-1 with **RodSpec**—a serializable AST (Abstract Syntax Tree) for validation logic. 
+## Type constraints
 
-1.  **Contract Build:** Your Acore rules are compiled into a `RodSpec` and embedded in the `.axiom` file.
-2.  **Runtime Execution:** The Rust runtime parses this spec into an executable validator.
-3.  **Deterministic Enforcement:** 
-    *   **Outgoing:** Requests are validated against the spec before being sent.
-    *   **Incoming:** Server responses are validated before being returned to the Flutter SDK.
+```acore
+sampleRate: Float(this >= 0.0 && this <= 1.0) = 0.25
+```
 
-### Why Rod?
+These constraints validate Acore configuration values during evaluation.
 
-*   **Native Speed:** Validation happens in the Rust runtime, bypassing the overhead of high-level languages.
-*   **Consistency:** Because the same Rust core is used, a validation that passes in your test suite is guaranteed to behave identically in the production mobile app.
-*   **Precision:** Capture specific requirements like `trim`, `uuid`, or `regex` that standard JSON schemas often miss.
+## Domain invariants
 
-<Callout type="warn">
-If a server response fails the Rod validation defined in your contract, the Axiom Runtime will throw a `ValidationException` and block the data from reaching your UI, preventing crashes caused by malformed data.
-</Callout>
+```acore
+invariants = Invariants {
+  ["nonNegativeTotal"] = DomainInvariant {
+    scope = Entities.order
+    expression = "total_cents >= 0"
+    fields = Listing { "total_cents" }
+  }
+}
+```
+
+Invariant expressions and bounded rule objects are signed evidence for review,
+generation, and impact analysis. The compiler does not execute arbitrary
+business expressions against production data.
+
+## Failure behavior
+
+Invalid authored types or structural references stop a build. Runtime payload
+failure is reported through the selected SDK/runtime error state. Exact error
+transport differs by target; test your consuming framework and avoid assuming
+one UI error shape across all clients.

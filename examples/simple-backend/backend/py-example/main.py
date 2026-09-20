@@ -24,7 +24,9 @@ from starlette.types import Message
 # ==============================
 # CONFIG
 # ==============================
-SECRET_KEY = "supersecretkey"
+# Local fixture only. Production applications must load a secret from their
+# deployment environment or secret manager.
+SECRET_KEY = "development-only-change-me"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
@@ -75,6 +77,7 @@ class Item(BaseModel):
     id: str
     title: str
     description: Optional[str]
+    dodo: Optional[str]
     owner_id: str
 
 

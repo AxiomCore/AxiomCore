@@ -1,0 +1,59 @@
+---
+title: Security rules
+description: AXSEC rule catalog, source evidence, delivery groups, and enforcement boundaries.
+---
+
+Security Mode emits stable AXSEC IDs across local checks, CI, signed releases, native PRs, contract pages, and trace contract context. A finding is either `invalid`, `uncovered`, `declared_unproven`, or `observed` extractor evidence. `audit` is non-blocking; `strict` rejects builds/releases with blocking gaps. A declaration is not presented as proof that arbitrary handler source is safe.
+
+## Rule delivery groups
+
+| Group | Security points | AXSEC families |
+| --- | --- | --- |
+| Identity | Broken authorization/IDOR; authentication | 001, 014, 031–033 |
+| Output/data | XSS; secret leakage; data exposure; observability leaks | 041, 051, 081–082, 151 |
+| Browser/network | SSRF; CSRF; rate/abuse; CORS | 061–073, 091, 111 |
+| Stateful/OS | Mass assignment; uploads; paths; commands; cache | 101, 121, 131–132, 141–142, 161–162 |
+| Global | Security invariants | Signed requirements using the preceding rule families |
+
+## Rule catalog
+
+| IDs | Detects | Primary declaration/remediation |
+| --- | --- | --- |
+| 001, 014 | Uncovered route or resource/IDOR binding | `EndpointGuard`, policy, `resourceBinding`, Domain relationship |
+| 031–033 | Missing/unsafe authentication profile | `AuthenticationPolicy` transport safeguards |
+| 041 | HTML output is not escaped | Escaped output boundary or reviewed unsafe exception |
+| 051 | Secret/sensitive data is not redacted | `SensitiveData.redact = true` plus adapter redaction |
+| 061, 062 | Required rate limit/idempotency missing | `RateLimit`, idempotency declaration and adapter key enforcement |
+| 072, 073 | Dynamic/unallowlisted/private egress | Fixed `NetworkService` origin; private network denied by default |
+| 081, 082 | Classified return lacks projection/audience | Domain response projection and approved audience |
+| 091 | Cookie mutation lacks CSRF | `CsrfPolicy` or explicit non-browser exemption |
+| 101 | Mutation has no writable-field allowlist | `writableFields`; adapter rejects unknown fields |
+| 111 | Wildcard credentialed CORS | Explicit trusted origins; never credentials with `*` |
+| 121 | Shared cache lacks principal variation | Disable sharing or require principal vary key |
+| 131, 132 | Unrooted/dynamic filesystem access | Rooted `PathPolicy`, deny external input |
+| 141, 142 | Process has no fixed executable or permits shell | Fixed executable and structured arguments |
+| 151 | Possible sensitive logging | Classify/redact and inspect cited call site |
+| 161, 162 | Upload sink/policy misses safe defaults | Size/type bounds, inspection, private non-executable storage |
+
+## Extractor evidence without an SDK
+
+Go and Python/FastAPI extractors emit advisory facts for dynamic network targets, process execution, filesystem paths, uploads, rate-limit signals, sensitive logging, and wildcard CORS. Facts include file, line, confidence, and a short description in the signed manifest.
+
+Facts may create a finding. They never grant access, mark a route public, or weaken a policy. Existing services therefore need no SDK; authors declare or override a boundary in `axiom.acore` when source evidence is incomplete.
+
+## Enforcement model
+
+| Boundary | Behavior |
+| --- | --- |
+| Compiler | Validates references and creates the canonical signed manifest |
+| `axiom security check` | Reports deterministic rules locally and in CI |
+| Build/release | `strict` rejects error findings; `audit` remains non-blocking |
+| Client runtime | Adds the loaded manifest hash, mode, effective declared policy/auth/permission, and endpoint finding count to an OpenTelemetry span |
+| Dashboard | Renders signed findings, coverage, graph, diffs, and trace policy context |
+| Existing Go/Python app | Unchanged by extraction; its middleware/handlers are the runtime enforcement boundary |
+
+The runtime context is diagnostic only. A future trusted server adapter can evaluate the signed policy against a principal and resource at request time, then emit an allow/deny decision trace. Until then dashboard labels policy evidence `declared_unproven`, instead of inventing a runtime decision.
+
+## Adoption measurements
+
+Track enabled contracts, audit-to-strict conversion, endpoint coverage, findings stopped before release, extractor-finding remediation time, and time to answer “who may perform this operation and why.”

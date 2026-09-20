@@ -1,4 +1,4 @@
 {
   "title": "Client Ecosystem",
-  "pages": ["flutter-dart", "react-atmx", "vanilla-web-atmx", "swift-ios"]
+  "pages": ["index", "vanilla-web-atmx", "react-atmx", "flutter-dart", "swift-ios"]
 }

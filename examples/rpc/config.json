@@ -1,7 +1,7 @@
 {
   "contracts": {
     "rpc": {
-      "file": "/Users/yashmakan/AxiomCore/_axiom/AxiomCore/examples/rpc/.axiom",
+      "file": "./.axiom",
       "baseUrl": "http://localhost:8000"
     }
   }

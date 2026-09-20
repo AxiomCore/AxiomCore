@@ -1,0 +1,62 @@
+---
+title: Axiom Cloud
+description: Accounts, projects, immutable contracts, release evidence, managed sandboxes, and observability.
+---
+
+<StatusNote status="alpha" title="Connected control plane">
+  Axiom Cloud implements accounts, workspaces, projects, contracts, release
+  evidence, channel operations, managed environments, contract tests, and
+  observability surfaces. Availability depends on a live deployment and account
+  access; APIs and operational limits remain pre-stable.
+</StatusNote>
+
+Axiom Cloud is the connected control plane for artifacts and their operational
+evidence. It complements local Acore and CLI workflows; it is not required to
+parse Acore, run local checks, or build an unsigned development artifact.
+
+```text
+developer / CI
+  -> immutable contract upload
+  -> hash + Cloud signature
+  -> durable validation, semantic diff, sandbox, tests, policy
+  -> activation-eligible release
+  -> versioned latest channel
+  -> pull by authorized clients
+```
+
+## Current product boundary
+
+<CapabilityTable rows={[
+  { capability: 'Accounts, workspaces, and projects', status: 'alpha', scope: 'Browser sessions, CLI device login, memberships, invitations, project roles, settings, and keys.' },
+  { capability: 'Contracts and releases', status: 'alpha', scope: 'Immutable versions, manifests, verification, semantic diff, durable pipeline evidence, explicit latest channel, activation, and rollback.' },
+  { capability: 'Managed sandbox and mock', status: 'alpha', scope: 'Project-scoped synthetic environment lifecycle where the deployment enables managed environments.' },
+  { capability: 'Contract tests and delivery policy', status: 'alpha', scope: 'Declared tests against the matching sandbox with persisted results and release-policy outcomes.' },
+  { capability: 'Runtime observability', status: 'alpha', scope: 'Scoped OTLP sources, traces, traffic, logs, retention, alerts, and security posture.' },
+  { capability: 'Contract pull requests', status: 'alpha', scope: 'Proposals, semantic changes, review comments, and review-state workflow.' },
+  { capability: 'Hosted CI/CD for every repository', status: 'coming-soon', scope: 'Current release pipelines process Axiom artifacts; they are not a general replacement for arbitrary repository CI.' },
+  { capability: 'Axiom Studio, Acode, and Marketplace', status: 'coming-soon', scope: 'Planned products, not additional tabs that can be inferred from the Cloud implementation.' },
+]} />
+
+## Choose local or connected work
+
+Use local commands for authoring, evaluation, security/domain validation,
+semantic diff, mocks, and contract tests. Use Cloud when a team needs shared
+identity, immutable distribution, signing provenance, review records, release
+channels, managed environments, or retained runtime evidence.
+
+Cloud records are not substitutes for backend authorization or repository
+review. A signed contract states provenance; a passing contract test states the
+bounded declared checks passed against the selected environment.
+
+## Start
+
+```bash
+axiom login
+axiom project list
+axiom project link
+axiom build --release --version 1.2.0
+```
+
+The CLI resolves the linked project from the current directory. In automation,
+pass an explicit project and immutable version and retain the resulting release
+identifier in deployment evidence.

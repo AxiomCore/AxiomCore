@@ -9,21 +9,28 @@ impl Telemetry {
     pub async fn track(
         config: &AccessConfig,
         command: &str,
-        args: Vec<String>,
         duration: Duration,
         success: bool,
-        error_msg: Option<String>,
+        error: Option<&str>,
     ) {
         let os_info = os_info::get();
+
+        if telemetry_disabled() {
+            return;
+        }
 
         let payload = serde_json::json!({
             "machine_id": config.machine_id,
             "command": command,
-            "args": serde_json::to_string(&args).unwrap_or_default(),
+            // `args` is retained for wire compatibility with the alpha
+            // endpoint, but it now holds a small schema version only. Never
+            // send file paths, URLs, credentials, query parameters, or user
+            // supplied contract/project names as adoption telemetry.
+            "args": "{\"schema_version\":1}",
             "duration": duration.as_millis() as u64,
             "success": success,
-            "error": error_msg.unwrap_or_default(),
-            "os": os_info.to_string(),
+            "error": error.map(error_category).unwrap_or(""),
+            "os": os_info.os_type().to_string(),
             "version": env!("CARGO_PKG_VERSION")
         });
 
@@ -45,5 +52,59 @@ impl Telemetry {
             }
             _ => {} // Ignore timeouts or success
         }
+    }
+}
+
+fn telemetry_disabled() -> bool {
+    matches!(
+        std::env::var("AXIOM_TELEMETRY")
+            .ok()
+            .as_deref()
+            .map(str::trim),
+        Some("0" | "false" | "FALSE" | "off" | "OFF")
+    )
+}
+
+fn error_category(error: &str) -> &'static str {
+    let normalized = error.to_ascii_lowercase();
+    if normalized.contains("not logged in")
+        || normalized.contains("authentication")
+        || normalized.contains("access")
+    {
+        "authentication"
+    } else if normalized.contains("network")
+        || normalized.contains("connection")
+        || normalized.contains("timeout")
+    {
+        "network"
+    } else if normalized.contains("not found")
+        || normalized.contains("missing")
+        || normalized.contains("invalid")
+    {
+        "input"
+    } else if normalized.contains("build")
+        || normalized.contains("compile")
+        || normalized.contains("artifact")
+    {
+        "build"
+    } else {
+        "other"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn telemetry_never_uses_the_raw_error_as_an_attribute() {
+        assert_eq!(
+            error_category("missing axiom.acore at /private/project"),
+            "input"
+        );
+        assert_eq!(
+            error_category("connection timeout to a collector"),
+            "network"
+        );
     }
 }

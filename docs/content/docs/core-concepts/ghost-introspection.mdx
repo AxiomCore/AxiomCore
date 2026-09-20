@@ -1,36 +1,68 @@
 ---
-title: Ghost Introspection
-description: Extracting backend schemas without Docker or heavy dependencies.
+title: Backend extraction
+description: What AxiomCore reads, what it executes, and how to review an extracted contract.
 ---
 
-import { Callout } from 'fumadocs-ui/components/callout';
+Backend extraction converts a supported service surface into declarations that
+Acore can amend. The important boundary is source-specific: an extractor may
+parse source, load framework metadata, or import an application module. Do not
+assume that extraction is universally static or side-effect free.
 
-Historically, extracting an API schema meant running the backend server. This forced CI/CD pipelines to install massive dependencies (like Pandas or PostgreSQL drivers) just to generate a Swagger file.
+## Current inputs
 
-AxiomCore solves this using **Ghost Introspection**.
+<CapabilityTable rows={[
+  { capability: 'FastAPI', status: 'available', scope: 'Loads the selected Python module, locates the FastAPI application, and extracts routes and models. The service environment must be importable.' },
+  { capability: 'Go services', status: 'alpha', scope: 'Extracts supported route and type patterns. Review output for framework-specific constructs.' },
+  { capability: 'OpenAPI JSON', status: 'experimental', scope: 'Bootstraps bounded domain suggestions for review; it is not a complete import of every vendor extension or Acore behavior.' },
+  { capability: 'SQL DDL', status: 'experimental', scope: 'Bootstraps bounded domain suggestions from an exported schema; it does not connect to or manage a live database.' },
+]} />
 
-### Decoupled Extractors
-Axiom CLI uses specialized binaries that parse Abstract Syntax Trees directly from your source files. You can install extractors on demand:
+## FastAPI execution boundary
+
+The FastAPI extractor installs import shims for some dependencies and also
+uses AST analysis for security evidence. It nevertheless imports and executes
+the selected module's top-level initialization to obtain the FastAPI instance.
+That means the extraction environment needs the application's relevant Python
+dependencies, and import-time code must not require production credentials or
+a live database.
+
+Prefer an application factory or module whose import performs declaration
+only. Move migrations, worker startup, external connections, and destructive
+setup behind explicit process entry points.
+
+```python
+from fastapi import FastAPI
+
+app = FastAPI()
+
+@app.get("/health")
+def health() -> dict[str, str]:
+    return {"status": "ok"}
+```
+
+Then initialize Acore against that module using the CLI workflow supported by
+your checkout:
 
 ```bash
 axiom install axiom-fastapi --module
-axiom install axiom-go-extractor --module
+axiom init ./src/main.py:app --module axiom-fastapi
+axiom build axiom.acore
 ```
 
-### The "Amends" Bridge
-In your `.acore` file, the `amends` keyword triggers the Ghost Extractor:
+## Review is part of extraction
 
-```pkl
-// Introspect a Python FastAPI application
-amends "axiom-fastapi:./src/main.py:app"
+An extractor reports what it can observe; it cannot prove the business meaning
+of every handler. Before release:
 
-// Introspect a Go Gin/Chi router
-amends "axiom-go:./cmd/server/main.go"
+1. inspect the generated or amended endpoints and models;
+2. confirm authentication, permissions, validation, and error declarations;
+3. add policies or explicit Acore declarations where source evidence is
+   incomplete;
+4. run contract tests against a controlled service or mock; and
+5. inspect the semantic diff against the current consumer version.
 
-// Or pull a standard OpenAPI spec from a URL!
-amends "axiom-openapi:https://api.stripe.com/v1/spec.yaml"
-```
-
-<Callout type="info">
-**Zero Environment Setup:** You can run `axiom build` on a bare-bones Ubuntu CI runner or an M3 Mac. Because the extractors don't execute the backend logic, they don't care if your database is offline or if your ENV variables are missing.
-</Callout>
+<StatusNote status="alpha" title="No universal no-execution promise">
+  CI runners can remain smaller than a full production environment, but they
+  still need the dependencies and safe initialization required by the chosen
+  extractor. Treat backend source as code at the extraction boundary.
+</StatusNote>

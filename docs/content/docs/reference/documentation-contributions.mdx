@@ -1,0 +1,67 @@
+---
+title: Documentation contributions
+description: Update AxiomCore documentation with implementation evidence, precise availability, safe examples, and reproducible validation.
+---
+
+Documentation changes are product changes. A command, API, compatibility, or
+availability claim must move with the implementation evidence that supports it.
+
+## Before editing
+
+1. identify the owning repository and narrow implementation path;
+2. reproduce the behavior with the current tool or test;
+3. choose the exact capability status from the
+   [support matrix](/introduction/support-matrix); and
+4. decide whether the change belongs in a concept, how-to, reference, or
+   product-direction page.
+
+Do not publish internal workstream labels. Planned products may explain intent,
+but must use **Coming soon** and must not contain runnable installation steps.
+
+## Local workflow
+
+```bash
+cd docs
+corepack enable
+pnpm install --frozen-lockfile
+pnpm check
+```
+
+`pnpm check` enforces content metadata and navigation, internal links, public
+terminology and example safety, TypeScript/MDX compilation, a production build,
+and HTTP smoke tests for public discovery routes.
+
+For a focused edit, run the faster checks first:
+
+```bash
+pnpm lint:content
+pnpm types:check
+```
+
+## Claim and example requirements
+
+- Add or update the matching row in the internal evidence ledger.
+- State the target, framework, command, artifact, or host boundary.
+- Separate a successful build from real backend or consumer behavior.
+- Use synthetic data and visibly non-production placeholders.
+- Use repository-relative paths; never commit a developer home path.
+- State when extraction imports or executes application code.
+- Treat semantic output as review evidence rather than a universal guarantee.
+- Check narrow and dark appearance when layout or MDX components change.
+
+## Review the generated surfaces
+
+Every public page has more than one representation:
+
+```text
+MDX source
+  ├── rendered HTML and search index
+  ├── processed /docs/<path>.mdx output
+  ├── llms.txt and llms-full.txt
+  ├── sitemap.xml and robots.txt
+  └── per-page Open Graph image and metadata
+```
+
+Confirm that status and boundaries survive those transformations. The
+repository-level `CONTRIBUTING.md` contains the maintainer release procedure
+and commands for changes that also touch examples or implementation code.

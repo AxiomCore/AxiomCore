@@ -14,7 +14,7 @@ class AxiomDefaultConfig {
     contracts: {
       'streamTest': AxiomContractConfig(
         baseUrl: 'http://localhost:8000',
-        assetPath: '/Users/yashmakan/AxiomCore/_axiom/AxiomCore/examples/stream/.axiom',
+        assetPath: '../.axiom',
       ),
     },
   );
@@ -173,4 +173,3 @@ class StreamTestModule {
   }
 
 }
-

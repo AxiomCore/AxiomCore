@@ -1,40 +1,69 @@
 ---
-title: Policies & Behavior
-description: Configuring retries, caches, and validations natively.
+title: Policies and runtime behavior
+description: Declare cache and retry intent globally or for an individual endpoint.
 ---
 
-Attach policies either globally or per-endpoint to instruct the Generic Runtime on how to behave.
+Service contracts can declare cache and retry policy. The runtime applies only
+the behavior implemented for the selected client target; inspect the generated
+contract and validate the target before relying on it.
 
-### Cache Policy
+## Global policy
 
-Axiom supports robust offline and high-performance caching.
-
-```pkl
-cache = new CachePolicy {
-  strategy = "stale_while_revalidate"
-  ttlSeconds = 3600
-}
-```
-*   `network_only`: Bypasses cache entirely.
-*   `cache_first`: Returns cache if valid; otherwise network.
-*   `network_first`: Attempts network; if timeout/offline, returns cache.
-*   `stale_while_revalidate`: Instantly returns cache to the UI, then fetches network in the background and updates the UI silently.
-
-### Retry Policy
-
-Prevent UI hangs and handle flaky internet autonomously.
-
-```pkl
-retry = new RetryPolicy {
-  maxAttempts = 3
-  retryOnCodes = new Listing { 502, 503, 504 }
-  retryOnTimeout = true
-  
-  backoff = new ExponentialBackoff {
-    initialDelay = "500ms"
-    multiplier = 2.0
-    useJitter = true
+```acore
+policies {
+  cache = CachePolicy {
+    strategy = "stale_while_revalidate"
+    ttlSeconds = 3600
+  }
+  retry = RetryPolicy {
+    maxAttempts = 3
+    retryOnCodes = Listing { 502 503 504 }
+    retryOnTimeout = true
+    backoff = ExponentialBackoff {
+      initialDelay = "500ms"
+      maxDelay = "10s"
+      multiplier = 2.0
+      useJitter = true
+    }
   }
 }
 ```
-*Available Backoffs:* `FixedBackoff`, `LinearBackoff`, `ExponentialBackoff`.
+
+## Endpoint override
+
+```acore
+endpoints {
+  ["get_profile"] = EndpointDef {
+    name = "get_profile"
+    path = "/profile"
+    method = "GET"
+    cache = CachePolicy { strategy = "cache_first" ttlSeconds = 300 }
+    retry = RetryPolicy { maxAttempts = 2 }
+  }
+}
+```
+
+An endpoint-level value is the narrow override for that endpoint. Do not infer
+an override from the HTTP method.
+
+## Cache strategies
+
+| Strategy | Contract intent |
+| --- | --- |
+| `network_only` | Do not satisfy the request from the contract cache. |
+| `cache_first` | Use a valid cached value before network. |
+| `network_first` | Prefer network and use the target's implemented fallback behavior. |
+| `stale_while_revalidate` | Permit an existing value while a refresh is attempted. |
+
+`ttlSeconds` is required by `CachePolicy`. Storage, eviction, privacy, and
+background-refresh behavior remain target/runtime concerns.
+
+## Retry and backoff
+
+`RetryPolicy` defaults to three attempts, retry codes `502`, `503`, and `504`,
+and timeout retries. Backoff implementations are fixed, linear, and
+exponential. Review retries for non-idempotent operations and declare security
+or idempotency requirements where appropriate.
+
+Policy declarations are not server enforcement and do not replace rate limits,
+timeouts, circuit breakers, or observability in the backend.

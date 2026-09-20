@@ -12,6 +12,8 @@ import {
   MapIcon
 } from 'lucide-react';
 
+const docsOrigin = 'https://docs.axiomcore.dev';
+
 // See https://fumadocs.dev/docs/headless/source-api for more info
 export const source = loader({
   baseUrl: '/',
@@ -21,6 +23,7 @@ export const source = loader({
     if (key === 'introduction') return createElement(BookIcon);
     if (key === 'getting-started') return createElement(RocketIcon);
     if (key === 'core-concepts') return createElement(CpuIcon);
+    if (key === 'guides') return createElement(MapIcon);
     if (key === 'acore-language') return createElement(CodeIcon);
     if (key === 'client-integration') return createElement(TerminalIcon);
     if (key === 'cloud-security') return createElement(ShieldCheckIcon);
@@ -34,7 +37,7 @@ export function getPageImage(page: InferPageType<typeof source>) {
 
   return {
     segments,
-    url: `/og/${segments.join('/')}`,
+    url: `/og/docs/${segments.join('/')}`,
   };
 }
 
@@ -42,6 +45,9 @@ export async function getLLMText(page: InferPageType<typeof source>) {
   const processed = await page.data.getText('processed');
 
   return `# ${page.data.title}
+
+Source: ${docsOrigin}${page.url}
+Description: ${page.data.description}
 
 ${processed}`;
 }

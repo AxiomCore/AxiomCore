@@ -1,0 +1,103 @@
+---
+title: Imports, Contracts, and Composition
+description: Choose the Acore keyword that matches the ownership and trust boundary.
+---
+
+Acore uses different keywords for source reuse, immutable contracts, source
+composition, and value inheritance. They are deliberately not synonyms.
+
+| Intent | Syntax | What crosses the boundary |
+| --- | --- | --- |
+| Reuse trusted source in the same build | `import "./shared.acore"` | A source module |
+| Consume a compiled contract | `use contract Tasks from "tasks" audience "mobile"` | A `.axiom` artifact selected by `AxiomDeps.toml` and a lock |
+| Consume a typed frontend package export | `use theme AppTheme from "theme" export "default"` | A verified theme or component-library export selected by a package lock |
+| Add declarations to Acore or extracted backend input | `amends "..."` | Build-time authoring input |
+| Inherit/promote a declared value | `extend Models.Task` | An in-memory value; no file is loaded |
+
+## Internal source modules: `import`
+
+```acore
+import "./shared.acore"
+```
+
+`import` is eager, source-to-source reuse within one trusted build. Use it for
+internal backend/shared modules. It does not create a release boundary and it
+must not load a compiled `.axiom` contract. Keep imported source within the
+same reviewed build boundary.
+
+## Compiled contracts: `use contract`
+
+```acore
+use contract Tasks from "tasks" audience "mobile"
+```
+
+Here `Tasks` is the local facade name and `tasks` is a stable alias in
+`AxiomDeps.toml` and `axiom.ui.lock.json`. The alias must resolve to a compiled
+file whose extension is `.axiom`. The compiler exposes only the
+selected operations, fields, audience, and policy metadata; it never loads the
+backend's `.acore` source or runs an extractor.
+
+This indirection lets an application update a package version or location in
+its manifest/lock without rewriting every source use. The current UI facade
+schema exposes the service operations and fields selected for its audience.
+
+## Typed frontend packages: `use theme` and `use component`
+
+Theme and component-library packages use kind-specific declarations:
+
+```acore
+use theme Material from "material-theme" export "default" appearance "light"
+use component Controls from "controls" export "PrimaryButton"
+```
+
+Both aliases resolve through the committed package lock. The declaration must
+match the artifact kind and name an export present in the locked package.
+Editor analysis provides diagnostics, completion, and definition links from
+that verified surface. Package source is neither executed nor merged into the
+consumer.
+
+## Backend composition: `amends`
+
+```acore
+amends "./base.acore"
+amends "axiom-openapi:./openapi.yaml"
+amends "axiom-fastapi:./app.py:app"
+amends "axiom-go:./cmd/api"
+```
+
+`amends` composes authoring inputs before an immutable contract is built. Use
+it for a local Acore base or supported extractor input such as OpenAPI,
+FastAPI, or Go. A compiled `.axiom` is immutable and cannot be amended.
+
+Top-level `extends "..."` is rejected because it made source composition and
+value inheritance ambiguous. `amends` is the one spelling for source
+composition.
+
+## Value inheritance: `extend`
+
+```acore
+Entities = Entities {
+  task = extend Models.Task
+}
+```
+
+`extend` promotes or inherits an already declared value. It does not import a
+file, run an extractor, or cross a trust boundary. Class declarations may use
+the conventional `class Child extends Parent` form; that is type inheritance,
+not a top-level input directive.
+
+## Contract build flow
+
+```text
+backend source/OpenAPI -- amends/import --> build --> .axiom
+                                            local: unsigned + warning
+                                            Cloud release: signed
+                                                   |
+frontend AxiomDeps.toml + lock -- use contract <---+
+```
+
+The frontend resolves `AxiomDeps.toml` and commits the resulting
+`axiom.ui.lock.json`. Local unsigned `.axiom` artifacts are accepted with a
+warning. A Cloud-released contract includes signature/public-key proof and is
+verified. A missing lock is a hard error: Axiom does not fall back to backend
+source or network discovery.

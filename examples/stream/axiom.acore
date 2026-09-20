@@ -1,4 +1,4 @@
-amends "axiom-fastapi:/Users/yashmakan/AxiomCore/_axiom/AxiomCore/examples/stream/test_server.py:app"
+amends "axiom-fastapi:./test_server.py:app"
 
 local Routes = module.Routes
 
@@ -17,21 +17,21 @@ endpoints {
 
   // Define the WebSocket message schema (Since Python @app.websocket is opaque)
   [Routes.websocket_endpoint] {
-    streaming = new WebSocketDef {
+    streaming = WebSocketDef {
       direction = "bidirectional"
       reconnect = "auto"
 
-      serverMessages = new Listing {
-        new WsMessageDef {
+      serverMessages = Listing {
+        WsMessageDef {
           type = "chat"
-          model = new TypeRefNamed { value = "ChatMessage" }
+          model = TypeRefNamed { value = "ChatMessage" }
         }
       }
 
-      clientMessages = new Listing {
-        new WsMessageDef {
+      clientMessages = Listing {
+        WsMessageDef {
           type = "raw"
-          model = new TypeRefPrimitive { kind = "string" }
+          model = TypeRefPrimitive { kind = "string" }
         }
       }
     }
@@ -40,15 +40,15 @@ endpoints {
   // SSE and Chunks are auto-inferred by the extractor as HttpStream/SSE,
   // but we ensure they map to our ChatMessage model for the SDK.
   [Routes.stream_chunks] {
-    streaming = new HttpStreamDef {
-      responseType = new TypeRefNamed { value = "ChatMessage" }
+    streaming = HttpStreamDef {
+      responseType = TypeRefNamed { value = "ChatMessage" }
       encoding = "json"
     }
   }
 
   [Routes.stream_sse] {
-    streaming = new SseStreamDef {
-      responseType = new TypeRefNamed { value = "ChatMessage" }
+    streaming = SseStreamDef {
+      responseType = TypeRefNamed { value = "ChatMessage" }
     }
   }
 }

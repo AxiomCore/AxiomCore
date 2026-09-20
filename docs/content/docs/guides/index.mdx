@@ -1,0 +1,30 @@
+---
+title: Adoption guides
+description: Put AxiomCore into an existing system, prove the boundary in CI, and prepare a reviewed release without rewriting the application.
+---
+
+import { Card, Cards } from 'fumadocs-ui/components/card';
+import { BadgeCheck, Boxes, GitPullRequest, Rocket, Webhook } from 'lucide-react';
+
+These guides connect the individual language and CLI references into complete,
+reviewable outcomes. They deliberately preserve the application framework you
+already use and introduce AxiomCore at one contract boundary at a time.
+
+<StatusNote status="alpha" title="Validate your exact stack">
+  These paths use implemented commands, but AxiomCore is still alpha. Pin the
+  CLI and extractor versions used in CI, retain the generated lock and artifact,
+  and run a consumer test before promoting a release.
+</StatusNote>
+
+<Cards>
+  <Card icon={<Boxes />} title="Adopt incrementally" href="/guides/incremental-adoption" description="Choose one source of truth and introduce a contract without a framework rewrite." />
+  <Card icon={<Webhook />} title="FastAPI to web" href="/guides/fastapi-to-web" description="Extract a service, build an artifact, mock it locally, and pull an ATMX web client." />
+  <Card icon={<GitPullRequest />} title="Create a CI gate" href="/guides/ci-contract-gate" description="Make source, domain, security, tests, artifact, and semantic changes independently reviewable." />
+  <Card icon={<Rocket />} title="Prepare a release" href="/guides/production-readiness" description="Review proof, configuration, auth, observability, rollback, and consumer compatibility." />
+  <Card icon={<BadgeCheck />} title="Run checked-in examples" href="/guides/example-catalog" description="Find bounded fixtures and the validation command for each supported surface." />
+</Cards>
+
+If you need command flags rather than a workflow, use the
+[CLI reference](/tooling/cli-reference). If you are deciding whether a target
+is mature enough for your application, begin with the
+[support matrix](/introduction/support-matrix).

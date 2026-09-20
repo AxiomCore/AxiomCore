@@ -3,5 +3,5 @@ framework = "flutter"
 [contracts]
 
 [contracts.py-example]
-source = "/Users/yashmakan/AxiomCore/AxiomCore/examples/simple-backend/frontend/axiom_flutter_web/../../py-example/.axiom"
+source = "../../backend/py-example/axiom.axiom"
 base_url = "http://localhost:8000"

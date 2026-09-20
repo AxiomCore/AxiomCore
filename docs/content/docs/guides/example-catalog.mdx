@@ -1,0 +1,52 @@
+---
+title: Example catalog
+description: Select a checked-in AxiomCore fixture by capability, maturity, dependency boundary, and validation command.
+---
+
+The repository `examples/` directory contains small, reviewable fixtures. They
+demonstrate one boundary at a time and are not production application
+templates.
+
+| Directory | Capability | Dependencies | Primary validation |
+| --- | --- | --- | --- |
+| `domain-commerce` | Domain entities, relationships, invariants, projections, and an audience-visible projection change | Axiom CLI | `axiom domain validate commerce-v1.acore` |
+| `domain-support` | Compact domain model with audience projection | Axiom CLI | `axiom domain validate support-v1.acore` |
+| `domain-inference-fastapi` | FastAPI/Pydantic extraction and explicit domain promotion | Python, FastAPI, Pydantic, FastAPI extractor | `axiom domain validate axiom.acore` |
+| `security-mode-v1` | Safe audit baseline and intentionally rejected strict input | Axiom CLI | `axiom security check axiom.acore` |
+| `simple-backend` | FastAPI and Go service/consumer integration fixtures | Selected backend and frontend toolchains | Validate the chosen backend and consumer separately |
+| `offline-first-feed` | Cache/offline-oriented service and web fixture | Backend and web toolchains | Build the contract, then exercise online/offline application states |
+| `realtime-chat` | Go service with web, React, and Flutter stream consumers | Go and selected frontend toolchain | Build, then test connect/message/error/reconnect/dispose |
+
+The `rpc`, `stream`, and `observability-and-auth` directories are lower-level
+runtime fixtures for maintainers. Start with the bounded examples above.
+
+## Self-contained validation
+
+```bash
+cd examples/domain-commerce
+axiom domain validate commerce-v1.acore
+axiom build commerce-v1.acore
+axiom diff commerce-v1.acore commerce-v2.acore --format semantic
+```
+
+The final command identifies the removed projection field as a semantic path
+change. The current output does not classify that projection removal as
+breaking, so the reviewer must treat it as a consumer-breaking change.
+
+For the security fixture:
+
+```bash
+cd examples/security-mode-v1
+axiom security check axiom.acore
+axiom security check axiom.unsafe.acore
+```
+
+The safe input must pass. The unsafe input must fail with `AXSEC-001`.
+
+## Safety and maintenance
+
+Examples use relative paths, synthetic data, and visibly non-production
+placeholder values. Never add a developer home-directory path, token, private
+key, telemetry DSN, cookie, sandbox key, or production endpoint. When a fixture
+depends on an alpha or experimental surface, its README must state the runtime
+and dependency boundary.

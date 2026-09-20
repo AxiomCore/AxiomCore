@@ -1,0 +1,65 @@
+---
+title: Cloud mocks and sandboxes
+description: Save authored mock configuration and run it locally or in a managed project environment.
+---
+
+There are two connected but distinct workflows: saving a project's authored
+mock configuration and provisioning a managed sandbox from an immutable
+release. `axiom deploy mock-server` performs the first operation; it does not
+by itself prove a Cloud Run environment is ready.
+
+## Save mock configuration
+
+From a linked project directory:
+
+```bash
+axiom deploy mock-server axiom.acore
+```
+
+The CLI evaluates the local Acore module, renders the result to JSON, and sends
+that configuration to the linked Cloud project. It fails when the file cannot
+be evaluated, the directory is not linked, the account is unauthorized, or
+the service rejects the configuration.
+
+The current command evaluates with its local project evaluator. Treat imported
+or amended code according to the [Backend extraction](/core-concepts/ghost-introspection)
+boundary before running it.
+
+## Consume locally
+
+```bash
+axiom serve --port 8080
+```
+
+When no local file is supplied, the connected serve path can obtain saved mock
+configuration for the linked project. The Cloud mock endpoint supports ETag
+validation, so an unchanged response can be reused without transferring the
+body again. Keep a local contract available in CI when you need a completely
+offline, deterministic test.
+
+## Provision a managed environment
+
+Use the dashboard's sandbox controls after the matching release is verified.
+Provisioning is asynchronous. Wait for the durable environment state to become
+ready before giving its endpoint to a consumer or queueing a sandbox-backed
+test.
+
+An empty mock document is valid but does not fabricate successful behavior for
+undeclared scenarios. A route without authored behavior can return an explicit
+not-implemented response.
+
+## Security checklist
+
+- use synthetic data only;
+- never put provider, database, or production user credentials in the mock;
+- require the sandbox key for routes, health controls, reset, and API docs;
+- redact the key from screenshots, shell history, logs, and test artifacts;
+- verify reset restores declared initial state; and
+- confirm expiry/deletion removes the provider resource before treating the
+  environment as gone.
+
+<StatusNote status="alpha" title="Managed execution">
+  Saving project mock configuration is implemented. Managed sandbox execution
+  depends on the connected deployment's environment feature and worker
+  resources; it is not available merely because the CLI command succeeded.
+</StatusNote>

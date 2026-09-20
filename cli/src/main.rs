@@ -244,20 +244,46 @@ enum Commands {
         #[command(subcommand)]
         action: ContractAction,
     },
+    /// Resolve, verify, inspect, diff, and source-check frontend .axiom packages
+    Packages {
+        #[command(subcommand)]
+        action: PackagesAction,
+    },
+    /// Build, sign, verify, inspect, and review sandboxed extensions
+    Extensions {
+        #[command(subcommand)]
+        action: ExtensionsAction,
+    },
     /// Check an Acore UI module and lower it only into an in-memory graph
     Ui {
         #[command(subcommand)]
         action: UiAction,
     },
-    /// Run an authored Acore UI session or a packaged .axiomapp
+    /// Run a backend service/mock, frontend UI session, or packaged .axiomapp
     Run {
-        /// A UI module such as apps/mobile/src/main.acore, or a .axiomapp
+        /// Backend/frontend .acore source or a packaged .axiomapp
         source: PathBuf,
-        #[arg(long, default_value = "axiom.ui.lock.json")]
-        lock: PathBuf,
+        /// Advanced UI lock override; normal development locks are prepared automatically
+        #[arg(long)]
+        lock: Option<PathBuf>,
         /// Acore defaults to ios; multi-target .axiomapp files prompt when omitted
         #[arg(long)]
         target: Option<String>,
+        /// Backend execution mode; defaults to service for backend sources
+        #[arg(long, value_enum)]
+        mode: Option<commands::run::RunMode>,
+        /// Backend host address
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+        /// Backend service or mock port
+        #[arg(short, long, default_value = "8080")]
+        port: u16,
+        /// Enable verbose backend mock diagnostics
+        #[arg(short, long)]
+        debug: bool,
+        /// Require reviewed locks and extension workflows without development regeneration
+        #[arg(long)]
+        frozen: bool,
         /// Compile once and exit; intended for CI and host-independent checks
         #[arg(long)]
         once: bool,
@@ -267,7 +293,7 @@ enum Commands {
         #[command(subcommand)]
         action: DomainAction,
     },
-    /// Inspect opt-in Phase 4 security policy, source evidence, and coverage
+    /// Inspect opt-in security policy, source evidence, and coverage
     Security {
         #[command(subcommand)]
         action: SecurityAction,
@@ -336,6 +362,181 @@ enum ContractAction {
         source: PathBuf,
         #[arg(long, default_value = "axiom.ui.lock.json")]
         lock: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum PackagesAction {
+    /// Validate and canonically encode a typed package envelope
+    Build {
+        source: PathBuf,
+        #[arg(short, long)]
+        out: PathBuf,
+    },
+    /// Resolve frontend package dependencies into a canonical committed lock
+    Resolve {
+        #[arg(long, default_value = "AxiomDeps.toml")]
+        deps: PathBuf,
+        #[arg(long, default_value = "AxiomPackages.lock")]
+        lock: PathBuf,
+    },
+    /// Re-resolve and verify all locked package bytes and proofs
+    Verify {
+        #[arg(long, default_value = "AxiomDeps.toml")]
+        deps: PathBuf,
+        #[arg(long, default_value = "AxiomPackages.lock")]
+        lock: PathBuf,
+    },
+    /// Print one verified locked package envelope
+    Inspect {
+        alias: String,
+        #[arg(long, default_value = "AxiomPackages.lock")]
+        lock: PathBuf,
+    },
+    /// Print a semantic package diff and enforce explicit review approvals
+    Diff {
+        before: PathBuf,
+        after: PathBuf,
+        #[arg(long = "approve")]
+        approvals: Vec<String>,
+    },
+    /// Validate package imports and compile the unchanged source for one target
+    CheckSource {
+        source: PathBuf,
+        #[arg(long, default_value = "AxiomPackages.lock")]
+        package_lock: PathBuf,
+        #[arg(long, default_value = "axiom.ui.lock.json")]
+        ui_lock: PathBuf,
+        #[arg(long, default_value = "ios")]
+        target: String,
+    },
+    /// Run the package-backed source through the normal target host/session
+    Run {
+        source: PathBuf,
+        #[arg(long, default_value = "AxiomPackages.lock")]
+        package_lock: PathBuf,
+        #[arg(long, default_value = "axiom.ui.lock.json")]
+        ui_lock: PathBuf,
+        #[arg(long, default_value = "ios")]
+        target: String,
+        #[arg(long)]
+        once: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum ExtensionsAction {
+    /// Compile one Rust source module registered in AxiomDeps.toml into verified core WASM
+    SourceBuild {
+        /// Registered AxiomDeps.toml extension alias
+        alias: String,
+        #[arg(long, default_value = "AxiomDeps.toml")]
+        deps: PathBuf,
+        /// Application-local generated artifact/cache directory
+        #[arg(long, default_value = ".axiom/extensions")]
+        out: PathBuf,
+        #[arg(long, default_value = "web")]
+        target: String,
+        /// Ignore a matching verified build cache entry
+        #[arg(long)]
+        clean: bool,
+    },
+    /// Build and sign one registered Rust source module into a local release workflow
+    SourceRelease {
+        /// Registered AxiomDeps.toml extension alias
+        alias: String,
+        #[arg(long, default_value = "AxiomDeps.toml")]
+        deps: PathBuf,
+        /// Application-local generated artifact/cache directory
+        #[arg(long, default_value = ".axiom/extensions")]
+        out: PathBuf,
+        /// Root workflow consumed by ordinary `axiom run` commands
+        #[arg(long, default_value = "AxiomExtensions.toml")]
+        workflow: PathBuf,
+        #[arg(long)]
+        application: String,
+        #[arg(long, default_value = "0.1.0")]
+        application_version: String,
+        #[arg(long)]
+        clean: bool,
+    },
+    /// Validate and canonically encode an extension package draft
+    Build {
+        source: PathBuf,
+        #[arg(short, long)]
+        out: PathBuf,
+    },
+    /// Sign a canonical package and emit a detached proof document
+    Sign {
+        artifact: PathBuf,
+        #[arg(long)]
+        key: PathBuf,
+        #[arg(short, long)]
+        out: PathBuf,
+    },
+    /// Resolve local extension packages into the committed package lock
+    Resolve {
+        #[arg(long, default_value = "AxiomDeps.toml")]
+        deps: PathBuf,
+        #[arg(long, default_value = "AxiomPackages.lock")]
+        lock: PathBuf,
+    },
+    /// Verify signed packages, authority inputs, locks, targets, and provenance offline
+    Verify {
+        #[arg(long, default_value = "AxiomExtensions.toml")]
+        manifest: PathBuf,
+    },
+    /// Explain one extension identity, provenance, and authority
+    Inspect {
+        alias: String,
+        #[arg(long, default_value = "AxiomExtensions.toml")]
+        manifest: PathBuf,
+    },
+    /// Show requested, granted, and target-effective authority
+    Permissions {
+        alias: String,
+        #[arg(long, default_value = "AxiomExtensions.toml")]
+        manifest: PathBuf,
+    },
+    /// Show extension dependencies and transitive origins
+    Graph {
+        #[arg(long, default_value = "AxiomExtensions.toml")]
+        manifest: PathBuf,
+    },
+    /// Diff two canonical authority locks and enforce explicit increases
+    Diff {
+        before: PathBuf,
+        after: PathBuf,
+        #[arg(long = "approve")]
+        approvals: Vec<String>,
+    },
+    /// Run deterministic offline release conformance checks
+    Test {
+        #[arg(long, default_value = "AxiomExtensions.toml")]
+        manifest: PathBuf,
+    },
+    /// Verify and emit the exact descriptor handed to the selected target host
+    Run {
+        alias: String,
+        #[arg(long, default_value = "AxiomExtensions.toml")]
+        manifest: PathBuf,
+        #[arg(long, default_value = "server")]
+        target: String,
+        /// Execute one verified export in the server reference host. Omit to
+        /// inspect the selected target handoff without running guest code.
+        #[arg(long)]
+        export: Option<String>,
+        /// JSON ABI input supplied to --export.
+        #[arg(long, default_value = "null")]
+        input: String,
+        /// Optional deterministic UI/store fixture for a server reference
+        /// invocation. Guest code never receives a native state reference.
+        #[arg(long)]
+        state: Option<PathBuf>,
+        /// Write canonical, redacted correlated execution evidence to this
+        /// explicit path in addition to the readable terminal report.
+        #[arg(long)]
+        audit_out: Option<PathBuf>,
     },
 }
 
@@ -573,6 +774,7 @@ async fn main() -> anyhow::Result<()> {
                 // trigger a cloud-auth prompt before an empty-workspace
                 // starter, check, inspection, or virtual reload can run.
                 | Commands::Ui { .. }
+                | Commands::Extensions { .. }
                 | Commands::Run { .. }
                 | Commands::Lsp
         ) {
@@ -678,6 +880,8 @@ async fn main() -> anyhow::Result<()> {
         Commands::Project { .. } => "project",
         Commands::Diff { .. } => "diff",
         Commands::Contract { .. } => "contract",
+        Commands::Packages { .. } => "packages",
+        Commands::Extensions { .. } => "extensions",
         Commands::Ui { .. } => "ui",
         Commands::Run { .. } => "run",
         Commands::Domain { .. } => "domain",
@@ -777,6 +981,148 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             }
             ContractAction::CheckSource { source, lock } => {
                 commands::contract::handle_check_source(source.clone(), lock.clone()).await
+            }
+        },
+        Commands::Packages { action } => match action {
+            PackagesAction::Build { source, out } => {
+                commands::packages::handle_build(source.clone(), out.clone()).await
+            }
+            PackagesAction::Resolve { deps, lock } => {
+                commands::packages::handle_resolve(deps.clone(), lock.clone()).await
+            }
+            PackagesAction::Verify { deps, lock } => {
+                commands::packages::handle_verify(deps.clone(), lock.clone()).await
+            }
+            PackagesAction::Inspect { alias, lock } => {
+                commands::packages::handle_inspect(lock.clone(), alias.clone()).await
+            }
+            PackagesAction::Diff {
+                before,
+                after,
+                approvals,
+            } => {
+                commands::packages::handle_diff(before.clone(), after.clone(), approvals.clone())
+                    .await
+            }
+            PackagesAction::CheckSource {
+                source,
+                package_lock,
+                ui_lock,
+                target,
+            } => {
+                commands::packages::handle_check_source(
+                    source.clone(),
+                    package_lock.clone(),
+                    ui_lock.clone(),
+                    target.clone(),
+                )
+                .await
+            }
+            PackagesAction::Run {
+                source,
+                package_lock,
+                ui_lock,
+                target,
+                once,
+            } => {
+                commands::ui::handle_run_with_packages(
+                    source.clone(),
+                    ui_lock.clone(),
+                    package_lock.clone(),
+                    target.clone(),
+                    *once,
+                )
+                .await
+            }
+        },
+        Commands::Extensions { action } => match action {
+            ExtensionsAction::SourceBuild {
+                alias,
+                deps,
+                out,
+                target,
+                clean,
+            } => {
+                commands::extensions::handle_source_build(
+                    deps.clone(),
+                    alias.clone(),
+                    out.clone(),
+                    target.clone(),
+                    *clean,
+                )
+                .await
+            }
+            ExtensionsAction::SourceRelease {
+                alias,
+                deps,
+                out,
+                workflow,
+                application,
+                application_version,
+                clean,
+            } => {
+                commands::extensions::handle_source_release(
+                    deps.clone(),
+                    alias.clone(),
+                    out.clone(),
+                    workflow.clone(),
+                    application.clone(),
+                    application_version.clone(),
+                    *clean,
+                )
+                .await
+            }
+            ExtensionsAction::Build { source, out } => {
+                commands::extensions::handle_build(source.clone(), out.clone()).await
+            }
+            ExtensionsAction::Sign { artifact, key, out } => {
+                commands::extensions::handle_sign(artifact.clone(), key.clone(), out.clone()).await
+            }
+            ExtensionsAction::Resolve { deps, lock } => {
+                commands::extensions::handle_resolve(deps.clone(), lock.clone()).await
+            }
+            ExtensionsAction::Verify { manifest } => {
+                commands::extensions::handle_verify(manifest.clone()).await
+            }
+            ExtensionsAction::Inspect { alias, manifest } => {
+                commands::extensions::handle_inspect(manifest.clone(), alias.clone()).await
+            }
+            ExtensionsAction::Permissions { alias, manifest } => {
+                commands::extensions::handle_permissions(manifest.clone(), alias.clone()).await
+            }
+            ExtensionsAction::Graph { manifest } => {
+                commands::extensions::handle_graph(manifest.clone()).await
+            }
+            ExtensionsAction::Diff {
+                before,
+                after,
+                approvals,
+            } => {
+                commands::extensions::handle_diff(before.clone(), after.clone(), approvals.clone())
+                    .await
+            }
+            ExtensionsAction::Test { manifest } => {
+                commands::extensions::handle_test(manifest.clone()).await
+            }
+            ExtensionsAction::Run {
+                alias,
+                manifest,
+                target,
+                export,
+                input,
+                state,
+                audit_out,
+            } => {
+                commands::extensions::handle_run(
+                    manifest.clone(),
+                    alias.clone(),
+                    target.clone(),
+                    export.clone(),
+                    input.clone(),
+                    state.clone(),
+                    audit_out.clone(),
+                )
+                .await
             }
         },
         Commands::Ui { action } => match action {
@@ -903,21 +1249,59 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             source,
             lock,
             target,
+            mode,
+            host,
+            port,
+            debug,
+            frozen,
             once,
         } => {
             if commands::app::is_axiom_application(source) {
+                if mode.is_some() {
+                    anyhow::bail!("--mode applies to backend .acore sources, not packaged .axiomapp execution");
+                }
                 if *once {
                     anyhow::bail!("--once applies to authored .acore sessions, not packaged .axiomapp execution");
                 }
                 commands::app::handle_run(source.clone(), target.clone()).await
             } else {
-                commands::ui::handle_run(
-                    source.clone(),
-                    lock.clone(),
-                    target.clone().unwrap_or_else(|| "ios".to_string()),
-                    *once,
-                )
-                .await
+                match commands::run::classify_acore_source(source)? {
+                    commands::run::AcoreSourceKind::Backend => {
+                        if target.is_some() {
+                            anyhow::bail!("--target applies to frontend .acore sources, not backend execution");
+                        }
+                        if lock.is_some() || *frozen || *once {
+                            anyhow::bail!(
+                                "--lock, --frozen, and --once apply to frontend .acore sources"
+                            );
+                        }
+                        commands::run::handle_backend(
+                            source.clone(),
+                            mode.unwrap_or(commands::run::RunMode::Service),
+                            host.clone(),
+                            *port,
+                            *debug,
+                        )
+                        .await
+                    }
+                    commands::run::AcoreSourceKind::Frontend => {
+                        if mode.is_some() {
+                            anyhow::bail!(
+                                "--mode applies to backend .acore sources, not frontend execution"
+                            );
+                        }
+                        let prepared_lock =
+                            commands::run::prepare_frontend(source, lock.as_deref(), *frozen)
+                                .await?;
+                        commands::ui::handle_run(
+                            source.clone(),
+                            prepared_lock,
+                            target.clone().unwrap_or_else(|| "ios".to_string()),
+                            *once,
+                        )
+                        .await
+                    }
+                }
             }
         }
         Commands::Security { action } => match action {

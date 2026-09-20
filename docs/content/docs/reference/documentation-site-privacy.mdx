@@ -1,0 +1,50 @@
+---
+title: Documentation site privacy
+description: Understand the narrow analytics, server logging, search, and support-data boundaries of the AxiomCore documentation site.
+---
+
+The documentation application is primarily public content. Reading a page does
+not require an AxiomCore account, contract, project, or CLI installation.
+
+## Site analytics
+
+The current application mounts `@vercel/analytics` only when the deployment
+sets the `VERCEL` environment marker. The analytics script and ingest endpoint
+are served through the deployment's `/_vercel/insights` path. Local development
+and non-Vercel builds do not mount that component through this code path.
+
+This documentation does not promise a fixed provider retention period or
+dataset because those are deployment-account controls rather than constants in
+the application source. Deployment owners must review provider configuration,
+access, and retention before enabling analytics.
+
+## Search and machine-readable routes
+
+Documentation search uses the site's generated public content. The application
+also exposes public processed MDX, `llms.txt`, `llms-full.txt`, sitemap, robots,
+Open Graph, version, and health routes. Do not place secrets, private URLs,
+customer data, or unreleased implementation details in public MDX or metadata.
+
+## Hosting logs
+
+The hosting platform or network edge may create operational request logs. This
+repository does not define their retention, regional storage, or access policy.
+Those controls belong to the deployment environment and must be reviewed by its
+owner. The health endpoint deliberately returns only a schema version, status,
+service identity, and an optional public source revision.
+
+## Feedback and diagnostics
+
+Information you choose to submit through a repository, community, or private
+security channel follows that channel's controls. Sanitize diagnostic output as
+described in [Support and feedback](/reference/support-and-feedback). Never
+send access tokens, cookies, signing material, DSNs, sandbox keys, private
+contracts, or sensitive request/response bodies.
+
+## Separate telemetry surfaces
+
+Documentation-site analytics is distinct from Axiom CLI adoption telemetry and
+project runtime observability. Installing or running the CLI does not depend on
+visiting this site, and viewing this site does not configure runtime telemetry.
+See [Observability and telemetry](/cloud/telemetry-and-observability) for those
+separate boundaries.

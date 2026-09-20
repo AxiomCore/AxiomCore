@@ -1,18 +1,22 @@
 {
   "title": "AxiomCore",
   "pages": [
-    "---Introduction---",
+    "index",
+    "---Start here---",
     "introduction",
     "getting-started",
-    "---Architecture---",
+    "---Adopt AxiomCore---",
+    "guides",
+    "---Understand the platform---",
     "core-concepts",
+    "---Build with Acore---",
     "acore-language",
-    "---Client SDKs---",
+    "---Use existing stacks---",
     "clients",
-    "---Developer Tooling---",
+    "---Develop and deliver---",
     "workflows",
     "tooling",
-    "---Infrastructure---",
+    "---Cloud and reference---",
     "cloud",
     "reference"
   ]

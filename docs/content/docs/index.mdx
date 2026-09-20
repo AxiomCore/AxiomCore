@@ -1,82 +1,70 @@
 ---
-title: Welcome to AxiomCore
-description: The deterministic API lifecycle platform. Rust-powered runtimes, Zero-JS hydration, and Write-Once contracts.
+title: Software built around contracts
+description: Build, connect, test, and evolve software through typed, auditable contracts.
 ---
 
 import { Card, Cards } from 'fumadocs-ui/components/card';
-import { Layers, Rocket, ShieldCheck, Zap, Server, Activity } from 'lucide-react';
+import { Blocks, Braces, Cloud, Compass, Route, TestTube2, Workflow } from 'lucide-react';
 
-# AxiomCore
+AxiomCore is a contract platform for describing and connecting software across
+backend services, user interfaces, runtimes, tests, security policy, packages,
+and delivery workflows. Its authoring language is **Acore**.
 
-AxiomCore is a **deterministic behavioral layer** that completely eliminates manual API integration. Instead of writing fragile network requests, caching logic, and error handlers in your frontend, AxiomCore embeds a high-performance **Generic Runtime** (powered by Rust and WebAssembly) directly into your app.
+You can adopt the platform incrementally. A Python or Go service can remain
+imperative. A Flutter, web, or Swift application can remain in its native
+framework. AxiomCore provides the versioned contract boundary between those
+parts—and Acore can also describe more of the application when that is useful.
 
-You write your backend in **FastAPI** or **Go**. Axiom extracts it, wraps it in a behavioral contract (`.acore`), and executes it identically across Flutter, React, iOS, and Vanilla Web.
+<StatusNote status="alpha" title="Current release maturity">
+  AxiomCore is an alpha ecosystem. Several local development paths are usable
+  today, but APIs and workflows can change. Every documentation section states
+  its narrower availability boundary.
+</StatusNote>
 
-### The Axiom Workflow
-
-AxiomCore replaces OpenAPI (Swagger) and GraphQL with a cryptographically signed binary artifact (`.axiom`). This artifact dictates exactly *how* the API behaves, not just what the data looks like.
+## Choose your path
 
 <Cards>
-  <Card
-    icon={<Zap />}
-    title="The Generic Runtime"
-    description="Native Rust (Mobile/Desktop) and Wasm (Web) engines handle retries, caching, WebSockets, and state-sync autonomously."
-  />
-  <Card
-    icon={<Layers />}
-    title="Thin, Smart SDKs"
-    description="Zero boilerplate. The React/ATMX and Flutter SDKs are just thin Proxies. The Heavy lifting happens natively."
-  />
-  <Card
-    icon={<Server />}
-    title="Stateful Local Mocking"
-    description="The built-in Axum mock server simulates network faults, connection resets, and stateful mutations instantly."
-  />
-  <Card
-    icon={<Activity />}
-    title="Native Test Runner"
-    description="A built-in test runner validating headers, bodies, JSON paths, and WebSocket streams natively."
-  />
+  <Card icon={<Route />} title="Understand AxiomCore" href="/introduction" description="See how contracts connect source, artifacts, runtimes, packages, and cloud workflows." />
+  <Card icon={<Braces />} title="Learn Acore" href="/introduction/what-is-acore" description="Learn what the language describes, how composition works, and where its boundary ends." />
+  <Card icon={<Workflow />} title="Build your first contract" href="/getting-started/installation" description="Install the CLI and follow the current local development path." />
+  <Card icon={<Compass />} title="Adopt in an existing system" href="/guides" description="Follow end-to-end guides for incremental adoption, CI, and release readiness." />
+  <Card icon={<Blocks />} title="Browse platform capabilities" href="/introduction/product-landscape" description="Separate what is available now from alpha, experimental, and coming-soon work." />
 </Cards>
 
----
+## One contract path, multiple adoption models
 
-## 🚀 Ecosystem Status
+```text
+existing source or Acore modules
+              │
+              ▼
+       extract + evaluate
+              │
+              ▼
+  versioned .axiom packages ───► diff, test, mock, audit
+              │
+              ├───────────────► native framework clients
+              │
+              └───────────────► Acore UI + .axiomapp
+```
 
-AxiomCore is currently in **Private Alpha**. We provide first-class support for the following stacks:
+The platform does not require a single language or framework on both sides of
+the contract. Start at the boundary that reduces the most integration risk for
+your team.
 
-| Layer | Supported Tech | Status |
-| :--- | :--- | :--- |
-| **Backend Extractors** | Python (FastAPI), Go (Native) | Alpha |
-| **Contract Language** | Acore (PKL-based) | Alpha |
-| **Mobile / Desktop** | Flutter, Swift (SPM), macOS, iOS | Alpha |
-| **Web (ATMX)** | React, Vanilla HTML/JS, Alpine.js | Alpha |
+## What exists today
 
-### What's New?
-*   **ATMX Web Engine:** Instant DOM hydration before Wasm even boots using `sessionStorage` caching.
-*   **Axiom Marketplace:** Pull third-party API contracts (Stripe, Twilio) directly into your app without reading their docs.
-*   **JSON-Atom Diffing:** Mathematical changelogs and terminal GUI diffs for API updates.
-
----
-
-## Ready to dive in?
-
-Choose your path to get started with AxiomCore.
+<CapabilityTable
+  rows={[
+    { capability: 'Acore language and tooling', status: 'alpha', scope: 'Independent parser, evaluator, standard library, language server, and contract-oriented authoring.' },
+    { capability: 'Contract and package lifecycle', status: 'alpha', scope: 'Canonical .axiom packages, locks, semantic diffing, local tests, mocks, and runtime consumption.' },
+    { capability: 'Backend integration', status: 'available', scope: 'FastAPI is the primary path; Go is alpha. OpenAPI and SQL currently provide bounded domain bootstrap workflows.' },
+    { capability: 'Frontend and UI', status: 'alpha', scope: 'Vanilla web, React, Flutter, Swift distribution, and Acore-authored UI have different maturity boundaries.' },
+    { capability: 'Cloud control plane', status: 'alpha', scope: 'Implemented account, project, and release workflows. Broader collaboration and automation remain in development.' },
+    { capability: 'Studio, Acode, and Marketplace', status: 'coming-soon', scope: 'Planned product experiences; they are not installable or supported workflows today.' },
+  ]}
+/>
 
 <Cards>
-  <Card
-    title="Install the CLI"
-    href="/getting-started/installation"
-    description="Get the Axiom CLI via Homebrew or curl."
-  />
-  <Card
-    title="Backend Quickstart"
-    href="/getting-started/quickstart-backend"
-    description="Extract your API and build your first behavioral contract."
-  />
-  <Card
-    title="Frontend Quickstart"
-    href="/getting-started/quickstart-frontend"
-    description="Pull the contract and build a reactive UI in minutes."
-  />
+  <Card icon={<TestTube2 />} title="Check current support" href="/introduction/support-matrix" description="Read exact framework, target, and distribution boundaries before adopting." />
+  <Card icon={<Cloud />} title="Use the reference" href="/reference" description="Find language schemas, errors, security rules, benchmarks, and terminology." />
 </Cards>

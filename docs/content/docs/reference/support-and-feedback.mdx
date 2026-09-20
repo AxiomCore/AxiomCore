@@ -1,0 +1,61 @@
+---
+title: Support and feedback
+description: Report documentation defects, product problems, and security vulnerabilities through the appropriate channel with safe diagnostic evidence.
+---
+
+Choose the channel by impact. Never place credentials or sensitive customer
+data in a public report.
+
+| Need | Channel | Include |
+| --- | --- | --- |
+| Documentation correction | [AxiomCore repository](https://github.com/AxiomCore/AxiomCore) issue or change proposal | Page URL, inaccurate sentence, implementation evidence, and proposed status/boundary |
+| Reproducible product problem | Repository issue or [community Discord](https://discord.gg/Fvv7ufN2DK) | Version, target, sanitized error, doctor report, and minimal contract |
+| Security vulnerability | Private process in [SECURITY.md](https://github.com/AxiomCore/AxiomCore/blob/main/SECURITY.md) | Impact, reproduction, affected versions, and safe proof of concept |
+| General capability question | Documentation search, FAQ, then community Discord | Intended backend/frontend, target, and required production boundary |
+
+<StatusNote status="alpha" title="Support boundary">
+  AxiomCore does not publish a general response-time or long-term-support SLA
+  today. The repository security policy is the authoritative private reporting
+  channel for vulnerabilities.
+</StatusNote>
+
+## Create a safe diagnostic bundle
+
+Start with read-only diagnostics:
+
+```bash
+axiom --version
+axiom doctor --json --strict > axiom-doctor.json
+axiom ui doctor --target web --json > axiom-ui-web.json
+```
+
+Before attaching anything, remove tokens, cookies, authorization headers,
+private URLs, signing material, DSNs, sandbox keys, request/response bodies,
+customer identifiers, local usernames, and cache payloads. Do not attach an
+artifact if its contract shape is private; provide its SHA-256 and the smallest
+synthetic reproduction instead.
+
+## Report a documentation defect
+
+State whether the problem is one of these:
+
+- **implementation mismatch:** the documented command, field, or behavior does
+  not match the current implementation;
+- **availability mismatch:** an Alpha, Experimental, or Coming soon capability
+  is presented with the wrong status;
+- **missing boundary:** prerequisites, execution, security, platform, or
+  compatibility limits are absent;
+- **navigation/accessibility:** content cannot be found, read, or operated at a
+  relevant viewport or input mode; or
+- **machine-reader mismatch:** HTML, processed MDX, `llms.txt`, metadata, or
+  sitemap output disagrees with the public page.
+
+Link the narrowest implementation evidence when possible. Do not expose
+internal milestone names in a public title or reproduction.
+
+## Escalate product failures
+
+Preserve the first structured error and identify the failing boundary:
+extraction, evaluation, build, proof, pull, runtime, target host, or Cloud.
+Follow [Troubleshooting](/reference/troubleshooting) before collecting broad
+debug output; later framework failures frequently hide the original condition.

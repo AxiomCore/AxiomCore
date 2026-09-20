@@ -1,0 +1,147 @@
+---
+title: Deterministic questions and Jev
+description: Ask bounded questions locally or use Jev as an optional probabilistic planner while keeping application facts deterministic.
+---
+
+Ask Axiom separates two responsibilities:
+
+```text
+question interpretation
+          ↓
+validated typed Inspector request
+          ↓
+local deterministic evidence query
+          ↓
+facts, paths, evidence, completeness and limits
+```
+
+The planner can be deterministic and local or probabilistic and remote. The
+answer always comes from the local evidence graph.
+
+## Local deterministic planner
+
+This is the default and performs no remote model request:
+
+```bash
+axiom inspect ask "what can write Home.total_label" .
+axiom inspect ask "what executes when I press Checkout" .
+axiom inspect ask "why pricing" .
+```
+
+The bounded phrase planner supports:
+
+- what can write a selector;
+- why an extension has network access;
+- what executes from an action or UI selector;
+- why a semantic fact is connected; and
+- what changed, when supplied a canonical semantic-change report.
+
+```bash
+axiom inspect ask "what changed" . \
+  --changes semantic-changes.json
+```
+
+Unsupported or ambiguous questions fail explicitly. Use the exact semantic ID
+when a display label is not unique.
+
+## Pre-plan questions for agents
+
+An agent can submit a validated `axiom-inspector-question/v1` document instead
+of relying on natural-language parsing:
+
+```bash
+axiom inspect answer question.json . --format json
+```
+
+Agents should retain `graphRevision`, cite returned evidence IDs, inspect
+completeness and limits, and avoid parsing human terminal output.
+
+## Optional Jev planner
+
+<StatusNote status="experimental" title="Remote probabilistic planning">
+  Jev planning is opt-in and requires Vercel AI Gateway access. It selects a
+  bounded intent and semantic target; it does not generate Inspector facts.
+</StatusNote>
+
+Run the command through a secret environment that already provides
+`AI_GATEWAY_API_KEY`:
+
+```bash
+infisical run --env=dev -- \
+  axiom inspect ask \
+  "Who can modify Home.total_label?" . \
+  --planner jev \
+  --allow-remote
+```
+
+Jev receives the question, narrow Inspector terminology, and a bounded shortlist
+of semantic candidate identities, kinds, and labels. It does not receive the
+application source, complete evidence graph, source spans, fact attributes,
+runtime payloads, or secret values through this planner path.
+
+It answers closed choice questions for intent and target. Axiom then:
+
+1. checks intent probability;
+2. resolves exact semantic names deterministically where possible;
+3. requires fuzzy targets to pass the selector threshold;
+4. rejects targets outside the local allowlist;
+5. creates and validates the normal versioned question request; and
+6. asks the local `EvidenceIndex` for facts and paths.
+
+Defaults are `0.65` for intent and `0.55` for fuzzy selector probability.
+Threshold overrides are evaluation controls, not a way to bypass request or
+evidence validation.
+
+## Safe abstention
+
+A precise question can resolve:
+
+```text
+Who can modify Home.total_label?
+```
+
+An ambiguous phrase such as “the cart total” can match more than one state or
+permission. Jev may select `none`, or Axiom may reject the choice below its
+configured threshold. That abstention is preferable to silently tracing the
+wrong application fact.
+
+Use the dashboard or `inspect graph` to copy the intended semantic label or ID,
+then ask again.
+
+## Planning receipts
+
+Every completed Jev decision produces an owner-only receipt under:
+
+```text
+.axiom/inspector/planner-receipts/
+```
+
+The receipt records the model, graph revision, question hash, bounded candidate
+set, thresholds, model probabilities, selected target and selector source,
+validated request, usage, and Gateway routing metadata. It stores a hash of the
+question rather than the raw question.
+
+The receipt is probabilistic planning evidence. The canonical Inspector answer
+remains a separate deterministic result.
+
+## Enable Jev in the dashboard
+
+```bash
+infisical run --env=dev -- \
+  axiom inspect serve . --allow-remote-planner
+```
+
+The Ask Axiom page then lets the user choose **Local deterministic** or
+**Jev · remote** for each question. Starting a normal dashboard session does not
+enable remote planning.
+
+## When to use each mode
+
+| Mode | Prefer it when |
+| --- | --- |
+| Local deterministic | The team knows the supported intent, uses exact labels or IDs, runs offline, or needs the smallest trust boundary |
+| Jev | A human uses varied wording and accepts an explicit remote planner with visible probabilities and abstention |
+| Versioned question document | An agent, CI job, or integration needs a stable, reviewable request without natural-language ambiguity |
+
+Jev improves question interpretation. It does not replace semantic diff,
+security analysis, runtime capture, source review, or application tests.

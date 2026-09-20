@@ -1,0 +1,122 @@
+---
+title: Local dashboard
+description: Launch and use the secure local Axiom Inspector dashboard for graphs, source, authority, runtime evidence, live targets, and changes.
+---
+
+The Axiom Inspector dashboard is packaged with the CLI. It is a local visual
+client for the same evidence and query engine used by `axiom inspect` commands.
+
+## Launch it
+
+From a frontend, backend, or combined application workspace:
+
+```bash
+axiom inspect serve .
+```
+
+Inspector binds to loopback, selects an available port, creates a random
+per-session capability token, opens the browser, and watches the workspace. To
+control startup:
+
+```bash
+axiom inspect serve . --port 61993 --no-open
+axiom inspect serve . --api-only --no-open
+```
+
+`--api-only` is useful for local agent integrations that consume the versioned
+API instead of the browser interface.
+
+## Dashboard areas
+
+| Area | Use it for |
+| --- | --- |
+| Overview | Application architecture, targets, verification summary, important findings, and runtime attachment state |
+| Graph | One focused semantic neighborhood with upstream, downstream, or bidirectional traversal |
+| Source | Source units and evidence-backed previews |
+| UI & state | Pages, components, actions, state, styles, responsive branches, accessibility, and target lowering |
+| Backend | Services, operations, entities, projections, policies, exposure, caching, and implementation evidence |
+| Extensions | Sandboxed module identity, exports, authority, targets, provenance, limits, and observed runs |
+| Dependencies | Direct and transitive contract, package, and executable closure |
+| Security | Requested, granted, and effective authority, exposure, findings, and readiness evidence |
+| Runtime | Normalized sessions, traces, outcomes, lifecycle events, redaction, and retention information |
+| Live | Development-target selection and causal explanation tied to the exact graph revision |
+| Changes | Semantic changes, classifications, evidence, and optional runtime differences |
+| Ask Axiom | Deterministic questions and, when explicitly enabled, bounded Jev planning |
+
+Target and truth-layer filters apply across the dashboard. Search locates
+semantic facts; it is not a free-form source grep.
+
+## Explore relationships
+
+Select a node or semantic card to open its evidence drawer. From there you can:
+
+- trace upstream, downstream, or both;
+- ask why the fact exists or has access;
+- inspect source evidence and surrounding lines;
+- open the local source in the configured editor;
+- follow contract, operation, state, permission, and provenance relationships;
+- copy the semantic ID for a CLI or agent query.
+
+The graph intentionally focuses one identity at a time. Rendering every fact in
+a large application at once would produce an unreadable graph and does not add
+evidence.
+
+## Attach a development application
+
+Keep the dashboard running, then launch an Acore UI through its normal
+development command:
+
+```bash
+axiom run frontend/main.acore --target web
+```
+
+Development hosts discover the owner-only connection descriptor at
+`.axiom/inspector/live-connection.json`. Web uses Alt-click and native
+development hosts use the supported long-press surface to select a rendered
+semantic element.
+
+The Live view can then connect the selected element to:
+
+- its component and source span;
+- applied styles and responsive branch;
+- accessibility declaration;
+- bound action and operation;
+- declared state dependencies;
+- matching redacted causal events when available.
+
+Live instrumentation is a development feature. Production archives and signed
+native bundles do not receive the Inspector token, picking overlay, or capture
+configuration.
+
+## Source refresh and last-good evidence
+
+When a watched input changes, Inspector rebuilds its evidence. A failed refresh
+keeps the previous valid graph and emits a diagnostic instead of publishing a
+partially updated model. Reload attached targets after the graph revision
+changes before interpreting live correlations.
+
+## Local security boundary
+
+- The server listens on loopback rather than a public interface.
+- Browser and API requests require the per-session token.
+- The dashboard uses a strict Content Security Policy.
+- Source access is limited to validated evidence paths inside the workspace.
+- Application values and secrets are not part of normalized evidence.
+- The dashboard cannot grant permissions or execute an extension.
+- Inspection performs no implicit hosted upload.
+
+Stop the process with Ctrl-C. The connection descriptor is removed during
+normal shutdown.
+
+## Jev in the dashboard
+
+Remote planning is disabled by default. Enable it for one session only when the
+Gateway key is already available through your local secret environment:
+
+```bash
+infisical run --env=dev -- \
+  axiom inspect serve . --allow-remote-planner
+```
+
+The Ask Axiom view then offers local deterministic and Jev planning. Read
+[Deterministic questions and Jev](/inspector/ask-axiom) before enabling it.

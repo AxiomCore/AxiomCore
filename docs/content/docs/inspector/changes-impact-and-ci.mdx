@@ -1,0 +1,133 @@
+---
+title: Changes, impact, and CI
+description: Snapshot application evidence, compare semantic identities, calculate bounded impact, and enforce review policy in CI.
+---
+
+Git explains which lines changed. Axiom Inspector explains which application
+facts changed and what those facts can affect.
+
+## Create canonical snapshots
+
+Before a material change:
+
+```bash
+axiom inspect snapshot . --output before.evidence.json
+```
+
+After the change:
+
+```bash
+axiom inspect snapshot . --output after.evidence.json
+```
+
+Verify a stored snapshot before using it:
+
+```bash
+axiom inspect validate-snapshot before.evidence.json
+axiom inspect validate-snapshot after.evidence.json
+```
+
+Snapshots are canonical and content-addressed by graph revision. They contain
+semantic application evidence, not a filesystem backup or application data
+dump.
+
+## Compare semantics
+
+```bash
+axiom inspect diff \
+  before.evidence.json \
+  after.evidence.json
+```
+
+The report compares semantic identities across domains such as:
+
+- operations and API/schema surface;
+- fields, projections, validation, cache, and streaming;
+- UI, state, styles, responsive rules, and accessibility;
+- packages, dependencies, provenance, and targets;
+- permission and policy changes; and
+- optional normalized runtime signatures.
+
+Changes are classified as breaking, approval-required, warning, or
+informational where the implemented policy has enough evidence. Permission
+increases are kept distinct because they often require a security approval.
+
+## Calculate impact
+
+Use the after snapshot as the graph against which impact is evaluated:
+
+```bash
+axiom inspect impact Product.price_label \
+  . --against after.evidence.json
+```
+
+Impact traversal is bounded and cycle-safe. A report includes affected semantic
+facts, targets, exact relationship paths, configured limits, and whether the
+result was truncated.
+
+This is more useful than a repository-wide text search for questions such as:
+
+- which projections and endpoints depend on a field;
+- which UI and targets consume an operation;
+- what a removed permission disconnects;
+- which extensions and state paths are affected by a contract change.
+
+## Include runtime comparison
+
+When both normalized sessions belong to the corresponding graphs:
+
+```bash
+axiom inspect diff \
+  before.evidence.json \
+  after.evidence.json \
+  --before-runtime before.runtime.json \
+  --after-runtime after.runtime.json
+```
+
+Runtime comparison ignores event IDs, timestamps, durations, and other timing
+noise while retaining meaningful event kind, target, outcome, semantic,
+authority, source, and redaction differences.
+
+## Use it as a CI gate
+
+```bash
+axiom inspect diff \
+  baseline.evidence.json \
+  candidate.evidence.json \
+  --fail-on breaking,permission-increase \
+  --output semantic-changes.json \
+  --format json
+```
+
+Supported failure classes are:
+
+- `breaking`;
+- `approval-required`;
+- `permission-increase`; and
+- `warning`.
+
+Choose the policy deliberately. Do not make every warning blocking until the
+team has reviewed its baseline.
+
+## Measure the Inspector release boundary
+
+```bash
+axiom inspect release-check .
+axiom inspect release-check . --enforce --format json
+```
+
+The check covers implemented generation/query/snapshot budgets and verifies the
+packaged offline dashboard and privacy boundary. It evaluates Inspector itself;
+it is not a substitute for building, testing, signing, or deploying the
+application.
+
+## Recommended pull-request evidence
+
+Keep these artifacts together:
+
+1. before and candidate graph revisions;
+2. canonical semantic-change report;
+3. impact reports for breaking or authority-sensitive roots;
+4. named approvals required by policy;
+5. relevant contract, extension, and target tests; and
+6. runtime evidence only when the review depends on observed behavior.

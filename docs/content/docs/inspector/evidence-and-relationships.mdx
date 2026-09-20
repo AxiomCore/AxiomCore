@@ -1,0 +1,136 @@
+---
+title: Evidence, facts, and relationships
+description: Read Axiom Inspector results correctly using truth layers, semantic identities, typed edges, revisions, and completeness.
+---
+
+Axiom Inspector represents an application as semantic facts connected by typed
+relationships. These terms are deliberately narrower than ordinary logs or a
+source-code search.
+
+## Four truth layers
+
+| Layer | Meaning | Example |
+| --- | --- | --- |
+| Declared | What an author wrote in source or a package declaration | An extension requests write access to `cart.total_label` |
+| Resolved | What Axiom compiled, verified, connected, and authorized | The application and Web target policy make that write permission effective |
+| Observed | What a particular captured execution did | Invocation 19 proposed a patch to `cart.total_label` and the host accepted it |
+| Changed | How two compatible evidence or runtime snapshots differ | A release adds a network permission or removes an operation |
+
+These layers are not interchangeable. An allowed limit is not observed usage;
+an operation reachable from a button is not proof that a user pressed it; and a
+package's maximum permission request is not an application grant.
+
+## Fact
+
+A **fact** is one normalized semantic node, such as:
+
+- page `Home`;
+- state value `Home.total_label`;
+- operation `Shop.list_products`;
+- backend endpoint `GET /products`;
+- extension `pricing`;
+- one requested or target-effective permission;
+- a style rule or responsive branch; or
+- one normalized runtime invocation.
+
+A fact carries a stable semantic ID, display label, kind, truth layer, target
+scope, verification state, attributes, and evidence references where available.
+
+Display labels are for people. Commands accept a unique label when it resolves
+unambiguously, but semantic IDs are the durable choice for automation.
+
+```bash
+axiom inspect node Home.total_label .
+axiom inspect node state:3b416d3829a8024ad025f8f5 .
+```
+
+If a label is ambiguous, copy the semantic ID from the dashboard drawer,
+`inspect graph`, or `inspect node` output.
+
+## Relationship
+
+A **relationship** is a directed, typed edge between two facts. Common
+relationships include:
+
+| Relationship | Meaning |
+| --- | --- |
+| `renders` | A page or component renders another UI fact |
+| `triggers` | A UI event starts an action |
+| `invokes` | An action or workflow invokes an extension export |
+| `calls` | One operation calls or resolves through another contract boundary |
+| `reads`, `writes`, `subscribes`, `dispatches` | Exact state, store, or capability interaction |
+| `imports`, `depends-on`, `resolved-to` | Dependency and resolution connection |
+| `requests`, `grants`, `authorizes`, `denies` | Authority progression or denial |
+| `projects`, `returns`, `validates`, `cached-by` | Data and operation semantics |
+| `sourced-from`, `signed-by` | Source, artifact, and provenance evidence |
+| `observed-as` | Static semantic identity correlated to runtime evidence |
+| `changed-to`, `impacts` | Change and bounded effect relationships |
+
+Relationships are compiler-, resolver-, verifier-, or runtime-produced. The
+dashboard layout is a presentation of those edges, not an inferred architecture
+diagram.
+
+## Upstream and downstream
+
+For a selected fact:
+
+- **upstream** asks what establishes, calls, writes, authorizes, or otherwise
+  contributes to it;
+- **downstream** asks what it can call, render, mutate, return, or affect; and
+- **both** shows a bounded neighborhood in both directions.
+
+```bash
+axiom inspect trace Home.total_label . --direction upstream
+axiom inspect trace Home.apply_member_price . --direction downstream
+axiom inspect graph . --root pricing --direction both --max-depth 4
+```
+
+Direction follows the canonical edge direction. It does not mean chronological
+execution unless the selected evidence is an observed runtime trace.
+
+## Evidence
+
+An **evidence reference** explains why a fact or relationship exists. Depending
+on the producer it can point to:
+
+- an Acore source span;
+- a verified `.axiom` artifact and digest;
+- a contract or package lock entry;
+- an extension module, interface, request, grant, or policy digest;
+- a compiler-owned source map; or
+- a normalized runtime session and trace identity.
+
+```bash
+axiom inspect evidence Home.total_label .
+axiom inspect provenance pricing .
+```
+
+The dashboard evidence drawer renders a bounded source snippet only after
+validating the referenced path and digest. Binary or out-of-workspace source
+paths fail closed.
+
+## Graph revision
+
+A **graph revision** identifies the complete canonical application evidence
+snapshot. Agents, live targets, runtime sessions, diffs, and dashboard queries
+carry it so facts from different builds are not silently combined.
+
+A live target running an older graph can remain visible as partial evidence,
+but Inspector refuses to correlate it as current truth until the application is
+reloaded.
+
+## Completeness and bounds
+
+Inspector queries are bounded by depth and result count. Results can also state
+that source, runtime, or another evidence class was not collected or unavailable.
+
+Treat these as part of the answer:
+
+- a complete static trace still does not prove execution;
+- an empty runtime session does not prove an operation is unreachable;
+- an unavailable source body should remain opaque;
+- a truncated graph should not be used to claim that no additional path exists.
+
+Use [runtime and audit evidence](/inspector/runtime-and-audits) when the question
+is “what happened,” and static graph queries when the question is “what can
+happen” or “why is this connected.”

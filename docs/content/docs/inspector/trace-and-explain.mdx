@@ -1,0 +1,131 @@
+---
+title: Trace and explain relationships
+description: Use graph, trace, why, access, reachability, lineage, evidence, and target comparison to answer focused application questions.
+---
+
+Start from one semantic fact and choose the question you want Inspector to
+answer.
+
+## Inspect one fact
+
+```bash
+axiom inspect node Home.total_label .
+axiom inspect evidence Home.total_label .
+```
+
+`node` shows the fact and immediate semantic neighborhood. `evidence` focuses on
+the source, artifact, lock, or runtime references supporting that fact.
+
+## Trace upstream or downstream
+
+```bash
+axiom inspect trace Home.total_label . --direction upstream
+axiom inspect trace Home.apply_member_price . --direction downstream
+axiom inspect trace pricing . --direction both --max-depth 6
+```
+
+Use upstream to ask “what establishes or can affect this?” Use downstream to ask
+“what can this reach or affect?” Increase depth deliberately; large traversals
+are bounded and report truncation.
+
+For the shopping example, an upstream state trace can connect:
+
+```text
+Apply member price button
+        -> action
+        -> pricing extension export
+        -> effective write authority
+        -> Home.total_label
+```
+
+Every arrow is a typed relationship. The path is not produced from label
+similarity.
+
+## Ask why
+
+```bash
+axiom inspect why Home.total_label .
+axiom inspect why pricing .
+```
+
+`why` returns the authoritative adjacent facts that establish the selected
+fact. For a permission, this can include its request, application grant, target
+policy, effective authorization, and declaration evidence.
+
+## Inspect access
+
+```bash
+axiom inspect access Home.total_label .
+axiom inspect access pricing .
+```
+
+Use `access` to separate:
+
+- who requests authority;
+- what the application grants;
+- what a target policy enables;
+- which exact state, store, service, or resource fact is authorized; and
+- whether matching observed evidence is available.
+
+## Prove reachability
+
+```bash
+axiom inspect reachability \
+  Home.apply_member_price \
+  Home.total_label .
+```
+
+This returns a deterministic shortest downstream path within the requested
+depth. No result means no path was found inside the available bounded graph; it
+does not prove that unavailable external implementation code has no path.
+
+## Follow lineage
+
+```bash
+axiom inspect lineage Product.price_label .
+```
+
+Lineage is useful for data questions such as:
+
+- where a rendered value originates;
+- which projection exposes a field;
+- which operation returns it;
+- which UI consumes it; or
+- what could be affected if it changes.
+
+## Query a neighborhood
+
+```bash
+axiom inspect graph . \
+  --root Shop.list_products \
+  --direction both \
+  --max-depth 4 \
+  --max-results 200
+```
+
+Use `graph` when you want a broader neighborhood rather than complete paths.
+For repeatable agent queries, submit a versioned query document:
+
+```bash
+axiom inspect query question.json . --format json
+```
+
+The file must conform to `axiom-query/v1`; malformed, unknown, or over-budget
+requests fail validation.
+
+## Compare target neighborhoods
+
+```bash
+axiom inspect target-compare pricing \
+  . --targets web,ios,android
+```
+
+Target comparison is appropriate for effective permissions, lowering support,
+and target-scoped evidence. It does not compare screenshots or infer visual
+parity.
+
+## Use the dashboard for the same workflow
+
+In the local dashboard, select any semantic card and choose **Trace upstream**,
+**Trace downstream**, **Trace both**, or **Why?**. The visual result uses the
+same semantic IDs, relationships, bounds, and graph revision as these commands.

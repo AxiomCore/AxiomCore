@@ -19,6 +19,31 @@ mocks, security analysis, and cloud services.
 
 The `axiom` command-line interface for local and connected workflows.
 
+## Axiom Inspector
+
+The alpha CLI and secure local dashboard that expose a canonical, queryable
+model of an Axiom application. Inspector presents declared, resolved, observed,
+and changed evidence without making probabilistic output authoritative.
+
+## Fact
+
+A versioned semantic statement in Axiom Inspector, such as a state declaration,
+operation, extension export, permission, target, or runtime event. A fact has a
+stable semantic identity within its evidence model and references the evidence
+that supports it.
+
+## Relationship
+
+A typed, directed edge between Inspector facts, such as `calls`, `reads`,
+`writes`, `imports`, `authorizes`, `renders`, or `observed-in`. Relationships
+support deterministic trace, lineage, reachability, why, and impact queries.
+
+## Graph revision
+
+The content-derived identity of one canonical Inspector evidence graph. Keep it
+with query, runtime, diff, and agent results so an answer is not interpreted
+against different source or lock state.
+
 ## Contract
 
 A typed, versionable description of a software boundary. Depending on its

@@ -1,0 +1,100 @@
+---
+title: Axiom Inspector
+description: Understand what an Axiom application declares, resolves, can access, executes, and changes.
+---
+
+<StatusNote status="alpha" title="Queryable application evidence">
+  Axiom Inspector is implemented in the Axiom CLI and packaged local dashboard.
+  Its evidence and query formats are versioned, but commands and presentation can
+  still change before a stable major release.
+</StatusNote>
+
+Axiom Inspector turns compiler, resolver, package, authority, and runtime
+evidence into a queryable model of an application. It is designed to answer:
+
+1. What is this application?
+2. What can it do, and why is it allowed to do that?
+3. What happened during a particular execution?
+4. What would be affected by a change?
+
+It can inspect a frontend-only workspace, a backend-only workspace, or a
+combined application with contracts, packages, sandboxed extensions, and target
+artifacts.
+
+```text
+Acore source, contracts, locks, packages and runtime audit events
+                              │
+                              ▼
+                canonical application evidence
+                    facts + relationships
+                     evidence + revisions
+                         /          \
+                        /            \
+               CLI and agents    local dashboard
+```
+
+The CLI and dashboard query the same evidence engine. The dashboard does not
+reimplement the compiler in JavaScript, and an AI explanation does not become a
+new source of application facts.
+
+## Start locally
+
+From the application workspace:
+
+```bash
+axiom inspect overview .
+axiom inspect serve .
+```
+
+The first command prints a human-oriented summary. The second opens the secure
+loopback dashboard on an available port.
+
+For an agent or CI job, request a machine format:
+
+```bash
+axiom inspect overview . --format json
+axiom inspect dependencies . --format json
+axiom inspect security . --format json
+```
+
+Human, JSON, JSONL, dashboard, and API presentations retain the same semantic
+identities and graph revision.
+
+## What you can inspect
+
+| Area | Examples |
+| --- | --- |
+| Frontend | Routes, pages, components, rendered primitives, state, actions, queries, mutations, styles, responsive branches, assets, and accessibility declarations |
+| Backend | Services, operations, endpoints, entities, fields, projections, validation, auth, exposure, errors, cache, retry, streams, mocks, and implementation bindings present in verified artifacts |
+| Contracts and packages | Direct and transitive imports, immutable identities, target support, provenance, and executable closure |
+| Extensions | Exports, source availability, module and interface digests, requested/granted/effective permissions, limits, dependencies, and observed invocations |
+| Security | Endpoint exposure, authority, deterministic findings, readiness blockers, warnings, and supporting evidence |
+| Runtime | Redacted sessions, traces, extension lifecycle, denials, state changes, cancellation, teardown, and evidence retention |
+| Changes | Semantic changes, approval classes, affected facts, bounded impact paths, and optional normalized runtime comparison |
+
+## Inspector is not a guesser
+
+Inspector reports what its current evidence can establish. It does not infer an
+external backend implementation body from an endpoint name, label static
+reachability as an observed call, or treat requested extension authority as an
+application grant.
+
+When evidence is unavailable or a traversal is truncated, that limitation is
+part of the result. Read [Evidence and relationships](/inspector/evidence-and-relationships)
+before using Inspector results as release evidence.
+
+## Recommended development loop
+
+1. Run `axiom inspect overview .` after adding or importing a contract.
+2. Review `dependencies`, `executable-closure`, `security`, and `authority`
+   before accepting third-party content.
+3. Trace important UI actions and backend operations in both directions.
+4. Keep the dashboard open while developing for source, graph, and live target
+   inspection.
+5. Capture runtime evidence only when the question requires observed behavior.
+6. Create canonical snapshots before and after material changes.
+7. Run semantic diff, impact, readiness, tests, and the normal release gates in
+   CI.
+
+Continue with the [local dashboard guide](/inspector/local-dashboard) or the
+[Inspector CLI reference](/inspector/cli-reference).

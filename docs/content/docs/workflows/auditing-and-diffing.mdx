@@ -6,6 +6,10 @@ description: Compare authored contracts, locked dependencies, and typed packages
 Text diffs show source edits. Axiom semantic diffs describe the resulting
 contract or package impact after evaluation and normalization.
 
+For a complete frontend, backend, or combined workspace, Axiom Inspector adds
+application-wide facts, relationships, authority, runtime sessions, impact,
+and source evidence. Start with the [Axiom Inspector guide](/inspector).
+
 ## Contract source and lock
 
 ```bash
@@ -43,3 +47,27 @@ diff result.
 Keep the before/after immutable identities, semantic output, approvals, and test
 results together. A diff is evidence about declared semantics; it is not proof
 that arbitrary backend code or separately distributed extension bytes are safe.
+
+## Whole-application snapshots and impact
+
+Create canonical evidence before and after a material application change:
+
+```bash
+axiom inspect snapshot . --output before.evidence.json
+# make the reviewed change
+axiom inspect snapshot . --output after.evidence.json
+
+axiom inspect diff before.evidence.json after.evidence.json \
+  --fail-on breaking,permission-increase
+
+axiom inspect impact Product.price_label \
+  . --against after.evidence.json
+```
+
+Inspector compares semantic identities across UI, state, contracts, backend,
+packages, extensions, authority, targets, and optional normalized runtime
+evidence. Its impact traversal is bounded and reports completeness; it is not a
+claim about unavailable external implementation code.
+
+See [Changes, impact, and CI](/inspector/changes-impact-and-ci) for snapshot
+validation, change classes, runtime comparison, and pull-request evidence.

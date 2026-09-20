@@ -1,0 +1,122 @@
+---
+title: Contracts and dependency closure
+description: Review imported contracts, transitive packages, executable extensions, provenance, and effective application authority.
+---
+
+An imported contract can bring more than operation signatures. It can depend on
+packages and executable extensions whose authority must be evaluated in the
+context of the consuming application.
+
+## List the dependency graph
+
+```bash
+axiom inspect dependencies .
+```
+
+This view includes direct and transitive contracts, packages, and executable
+extensions discovered from the current workspace and verified locks. It does
+not scan an unrelated language package manager and assume those packages are
+Axiom dependencies.
+
+## Inspect one contract
+
+Use the manifest alias that the application imports:
+
+```bash
+axiom inspect contract shop .
+axiom inspect contract shop . --closure
+```
+
+Without `--closure`, the command focuses on the contract and its exposed
+semantic surface. With `--closure`, it includes reachable dependency facts.
+
+Review:
+
+- immutable artifact and lock identity;
+- audiences and operations;
+- inputs, outputs, errors, projections, and policies;
+- cache and streaming declarations;
+- introducing dependency edges;
+- source or artifact evidence availability; and
+- verification or incompleteness state.
+
+## Find executable code behind a dependency
+
+```bash
+axiom inspect executable-closure shop .
+axiom inspect executable-closure shop . --target web
+```
+
+The executable closure answers whether a dependency makes sandboxed code
+reachable from this application and shows the associated authority for the
+selected target.
+
+The important calculation is:
+
+```text
+package maximum request
+        ∩ application grant
+        ∩ target policy
+        ∩ runtime limits
+        = target-effective authority
+```
+
+Inspector keeps each stage separate. A package request is not described as a
+grant, and an effective permission is not described as observed usage.
+
+## Inspect provenance
+
+```bash
+axiom inspect provenance pricing .
+```
+
+Depending on available evidence, provenance can connect:
+
+- declared source and source digest;
+- package and module identity;
+- interface and SDK identity;
+- signature or unsigned-development state;
+- dependency and lock origin;
+- authority documents and target policies; and
+- the release or application that includes it.
+
+A valid digest or signature establishes integrity relative to its verification
+boundary. It does not prove that the code is correct or that every requested
+permission should be granted.
+
+## Review a third-party contract
+
+Before accepting it:
+
+1. Run `inspect contract ALIAS --closure`.
+2. Run `inspect executable-closure ALIAS` for each intended target.
+3. Review `inspect provenance` for reachable packages and extensions.
+4. Review requested, granted, and effective permissions with `inspect access`
+   and `inspect authority`.
+5. Trace important operations into your application.
+6. Save a canonical snapshot for review and CI.
+7. Compare the snapshot whenever the lock or package version changes.
+
+If extension source is unavailable, Inspector should say so. Artifact identity,
+interface, authority, and signatures can still be reviewed, but unavailable
+source must not be reconstructed or described as audited source code.
+
+## Trace a contract operation
+
+```bash
+axiom inspect operation Shop.list_products .
+axiom inspect trace Shop.list_products . --direction both
+```
+
+Where verified identities match, a path can connect:
+
+```text
+UI query
+  -> imported contract operation
+  -> backend endpoint
+  -> response projection
+  -> domain or model fields
+```
+
+This is static application reachability. Use runtime evidence when you need to
+show that a particular call actually occurred.

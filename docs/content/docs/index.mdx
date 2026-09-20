@@ -4,7 +4,7 @@ description: Build, connect, test, and evolve software through typed, auditable 
 ---
 
 import { Card, Cards } from 'fumadocs-ui/components/card';
-import { Blocks, Braces, Cloud, Compass, Route, TestTube2, Workflow } from 'lucide-react';
+import { Blocks, Braces, Cloud, Compass, Route, ScanSearch, TestTube2, Workflow } from 'lucide-react';
 
 AxiomCore is a contract platform for describing and connecting software across
 backend services, user interfaces, runtimes, tests, security policy, packages,
@@ -28,6 +28,7 @@ parts—and Acore can also describe more of the application when that is useful.
   <Card icon={<Braces />} title="Learn Acore" href="/introduction/what-is-acore" description="Learn what the language describes, how composition works, and where its boundary ends." />
   <Card icon={<Workflow />} title="Build your first contract" href="/getting-started/installation" description="Install the CLI and follow the current local development path." />
   <Card icon={<Compass />} title="Adopt in an existing system" href="/guides" description="Follow end-to-end guides for incremental adoption, CI, and release readiness." />
+  <Card icon={<ScanSearch />} title="Inspect an application" href="/inspector" description="Query architecture, relationships, authority, runtime evidence, and semantic change from the CLI or local dashboard." />
   <Card icon={<Blocks />} title="Browse platform capabilities" href="/introduction/product-landscape" description="Separate what is available now from alpha, experimental, and coming-soon work." />
 </Cards>
 
@@ -59,6 +60,7 @@ your team.
     { capability: 'Contract and package lifecycle', status: 'alpha', scope: 'Canonical .axiom packages, locks, semantic diffing, local tests, mocks, and runtime consumption.' },
     { capability: 'Backend integration', status: 'available', scope: 'FastAPI is the primary path; Go is alpha. OpenAPI and SQL currently provide bounded domain bootstrap workflows.' },
     { capability: 'Frontend and UI', status: 'alpha', scope: 'Vanilla web, React, Flutter, Swift distribution, and Acore-authored UI have different maturity boundaries.' },
+    { capability: 'Axiom Inspector', status: 'alpha', scope: 'Queryable application facts and relationships, security and authority review, runtime evidence, semantic change analysis, and a secure local dashboard.' },
     { capability: 'Cloud control plane', status: 'alpha', scope: 'Implemented account, project, and release workflows. Broader collaboration and automation remain in development.' },
     { capability: 'Studio, Acode, and Marketplace', status: 'coming-soon', scope: 'Planned product experiences; they are not installable or supported workflows today.' },
   ]}

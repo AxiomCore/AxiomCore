@@ -70,6 +70,137 @@ const TYPES_REACT_VERSION: &str = "18.3.28";
 const UI_HOST_RELEASE_PUBLIC_KEY_HEX: &str =
     "85f0729ca36ada0ef648b08e0284085bf08815b1a291e926e2df555b1bf3a721";
 
+// Appended only to the interactive development server's in-memory Web host
+// asset when a live Inspector connection exists. The signed host archive and
+// every packaged/release application remain byte-for-byte free of picker code.
+const WEB_INSPECTOR_DEVELOPMENT_SOURCE: &str = r#"
+
+// Axiom Inspector development instrumentation (not present in release assets).
+(() => {
+  let started = false, sequence = 0, command = 0, lastTrace = null;
+  const revisions = new Map();
+  let overlay;
+  const valueShape = value => value == null ? 'null' : Array.isArray(value) ? `list:${value.length}` : typeof value === 'string' ? `string:${value.length}` : typeof value;
+  const api = (path, body) => {
+    const config = model?.runtimeConfig?.inspector;
+    if (!config?.enabled) return Promise.resolve(null);
+    const url = `${config.endpoint}${path}${path.includes('?') ? '&' : '?'}token=${encodeURIComponent(config.token)}`;
+    return fetch(url, body === undefined ? { cache: 'no-store' } : {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+    }).then(async response => {
+      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || `Inspector ${response.status}`);
+      return response.json();
+    });
+  };
+  const sessionId = `web-${crypto.randomUUID()}`;
+  const findNode = id => {
+    const visit = nodes => {
+      for (const node of nodes || []) {
+        if (node.semanticId?.value === id) return node;
+        const nested = visit(node.children) || visit(node.elseChildren) || (node.elseIf || []).map(branch => visit(branch.children)).find(Boolean);
+        if (nested) return nested;
+      }
+    };
+    for (const page of model?.ir?.pages || []) { const found = visit(page.view); if (found) return { node: found, page }; }
+    for (const component of model?.ir?.components || []) { const found = visit(component.view); if (found) return { node: found, component }; }
+    return {};
+  };
+  const stateDependencies = (found, page) => {
+    const text = JSON.stringify(found || {});
+    return [
+      ...(page?.states || []).filter(state => new RegExp(`\\b${state.name}\\b`).test(text)).map(state => state.semanticId?.value || state.name),
+      ...(page?.operations || []).filter(operation => new RegExp(`\\b${operation.name}\\b`).test(text)).map(operation => `${operation.name}.pending`),
+    ].sort();
+  };
+  const highlight = element => {
+    if (!element) return;
+    overlay ||= Object.assign(document.createElement('div'), { id: 'axiom-inspector-highlight' });
+    if (!overlay.isConnected) document.body.append(overlay);
+    const rect = element.getBoundingClientRect();
+    Object.assign(overlay.style, { position:'fixed', pointerEvents:'none', zIndex:'2147483647', border:'2px solid #c9ff68', background:'rgba(201,255,104,.10)', left:`${rect.left}px`, top:`${rect.top}px`, width:`${rect.width}px`, height:`${rect.height}px`, borderRadius:'4px', boxSizing:'border-box' });
+  };
+  const select = (element, reason='pointer') => {
+    const semanticId = element?.dataset?.axiomId;
+    if (!semanticId) return;
+    const { node, page } = findNode(semanticId);
+    const rect = element.getBoundingClientRect();
+    highlight(element);
+    api('/api/v1/live/selection', {
+      format:'axiom-inspector-selection/v1', sessionId, target:'web', graphRevision:model.runtimeConfig.inspector.graphRevision,
+      sequence:++sequence, semanticId, componentSemanticId:element.closest('[data-axiom-component]')?.dataset?.axiomComponent || null,
+      reason, traceId:lastTrace, redacted:true,
+      presentation:{ disabled:Boolean(element.disabled || element.getAttribute('aria-disabled') === 'true'), visible:Boolean(element.getClientRects().length), focused:document.activeElement === element, valueShape:valueShape(element.value), role:element.getAttribute('role') || element.tagName.toLowerCase(), accessibilityLabel:element.getAttribute('aria-label') || '', viewport:root.dataset.axiomViewport || '', bounds:{x:Math.round(rect.x),y:Math.round(rect.y),width:Math.round(rect.width),height:Math.round(rect.height)}, classes:[...element.classList].sort() },
+      stateDependencies:stateDependencies(node, page),
+    }).catch(error => diagnostic('WEB_INSPECTOR', error.message, 'warning'));
+  };
+  const install = async () => {
+    if (started || !model?.runtimeConfig?.inspector?.enabled || model.hotReload !== true) return;
+    started = true;
+    const config = model.runtimeConfig.inspector;
+    await api('/api/v1/live/handshake', { format:'axiom-inspector-handshake/v1', sessionId, target:'web', graphRevision:config.graphRevision, host:config.host, hostVersion:config.hostVersion, development:true });
+    addEventListener('click', event => { if (event.altKey) { event.preventDefault(); event.stopImmediatePropagation(); select(event.target.closest?.('[data-axiom-id]')); } }, true);
+    setInterval(async () => {
+      const value = await api(`/api/v1/live/commands?target=web&sessionId=${encodeURIComponent(sessionId)}&after=${command}`).catch(() => null);
+      for (const item of value?.commands || []) { command = Math.max(command, item.id); if (item.kind === 'highlight') highlight([...document.querySelectorAll('[data-axiom-id]')].find(element => element.dataset.axiomId === item.semanticId)); if (item.kind === 'clear-highlight') overlay?.remove(); }
+    }, 500);
+  };
+  const causal = (traceId, kind, semanticId, parentSemanticId, outcome) => api('/api/v1/live/causal', { format:'axiom-inspector-causal-event/v1', sessionId, target:'web', graphRevision:model.runtimeConfig.inspector.graphRevision, sequence:++sequence, traceId, kind, semanticId:semanticId || 'ui:unknown', parentSemanticId:parentSemanticId || null, outcome, redacted:true }).catch(() => {});
+  globalThis.__axiomInspector = {
+    actionStarted(id) { lastTrace = `${id || 'action'}:${Date.now()}:${sequence + 1}`; causal(lastTrace, 'user-event', id, null, 'observed'); causal(lastTrace, 'action', id, id, 'started'); return lastTrace; },
+    effect(traceId, kind, semanticId, parentSemanticId) { causal(traceId, kind === 'stream' ? 'query' : kind, semanticId, parentSemanticId, 'started'); },
+    actionCompleted(traceId, id) { causal(traceId, 'rerender', id, id, 'completed'); },
+    stateChanged(traceId, writerSemanticId, stateName, before, after) {
+      const page = model.ir.pages.find(candidate => (candidate.states || []).some(state => state.name === stateName));
+      const state = page?.states?.find(candidate => candidate.name === stateName);
+      const stateId = state?.semanticId?.value || stateName;
+      const prior = revisions.get(stateId) || 0, next = prior + 1; revisions.set(stateId, next);
+      api('/api/v1/live/state', { format:'axiom-inspector-state-event/v1', sessionId, target:'web', graphRevision:model.runtimeConfig.inspector.graphRevision, sequence:++sequence, stateSemanticId:stateId, revisionBefore:prior, revisionAfter:next, writerSemanticId:writerSemanticId || 'ui:unknown', authorized:true, validated:true, decision:'applied', traceId, changedPaths:[stateName], redacted:true }).catch(() => {});
+      causal(traceId, 'state-patch', stateId, writerSemanticId, 'applied');
+    },
+  };
+  const timer = setInterval(() => { if (model?.runtimeConfig?.inspector) { clearInterval(timer); install().catch(error => diagnostic('WEB_INSPECTOR', error.message, 'warning')); } }, 25);
+})();
+"#;
+
+const NATIVE_INSPECTOR_DEVELOPMENT_SOURCE: &str = r#"
+
+// Axiom Inspector development instrumentation (not present in release bundles).
+type AxiomInspectorConfig = { enabled: boolean; endpoint: string; token: string; graphRevision: string; target: 'android' | 'ios'; host: string; hostVersion: string };
+type AxiomInspectorEvent = { target?: { dataset?: Record<string, string> }; currentTarget?: { dataset?: Record<string, string> }; detail?: Record<string, unknown> };
+let axiomInspectorSequence = 0;
+const axiomInspectorSession = `${runtimeConfig.inspector?.target || 'native'}-${Date.now()}-${Math.floor(Math.random() * 1000000)}`;
+function axiomInspectorRequest(path: string, body?: unknown): Promise<any> {
+  const config = runtimeConfig.inspector as AxiomInspectorConfig | undefined;
+  if (!config?.enabled) return Promise.resolve(null);
+  const separator = path.includes('?') ? '&' : '?';
+  return lynx.fetch(`${config.endpoint}${path}${separator}token=${encodeURIComponent(config.token)}`, body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then((response: any) => {
+    if (!response.ok) throw new Error(`AXIOM_INSPECTOR_${response.status}`);
+    return response.json();
+  });
+}
+export function AxiomInspectorRoot({ children }: { children: unknown }) {
+  const config = runtimeConfig.inspector as AxiomInspectorConfig;
+  const [selected, setSelected] = useState<string>('');
+  const command = useRef<number>(0);
+  useEffect(() => {
+    axiomInspectorRequest('/api/v1/live/handshake', { format:'axiom-inspector-handshake/v1', sessionId:axiomInspectorSession, target:config.target, graphRevision:config.graphRevision, host:config.host, hostVersion:config.hostVersion, development:true }).catch(() => {});
+    const timer = setInterval(() => {
+      axiomInspectorRequest(`/api/v1/live/commands?target=${config.target}&sessionId=${encodeURIComponent(axiomInspectorSession)}&after=${command.current}`).then(value => {
+        for (const item of value?.commands || []) { command.current = Math.max(command.current, item.id); if (item.kind === 'highlight') setSelected(item.semanticId || ''); if (item.kind === 'clear-highlight') setSelected(''); }
+      }).catch(() => {});
+    }, 500);
+    return () => clearInterval(timer);
+  }, []);
+  const pick = (event: AxiomInspectorEvent) => {
+    const semanticId = event.target?.dataset?.axiomId || event.currentTarget?.dataset?.axiomId || String(event.detail?.semanticId || '');
+    if (!semanticId) return;
+    setSelected(semanticId);
+    axiomInspectorRequest('/api/v1/live/selection', { format:'axiom-inspector-selection/v1', sessionId:axiomInspectorSession, target:config.target, graphRevision:config.graphRevision, sequence:++axiomInspectorSequence, semanticId, reason:'long-press', presentation:{ visible:true, viewport:axiomViewportClass(), role:'native-semantic-element', valueShape:'redacted' }, stateDependencies:[], redacted:true }).catch(() => {});
+  };
+  return <view className="axiom-inspector-root" bindlongpress={pick}>{children}{selected ? <view className="axiom-inspector-highlight"><text className="axiom-inspector-highlight-label">Inspecting {selected}</text></view> : null}</view>;
+}
+"#;
+
 #[derive(Debug, Clone, ValueEnum)]
 pub enum UiInspectView {
     Ir,
@@ -887,8 +1018,14 @@ async fn handle_run_web(
         anyhow::anyhow!("web UI was not launched because the initial source did not compile")
     })?;
     let initial_extensions = assemble_verified_extensions(&source, compilation, UiTarget::Web)?;
-    let initial_runtime_config =
-        build_application_runtime_config_value(compilation, &lock, &initial_extensions)?;
+    let initial_runtime_config = development_runtime_config_value(
+        &source,
+        compilation,
+        &lock,
+        &initial_extensions,
+        UiTarget::Web,
+    )?;
+    let development_host_files = development_web_host_files(&host, &initial_runtime_config)?;
     let (reload, _) = broadcast::channel(16);
     let (diagnostic_tx, mut diagnostic_rx) = mpsc::unbounded_channel();
     let state = WebHostState {
@@ -897,7 +1034,7 @@ async fn handle_run_web(
             true,
             initial_runtime_config,
         )?)),
-        files: Arc::new(extract_web_host(&host)?),
+        files: Arc::new(development_host_files),
         extension_files: Arc::new(RwLock::new(initial_extensions.files)),
         asset_root: asset_root.clone(),
         declared_assets: Arc::new(RwLock::new(web_declared_assets(compilation))),
@@ -981,7 +1118,7 @@ async fn handle_run_web(
                                     if let Some(compilation) = session.last_good() {
                                     match assemble_verified_extensions(&source, compilation, UiTarget::Web)
                                         .and_then(|assembly| {
-                                            let config = build_application_runtime_config_value(compilation, &lock, &assembly)?;
+                                            let config = development_runtime_config_value(&source, compilation, &lock, &assembly, UiTarget::Web)?;
                                             let app = web_model_with_runtime_config(compilation, true, config)?;
                                             Ok((assembly, app))
                                         }) {
@@ -1008,6 +1145,27 @@ async fn handle_run_web(
             }
         }
     }
+}
+
+fn development_web_host_files(
+    host: &UiHostInstallation,
+    _runtime_config: &serde_json::Value,
+) -> Result<HashMap<String, Vec<u8>>> {
+    let mut files = extract_web_host(host)?;
+    let host_js = files
+        .get_mut("host.js")
+        .context("verified Web UI Host archive is missing host.js")?;
+    // A source checkout can evolve the development-only Inspector hooks before
+    // the next signed host archive is published. Prefer that checked-in host
+    // while developing the monorepo; installed CLIs continue to use the
+    // verified archive, which contains the same hooks at release time.
+    let source_host = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../axiom-ui-host/web/host.js");
+    if source_host.is_file() {
+        *host_js = std::fs::read(&source_host)
+            .with_context(|| format!("could not read {}", source_host.display()))?;
+    }
+    host_js.extend_from_slice(WEB_INSPECTOR_DEVELOPMENT_SOURCE.as_bytes());
+    Ok(files)
 }
 
 fn native_diagnostic_source(host: &UiHostInstallation) -> Result<NativeDiagnosticSource> {
@@ -2204,8 +2362,13 @@ fn deliver_last_good(
         .expect("valid native delivery has UI IR")
         .target;
     let extension_assembly = assemble_verified_extensions(source, compilation, target)?;
-    let runtime_config_value =
-        build_application_runtime_config_value(compilation, lock_path, &extension_assembly)?;
+    let runtime_config_value = development_runtime_config_value(
+        source,
+        compilation,
+        lock_path,
+        &extension_assembly,
+        target,
+    )?;
     let runtime_config_fingerprint = sha256_bytes(&deterministic_json(&runtime_config_value)?);
     let runtime_config = runtime_config_source(&runtime_config_value)?;
     let bundle = compile_virtual_lynx_bundle(build, &runtime_config, asset_root, target)?;
@@ -2738,6 +2901,52 @@ fn build_application_runtime_config_value(
     Ok(config)
 }
 
+/// Attach the local Inspector only to an interactive development build. The
+/// connection file is session-scoped, loopback-only, and never consulted by
+/// release assembly, so picker/capture code cannot enter production output by
+/// accident.
+fn development_runtime_config_value(
+    source: &Path,
+    compilation: &UiCompilation,
+    lock_path: &Path,
+    assembly: &VerifiedExtensionAssembly,
+    target: UiTarget,
+) -> Result<serde_json::Value> {
+    let mut config = build_application_runtime_config_value(compilation, lock_path, assembly)?;
+    let mut directory = source
+        .parent()
+        .filter(|value| !value.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    loop {
+        let candidate = directory.join(".axiom/inspector/live-connection.json");
+        if candidate.is_file() {
+            let connection: axiom_lib::live_inspection::InspectorConnection =
+                serde_json::from_slice(&std::fs::read(&candidate)?)
+                    .with_context(|| format!("parse {}", candidate.display()))?;
+            connection.validate()?;
+            config["inspector"] = serde_json::json!({
+                "format": "axiom-inspector-target/v1",
+                "enabled": true,
+                "endpoint": connection.endpoint,
+                "token": connection.token,
+                "graphRevision": connection.graph_revision,
+                "target": target.as_str(),
+                "host": "axiom-ui-host",
+                "hostVersion": env!("CARGO_PKG_VERSION"),
+            });
+            break;
+        }
+        let Some(parent) = directory.parent() else {
+            break;
+        };
+        if parent == directory {
+            break;
+        }
+        directory = parent;
+    }
+    Ok(config)
+}
+
 fn build_verified_runtime_config(compilation: &UiCompilation, lock_path: &Path) -> Result<String> {
     runtime_config_source(&build_verified_runtime_config_value(
         compilation,
@@ -2955,6 +3164,9 @@ fn compile_virtual_lynx_bundle(
             format!("cannot write opaque virtual file {}", destination.display())
         })?;
     }
+    if runtime_config.contains("\"inspector\"") {
+        instrument_native_inspector(&project)?;
+    }
     materialize_runtime_facade_package(&project)?;
     embed_declared_assets(build, asset_root, &project)?;
     if !project.join("virtual/main.tsx").is_file() {
@@ -3010,6 +3222,38 @@ fn compile_virtual_lynx_bundle(
         bail!("AXIOM_UI_BUNDLE: the pinned compiler completed without dist/main.lynx.bundle");
     }
     Ok(bundle)
+}
+
+fn instrument_native_inspector(project: &Path) -> Result<()> {
+    let runtime_path = project.join("virtual/axiom-ui-runtime.tsx");
+    let mut runtime = std::fs::read_to_string(&runtime_path)?;
+    runtime.push_str(NATIVE_INSPECTOR_DEVELOPMENT_SOURCE);
+    std::fs::write(&runtime_path, runtime)?;
+
+    let main_path = project.join("virtual/main.tsx");
+    let main = std::fs::read_to_string(&main_path)?;
+    let main = main.replace(
+        "AxiomMotionRoot, AxiomNavigationProvider, AxiomViewportRoot, useAxiomNavigation",
+        "AxiomInspectorRoot, AxiomMotionRoot, AxiomNavigationProvider, AxiomViewportRoot, useAxiomNavigation",
+    );
+    let main = main.replace(
+        "root.render(<AxiomViewportRoot>",
+        "root.render(<AxiomInspectorRoot><AxiomViewportRoot>",
+    );
+    let main = main.replace(
+        "</AxiomViewportRoot>);",
+        "</AxiomViewportRoot></AxiomInspectorRoot>);",
+    );
+    if !main.contains("AxiomInspectorRoot") {
+        bail!("AXIOM_INSPECTOR_INSTRUMENTATION: native entrypoint shape is unsupported");
+    }
+    std::fs::write(&main_path, main)?;
+
+    let css_path = project.join("virtual/axiom-ui.css");
+    let mut css = std::fs::read_to_string(&css_path)?;
+    css.push_str("\n.axiom-inspector-root{position:relative;min-height:100%;}.axiom-inspector-highlight{position:absolute;left:8px;right:8px;top:8px;z-index:2147483647;padding:6px 10px;border-width:2px;border-color:#c9ff68;background-color:#07100f;border-radius:8px;}.axiom-inspector-highlight-label{color:#c9ff68;font-size:11px;}\n");
+    std::fs::write(&css_path, css)?;
+    Ok(())
 }
 
 fn resolve_rspack_node(engine: &Path) -> Result<PathBuf> {
@@ -3562,12 +3806,16 @@ fn android_signature_conflict(output: &str) -> bool {
 /// Derive these URLs from the already verified runtime configuration so an app
 /// without contract imports never needs a UI lock merely to launch.
 fn android_loopback_base_urls(runtime_config: &serde_json::Value) -> Vec<String> {
-    runtime_config["contracts"]
+    let mut urls = runtime_config["contracts"]
         .as_array()
         .into_iter()
         .flatten()
         .filter_map(|contract| contract["baseUrl"].as_str().map(str::to_string))
-        .collect()
+        .collect::<Vec<_>>();
+    if let Some(endpoint) = runtime_config["inspector"]["endpoint"].as_str() {
+        urls.push(endpoint.to_string());
+    }
+    urls
 }
 
 fn configure_android_loopback(device: &str, base_urls: &[String]) -> Result<()> {
@@ -4631,6 +4879,41 @@ all compiler output in memory.
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_inspector_is_an_explicit_development_instrumentation_step() {
+        let project = std::env::temp_dir().join(format!(
+            "axiom-native-inspector-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let virtual_root = project.join("virtual");
+        std::fs::create_dir_all(&virtual_root).unwrap();
+        std::fs::write(
+            virtual_root.join("axiom-ui-runtime.tsx"),
+            "export const runtime = true;\n",
+        )
+        .unwrap();
+        std::fs::write(
+            virtual_root.join("main.tsx"),
+            "import { AxiomMotionRoot, AxiomNavigationProvider, AxiomViewportRoot, useAxiomNavigation } from './axiom-ui-runtime';\nroot.render(<AxiomViewportRoot><view /></AxiomViewportRoot>);\n",
+        )
+        .unwrap();
+        std::fs::write(virtual_root.join("axiom-ui.css"), "page{}\n").unwrap();
+
+        let untouched = std::fs::read_to_string(virtual_root.join("main.tsx")).unwrap();
+        assert!(!untouched.contains("AxiomInspectorRoot"));
+        instrument_native_inspector(&project).unwrap();
+        let instrumented = std::fs::read_to_string(virtual_root.join("main.tsx")).unwrap();
+        let runtime = std::fs::read_to_string(virtual_root.join("axiom-ui-runtime.tsx")).unwrap();
+        assert!(instrumented.contains("<AxiomInspectorRoot><AxiomViewportRoot>"));
+        assert!(runtime.contains("axiom-inspector-handshake/v1"));
+        assert!(runtime.contains("bindlongpress={pick}"));
+        std::fs::remove_dir_all(project).unwrap();
+    }
 
     #[test]
     fn native_runtime_restart_tracks_verified_configuration_lifecycle() {

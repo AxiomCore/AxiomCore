@@ -280,6 +280,7 @@ dependencies = [
  "tokio-util",
  "toml",
  "toml_edit",
+ "tower-http 0.5.2",
  "tui-input",
  "tui-textarea",
  "uuid",

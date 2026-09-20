@@ -38,7 +38,9 @@ axiom doctor --json --strict
 | `axiom build --release [--project ID_OR_SLUG] [--version VERSION]` | Build and send the result through the connected Cloud release path. |
 | `axiom benchmark [FILE]` | Measure local build and artifact-load boundaries with warmup/iteration controls and a JSON report. |
 | `axiom diff FILE1 [FILE2]` | Diff two inputs, or one input against its lock, using `text`, `semantic`, `atom`, or `changelog` output. |
-| `axiom inspect [PATH]` | Open the contract inspector, or verify and describe an `.axiomapp`. |
+| `axiom inspect FILE.axiom` | Open the legacy single-contract terminal inspector. |
+| `axiom inspect FILE.axiomapp` | Verify and describe an application artifact. |
+| `axiom inspect overview [PATH]` | Build and summarize canonical application evidence. |
 | `axiom domain validate [FILE] [--json]` | Validate Domain Model references and print the canonical manifest hash. |
 | `axiom domain bootstrap INPUT --source SOURCE` | Write reviewable domain suggestions with `SOURCE` set to `openapi` or `sql`, without modifying the input or connecting to a live database. |
 | `axiom security check [FILE] [--json] [--fail-on-warning]` | Analyze the optional security model without writing an artifact. |
@@ -46,6 +48,24 @@ axiom doctor --json --strict
 `benchmark` defaults to 10 measured iterations, 2 warmups, and
 `axiom-benchmark.json`. Results describe that machine and checkout; use the
 same inputs and environment when comparing reports.
+
+## Axiom Inspector
+
+The `axiom inspect` namespace can analyze a frontend, backend, or combined
+workspace as a semantic application rather than as isolated files:
+
+```bash
+axiom inspect overview .
+axiom inspect dependencies .
+axiom inspect trace Home.total_label . --direction upstream
+axiom inspect security . --format json
+axiom inspect serve .
+```
+
+It includes focused frontend/backend views, contracts and executable closure,
+graph and evidence queries, authority and readiness, runtime audit sessions,
+canonical snapshots, semantic diff and impact, agent-safe machine output, and
+the local dashboard. See the complete [Inspector CLI reference](/inspector/cli-reference).
 
 ## Local development
 

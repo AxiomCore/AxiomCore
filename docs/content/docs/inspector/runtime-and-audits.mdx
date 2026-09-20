@@ -1,0 +1,131 @@
+---
+title: Runtime evidence and audits
+description: Capture, normalize, inspect, import, export, and interpret redacted runtime sessions without mixing them with static reachability.
+---
+
+Static evidence answers what an application declares or can reach. Runtime
+evidence answers what a particular captured session observed.
+
+## Create or normalize a session
+
+Create a bounded session for a target:
+
+```bash
+axiom inspect record . --target web --session demo
+```
+
+Normalize an existing supported audit export:
+
+```bash
+axiom inspect record . \
+  --target server \
+  --input extension-audit.json \
+  --session checkout-review
+```
+
+If capture was intentionally unavailable, record that explicitly rather than
+presenting an empty session as proof of no activity:
+
+```bash
+axiom inspect record . --target ios --session release-check --disabled
+```
+
+Sessions are kept under the ignored local Inspector workspace and remain bound
+to their application graph revision.
+
+## Inspect a session
+
+```bash
+axiom inspect runtime . --session latest
+axiom inspect runtime . --session checkout-review --format json
+```
+
+Normalized evidence can include supported versions of:
+
+- session and target identity;
+- trace and invocation correlation;
+- extension load, completion, failure, denial, cancellation, drain, and teardown;
+- host calls and bounded resource metadata;
+- state patch or transaction decisions and changed paths;
+- cache decisions and operation identities;
+- dropped, truncated, or unavailable evidence indicators; and
+- redaction state.
+
+Application payload values are not part of normalized runtime evidence. The
+audit model retains semantic identities and safe metadata needed to explain the
+event without turning Inspector into a secret or production-data viewer.
+
+## Import and export audit bundles
+
+Export one canonical redacted runtime session:
+
+```bash
+axiom inspect export-audit . \
+  --session checkout-review \
+  --output checkout-review.audit.json
+```
+
+Import a supported offline runtime or extension audit export:
+
+```bash
+axiom inspect import-audit checkout-review.audit.json . \
+  --session imported-checkout
+```
+
+Import validates the schema and application correlation instead of accepting an
+arbitrary log file. Preserve the original artifact when it forms part of a
+review or incident record.
+
+## Live development evidence
+
+Start the dashboard before the target application:
+
+```bash
+axiom inspect serve .
+axiom run frontend/main.acore --target web
+```
+
+Development hosts can attach through the owner-only loopback descriptor and
+submit versioned, redacted selection and causal events. Web uses Alt-click and
+supported native development hosts use long-press selection.
+
+The dashboard refuses current correlation when the running application reports
+a different graph revision. Reload the application instead of interpreting
+stale state against new source.
+
+## Audit interpretation rules
+
+1. A static path is not an observed invocation.
+2. An effective permission is not proof that it was used.
+3. An observed invocation does not prove that every statically reachable path
+   ran.
+4. A disabled or truncated capture is not evidence of absence.
+5. Timing differences are operational measurements, not automatically semantic
+   application changes.
+6. Redaction and dropped-event metadata are part of the evidence.
+
+## Signed Inspector handoff
+
+A runtime audit bundle contains a session. A signed Inspector exchange can
+carry a complete application snapshot plus optional matching runtime and change
+evidence:
+
+```bash
+chmod 600 inspector-signing-key
+
+axiom inspect export-inspector . \
+  --key inspector-signing-key \
+  --runtime \
+  --output application.inspector.json
+
+axiom inspect import-inspector application.inspector.json \
+  --output-dir imported-inspector
+```
+
+Import verifies the Ed25519 signature, payload digest, schema, canonical bytes,
+graph revision, and nested evidence before writing to an empty directory. A
+valid signature establishes integrity relative to a key; the recipient must
+still decide whether that signer is trusted.
+
+Inspector does not upload this exchange automatically. It is an explicit
+offline handoff boundary.

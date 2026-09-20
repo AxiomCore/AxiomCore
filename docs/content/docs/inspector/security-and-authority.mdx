@@ -1,0 +1,117 @@
+---
+title: Security, authority, and readiness
+description: Review endpoint exposure, extension capabilities, deterministic findings, and release readiness without an opaque score.
+---
+
+Axiom Inspector presents concrete security facts and their evidence. It does
+not produce an unexplained security score.
+
+## Start with four views
+
+```bash
+axiom inspect security .
+axiom inspect authority .
+axiom inspect exposure .
+axiom inspect readiness .
+```
+
+| View | Purpose |
+| --- | --- |
+| `security` | Deterministic security facts and current findings |
+| `authority` | Direct and transitive requested, granted, and target-effective capabilities |
+| `exposure` | Explicit public and restricted backend endpoint facts |
+| `readiness` | Blocker and warning counts with evidence, not an aggregate score |
+
+Use JSON for CI or agents:
+
+```bash
+axiom inspect security . --format json
+axiom inspect authority . --format json
+axiom inspect readiness . --format json
+```
+
+## Read extension authority correctly
+
+For sandboxed extensions, review each stage:
+
+```text
+requested by package or local source
+            ↓ intersect
+granted by the application
+            ↓ intersect
+enabled by the selected target policy
+            ↓ bounded by
+runtime limits
+            ↓
+effective authority
+```
+
+The extension still cannot receive direct application memory, a native pointer,
+a database connection, or ambient network access. It receives typed host
+services, snapshots, handles, and limits associated with effective authority.
+
+```bash
+axiom inspect access pricing .
+axiom inspect executable-closure shop . --target ios
+axiom inspect provenance pricing .
+```
+
+## Examine one finding
+
+List findings through `security` or open one selector directly:
+
+```bash
+axiom inspect finding FINDING_ID .
+```
+
+Review:
+
+- deterministic classification;
+- affected semantic fact and target;
+- source or artifact evidence;
+- whether the condition is declared, resolved, or observed;
+- the exact remediation or approval boundary; and
+- whether evidence is incomplete.
+
+Examples can include unsigned development artifacts, explicit public endpoints,
+permission increases, or unverifiable provenance. A warning is not silently
+converted into a blocker, and a blocker is not hidden inside a numeric score.
+
+## Inspector security versus Acore security analysis
+
+These commands answer related but different questions:
+
+```bash
+axiom security check axiom.acore
+axiom inspect security .
+```
+
+`axiom security check` analyzes the optional Acore backend security model and
+its policies. `axiom inspect security` aggregates security and trust facts from
+the complete available application evidence, including dependencies,
+extensions, locks, target authority, and imported artifacts.
+
+Use both for a backend application that declares Acore security policy.
+
+## Readiness is not certification
+
+`inspect readiness` reports current deterministic blockers and warnings. A
+clean report does not prove arbitrary external code is safe, that physical
+devices have been certified, or that an environment is correctly deployed.
+
+Pair it with:
+
+- semantic diff and impact;
+- contract and package verification;
+- extension tests and runtime denial tests;
+- target-specific application tests;
+- dependency and signer review; and
+- the release policy for the intended environment.
+
+## Privacy boundary
+
+Inspector does not need secret values to explain authority. Permission names,
+resource identities, policies, hashes, and redacted audit metadata are enough.
+If a security answer depends on an unavailable value or external enforcement,
+the result must retain that limitation rather than copying the value into the
+evidence graph.

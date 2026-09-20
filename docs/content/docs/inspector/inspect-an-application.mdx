@@ -1,0 +1,119 @@
+---
+title: Inspect an application
+description: Explore frontend, backend, state, styles, operations, data, accessibility, exposure, and cache behavior from one workspace.
+---
+
+Use the high-level Inspector commands to learn the shape of a project before
+following individual relationships.
+
+## Begin with the overview
+
+```bash
+axiom inspect overview .
+```
+
+The overview discovers available frontend source, backend artifacts, contracts,
+packages, extensions, and targets. It reports verification and completeness
+rather than treating every workspace as a full-stack application.
+
+Use a machine format when another tool consumes the result:
+
+```bash
+axiom inspect overview . --format json
+```
+
+## Frontend views
+
+```bash
+axiom inspect frontend .
+axiom inspect ui .
+axiom inspect state .
+axiom inspect styles .
+axiom inspect accessibility .
+```
+
+| Command | Questions it helps answer |
+| --- | --- |
+| `frontend` | Which modules, routes, pages, actions, state and operations exist? |
+| `ui` | What semantic component and primitive tree is rendered, and which actions are bound? |
+| `state` | Which state facts exist, and which proven facts read or write them? |
+| `styles` | Which typed variables, rules, classes, and responsive branches are compiled? |
+| `accessibility` | Which roles, labels, and other declared accessibility semantics are attached? |
+
+Frontend evidence is produced by the Axiom UI compiler for supported targets.
+Inspector does not derive behavior from visual similarity or DOM conventions.
+
+## Backend views
+
+```bash
+axiom inspect backend .
+axiom inspect operation list_products .
+axiom inspect data .
+axiom inspect exposure .
+axiom inspect cache .
+```
+
+| Command | Questions it helps answer |
+| --- | --- |
+| `backend` | Which services, operations, data facts, policies and implementation bindings are present? |
+| `operation` | How does one frontend or backend operation cross a verified contract boundary? |
+| `data` | Which models, fields, entities, projections and relationships exist? |
+| `exposure` | Which endpoint facts are explicitly public or restricted? |
+| `cache` | Which operations own cache identities and strategies? |
+
+Backend implementation bodies remain opaque when the verified artifact does not
+contain that evidence. Inspector can show a declared endpoint, projection, or
+binding without claiming to know arbitrary external code behind it.
+
+## Follow data lineage
+
+Use a unique label or semantic ID:
+
+```bash
+axiom inspect data . --lineage Product.price_label
+axiom inspect lineage Product.price_label .
+```
+
+A cross-layer lineage can connect a domain field to a projection, endpoint,
+locked contract operation, frontend query, component, and rendered value. Each
+step remains a typed relationship with its own evidence.
+
+## Compare targets
+
+Target comparison shows how the selected fact's verified neighborhood differs:
+
+```bash
+axiom inspect target-compare Home \
+  . --targets web,ios,android
+```
+
+Use it for target availability, responsive or lowering differences, and
+target-effective authority. It does not claim pixel-identical rendering.
+
+## Selectors
+
+Most focused commands accept either:
+
+- a unique human label, such as `Home.total_label` or `pricing`; or
+- an exact semantic ID copied from Inspector output.
+
+Prefer IDs in CI and agent workflows. Labels can become ambiguous as the
+application grows.
+
+## Output formats
+
+Where documented, Inspector supports:
+
+```bash
+--format human
+--format json
+--format jsonl
+```
+
+Human output is for reading, not parsing. JSON carries the complete bounded
+result. JSONL is useful when a result contains streamed fact or path records.
+All machine results retain version, graph revision, semantic IDs, completeness,
+and evidence references appropriate to that command.
+
+Next, learn how to inspect [contracts and executable dependencies](/inspector/contracts-and-dependencies)
+or [trace one fact through the graph](/inspector/trace-and-explain).

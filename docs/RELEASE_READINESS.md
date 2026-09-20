@@ -1,6 +1,6 @@
 # Documentation release readiness
 
-Last verified: **2026-09-18**
+Last verified: **2026-09-21**
 
 This internal record covers the public documentation application in
 `content/docs`, its checked-in example entry points, and its discovery output.
@@ -10,14 +10,14 @@ matrix.
 
 ## Completed gates
 
-- 82 MDX pages have unique titles and descriptions.
+- 93 MDX pages have unique titles and descriptions.
 - All checked internal page routes resolve.
 - Public content and catalogued examples contain no numbered internal
   milestone names, developer home-directory paths, or credential-shaped demo
   values found by the repository scan.
 - `pnpm install --frozen-lockfile` succeeds against the committed pnpm lock.
 - `pnpm check` passes the content policy, type, build, and HTTP smoke stages.
-- `pnpm build` completes 256 static-generation tasks and records 256
+- `pnpm build` completes 289 static-generation tasks and records 289
   prerendered routes, including page HTML, processed MDX, Open Graph images,
   `llms.txt`, `llms-full.txt`, `sitemap.xml`, and `robots.txt`.
 - The release gate generates a content-addressed manifest covering source and
@@ -29,9 +29,13 @@ matrix.
   that the framework identity header is absent.
 - The repository documentation workflow runs the same release gate for public
   docs, example, and policy changes without holding deployment authority.
-- The complete-corpus audit checks all 82 HTML pages, 82 Open Graph images, 81
+- The complete-corpus audit checks all 93 HTML pages, 93 Open Graph images, 92
   per-page processed MDX routes, exact sitemap/LLM-reader inventory parity, and
   every legacy redirect against the production server.
+- The Axiom Inspector documentation track covers canonical evidence, facts and
+  relationships, frontend/backend inspection, contracts and executable closure,
+  security and authority, runtime audits, semantic change and impact, the local
+  dashboard, agent-oriented CLI output, and the bounded optional Jev planner.
 - The historical `/cloud/deplying-mocks` URL permanently redirects directly to
   the canonical `/cloud/deploying-mocks` page and is excluded from discovery
   output.

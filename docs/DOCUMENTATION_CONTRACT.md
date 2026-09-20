@@ -14,6 +14,10 @@ published as a documentation page.
   formatter/editor services, and language server. Never describe it as a thin
   alias for another language.
 - **Axiom CLI** is the `axiom` command-line interface.
+- **Axiom Inspector** is the implemented alpha CLI and secure local dashboard
+  over canonical application evidence. Its facts and relationships are
+  deterministic. Optional Jev planning interprets a question but never becomes
+  the source of application facts.
 - **Axiom package** is a canonical, versioned `.axiom` envelope. Its kind is
   service, theme, component library, database schema, extension, or application
   policy.

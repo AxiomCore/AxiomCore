@@ -2,7 +2,7 @@
 
 This internal ledger anchors public capability claims to the implementation.
 Paths are repository-relative within the AxiomCore organization/workspace.
-Last full review: **2026-09-18**.
+Last full review: **2026-09-21**.
 
 | Capability or term | Public status | Primary implementation evidence | Verification evidence / boundary |
 | --- | --- | --- | --- |
@@ -10,6 +10,8 @@ Last full review: **2026-09-18**.
 | Acore source grammar | Alpha | `acore/src/lexer.rs`, `acore/src/parser.rs`, `acore/src/ast.rs` | Public docs exclude evaluator-only generator nodes and lexer tokens that the parser does not yet accept. Acore uses typed-object syntax without a `new` keyword. |
 | Acore base schema and standard modules | Alpha | `acore/src/stdlib/base.acore`, `acore/src/stdlib.rs` | The public schema reference follows checked-in classes. Only resolver-exposed modules are documented as importable. |
 | Axiom CLI | Alpha | `AxiomCore/cli/src/main.rs`, `AxiomCore/cli/src/commands/` | CLI unit/integration tests; commands vary by connected service and installed target host. |
+| Axiom Inspector | Alpha | `AxiomCore/cli/src/commands/{inspector,inspector_frontend,inspector_runtime,inspector_server,inspector_dashboard}.rs`, packaged dashboard assets | Canonical evidence, typed relationships, frontend/backend/dependency/authority views, graph queries, runtime normalization, snapshots, semantic diff/impact, signed offline exchange, local dashboard, and release checks are implemented. Evidence is bounded and can be incomplete; live target attachment is development-only. |
+| Jev question planner | Experimental | `AxiomCore/cli/src/commands/inspector_jev.rs`, `AxiomCore/cli/INSPECTOR_JEV.md` | Opt-in Vercel AI Gateway evaluation with model `typesafe-ai/jev`; receives the question and bounded semantic candidates, uses probability thresholds and safe abstention, and can only produce a validated request for the local evidence engine. It is not an evidence source. |
 | Canonical `.axiom` package envelope | Alpha | `axiom-lib/src/package.rs` | Package encode/decode, canonicalization, kind validation, and non-executable-boundary tests. |
 | Package resolution and semantic diff | Alpha | `axiom-lib/src/package_resolver.rs`, `axiom-lib/src/package_diff.rs` | Resolver and diff test suites; a committed lock is required for deterministic consumption. |
 | Package kinds | Alpha | `axiom-lib/src/package.rs::PackageKind` | Service, theme, component-library, database-schema, extension, application-policy. Extension packages contain metadata and content-addressed references to separately verified executable bytes. |

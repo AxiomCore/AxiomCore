@@ -1,0 +1,119 @@
+---
+title: Inspector CLI reference
+description: Command map for application evidence, graph queries, security, runtime audits, changes, questions, and offline exchange.
+---
+
+<StatusNote status="alpha" title="Verify the installed CLI">
+  Inspector command and schema surfaces are versioned but pre-stable. Run
+  `axiom inspect --help` and `axiom inspect COMMAND --help` for the installed
+  version.
+</StatusNote>
+
+All commands below use the current directory when `[PATH]` is omitted.
+
+## Application views
+
+| Command | Purpose |
+| --- | --- |
+| `axiom inspect overview [PATH]` | Summarize discovered facts and verification state |
+| `axiom inspect frontend [PATH]` | Frontend modules, routes, pages, and behavior |
+| `axiom inspect ui [PATH]` | Semantic UI tree and action bindings |
+| `axiom inspect styles [PATH]` | Typed styles, variables, and responsive branches |
+| `axiom inspect state [PATH]` | State declarations and proven readers/writers |
+| `axiom inspect accessibility [PATH]` | Declared accessibility semantics |
+| `axiom inspect backend [PATH]` | Backend services, operations, data, and policies |
+| `axiom inspect operation SELECTOR [PATH]` | Trace one operation across contract boundaries |
+| `axiom inspect data [PATH] [--lineage SELECTOR]` | Models, fields, projections, relationships, and optional lineage |
+| `axiom inspect exposure [PATH]` | Explicit public/restricted endpoint facts |
+| `axiom inspect cache [PATH]` | Contract-owned cache policy and operation associations |
+
+## Contracts, packages, and extensions
+
+| Command | Purpose |
+| --- | --- |
+| `axiom inspect dependencies [PATH]` | Direct and transitive contracts, packages, and executable extensions |
+| `axiom inspect contract ALIAS [PATH] [--closure]` | One imported contract and optional reachable closure |
+| `axiom inspect executable-closure ALIAS [PATH] [--target TARGET]` | Executable code and authority reachable from a dependency |
+| `axiom inspect provenance SELECTOR [PATH]` | Provenance and evidence for a package, contract, or extension |
+
+## Graph and explanation
+
+| Command | Purpose |
+| --- | --- |
+| `axiom inspect graph [PATH]` | Bounded neighborhood, optionally rooted with `--root` |
+| `axiom inspect node SELECTOR [PATH]` | One fact and its immediate evidence neighborhood |
+| `axiom inspect evidence SELECTOR [PATH]` | Source or artifact evidence for a fact |
+| `axiom inspect trace SELECTOR [PATH]` | Typed upstream, downstream, or bidirectional paths |
+| `axiom inspect why SELECTOR [PATH]` | Authoritative adjacent facts that explain a fact |
+| `axiom inspect access SELECTOR [PATH]` | Requested, granted, and effective access |
+| `axiom inspect reachability FROM TO [PATH]` | Deterministic shortest downstream path |
+| `axiom inspect lineage SELECTOR [PATH]` | Bounded typed lineage |
+| `axiom inspect target-compare SELECTOR [PATH] --targets LIST` | Compare a fact's target-scoped neighborhoods |
+| `axiom inspect query QUERY_FILE [PATH]` | Execute a validated `axiom-query/v1` document |
+
+Graph and trace accept documented direction and bound flags such as
+`--direction`, `--max-depth`, and `--max-results`.
+
+## Security and authority
+
+| Command | Purpose |
+| --- | --- |
+| `axiom inspect security [PATH]` | Deterministic security facts and findings |
+| `axiom inspect authority [PATH]` | Resolved direct and transitive bill of authority |
+| `axiom inspect finding [SELECTOR] [PATH]` | One finding and its supporting evidence |
+| `axiom inspect readiness [PATH]` | Explicit blockers and warnings without an opaque score |
+
+## Runtime and audit
+
+| Command | Purpose |
+| --- | --- |
+| `axiom inspect record [PATH] --target TARGET` | Create a bounded session or normalize `--input` audit evidence |
+| `axiom inspect runtime [PATH] [--session ID]` | Inspect a normalized session; default is `latest` |
+| `axiom inspect export-audit [PATH] --output FILE` | Export one canonical redacted runtime bundle |
+| `axiom inspect import-audit INPUT [PATH]` | Import a supported runtime or extension audit export |
+| `axiom inspect serve [PATH]` | Launch the secure loopback dashboard and local API |
+
+## Snapshots, changes, and impact
+
+| Command | Purpose |
+| --- | --- |
+| `axiom inspect snapshot [PATH] --output FILE` | Write canonical content-addressed application evidence |
+| `axiom inspect validate-snapshot FILE` | Verify schema, references, revision, and canonical bytes |
+| `axiom inspect diff BEFORE AFTER` | Compare evidence by semantic identity |
+| `axiom inspect impact SELECTOR [PATH] --against SNAPSHOT` | Calculate direct and bounded transitive impact |
+
+`diff --fail-on` accepts comma-separated `breaking`, `approval-required`,
+`permission-increase`, and `warning` values. Pair `--before-runtime` and
+`--after-runtime` when comparing normalized runtime evidence.
+
+## Questions and agents
+
+| Command | Purpose |
+| --- | --- |
+| `axiom inspect ask QUESTION [PATH]` | Use the local deterministic phrase planner by default |
+| `axiom inspect ask QUESTION [PATH] --planner jev --allow-remote` | Use the opt-in bounded Jev planner |
+| `axiom inspect answer QUESTION_FILE [PATH]` | Execute a validated `axiom-inspector-question/v1` document |
+
+Use `--changes` when asking “what changed.” Use JSON for agents and retain graph
+revision, completeness, limits, and evidence IDs.
+
+## Offline exchange and hardening
+
+| Command | Purpose |
+| --- | --- |
+| `axiom inspect export-inspector [PATH] --key KEY --output FILE` | Create a signed explicit offline handoff, optionally with `--runtime` or `--changes` |
+| `axiom inspect import-inspector INPUT --output-dir DIRECTORY` | Verify and unpack a signed handoff into an empty directory |
+| `axiom inspect release-check [PATH] [--enforce]` | Measure Inspector budgets and privacy/offline invariants |
+
+Private signing keys must remain owner-only and outside source control.
+
+## Machine-output rules
+
+- Use `--format json` for one complete result.
+- Use `--format jsonl` where record-wise consumption is useful.
+- Do not parse human tables or dashboard HTML.
+- Treat non-zero exit status as failure.
+- Retain schema format and graph revision with the result.
+- Inspect completeness and truncation before making an absence claim.
+- Use exact semantic IDs when a label can be ambiguous.
+- Never treat model planning probability as evidence confidence.

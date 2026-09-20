@@ -7,13 +7,31 @@ Some Axiom CLI commands use a terminal user interface when attached to an
 interactive terminal. CI should use their headless or JSON alternatives where
 available.
 
+## Axiom Inspector local dashboard
+
+For a whole frontend, backend, or combined application, use the browser-based
+local Inspector rather than the legacy single-artifact terminal view:
+
+```bash
+axiom inspect serve .
+```
+
+It presents focused application graphs, semantic source evidence, UI and state,
+backend operations, dependencies, extension authority, security findings,
+runtime sessions, changes, and Ask Axiom. It binds to loopback and uses a random
+per-session capability token.
+
+Read the [local dashboard guide](/inspector/local-dashboard) for live target
+attachment, source refresh, agent/API mode, and the optional Jev planner.
+
 ## Contract inspector
 
 ```bash
 axiom inspect api.axiom
 ```
 
-The inspector has endpoint and model views. Use `Tab` to switch views,
+This legacy single-contract terminal inspector has endpoint and model views.
+Use `Tab` to switch views,
 `j`/`k` or arrow keys to move the current selection, and `q` or `Esc` to exit.
 The endpoint pane shows the compiled endpoint detail; the model view includes
 models and enums present in the artifact.

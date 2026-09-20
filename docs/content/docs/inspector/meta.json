@@ -1,0 +1,16 @@
+{
+  "title": "Axiom Inspector",
+  "pages": [
+    "index",
+    "evidence-and-relationships",
+    "local-dashboard",
+    "inspect-an-application",
+    "contracts-and-dependencies",
+    "trace-and-explain",
+    "security-and-authority",
+    "runtime-and-audits",
+    "changes-impact-and-ci",
+    "ask-axiom",
+    "cli-reference"
+  ]
+}

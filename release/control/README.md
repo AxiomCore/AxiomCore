@@ -15,8 +15,15 @@ file, saves originals on the external build volume, and never commits or
 publishes. `release/control/gate.py` checks the intent, committed source,
 notes, staged manifest, and verified receipts before a publisher handoff.
 
-From the `AxiomCore` repository root, run `just release-test` and
-`just release-plan`. The catalog in `catalog.toml` names each deliverable's
+From the `AxiomCore` repository root, run `just release-test`,
+`just release-versions`, and `just release-prepare`. The checked-in
+`intent.json` names the active train and changed components; `versions.json`
+owns candidate versions for all 20 catalog components. The package-native
+Cargo/npm/pubspec versions are read back as mirrors, and published versions
+remain unknown until an authenticated baseline is imported. For the current
+CLI-only draft train, `just release-train-plan` writes a scoped first-build
+plan to the mounted SSD and `just release-train-status` shows its evidence
+folder. The catalog in `catalog.toml` names each deliverable's
 committed source inputs, dependency edges, owner, and publication destination.
 `ctl.py` hashes the selected Git tree objects—not an entire repository HEAD—so
 a docs-only commit does not rebuild a CLI binary. A dependency fingerprint is

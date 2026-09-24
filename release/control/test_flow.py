@@ -8,6 +8,8 @@ from unittest.mock import patch
 import ctl
 import flow
 import gate
+import train
+import versions
 
 
 def git(repo: Path, *args: str) -> None:
@@ -16,6 +18,63 @@ def git(repo: Path, *args: str) -> None:
 
 
 class ReleaseFlowTests(unittest.TestCase):
+    def test_train_status_uses_fixed_evidence_folder_without_mounted_ssd(self):
+        catalog = {"components": [{"id": "cli", "owner": "owner", "version": "Cargo.toml"}]}
+        with tempfile.TemporaryDirectory(prefix="axiom-flow-test-") as temporary:
+            workspace = Path(temporary)
+            owner = workspace / "owner"
+            owner.mkdir()
+            git(owner, "init", "-q")
+            (owner / "Cargo.toml").write_text('[package]\nname = "cli"\nversion = "1.2.3"\n')
+            catalog["repositories"] = {"owner": "owner"}
+            intent_path = workspace / "intent.json"
+            intent_path.write_text(json.dumps({"format": flow.INTENT_FORMAT, "trainId": "test.1",
+                                               "changes": [{"component": "cli", "type": "fix",
+                                                            "summary": "Fix it."}]}))
+            versions_path = workspace / "versions.json"
+            versions_path.write_text(json.dumps({"format": versions.FORMAT,
+                                                 "components": {"cli": {"candidateVersion": "1.2.4"}}}))
+            report = train.status(catalog, workspace, workspace / "absent-volume",
+                                  intent_path, versions_path)
+            self.assertFalse(report["storageAvailable"])
+            self.assertEqual(report["evidenceRoot"], str(workspace / "absent-volume/trains/test.1"))
+            self.assertEqual(report["publicationStatus"], "not-proven-published")
+
+    def test_checked_in_intent_uses_one_candidate_version_ledger(self):
+        catalog = ctl.read_catalog()
+        ledger = versions.read_versions(versions.VERSIONS, catalog)
+        self.assertEqual(set(ledger["components"]),
+                         {component["id"] for component in catalog["components"]})
+        intent = flow.read_intent(ctl.CONTROL_DIR / "intent.json", catalog, ledger)
+        self.assertEqual(intent["changes"][0]["version"], "0.147.0")
+        self.assertEqual(intent["changes"][0]["component"], "cli")
+
+    def test_ledger_rejects_missing_components_and_version_on_digest_component(self):
+        catalog = {"components": [{"id": "cli", "version": "Cargo.toml"},
+                                  {"id": "docs"}]}
+        with tempfile.TemporaryDirectory(prefix="axiom-flow-test-") as temporary:
+            path = Path(temporary) / "versions.json"
+            path.write_text(json.dumps({"format": versions.FORMAT,
+                                        "components": {"cli": {"candidateVersion": "1.0.0"}}}))
+            with self.assertRaisesRegex(ctl.ReleaseError, "cover every catalog component"):
+                versions.read_versions(path, catalog)
+            path.write_text(json.dumps({"format": versions.FORMAT,
+                                        "components": {"cli": {"candidateVersion": "1.0.0"},
+                                                       "docs": {"candidateVersion": "1.0.0"}}}))
+            with self.assertRaisesRegex(ctl.ReleaseError, "digest-based"):
+                versions.read_versions(path, catalog)
+
+    def test_ledger_intent_rejects_conflicting_inline_version(self):
+        catalog = {"components": [{"id": "cli", "version": "Cargo.toml"}]}
+        ledger = {"components": {"cli": {"candidateVersion": "1.2.4"}}}
+        with tempfile.TemporaryDirectory(prefix="axiom-flow-test-") as temporary:
+            path = Path(temporary) / "intent.json"
+            path.write_text(json.dumps({"format": flow.INTENT_FORMAT, "trainId": "test.1",
+                                        "changes": [{"component": "cli", "type": "fix",
+                                                     "summary": "Fix it.", "version": "1.2.5"}]}))
+            with self.assertRaisesRegex(ctl.ReleaseError, "differs from versions.json"):
+                flow.read_intent(path, catalog, ledger)
+
     def test_intent_requires_explicit_versions_and_unique_components(self):
         catalog = {"components": [
             {"id": "cli", "version": "cli/Cargo.toml"},

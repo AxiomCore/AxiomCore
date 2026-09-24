@@ -787,7 +787,8 @@ def main() -> int:
             intent = None
             if args.intent:
                 from flow import read_intent
-                intent = read_intent(args.intent, catalog)
+                from versions import VERSIONS, read_versions
+                intent = read_intent(args.intent, catalog, read_versions(VERSIONS, catalog))
             staged = stage_manifest(json.loads(args.plan.read_text()), catalog, args.workspace.resolve(),
                                     args.train_id, args.receipt, args.out, intent)
             print(f"Staged {staged['trainId']}: {len(staged['components'])} component(s); nothing published")

@@ -21,6 +21,7 @@ import tempfile
 import tomllib
 
 import ctl
+import versions
 
 
 INTENT_FORMAT = "axiom-platform-release-intent/v1"
@@ -38,7 +39,7 @@ def stable_tuple(value: str) -> tuple[int, int, int]:
     return tuple(int(part) for part in value.split("."))
 
 
-def read_intent(path: Path, catalog: dict) -> dict:
+def read_intent(path: Path, catalog: dict, ledger: dict | None = None) -> dict:
     intent = json.loads(path.read_text())
     if intent.get("format") != INTENT_FORMAT or not TRAIN_ID.fullmatch(str(intent.get("trainId", ""))):
         raise ctl.ReleaseError("release intent needs the supported format and a safe trainId")
@@ -65,6 +66,13 @@ def read_intent(path: Path, catalog: dict) -> dict:
             raise ctl.ReleaseError(f"breaking change needs migration guidance for {component_id}")
         definition = definitions[component_id]
         version = change.get("version")
+        if ledger is not None:
+            candidate = ledger["components"][component_id]["candidateVersion"]
+            if version is not None and version != candidate:
+                raise ctl.ReleaseError(f"{component_id} intent version differs from versions.json")
+            if candidate is not None:
+                change["version"] = candidate
+                version = candidate
         if definition.get("version") or component_id in TAGGED_COMPONENTS:
             if not isinstance(version, str):
                 raise ctl.ReleaseError(f"explicit release version is required for {component_id}")
@@ -184,7 +192,7 @@ def make_preparation(intent: dict, catalog: dict, workspace: Path) -> tuple[dict
                 raise ctl.ReleaseError(f"no reviewed version editor exists for {component_id}")
 
             if component_id == "sdk-atmx-web":
-                index = owner / "web/atmx/src/index.ts"
+                index = owner / "src/index.ts"
                 edit(index, lambda source, old=previous, new=version:
                      unique_substitution(source, rf'^(export const ATMX_VERSION = "){re.escape(old)}(";)$',
                                          rf'\g<1>{new}\g<2>', str(index)))
@@ -291,19 +299,21 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--catalog", type=Path, default=ctl.CATALOG)
     parser.add_argument("--workspace", type=Path, default=ctl.WORKSPACE)
-    parser.add_argument("--intent", type=Path, required=True)
+    parser.add_argument("--intent", type=Path, default=ctl.CONTROL_DIR / "intent.json")
+    parser.add_argument("--versions", type=Path, default=versions.VERSIONS)
     parser.add_argument("--out", type=Path)
     parser.add_argument("--apply", action="store_true", help="apply reviewed version/fragment edits with external backups")
     args = parser.parse_args()
     try:
         catalog = ctl.read_catalog(args.catalog)
         workspace = args.workspace.resolve()
-        intent = read_intent(args.intent, catalog)
+        ledger = versions.read_versions(args.versions, catalog)
+        intent = read_intent(args.intent, catalog, ledger)
         report, edits, fragments = make_preparation(intent, catalog, workspace)
         if args.apply:
-            if not args.out:
-                raise ctl.ReleaseError("--apply requires a fresh --out path on the release volume")
             root = ctl.require_external_build_root()
+            if not args.out:
+                args.out = root / "trains" / intent["trainId"] / "preparation.json"
             if root not in args.out.resolve().parents or args.out.exists():
                 raise ctl.ReleaseError("preparation report must be a new path under the release build root")
             backup = apply_preparation(report, edits, fragments, catalog, workspace)

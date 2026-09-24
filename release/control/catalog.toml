@@ -15,6 +15,8 @@ acore = "acore"
 "axiom-mock" = "axiom-mock"
 "axiom-runtime" = "axiom-runtime"
 "axiom-sdk" = "axiom-sdk"
+"atmx-web" = "axiom-sdk/web/atmx"
+"atmx-react" = "axiom-sdk/web/atmx-react"
 "axiom-test-runner" = "axiom-test-runner"
 "axiom-ui" = "axiom-ui"
 "axiom-ui-host" = "axiom-ui-host"
@@ -98,13 +100,13 @@ sources = [
 
 [[components]]
 id = "sdk-atmx-web"
-owner = "axiom-sdk"
+owner = "atmx-web"
 kind = "npm"
-version = "web/atmx/package.json"
+version = "package.json"
 adapter = "ci-only"
 destination = "npm: atmx-web; Cloudflare R2 versioned objects"
 sources = [
-  { repo = "axiom-sdk", paths = ["web/atmx/"] },
+  { repo = "atmx-web", paths = ["src/", "package.json", "package-lock.json", "vite.config.ts"] },
   { repo = "axiom-runtime", paths = ["src/", "Cargo.toml", "Cargo.lock"] },
   { repo = "axiom-lib", paths = ["src/", "Cargo.toml", "Cargo.lock"] },
   { repo = "rod", paths = ["core/", "macros/", "Cargo.lock"] },
@@ -113,13 +115,13 @@ sources = [
 
 [[components]]
 id = "sdk-atmx-react"
-owner = "axiom-sdk"
+owner = "atmx-react"
 kind = "npm"
-version = "web/atmx-react/package.json"
+version = "package.json"
 adapter = "ci-only"
 destination = "npm: atmx-react"
 depends_on = ["sdk-atmx-web"]
-sources = [{ repo = "axiom-sdk", paths = ["web/atmx-react/"] }]
+sources = [{ repo = "atmx-react", paths = ["src/", "package.json", "package-lock.json", "tsup.config.ts"] }]
 
 [[components]]
 id = "sdk-atmx-cli"

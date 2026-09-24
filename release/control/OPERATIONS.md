@@ -8,35 +8,47 @@ packages and some legacy scripts overwrite release assets.
 
 ## Release-intent flow
 
-1. Copy [intent.example.json](./intent.example.json) to a fresh path on the
-   release SSD. List only components actually changing. Give each versioned or
-   GitHub-tagged component an explicit new stable `X.Y.Z` version. Services,
-   docs, and dashboard deployments have no SemVer field; their identities are
-   immutable image/deployment digests. Use one host version across all host
-   targets in a train.
-2. Preview with `just release-prepare INTENT.json`. If the preview is correct,
-   run the following with a fresh train-specific output path:
+The checked-in starting train is `2026.09.24.1`, scoped to the CLI, with
+candidate `0.147.0`. It is a **draft candidate**, not a published release.
+Review its summary and version before applying. The currently known installed
+UI Host `0.6.6` is not treated as a verified published baseline; the ledger
+leaves the host candidates unset until a new host release is chosen.
 
-   ```sh
-   just release-prepare-apply INTENT.json /Volumes/AxiomReleaseBuild/axiom-release/preparations/TRAIN.json
-   ```
+1. Edit the committed [intent.json](./intent.json) with a **fresh train ID** and
+   only the components actually changing. Each change has a `type`, one-line
+   `summary`, and, for breaking changes, `migration`. Version numbers live in
+   [versions.json](./versions.json), not in intent. Run `just release-versions`
+   to see every component's source and candidate versions; use
+   `just release-version-set COMPONENT X.Y.Z` to set a new candidate. A
+   component with an existing candidate needs `release-version-replace` after
+   review. All three UI Host targets share one version. Services, docs, and
+   dashboard deployments use verified image/deployment digests, not SemVer.
+2. Preview with `just release-prepare`. This reads the fixed intent and ledger
+   paths in this repository, with no SSD requirement. If the preview is correct,
+   run `just release-mount`, `just release-preflight`, then
+   `just release-prepare-apply`. The apply command chooses
+   `trains/TRAIN/preparation.json` under the mounted release root automatically;
+   it refuses to overwrite evidence for the same train.
 
-   This
-   writes only named clean version files and new owned JSON note fragments.
+   This writes only named clean version files and new owned JSON note fragments.
    Byte-for-byte originals go under the SSD's `backups/TRAIN/`. Review every
    repository diff, run its tests, and commit each reviewed change. The command
    never commits, tags, or pushes. If any target file is dirty, it stops;
    resolve that file deliberately rather than discarding work.
 3. Make a strict scoped plan against an authenticated published baseline, then
-   run `just release-gate INTENT.json PLAN.json`. It checks that the committed
+   run `just release-gate PLAN.json`. It checks that the committed
    note for each selected component exactly matches the intent, that planned
    versions equal the source versions, and that source SHAs have not moved.
    A new platform installation without a trusted baseline can make a
    first-build plan, but this is **not** proof of a prior published release.
+   `just release-train-plan` writes the current intent's first-build plan to
+   `trains/TRAIN/plan.json` and fails if dependencies also need intent entries.
+   Once signed baseline import exists, use the baseline-aware planner instead;
+   this convenience command does not silently trust an unsigned local file.
 4. Build each `BUILD` entry; fetch and verify exact published bytes for each
    `REUSE` entry. Local adapters exist for `cli` and the three UI Hosts.
    CI-only entries still need owning build jobs and `release-receipt` records.
-   Stage with `python3.12 -B release/control/ctl.py stage --intent INTENT.json
+   Stage with `python3.12 -B release/control/ctl.py stage --intent release/control/intent.json
    --plan PLAN.json --train-id TRAIN --receipt RECEIPT.json ... --out STAGE.json`
    and run `gate.py` again
    with the stage and all receipt paths. A passing stage gate is only
@@ -76,12 +88,19 @@ cd /Users/yashmakan/AxiomCore/AxiomCore
 just release-mount
 just release-preflight
 just release-test
-just release-plan
+just release-versions
+just release-prepare
+just release-train-status
 ```
 
 The APFS image already exists at
 `/Volumes/ExternalSSD/AxiomReleaseBuild.sparsebundle`; its build root is
-`/Volumes/AxiomReleaseBuild/axiom-release`. No environment export is needed.
+`/Volumes/AxiomReleaseBuild/axiom-release`. The standard evidence folder is
+`/Volumes/AxiomReleaseBuild/axiom-release/trains/TRAIN/`, containing the
+preparation, plan, notes, gate, and staged/published references as each phase
+exists. `just release-train-status` reports which files actually exist; it
+never asserts publication. No environment export or manually typed root is
+needed for the normal prepare and train-plan commands.
 `release-mount` is safe to repeat after a reboot; it refuses a conflicting
 mount. A `BLOCK` result means the declared inputs are dirty or a versioned
 component needs a new version. Commit reviewed changes in each owning repo,
@@ -96,7 +115,7 @@ With an authenticated published platform manifest:
 
 ```sh
 just release-plan-component-against cli PUBLISHED_MANIFEST.json /Volumes/AxiomReleaseBuild/axiom-release/plans/cli.json
-just release-gate INTENT.json /Volumes/AxiomReleaseBuild/axiom-release/plans/cli.json
+just release-gate /Volumes/AxiomReleaseBuild/axiom-release/plans/cli.json
 just release-notes-save /Volumes/AxiomReleaseBuild/axiom-release/plans/cli.json /Volumes/AxiomReleaseBuild/axiom-release/notes/cli.md
 ```
 
@@ -114,7 +133,7 @@ Only four components have SSD-safe local builders today:
 ```sh
 just release-build cli /Volumes/AxiomReleaseBuild/axiom-release/plans/cli.json
 just release-verify /Volumes/AxiomReleaseBuild/axiom-release/artifacts/cli/receipt.json
-just release-stage-intent-one INTENT.json /Volumes/AxiomReleaseBuild/axiom-release/plans/cli.json 2026.09.23.1 /Volumes/AxiomReleaseBuild/axiom-release/artifacts/cli/receipt.json /Volumes/AxiomReleaseBuild/axiom-release/staged/2026.09.23.1.json
+just release-stage-intent-one /Volumes/AxiomReleaseBuild/axiom-release/plans/cli.json 2026.09.24.1 /Volumes/AxiomReleaseBuild/axiom-release/artifacts/cli/receipt.json /Volumes/AxiomReleaseBuild/axiom-release/staged/2026.09.24.1.json
 ```
 
 `ui-host-web`, `ui-host-android`, and `ui-host-ios` also support `release-build`.
@@ -127,6 +146,33 @@ the release volume. A staged
 manifest is not a published release and cannot be the next baseline.
 
 ## Which update means which release?
+
+For a CLI-only change, edit `intent.json` to contain `cli` with a truthful
+one-line summary; use `just release-version-set cli 0.147.0` (or a later
+reviewed version), then `just release-prepare`. After review, use
+`just release-prepare-apply`; review the CLI manifest/lock diff and generated
+`release-notes/unreleased/TRAIN-cli.json`, run CLI tests, and commit them.
+`just release-train-plan` then records the scoped first-build plan on the SSD.
+The `release-build cli PLAN` and `release-verify RECEIPT` commands create and
+verify local evidence, **not a GitHub release**. Do not publish until the
+CLI publisher consumes that receipt and verifies remote bytes.
+
+For a Host release, put `ui-host-web`, `ui-host-android`, and `ui-host-ios` in
+the intent with their actual changes; set all three candidate versions to
+the same new number, for example `0.6.7`. One host release manifest covers all
+targets, even if some bytes can be verified and reused. The Android APK is a
+development host, not a customer application APK. For a backend API-only
+deployment, put `backend-api` in the intent with no SemVer candidate; its
+release identity is the verified image digest and Cloud Run revision in the
+eventual receipt. The same principle applies to docs (deployment ID) and the
+dashboard origin/proxy (image and deployment identity).
+
+For each component, the intent's `summary` becomes a committed
+`release-notes/unreleased/TRAIN-COMPONENT.json` fragment at apply time.
+`just release-notes-save PLAN NOTES` renders the cross-component rollup; only
+after remote publication should the finalizer append the owner's changelog
+and archive that fragment. The finalizer is still a production gap, so do not
+manually mark the train complete merely because notes rendered.
 
 | Change | Plan component(s) | Version and production action |
 | --- | --- | --- |
@@ -185,7 +231,12 @@ release workflow, not a platform host version bump.
   not force a common number. The planner blocks a selected versioned component
   whose version still equals the published baseline. Make the reviewed version
   bump and release-note fragment in the owning repo, commit both, then create
-  the strict plan. The planner reads versions; it does not edit them.
+  the strict plan. `versions.json` is the one editable candidate-version
+  ledger for all catalog components; package-native manifests remain required
+  mirrors. `just release-versions` reads those mirrors and shows candidates.
+  A `null` published version means **unknown/unverified**, not unreleased.
+  Authenticated published versions and service digests must eventually come
+  from the signed baseline, never from manually filling this ledger.
 - CLI: `AxiomCore/cli/Cargo.toml`; npm: each package's `package.json`;
   Flutter: each `pubspec.yaml`; FastAPI: `pyproject.toml`. Host: signed host
   manifest and immutable `vX.Y.Z` release. Services: image digest/revision.
@@ -193,8 +244,9 @@ release workflow, not a platform host version bump.
 - The CLI's minimum host protocol in `cli/src/commands/ui.rs` is a compatibility
   floor, **not** the CLI or host release version. Change it only with a reviewed
   delivery/protocol requirement and test that older hosts fail clearly.
-- Before planning, add a committed JSON fragment under the owning repository's
-  `release-notes/unreleased/`, following `change-fragment.example.json`. The
+- Before planning, `release-prepare-apply` creates a JSON fragment under the
+  owning repository's `release-notes/unreleased/`, following
+  `change-fragment.example.json`. Review and commit it. The
   `component` must match the catalog ID; `breaking` requires `migration`.
 - `just release-notes-save <plan> <ssd-path>` creates the cross-repo train
   rollup and fails if a selected component lacks its committed fragment. After

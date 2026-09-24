@@ -1,0 +1,11 @@
+{
+  "format": "axiom-platform-release-intent/v1",
+  "trainId": "2026.09.24.1",
+  "changes": [
+    {
+      "component": "cli",
+      "type": "feature",
+      "summary": "Improve extension authoring, dependency resolution, and Inspector workflows in the Axiom CLI."
+    }
+  ]
+}

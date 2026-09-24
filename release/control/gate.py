@@ -16,6 +16,7 @@ import sys
 
 import ctl
 import flow
+import versions
 
 
 GATE_FORMAT = "axiom-platform-release-gate/v1"
@@ -86,7 +87,7 @@ def inspect_candidate(intent: dict, plan: dict, catalog: dict, workspace: Path,
             blockers.append("Flutter podspec runtime pin differs from release intent")
     if "sdk-atmx-react" in selected and "sdk-atmx-web" in selected:
         web_version = changes.get("sdk-atmx-web", {}).get("version")
-        react_path = ctl.repo_path(catalog, "axiom-sdk", workspace) / "web/atmx-react/package.json"
+        react_path = ctl.repo_path(catalog, "atmx-react", workspace) / "package.json"
         if web_version and react_path.is_file():
             pinned = json.loads(react_path.read_text()).get("dependencies", {}).get("atmx-web")
             if pinned != f"^{web_version}":
@@ -170,7 +171,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--catalog", type=Path, default=ctl.CATALOG)
     parser.add_argument("--workspace", type=Path, default=ctl.WORKSPACE)
-    parser.add_argument("--intent", type=Path, required=True)
+    parser.add_argument("--intent", type=Path, default=ctl.CONTROL_DIR / "intent.json")
+    parser.add_argument("--versions", type=Path, default=versions.VERSIONS)
     parser.add_argument("--plan", type=Path, required=True)
     parser.add_argument("--stage", type=Path)
     parser.add_argument("--receipt", type=Path, action="append", default=[])
@@ -178,7 +180,8 @@ def main() -> int:
     args = parser.parse_args()
     try:
         catalog = ctl.read_catalog(args.catalog)
-        intent = flow.read_intent(args.intent, catalog)
+        ledger = versions.read_versions(args.versions, catalog)
+        intent = flow.read_intent(args.intent, catalog, ledger)
         plan = json.loads(args.plan.read_text())
         stage = json.loads(args.stage.read_text()) if args.stage else None
         report = inspect_candidate(intent, plan, catalog, args.workspace.resolve(), stage, args.receipt)

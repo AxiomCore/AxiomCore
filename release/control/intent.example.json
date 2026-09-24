@@ -5,8 +5,7 @@
     {
       "component": "cli",
       "type": "fix",
-      "summary": "Describe the CLI fix users will notice.",
-      "version": "0.147.0"
+      "summary": "Describe the CLI fix users will notice."
     },
     {
       "component": "backend-api",

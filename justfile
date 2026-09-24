@@ -9,6 +9,25 @@ default:
 release-test:
   {{python}} -B -m unittest discover -s release/control -p 'test_*.py' -v
 
+# Candidate versions for every catalog component; published identities require
+# a separately authenticated release baseline.
+release-versions:
+  {{python}} -B release/control/versions.py show
+
+release-version-set component version:
+  {{python}} -B release/control/versions.py set "{{component}}" "{{version}}"
+
+release-version-replace component version:
+  {{python}} -B release/control/versions.py set "{{component}}" "{{version}}" --replace
+
+# Standard evidence paths are derived from release/control/intent.json and
+# the mounted release volume. No caller-supplied absolute path is needed.
+release-train-plan:
+  {{python}} -B release/control/train.py plan
+
+release-train-status:
+  {{python}} -B release/control/train.py status
+
 release-plan:
   {{python}} -B release/control/ctl.py plan
 
@@ -59,8 +78,8 @@ release-receipt component plan artifact out:
 release-stage-one plan train receipt out:
   {{python}} -B release/control/ctl.py stage --plan "{{plan}}" --train-id "{{train}}" --receipt "{{receipt}}" --out "{{out}}"
 
-release-stage-intent-one intent plan train receipt out:
-  {{python}} -B release/control/ctl.py stage --intent "{{intent}}" --plan "{{plan}}" --train-id "{{train}}" --receipt "{{receipt}}" --out "{{out}}"
+release-stage-intent-one plan train receipt out:
+  {{python}} -B release/control/ctl.py stage --intent release/control/intent.json --plan "{{plan}}" --train-id "{{train}}" --receipt "{{receipt}}" --out "{{out}}"
 
 release-notes plan:
   {{python}} -B release/control/ctl.py notes --plan "{{plan}}" --enforce
@@ -73,18 +92,18 @@ release-notes-owner-save owner plan out:
 
 # Preview or explicitly apply version bumps and owned release-note fragments.
 # Apply saves originals on the external release volume; it never commits.
-release-prepare intent:
-  {{python}} -B release/control/flow.py --intent "{{intent}}"
+release-prepare:
+  {{python}} -B release/control/flow.py
 
-release-prepare-save intent out:
-  {{python}} -B release/control/flow.py --intent "{{intent}}" --out "{{out}}"
+release-prepare-save out:
+  {{python}} -B release/control/flow.py --out "{{out}}"
 
-release-prepare-apply intent out:
-  {{python}} -B release/control/flow.py --intent "{{intent}}" --out "{{out}}" --apply
+release-prepare-apply:
+  {{python}} -B release/control/flow.py --apply
 
 # A passing gate is ready for a publisher, not proof that anything is live.
-release-gate intent plan:
-  {{python}} -B release/control/gate.py --intent "{{intent}}" --plan "{{plan}}"
+release-gate plan:
+  {{python}} -B release/control/gate.py --plan "{{plan}}"
 
-release-gate-staged intent plan stage receipt out:
-  {{python}} -B release/control/gate.py --intent "{{intent}}" --plan "{{plan}}" --stage "{{stage}}" --receipt "{{receipt}}" --out "{{out}}"
+release-gate-staged plan stage receipt out:
+  {{python}} -B release/control/gate.py --plan "{{plan}}" --stage "{{stage}}" --receipt "{{receipt}}" --out "{{out}}"

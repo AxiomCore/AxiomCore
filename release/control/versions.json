@@ -1,0 +1,25 @@
+{
+  "format": "axiom-platform-component-versions/v1",
+  "components": {
+    "cli": { "candidateVersion": "0.147.0" },
+    "runtime-apple": { "candidateVersion": null },
+    "ui-host-web": { "candidateVersion": null },
+    "ui-host-android": { "candidateVersion": null },
+    "ui-host-ios": { "candidateVersion": null },
+    "sdk-atmx-web": { "candidateVersion": null },
+    "sdk-atmx-react": { "candidateVersion": null },
+    "sdk-atmx-cli": { "candidateVersion": null },
+    "sdk-flutter-generator": { "candidateVersion": null },
+    "sdk-flutter": { "candidateVersion": null },
+    "sdk-swift": { "candidateVersion": null },
+    "backend-api": { "candidateVersion": null },
+    "extractor-fastapi": { "candidateVersion": null },
+    "extractor-go": { "candidateVersion": null },
+    "backend-worker": { "candidateVersion": null },
+    "mock-runner": { "candidateVersion": null },
+    "contract-test-runner": { "candidateVersion": null },
+    "dashboard-origin": { "candidateVersion": null },
+    "dashboard-proxy": { "candidateVersion": null },
+    "docs": { "candidateVersion": null }
+  }
+}

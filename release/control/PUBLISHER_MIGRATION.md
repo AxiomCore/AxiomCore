@@ -22,6 +22,33 @@ destination, and evidence URI. A failed target leaves the train staged or
 partially published; it never creates a successful baseline. Retrying must be
 idempotent by immutable version/digest and must not use `--clobber`.
 
+## Current production gap (2026-09-24)
+
+The checked-in `release/control/intent.json` is a CLI-only draft train. The
+candidate version in `versions.json` is not a registry version or a release.
+The current GitHub Actions workflow only runs release-control tests. Before a
+production train, complete and rehearse each of these in protected CI:
+
+1. Import and sign an authenticated published baseline from the live channels.
+   A local installed host or source package version is not sufficient evidence.
+2. Add exact-SHA, selective builders and common receipts for every CI-only
+   component; keep build jobs separate from publisher credentials.
+3. Make every publisher consume a verified staged artifact or image digest.
+   Replace broad, source-mutating, or `--clobber` legacy scripts one owner at a
+   time; never use `release-all` as the production path.
+4. Verify registry/GitHub bytes after upload, and verify Cloud Run/Cloudflare
+   deployment revisions and smoke tests after activation.
+5. Handle dependency waves explicitly: Apple framework before Swift/Flutter
+   pins; `atmx-web` before React; SDK version mirrors before a CLI generator
+   that embeds them; dashboard origin before a proxy that embeds its URL.
+6. Record partial publication, retry and rollback references without issuing
+   a successful baseline until every required target passes.
+7. Finalize owner changelogs, archive committed fragments, sign the published
+   manifest, and make the next planner verify that signature automatically.
+8. Run a disposable staging rehearsal for each destination, including a
+   failure after one component has published. Promote only after remote
+   checksum and rollback tests pass.
+
 Production publishing should run in protected GitHub Actions environments.
 The local control plane may prepare, test, build supported targets on the SSD,
 and inspect evidence; it must not implicitly publish when a developer runs

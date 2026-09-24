@@ -1,0 +1,5 @@
+{
+  "component": "docs",
+  "type": "feature",
+  "summary": "Release docs as a verified digest-based deployment."
+}

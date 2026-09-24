@@ -115,7 +115,7 @@ def next_train_id(current: str, root: Path, today: str | None = None) -> str:
     return prefix + str(max(numbers, default=0) + 1)
 
 
-def published_evidence(root: Path, catalog: dict) -> dict[str, dict]:
+def published_evidence(root: Path, catalog: dict, train_id: str | None = None) -> dict[str, dict]:
     """Show only locally recorded remote-verification, never infer publication."""
     known = {entry["id"]: entry for entry in catalog["components"]}
     result: dict[str, dict] = {}
@@ -123,7 +123,7 @@ def published_evidence(root: Path, catalog: dict) -> dict[str, dict]:
     if not directory.is_dir():
         return result
     for train in directory.iterdir():
-        if not train.is_dir() or train.is_symlink():
+        if not train.is_dir() or train.is_symlink() or (train_id is not None and train.name != train_id):
             continue
         components = train / "components"
         if not components.is_dir() or components.is_symlink():

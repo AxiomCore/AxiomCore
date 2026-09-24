@@ -19,7 +19,7 @@ class PublisherTests(unittest.TestCase):
     def test_pages_verifier_ignores_deployment_directives(self):
         with patch.object(publisher.urllib.request, "urlopen") as opened:
             publisher._verify_pages_files("https://axiomcore-docs.pages.dev",
-                                          {"_headers": "x", "_redirects": "y"}, "axiomcore-docs")
+                                          {"_headers": "x", "_redirects": "y"}, "axiomcore-docs.pages.dev")
             opened.assert_not_called()
 
     def test_extract_static_archive_accepts_only_regular_relative_files(self):
@@ -86,11 +86,16 @@ class PublisherTests(unittest.TestCase):
                 "plan": {"repositories": {"axiom-frontend": {"head": "abc123"}}},
             }
             calls = []
+            created = False
 
             def run(*args, **kwargs):
+                nonlocal created
                 calls.append(args)
                 if args[-4:] == ("pages", "project", "list", "--json"):
-                    return b'[{"name":"axiom-landing"}]'
+                    return (b'[{"Project Name":"axiom-landing",'
+                            b'"Project Domains":"axiom-landing-efz.pages.dev"}]' if created else b'[]')
+                if "create" in args:
+                    created = True
                 return b""
 
             with patch.object(publisher, "remote_source_heads"), \
@@ -103,14 +108,64 @@ class PublisherTests(unittest.TestCase):
                     patch.object(publisher.ctl, "stage_tracked_landing_source"), \
                     patch.object(publisher.ctl, "run", side_effect=run), \
                     patch.object(publisher, "_run_with_combined_output",
-                                 return_value="https://abc.axiom-landing.pages.dev"), \
+                                 return_value="https://abc.axiom-landing-efz.pages.dev"), \
                     patch.object(publisher, "_verify_pages_files") as verify:
                 result = publisher.publish_landing(candidate)
             self.assertEqual(result["status"], "remote-verified")
             self.assertEqual(result["files"]["index.html"], ctl.sha256(b"hello"))
             self.assertTrue(any("pages" in args and "project" in args for args in calls))
+            self.assertTrue(any("create" in args and "--force" in args for args in calls))
             self.assertEqual(verify.call_count, 2)
             self.assertTrue((candidate["directory"] / "publication/published.json").is_file())
+
+    def test_landing_resumes_verified_upload_without_deploying_again(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive = root / "axiom-landing-pages.tar.gz"
+            with tarfile.open(archive, "w:gz") as output:
+                entry = tarfile.TarInfo("index.html")
+                entry.size = 5
+                output.addfile(entry, io.BytesIO(b"hello"))
+            directory = root / "trains/test/components/landing"
+            publication = directory / "publication"
+            (publication / "site").mkdir(parents=True)
+            (publication / "tooling").mkdir()
+            (publication / "site/index.html").write_bytes(b"hello")
+            stage = {"status": "staged-not-published"}
+            ctl.write_json(publication / "deploy-intent.json", {
+                "stageSha256": ctl.sha256(ctl.canonical(stage)), "project": "axiom-landing",
+                "files": {"index.html": ctl.sha256(b"hello")}})
+            candidate = {
+                "root": root, "workspace": root, "catalog": {}, "directory": directory,
+                "receipts": [root / "receipt.json"], "intent": {"trainId": "test"},
+                "stage": stage,
+                "plan": {"repositories": {"axiom-frontend": {"head": "6c80c500ee98"}}},
+            }
+
+            def run(*args, **kwargs):
+                if "project" in args and "list" in args:
+                    return (b'[{"Project Name":"axiom-landing",'
+                            b'"Project Domains":"axiom-landing-efz.pages.dev"}]')
+                if "deployment" in args and "list" in args:
+                    return (b'[{"Branch":"main","Source":"6c80c50",'
+                            b'"Deployment":"https://abc.axiom-landing-efz.pages.dev"}]')
+                self.fail(f"unexpected Cloudflare command: {args}")
+
+            with patch.object(publisher, "remote_source_heads"), \
+                    patch.object(publisher.ctl, "repo_path", return_value=root), \
+                    patch.object(publisher.ctl, "verify_receipt", return_value={
+                        "artifacts": [{"file": archive.name, "path": str(archive)}]}), \
+                    patch.object(publisher.ctl, "build_environment", return_value={
+                        "CLOUDFLARE_ACCOUNT_ID": "account", "CLOUDFLARE_API_TOKEN": "token"}), \
+                    patch.object(publisher, "_check_secret_names"), \
+                    patch.object(publisher.ctl, "run", side_effect=run), \
+                    patch.object(publisher, "_run_with_combined_output") as upload, \
+                    patch.object(publisher, "_verify_pages_files") as verify:
+                result = publisher.publish_landing(candidate)
+            upload.assert_not_called()
+            self.assertEqual(verify.call_count, 2)
+            self.assertEqual(result["remote"], "https://abc.axiom-landing-efz.pages.dev")
+            self.assertTrue((publication / "published.json").is_file())
 
 
 if __name__ == "__main__":

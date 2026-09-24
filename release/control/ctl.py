@@ -510,7 +510,7 @@ def stage_tracked_source(repository: Path, destination: Path, selectors: tuple[s
 
 def stage_tracked_landing_source(repository: Path, destination: Path) -> None:
     stage_tracked_source(repository, destination,
-                         ("apps/landing", "packages/design-system", "package.json",
+                         (".infisical.json", "apps/landing", "packages/design-system", "package.json",
                           "pnpm-lock.yaml", "pnpm-workspace.yaml"))
 
 

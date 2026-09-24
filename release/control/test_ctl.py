@@ -14,6 +14,19 @@ def git(repo: Path, *args: str) -> None:
 
 
 class ReleaseControlTests(unittest.TestCase):
+    def test_landing_tooling_includes_tracked_infisical_project_context(self):
+        with tempfile.TemporaryDirectory(prefix="axiom-release-test-") as temporary:
+            repository = Path(temporary) / "frontend"
+            destination = Path(temporary) / "tooling"
+            repository.mkdir()
+            destination.mkdir()
+            git(repository, "init", "-q")
+            context = '{"workspaceId":"example-project"}'
+            (repository / ".infisical.json").write_text(context)
+            git(repository, "add", "--", ".infisical.json")
+            ctl.stage_tracked_landing_source(repository, destination)
+            self.assertEqual((destination / ".infisical.json").read_text(), context)
+
     def test_release_evidence_writes_do_not_replace_existing_files(self):
         with tempfile.TemporaryDirectory(prefix="axiom-release-test-") as temporary:
             evidence = Path(temporary) / "plans" / "candidate.json"

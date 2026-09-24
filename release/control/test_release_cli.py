@@ -12,6 +12,32 @@ import release_cli
 
 
 class CandidatePreflightTests(unittest.TestCase):
+    def test_status_marks_only_current_train_remote_verified_components_published(self):
+        catalog = {"components": [{"id": "landing"}, {"id": "docs"}]}
+        ledger = {"components": {name: {"candidateVersion": None}
+                                 for name in ("landing", "docs")}}
+        intent = {"trainId": "2026.09.24.5", "wave": "release",
+                  "changes": [{"component": "landing"}],
+                  "queued": [{"component": "docs"}]}
+        with tempfile.TemporaryDirectory(prefix="axiom-status-test-") as temporary:
+            output = io.StringIO()
+            with patch.dict(os.environ, {"AXIOM_RELEASE_BUILD_ROOT": temporary}), \
+                    patch.object(release_cli.scan, "inventory",
+                                 return_value={"affected": ["landing", "docs"]}), \
+                    patch.object(release_cli.cycle, "published_evidence",
+                                 return_value={"landing": {"trainId": "2026.09.24.5"}}) as evidence, \
+                    patch.object(release_cli.train, "status", return_value={
+                        "evidenceRoot": temporary, "storageAvailable": True}), \
+                    patch.object(release_cli.flow, "make_preparation",
+                                 return_value=({"blocked": []}, [], [])), \
+                    redirect_stdout(output):
+                release_cli.status(catalog, ledger, intent)
+            evidence.assert_called_once_with(Path(temporary).resolve(), catalog,
+                                             train_id="2026.09.24.5")
+            self.assertIn("landing                published", output.getvalue())
+            self.assertIn("docs                   queued", output.getvalue())
+            self.assertIn("Published in this train: 1/1", output.getvalue())
+
     def test_queued_only_additions_preserve_prepared_active_wave(self):
         previous = {"format": "axiom-platform-release-intent/v1", "trainId": "train.2",
                     "changes": [{"component": "docs", "type": "fix", "summary": "Fix docs."}],

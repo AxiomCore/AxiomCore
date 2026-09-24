@@ -95,15 +95,20 @@ def status(catalog: dict, ledger: dict, intent: dict) -> None:
     active = {change["component"] for change in intent["changes"]}
     queued = {change["component"] for change in intent.get("queued", [])}
     affected = set(report["affected"])
+    root = Path(os.environ.get("AXIOM_RELEASE_BUILD_ROOT", str(ctl.DEFAULT_BUILD_ROOT))).resolve()
+    published = cycle.published_evidence(root, catalog, train_id=intent["trainId"])
     print(f"Train {intent['trainId']} · active wave {intent.get('wave', 'default')}")
     print(f"Changed build inputs: {len(affected)} components (relative to local upstream, not published baseline)")
     for component_id in sorted(affected | active | queued):
-        state = "active" if component_id in active else "queued" if component_id in queued else "uncovered"
+        state = ("published" if component_id in active and component_id in published else
+                 "active" if component_id in active else
+                 "queued" if component_id in queued else "uncovered")
         candidate = ledger["components"][component_id]["candidateVersion"]
         print(f"  {component_id:22} {state:9} candidate={candidate or 'digest/none'}")
+    if root.is_dir():
+        print(f"Published in this train: {len(active & published.keys())}/{len(active)} active component(s) remotely verified")
     if affected - active - queued:
         print("Action: account for uncovered components in intent.json before preparing.")
-    root = Path(os.environ.get("AXIOM_RELEASE_BUILD_ROOT", str(ctl.DEFAULT_BUILD_ROOT))).resolve()
     evidence = train.status(catalog, ctl.WORKSPACE, root)
     print(f"Evidence: {evidence['evidenceRoot']} ({'available' if evidence['storageAvailable'] else 'SSD not mounted'})")
     preparation_path = train.train_paths(root, intent["trainId"])["preparation"]

@@ -64,6 +64,8 @@ class ReleaseCycleTests(unittest.TestCase):
             published.write_text(json.dumps(record))
             catalog = {"components": [{"id": "ui-host-web"}]}
             self.assertEqual(cycle.published_evidence(root, catalog)["ui-host-web"]["version"], "0.6.7")
+            self.assertEqual(cycle.published_evidence(root, catalog, "2026.09.24.4"), {})
+            self.assertIn("ui-host-web", cycle.published_evidence(root, catalog, "2026.09.24.3"))
             record["stageSha256"] = "wrong"
             published.write_text(json.dumps(record))
             self.assertEqual(cycle.published_evidence(root, catalog), {})

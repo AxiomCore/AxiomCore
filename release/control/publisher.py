@@ -321,13 +321,13 @@ def _extract_static_archive(archive: Path, directory: Path) -> dict[str, str]:
     return observed
 
 
-def _verify_pages_files(base_url: str, files: dict[str, str], project: str = "axiom-landing") -> None:
+def _verify_pages_files(base_url: str, files: dict[str, str], domain: str = "axiom-landing.pages.dev") -> None:
     parsed = urllib.parse.urlsplit(base_url)
     hostname = parsed.hostname or ""
     if (parsed.scheme != "https" or parsed.port is not None or parsed.path not in ("", "/")
             or parsed.query or parsed.fragment or
-            (hostname != f"{project}.pages.dev" and not hostname.endswith(f".{project}.pages.dev"))):
-        raise ctl.ReleaseError(f"Cloudflare deployment did not return an HTTPS URL for {project}")
+            (hostname != domain and not hostname.endswith(f".{domain}"))):
+        raise ctl.ReleaseError(f"Cloudflare deployment did not return an HTTPS URL for {domain}")
     count = sum(name not in ("_headers", "_redirects", "_routes.json") for name in files)
     print(f"Verifying {count} served file(s) at {base_url}...", flush=True)
     def verify_one(item: tuple[str, str]) -> None:
@@ -373,6 +373,94 @@ PAGES_COMPONENTS = {
 }
 
 
+def _pages_project_domain(projects: list[dict], project: str) -> str | None:
+    matches = [item for item in projects
+               if item.get("name", item.get("Project Name")) == project]
+    if len(matches) > 1:
+        raise ctl.ReleaseError(f"Cloudflare returned duplicate Pages projects named {project}")
+    if not matches:
+        return None
+    item = matches[0]
+    domains = item.get("Project Domains") or item.get("domains") or item.get("subdomain") or ""
+    if isinstance(domains, list):
+        domains = ",".join(domains)
+    candidates = [domain.strip().lower() for domain in domains.split(",")
+                  if domain.strip().lower().endswith(".pages.dev")]
+    if len(candidates) != 1 or not re.fullmatch(r"[a-z0-9.-]+\.pages\.dev", candidates[0]):
+        raise ctl.ReleaseError(f"Cloudflare did not report one Pages domain for {project}")
+    return candidates[0]
+
+
+def _pages_project_list(wrangler: list[str], tool_source: Path, env: dict[str, str]) -> list[dict]:
+    listed = ctl.run(*_cloudflare_command([*wrangler, "pages", "project", "list", "--json"], env),
+                     cwd=tool_source, env=env).decode()
+    projects = json.loads(listed)
+    if isinstance(projects, dict):
+        projects = projects.get("result", [])
+    if not isinstance(projects, list) or any(not isinstance(item, dict) for item in projects):
+        raise ctl.ReleaseError("Cloudflare Pages project list was not a JSON array")
+    return projects
+
+
+def _resume_pages_upload(candidate: dict, component: str, project: str,
+                         archive: Path, publication: Path, stage_sha: str,
+                         tool_source: Path, wrangler: list[str], env: dict[str, str]) -> dict:
+    intent = json.loads((publication / "deploy-intent.json").read_text())
+    if intent.get("stageSha256") != stage_sha or intent.get("project") != project:
+        raise ctl.ReleaseError(f"prior {component} upload intent belongs to another stage")
+    files = intent.get("files")
+    if not isinstance(files, dict) or not files or any(
+            not isinstance(name, str) or Path(name).is_absolute() or ".." in Path(name).parts
+            or not isinstance(digest, str) or
+            not (publication / "site" / name).is_file() or
+            ctl.sha256_file(publication / "site" / name) != digest
+            for name, digest in files.items()):
+        raise ctl.ReleaseError(f"prior {component} upload files changed; inspect before retrying")
+    # Re-read the immutable receipt's archive; a surviving work directory is not evidence.
+    with tarfile.open(archive, "r:gz") as source:
+        archived = {}
+        for member in source:
+            content = source.extractfile(member) if member.isfile() else None
+            if content is None:
+                raise ctl.ReleaseError("candidate archive changed during publication")
+            with content:
+                archived[member.name] = ctl.sha256(content.read())
+    if archived != files:
+        raise ctl.ReleaseError(f"prior {component} upload differs from candidate archive")
+    domain = _pages_project_domain(_pages_project_list(wrangler, tool_source, env), project)
+    if not domain:
+        raise ctl.ReleaseError(f"Cloudflare Pages project {project} is missing after upload")
+    listed = ctl.run(*_cloudflare_command([*wrangler, "pages", "deployment", "list",
+                                           "--project-name", project, "--json"], env),
+                     cwd=tool_source, env=env).decode()
+    deployments = json.loads(listed)
+    if not isinstance(deployments, list):
+        raise ctl.ReleaseError("Cloudflare Pages deployment list was not a JSON array")
+    head = candidate["plan"]["repositories"][PAGES_COMPONENTS[component][0]]["head"]
+    for item in deployments:
+        source = item.get("Source", "")
+        url = item.get("Deployment", "")
+        if (item.get("Branch") != "main" or not isinstance(source, str)
+                or len(source) < 7 or not head.startswith(source)
+                or not isinstance(url, str)):
+            continue
+        try:
+            _verify_pages_files(url, files, domain)
+            _verify_pages_files(f"https://{domain}", files, domain)
+        except (OSError, ctl.ReleaseError):
+            continue
+        ctl.write_json(publication / "deployment.json",
+                       {"stageSha256": stage_sha, "url": url, "domain": domain, "files": files})
+        result = {"format": "axiom-platform-component-publication/v1", "component": component,
+                  "trainId": candidate["intent"]["trainId"], "stageSha256": stage_sha,
+                  "destination": f"Cloudflare Pages: {project}", "remote": url,
+                  "files": files, "status": "remote-verified"}
+        ctl.write_json(publication / "published.json", result)
+        return result
+    raise ctl.ReleaseError(f"no matching {component} deployment served the exact staged bytes; "
+                           "nothing was uploaded again")
+
+
 def publish_pages(candidate: dict, component: str) -> dict:
     if component not in PAGES_COMPONENTS or candidate["directory"].name != component:
         raise ctl.ReleaseError("Pages publisher received another component")
@@ -392,8 +480,9 @@ def publish_pages(candidate: dict, component: str) -> dict:
         saved = json.loads(deployment.read_text())
         if saved.get("stageSha256") != stage_sha:
             raise ctl.ReleaseError(f"prior {component} deployment belongs to another stage")
-        _verify_pages_files(saved["url"], saved["files"], project)
-        _verify_pages_files(f"https://{project}.pages.dev", saved["files"], project)
+        domain = saved.get("domain", f"{project}.pages.dev")
+        _verify_pages_files(saved["url"], saved["files"], domain)
+        _verify_pages_files(f"https://{domain}", saved["files"], domain)
         result = {"format": "axiom-platform-component-publication/v1", "component": component,
                   "trainId": candidate["intent"]["trainId"], "stageSha256": stage_sha,
                   "destination": f"Cloudflare Pages: {project}", "remote": saved["url"],
@@ -405,11 +494,19 @@ def publish_pages(candidate: dict, component: str) -> dict:
             return prior
         ctl.write_json(published, result)
         return result
-    if publication.exists():
-        raise ctl.ReleaseError(f"incomplete {component} publication exists; inspect before retrying: {publication}")
     env = ctl.build_environment(root, component)
     _check_secret_names(("CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN"),
                         _cloudflare_command, env, owner)
+    if (publication / "deploy-intent.json").exists():
+        tool_source = publication / "tooling"
+        wrangler = (["pnpm", "--filter", "axiom-landing", "exec", "wrangler"]
+                    if component == "landing" else ["pnpm", "exec", "wrangler"])
+        if component == "docs":
+            tool_source = tool_source / "docs"
+        return _resume_pages_upload(candidate, component, project, Path(records[0]["path"]),
+                                    publication, stage_sha, tool_source, wrangler, env)
+    if publication.exists():
+        raise ctl.ReleaseError(f"incomplete {component} publication exists; inspect before retrying: {publication}")
     publication.mkdir(parents=True)
     files = _extract_static_archive(Path(records[0]["path"]), publication / "site")
     tool_source = publication / "tooling"
@@ -425,18 +522,15 @@ def publish_pages(candidate: dict, component: str) -> dict:
                 env=env, capture=False)
         wrangler = ["pnpm", "exec", "wrangler"]
         tool_source = tool_source / "docs"
-    listed = ctl.run(*_cloudflare_command([*wrangler, "pages", "project", "list", "--json"], env),
-                     cwd=tool_source, env=env).decode()
-    projects = json.loads(listed)
-    if isinstance(projects, dict):
-        projects = projects.get("result", [])
-    if not isinstance(projects, list):
-        raise ctl.ReleaseError("Cloudflare Pages project list was not a JSON array")
-    if not any(item.get("name") == project for item in projects):
+    domain = _pages_project_domain(_pages_project_list(wrangler, tool_source, env), project)
+    if domain is None:
         print(f"Creating Cloudflare Pages project {project}...", flush=True)
         ctl.run(*_cloudflare_command([*wrangler, "pages", "project", "create",
-                                      project, "--production-branch", "main"], env),
+                                      project, "--production-branch", "main", "--force"], env),
                 cwd=tool_source, env=env)
+        domain = _pages_project_domain(_pages_project_list(wrangler, tool_source, env), project)
+        if domain is None:
+            raise ctl.ReleaseError(f"Cloudflare did not list the created Pages project {project}")
     ctl.write_json(publication / "deploy-intent.json",
                    {"stageSha256": stage_sha, "project": project, "files": files})
     head = candidate["plan"]["repositories"][owner_name]["head"]
@@ -445,13 +539,13 @@ def publish_pages(candidate: dict, component: str) -> dict:
                                          str(publication / "site"), "--project-name", project,
                                          "--branch", "main", "--commit-hash", head], env), tool_source, env)
     urls = [url for url in re.findall(r"https://[a-zA-Z0-9.-]+\.pages\.dev", output)
-            if (urllib.parse.urlsplit(url).hostname or "").endswith(f".{project}.pages.dev")]
+            if (urllib.parse.urlsplit(url).hostname or "").endswith(f".{domain}")]
     if not urls:
         raise ctl.ReleaseError("Wrangler returned no deployment URL; inspect Cloudflare before retrying")
     url = urls[-1]
-    ctl.write_json(deployment, {"stageSha256": stage_sha, "url": url, "files": files})
-    _verify_pages_files(url, files, project)
-    _verify_pages_files(f"https://{project}.pages.dev", files, project)
+    ctl.write_json(deployment, {"stageSha256": stage_sha, "url": url, "domain": domain, "files": files})
+    _verify_pages_files(url, files, domain)
+    _verify_pages_files(f"https://{domain}", files, domain)
     result = {"format": "axiom-platform-component-publication/v1", "component": component,
               "trainId": candidate["intent"]["trainId"], "stageSha256": stage_sha,
               "destination": f"Cloudflare Pages: {project}", "remote": url,

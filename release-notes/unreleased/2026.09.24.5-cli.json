@@ -1,0 +1,5 @@
+{
+  "component": "cli",
+  "type": "feature",
+  "summary": "Release cli 0.147.0 through the verified Axiom release control plane."
+}

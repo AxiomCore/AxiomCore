@@ -37,11 +37,29 @@ jobs, and sites use immutable image/deployment digests rather than SemVer.
 
 ## One interface, three routine actions
 
-1. Run `just release` to see affected components and the next action. Review
-   [intent.json](./intent.json); its `changes` are this wave, and `queued` are
-   accounted-for follow-on releases. Edit the one-line `summary` and `type`
-   there when describing a change. Use a fresh train ID for each new wave.
-2. If a SemVer candidate needs changing, run
+1. Run `just release` to see affected components and the next action. Start a
+   new cycle with `just release new`. Use arrows and Space to select components;
+   UI Host web/Android/iOS stay together, and declared dependencies are added
+   before confirmation. The wizard shows the current source version, the next
+   candidate version, and the last locally recorded remotely verified release
+   (or **unknown**—not proof that no release exists). It asks for each
+   component's change type and next SemVer where applicable. For each component
+   and for the overall release summary, choose a version-aware template or
+   write a custom summary from an empty prompt; breaking changes also require
+   migration guidance. It allocates the next unused train ID, manages the wave
+   name internally, and checkpoints selections and each answer on the release
+   SSD immediately.
+   Re-run `just release new` after interruption to resume at the next unanswered
+   field. `just release new restart` archives the unfinished draft (after
+   confirmation) before starting a different selection. Nothing is applied to
+   source files until a final `yes`. The previous intent and version ledger
+   are backed up on the release SSD; unfinished unselected changes stay queued.
+   Candidate versions sharing one GitHub Releases destination are validated at
+   each version prompt; a collision suggests the next patch version rather
+   than discarding the answers already entered.
+   The intent is still reviewable source of truth, but routine releases no
+   longer require hand-editing it.
+2. If a SemVer candidate needs correcting outside the wizard, run
    `just release version COMPONENT X.Y.Z`. Use `ui-host` as `COMPONENT` to set
    web, Android, and iOS together. This edits only the ledger. Review its diff.
 3. Run `just release prepare`. It applies the active wave's version mirrors

@@ -1,26 +1,68 @@
 {
   "format": "axiom-platform-component-versions/v1",
   "components": {
-    "cli": { "candidateVersion": "0.147.0" },
-    "runtime-apple": { "candidateVersion": "0.148.0" },
-    "ui-host-web": { "candidateVersion": "0.6.7" },
-    "ui-host-android": { "candidateVersion": "0.6.7" },
-    "ui-host-ios": { "candidateVersion": "0.6.7" },
-    "sdk-atmx-web": { "candidateVersion": "0.147.0" },
-    "sdk-atmx-react": { "candidateVersion": "0.147.0" },
-    "sdk-atmx-cli": { "candidateVersion": null },
-    "sdk-flutter-generator": { "candidateVersion": null },
-    "sdk-flutter": { "candidateVersion": "0.147.0" },
-    "sdk-swift": { "candidateVersion": "0.147.0" },
-    "backend-api": { "candidateVersion": null },
-    "extractor-fastapi": { "candidateVersion": null },
-    "extractor-go": { "candidateVersion": null },
-    "backend-worker": { "candidateVersion": null },
-    "mock-runner": { "candidateVersion": null },
-    "contract-test-runner": { "candidateVersion": null },
-    "dashboard-origin": { "candidateVersion": null },
-    "dashboard-proxy": { "candidateVersion": null },
-    "landing": { "candidateVersion": null },
-    "docs": { "candidateVersion": null }
+    "cli": {
+      "candidateVersion": "0.147.0"
+    },
+    "runtime-apple": {
+      "candidateVersion": "0.148.0"
+    },
+    "ui-host-web": {
+      "candidateVersion": "0.6.7"
+    },
+    "ui-host-android": {
+      "candidateVersion": "0.6.7"
+    },
+    "ui-host-ios": {
+      "candidateVersion": "0.6.7"
+    },
+    "sdk-atmx-web": {
+      "candidateVersion": "0.147.0"
+    },
+    "sdk-atmx-react": {
+      "candidateVersion": "0.147.0"
+    },
+    "sdk-atmx-cli": {
+      "candidateVersion": null
+    },
+    "sdk-flutter-generator": {
+      "candidateVersion": "0.146.0"
+    },
+    "sdk-flutter": {
+      "candidateVersion": "0.147.0"
+    },
+    "sdk-swift": {
+      "candidateVersion": "0.147.0"
+    },
+    "backend-api": {
+      "candidateVersion": null
+    },
+    "extractor-fastapi": {
+      "candidateVersion": "0.1.0"
+    },
+    "extractor-go": {
+      "candidateVersion": "0.1.1"
+    },
+    "backend-worker": {
+      "candidateVersion": null
+    },
+    "mock-runner": {
+      "candidateVersion": null
+    },
+    "contract-test-runner": {
+      "candidateVersion": null
+    },
+    "dashboard-origin": {
+      "candidateVersion": null
+    },
+    "dashboard-proxy": {
+      "candidateVersion": null
+    },
+    "landing": {
+      "candidateVersion": null
+    },
+    "docs": {
+      "candidateVersion": null
+    }
   }
 }

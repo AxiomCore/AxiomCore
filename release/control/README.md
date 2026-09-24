@@ -16,6 +16,13 @@ The source of truth is split deliberately:
   SemVer numbers. The owning Cargo/npm/pubspec manifests are the native
   package-manager mirrors; `prepare` updates them. A null candidate for a
   service or site means its identity is a future immutable digest/deployment.
+- `just release new` interactively creates the next train: arrow-key component
+  selection, per-component change type and SemVer candidate where applicable,
+  and template-or-empty-custom choices for component and cycle summaries. Each
+  answer is checkpointed on the release SSD; rerun the same command to resume.
+  `just release new restart` archives an unfinished draft before restarting.
+  Final confirmation backs up previous source files on the SSD, but does not
+  prepare, build, commit, push, or publish.
 - [intent.json](./intent.json) groups one wave's user-visible changes and
   release-note summaries. Its `queued` list records affected dependent
   components awaiting an earlier artifact. A new wave gets a new train ID.

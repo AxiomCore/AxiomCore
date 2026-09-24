@@ -10,6 +10,7 @@ import subprocess
 import sys
 
 import ctl
+import cycle
 import flow
 import gate
 import progress
@@ -25,6 +26,8 @@ import versions
 HOST_IDS = {"ui-host-web", "ui-host-android", "ui-host-ios"}
 HELP = """AxiomCore release commands:
   just release                         Show changed builds and the next safe step
+  just release new                     Choose components and create the next release cycle interactively
+  just release new restart             Archive an unfinished draft and start a different cycle
   just release capabilities            Show build and publish readiness for every catalog component
   just release version COMPONENT X.Y.Z Set one candidate version (or ui-host group)
   just release prepare                 Apply reviewed active-wave versions and notes, with SSD backups
@@ -41,8 +44,10 @@ HELP = """AxiomCore release commands:
   just release publish COMPONENT       Publish a staged component through its verified adapter
   just release test                    Run release-control tests
 
-The active and queued changes are in release/control/intent.json. Candidate
-versions are in release/control/versions.json. Prepare and candidate do not
+The interactive new-cycle flow manages train IDs, the active component list,
+change types, summaries and candidate versions. Selections and answers are
+checkpointed on the release SSD; rerun `just release new` after interruption.
+You do not need to edit intent.json manually. Prepare and candidate do not
 publish. Publish requires exact staged receipts and remote verification.
 """
 
@@ -120,6 +125,7 @@ def status(catalog: dict, ledger: dict, intent: dict) -> None:
                 print("Next: `just release review` to inspect and commit source changes, then run candidate preflight.")
         except (ctl.ReleaseError, OSError, ValueError) as error:
             print(f"Preparation needs attention: {error}")
+    print("Start another cycle: `just release new` (select components; train ID and wave are automatic).")
     print("Use `just release capabilities` for destination support and staged candidate readiness.")
 
 
@@ -352,6 +358,15 @@ def main() -> int:
         catalog, ledger, intent = load()
         if action == "status":
             status(catalog, ledger, intent)
+        elif action in ("new", "new-cycle"):
+            if component not in ("", "restart"):
+                raise ctl.ReleaseError("usage: just release new [restart]")
+            root = ctl.mount_default_build_root()
+            try:
+                cycle.run(catalog, ledger, intent, root, restart=component == "restart")
+            except (KeyboardInterrupt, EOFError):
+                print(f"New release interrupted. Run `just release new` to resume its SSD draft: {cycle.draft_path(root)}")
+                return 130
         elif action == "capabilities":
             capabilities(catalog)
         elif action == "version":

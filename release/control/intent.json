@@ -1,91 +1,111 @@
 {
   "format": "axiom-platform-release-intent/v1",
-  "trainId": "2026.09.24.3",
-  "wave": "foundation",
-  "summary": "Add the centralized AxiomCore release control plane and stage changed runtime, host, SDK, runner, CLI, and documentation components through reviewed candidate versions and evidence.",
+  "trainId": "2026.09.24.5",
+  "wave": "release",
+  "summary": "Release cli 0.147.0, runtime-apple 0.148.0, ui-host-web 0.6.7, ui-host-android 0.6.7, ui-host-ios 0.6.7, sdk-flutter-generator 0.146.0, sdk-flutter 0.147.0, sdk-swift 0.147.0, backend-api (digest), extractor-fastapi 0.1.0, extractor-go 0.1.1, backend-worker (digest), mock-runner (digest), contract-test-runner (digest), dashboard-origin (digest), dashboard-proxy (digest), landing (digest) through the Axiom release control plane.",
   "changes": [
+    {
+      "component": "cli",
+      "type": "feature",
+      "summary": "Release cli 0.147.0 through the verified Axiom release control plane."
+    },
     {
       "component": "runtime-apple",
       "type": "feature",
-      "summary": "Add typed Rust extension APIs, Python and TypeScript SDK boundaries, and multilingual sandbox runtime support."
+      "summary": "Release runtime-apple 0.148.0 through the verified Axiom release control plane."
     },
     {
       "component": "ui-host-web",
       "type": "fix",
-      "summary": "Fix browser host rendering and interaction handling for Acore UI bundles and extension-backed actions."
+      "summary": "Release ui-host-web 0.6.7 through the verified Axiom release control plane."
     },
     {
       "component": "ui-host-android",
       "type": "fix",
-      "summary": "Repair the Android host's staged renderer build and align emulator delivery with the updated extension runtime."
+      "summary": "Release ui-host-android 0.6.7 through the verified Axiom release control plane."
     },
     {
       "component": "ui-host-ios",
       "type": "feature",
-      "summary": "Rebuild the iOS host against the updated extension runtime and native UI bundle contract."
+      "summary": "Release ui-host-ios 0.6.7 through the verified Axiom release control plane."
     },
+    {
+      "component": "sdk-flutter-generator",
+      "type": "feature",
+      "summary": "Release sdk-flutter-generator 0.146.0 through the verified Axiom release control plane."
+    },
+    {
+      "component": "sdk-flutter",
+      "type": "feature",
+      "summary": "Release sdk-flutter 0.147.0 through the verified Axiom release control plane.",
+      "runtimeVersion": "0.148.0"
+    },
+    {
+      "component": "sdk-swift",
+      "type": "feature",
+      "summary": "Release sdk-swift 0.147.0 through the verified Axiom release control plane."
+    },
+    {
+      "component": "backend-api",
+      "type": "feature",
+      "summary": "Release backend-api as a verified digest-based deployment."
+    },
+    {
+      "component": "extractor-fastapi",
+      "type": "feature",
+      "summary": "Release extractor-fastapi 0.1.0 through the verified Axiom release control plane."
+    },
+    {
+      "component": "extractor-go",
+      "type": "feature",
+      "summary": "Release extractor-go 0.1.1 through the verified Axiom release control plane."
+    },
+    {
+      "component": "backend-worker",
+      "type": "internal",
+      "summary": "Release backend-worker as a verified digest-based deployment."
+    },
+    {
+      "component": "mock-runner",
+      "type": "fix",
+      "summary": "Release mock-runner as a verified digest-based deployment."
+    },
+    {
+      "component": "contract-test-runner",
+      "type": "internal",
+      "summary": "Release contract-test-runner as a verified digest-based deployment."
+    },
+    {
+      "component": "dashboard-origin",
+      "type": "internal",
+      "summary": "Release dashboard-origin as a verified digest-based deployment."
+    },
+    {
+      "component": "dashboard-proxy",
+      "type": "feature",
+      "summary": "Release dashboard-proxy as a verified digest-based deployment."
+    },
+    {
+      "component": "landing",
+      "type": "feature",
+      "summary": "Release landing as a verified digest-based deployment."
+    }
+  ],
+  "queued": [
     {
       "component": "sdk-atmx-web",
       "type": "feature",
       "summary": "Rebuild atmx-web against the typed extension runtime and shared browser SDK interface."
     },
     {
-      "component": "backend-worker",
-      "type": "internal",
-      "summary": "Rebuild the release worker with updated Acore server, UI module, and shared contract models."
-    },
-    {
-      "component": "mock-runner",
-      "type": "fix",
-      "summary": "Improve mock data generation, mutation responses, and server behavior for Acore backend demos."
-    },
-    {
-      "component": "contract-test-runner",
-      "type": "internal",
-      "summary": "Rebuild contract-test execution against updated Acore and UI models."
-    },
-    {
       "component": "docs",
       "type": "feature",
       "summary": "Document extension dependencies, authoring migration, and current SDK support boundaries."
-    }
-  ],
-  "queued": [
-    {
-      "component": "dashboard-proxy",
-      "type": "feature",
-      "summary": "Publish the dashboard proxy from a staged, origin-pinned Pages worker and verify its deployed release marker."
-    },
-    {
-      "component": "landing",
-      "type": "feature",
-      "summary": "Publish the Astro landing site as a verified Cloudflare Pages deployment using the centralized release control plane."
-    },
-    {
-      "component": "dashboard-origin",
-      "type": "internal",
-      "summary": "Audit the shared pnpm lockfile change from the landing deployment toolchain before selecting a dashboard rebuild."
     },
     {
       "component": "sdk-atmx-react",
       "type": "feature",
       "summary": "Rebuild atmx-react against the verified atmx-web package and updated runtime interface."
-    },
-    {
-      "component": "sdk-flutter",
-      "type": "feature",
-      "summary": "Separate Flutter plugin and native runtime versions, then pin the verified Apple framework.",
-      "runtimeVersion": "0.148.0"
-    },
-    {
-      "component": "sdk-swift",
-      "type": "feature",
-      "summary": "Refresh the Swift package's immutable XCFramework checksum after the Apple runtime is verified."
-    },
-    {
-      "component": "cli",
-      "type": "feature",
-      "summary": "Add extension dependency workflows, multilingual source builds, and Inspector improvements to the CLI; use the new central release control plane for its distribution."
     }
   ]
 }

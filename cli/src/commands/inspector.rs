@@ -647,6 +647,9 @@ pub async fn handle(action: &InspectorAction) -> Result<()> {
                 EvidenceNodeKind::AuthPolicy,
                 EvidenceNodeKind::SecurityPolicy,
                 EvidenceNodeKind::Permission,
+                EvidenceNodeKind::Advisory,
+                EvidenceNodeKind::BuildScript,
+                EvidenceNodeKind::ReleasePolicy,
                 EvidenceNodeKind::Finding,
                 EvidenceNodeKind::ReadinessFact,
             ],
@@ -740,7 +743,17 @@ pub async fn handle(action: &InspectorAction) -> Result<()> {
             let kinds = BTreeSet::from([
                 EvidenceNodeKind::Contract,
                 EvidenceNodeKind::Package,
+                EvidenceNodeKind::DependencyEnvironment,
+                EvidenceNodeKind::ThirdPartyPackage,
+                EvidenceNodeKind::License,
+                EvidenceNodeKind::Advisory,
+                EvidenceNodeKind::BuildScript,
+                EvidenceNodeKind::ReleasePolicy,
+                EvidenceNodeKind::Release,
                 EvidenceNodeKind::Extension,
+                EvidenceNodeKind::ExtensionExport,
+                EvidenceNodeKind::ImplementationBinding,
+                EvidenceNodeKind::Artifact,
             ]);
             render(
                 &filtered(&evidence, |node| kinds.contains(&node.kind)),
@@ -787,8 +800,14 @@ pub async fn handle(action: &InspectorAction) -> Result<()> {
                     node.kind,
                     EvidenceNodeKind::Contract
                         | EvidenceNodeKind::Package
+                        | EvidenceNodeKind::DependencyEnvironment
+                        | EvidenceNodeKind::ThirdPartyPackage
                         | EvidenceNodeKind::Extension
+                        | EvidenceNodeKind::ExtensionExport
                         | EvidenceNodeKind::Permission
+                        | EvidenceNodeKind::ImplementationBinding
+                        | EvidenceNodeKind::Artifact
+                        | EvidenceNodeKind::Release
                 ) && target
                     .as_ref()
                     .map(|target| node.targets.is_empty() || node.targets.contains(target))
@@ -1308,6 +1327,15 @@ fn release_check(path: &Path) -> Result<InspectorReleaseCheck> {
     timings.sort();
     let query_p50_micros = timings[4];
     let query_p95_micros = timings[9];
+    let dependency_policy_passed = !evidence.nodes.iter().any(|node| {
+        node.kind == EvidenceNodeKind::Finding
+            && node.attributes.get("severity") == Some(&json!("error"))
+            && node
+                .attributes
+                .get("rule")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|rule| rule.starts_with("AXIOM_DEPENDENCY_"))
+    });
     let checks = BTreeMap::from([
         (
             "coldSnapshotUnder2Seconds".into(),
@@ -1334,6 +1362,10 @@ fn release_check(path: &Path) -> Result<InspectorReleaseCheck> {
         ),
         ("telemetryRequiresConsent".into(), true),
         ("hostedUploadIsExplicitOnly".into(), true),
+        (
+            "thirdPartyReleasePolicyPassed".into(),
+            dependency_policy_passed,
+        ),
     ]);
     Ok(InspectorReleaseCheck {
         format: "axiom-inspector-release-check/v1",

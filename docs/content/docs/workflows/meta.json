@@ -8,6 +8,7 @@
     "acore-ui-application-lifecycle",
     "package-lifecycle",
     "executable-extension-lifecycle",
+    "migrating-extension-authoring",
     "local-validation-loop",
     "release-and-upgrade",
     "auditing-and-diffing",

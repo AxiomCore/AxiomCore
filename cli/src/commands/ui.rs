@@ -1,8 +1,11 @@
 use anyhow::{bail, Context, Result};
-use axiom_build::core::extension_source::{build_rust_source_extension, SourceBuildOptions};
+use axiom_build::core::extension_source::SourceBuildOptions;
+use axiom_build::core::typescript_source::build_source_extension;
 use axiom_extension_host::HostProfile;
 use axiom_lib::ui_contract::{read_lock, verify_locked_artifact_bytes, UiOperationKind};
 use axiom_lib::{extension_workflow::load_verified_extension_target, package::PackageTarget};
+#[cfg(test)]
+use axiom_ui::compile_ui_source;
 use axiom_ui::{
     capability_registry::{
         phase2_capability_registry, AcoreSupportStatus, CapabilityKind,
@@ -10,7 +13,7 @@ use axiom_ui::{
         PHASE2_LYNX_UI_NPM_INTEGRITY, PHASE2_LYNX_UI_PACKAGE, PHASE2_LYNX_UI_SOURCE_COMMIT,
         PHASE2_LYNX_UI_VERSION, PHASE2_PINNED_LYNX_COMMIT,
     },
-    compact_semantic_context, compile_ui_source, native_reload_directive, HotReloadEvent,
+    compact_semantic_context, compile_ui_source_at_path, native_reload_directive, HotReloadEvent,
     HotReloadOutcome, NativeReloadDirective, SafeEditStatus, UiActionStep, UiCompilation,
     UiCompileOptions, UiDevelopmentSession, UiTarget, VirtualReactLynxBuild,
 };
@@ -120,13 +123,15 @@ const WEB_INSPECTOR_DEVELOPMENT_SOURCE: &str = r#"
     Object.assign(overlay.style, { position:'fixed', pointerEvents:'none', zIndex:'2147483647', border:'2px solid #c9ff68', background:'rgba(201,255,104,.10)', left:`${rect.left}px`, top:`${rect.top}px`, width:`${rect.width}px`, height:`${rect.height}px`, borderRadius:'4px', boxSizing:'border-box' });
   };
   const select = (element, reason='pointer') => {
+    const config = model?.runtimeConfig?.inspector;
+    if (!config?.enabled) return;
     const semanticId = element?.dataset?.axiomId;
     if (!semanticId) return;
     const { node, page } = findNode(semanticId);
     const rect = element.getBoundingClientRect();
     highlight(element);
     api('/api/v1/live/selection', {
-      format:'axiom-inspector-selection/v1', sessionId, target:'web', graphRevision:model.runtimeConfig.inspector.graphRevision,
+      format:'axiom-inspector-selection/v1', sessionId, target:'web', graphRevision:config.graphRevision,
       sequence:++sequence, semanticId, componentSemanticId:element.closest('[data-axiom-component]')?.dataset?.axiomComponent || null,
       reason, traceId:lastTrace, redacted:true,
       presentation:{ disabled:Boolean(element.disabled || element.getAttribute('aria-disabled') === 'true'), visible:Boolean(element.getClientRects().length), focused:document.activeElement === element, valueShape:valueShape(element.value), role:element.getAttribute('role') || element.tagName.toLowerCase(), accessibilityLabel:element.getAttribute('aria-label') || '', viewport:root.dataset.axiomViewport || '', bounds:{x:Math.round(rect.x),y:Math.round(rect.y),width:Math.round(rect.width),height:Math.round(rect.height)}, classes:[...element.classList].sort() },
@@ -144,17 +149,24 @@ const WEB_INSPECTOR_DEVELOPMENT_SOURCE: &str = r#"
       for (const item of value?.commands || []) { command = Math.max(command, item.id); if (item.kind === 'highlight') highlight([...document.querySelectorAll('[data-axiom-id]')].find(element => element.dataset.axiomId === item.semanticId)); if (item.kind === 'clear-highlight') overlay?.remove(); }
     }, 500);
   };
-  const causal = (traceId, kind, semanticId, parentSemanticId, outcome) => api('/api/v1/live/causal', { format:'axiom-inspector-causal-event/v1', sessionId, target:'web', graphRevision:model.runtimeConfig.inspector.graphRevision, sequence:++sequence, traceId, kind, semanticId:semanticId || 'ui:unknown', parentSemanticId:parentSemanticId || null, outcome, redacted:true }).catch(() => {});
+  const causal = (traceId, kind, semanticId, parentSemanticId, outcome) => {
+    const config = model?.runtimeConfig?.inspector;
+    if (!config?.enabled) return Promise.resolve(null);
+    return api('/api/v1/live/causal', { format:'axiom-inspector-causal-event/v1', sessionId, target:'web', graphRevision:config.graphRevision, sequence:++sequence, traceId, kind, semanticId:semanticId || 'ui:unknown', parentSemanticId:parentSemanticId || null, outcome, redacted:true }).catch(() => {});
+  };
   globalThis.__axiomInspector = {
     actionStarted(id) { lastTrace = `${id || 'action'}:${Date.now()}:${sequence + 1}`; causal(lastTrace, 'user-event', id, null, 'observed'); causal(lastTrace, 'action', id, id, 'started'); return lastTrace; },
     effect(traceId, kind, semanticId, parentSemanticId) { causal(traceId, kind === 'stream' ? 'query' : kind, semanticId, parentSemanticId, 'started'); },
     actionCompleted(traceId, id) { causal(traceId, 'rerender', id, id, 'completed'); },
     stateChanged(traceId, writerSemanticId, stateName, before, after) {
-      const page = model.ir.pages.find(candidate => (candidate.states || []).some(state => state.name === stateName));
-      const state = page?.states?.find(candidate => candidate.name === stateName);
+      const config = model?.runtimeConfig?.inspector;
+      if (!config?.enabled) return;
+      const path = state => state.scope ? `${state.scope}.${state.name}` : state.name;
+      const page = model.ir.pages.find(candidate => (candidate.states || []).some(state => path(state) === stateName));
+      const state = page?.states?.find(candidate => path(candidate) === stateName);
       const stateId = state?.semanticId?.value || stateName;
       const prior = revisions.get(stateId) || 0, next = prior + 1; revisions.set(stateId, next);
-      api('/api/v1/live/state', { format:'axiom-inspector-state-event/v1', sessionId, target:'web', graphRevision:model.runtimeConfig.inspector.graphRevision, sequence:++sequence, stateSemanticId:stateId, revisionBefore:prior, revisionAfter:next, writerSemanticId:writerSemanticId || 'ui:unknown', authorized:true, validated:true, decision:'applied', traceId, changedPaths:[stateName], redacted:true }).catch(() => {});
+      api('/api/v1/live/state', { format:'axiom-inspector-state-event/v1', sessionId, target:'web', graphRevision:config.graphRevision, sequence:++sequence, stateSemanticId:stateId, revisionBefore:prior, revisionAfter:next, writerSemanticId:writerSemanticId || 'ui:unknown', authorized:true, validated:true, decision:'applied', traceId, changedPaths:[stateName], redacted:true }).catch(() => {});
       causal(traceId, 'state-patch', stateId, writerSemanticId, 'applied');
     },
   };
@@ -426,17 +438,19 @@ const NATIVE_RUNTIME_CONFIG_MARKER: &str = "axiom.runtime.config.sha256";
 // Host protocol v3 retains the v2 delivery acknowledgement and adds a bounded,
 // graph-bound Lynx diagnostic channel. Older hosts can render bundles but
 // cannot provide the error visibility required by `axiom run`.
-// 0.6.5 is the first host release containing the complete Phase 2 renderer
-// surface, including Web stylesheet delivery and component scope boundaries.
-// Treating an older host as current is especially deceptive on Web:
-// interaction still works while presentation is incomplete or absent.
-const IOS_HOST_PROTOCOL_MINIMUM: &str = "0.6.5";
+// 0.6.6 is the first native host release built against the language-neutral
+// extension provenance schema. Older native runtimes reject those canonical
+// package bytes before any contract operation can start, which otherwise
+// surfaces as a misleading query failure in applications using extensions.
+const IOS_HOST_PROTOCOL_MINIMUM: &str = "0.6.6";
 // Android delivery uses an Axiom-owned development APK. It is separate from a
 // future end-user application build because adb app-private transport requires
 // a debuggable host.
-// 0.6.5 also retains the supported ReadableMap/JavaOnlyMap reflection boundary
-// and emulator loopback routing introduced by the earlier Android host.
-const ANDROID_HOST_PROTOCOL_MINIMUM: &str = "0.6.5";
+// Android embeds the same native package decoder and shares this compatibility
+// boundary with iOS.
+const ANDROID_HOST_PROTOCOL_MINIMUM: &str = "0.6.6";
+// Web uses the separately versioned browser extension kernel; 0.6.5 already
+// implements the current package boundary and Phase 2 renderer surface.
 const WEB_HOST_PROTOCOL_MINIMUM: &str = "0.6.5";
 const LYNX_ENGINE_SOURCE: &str = "https://github.com/lynx-family/lynx.git";
 const LYNX_ENGINE_COMMIT: &str = "73bf89185547d0caf725bab4f3a46fa1e1f9616d";
@@ -524,8 +538,12 @@ async fn handle_run_internal(
         asset_root: Some(asset_root.clone()),
     };
     let mut session = match package_lock {
-        Some(package_lock) => UiDevelopmentSession::new_with_package_lock(options, package_lock),
-        None => UiDevelopmentSession::new(options),
+        Some(package_lock) => UiDevelopmentSession::new_for_source_with_package_lock(
+            options,
+            source.clone(),
+            package_lock,
+        ),
+        None => UiDevelopmentSession::new_for_source(options, source.clone()),
     };
     let initial = apply_path(&mut session, &source)?;
     report_reload(&initial);
@@ -596,7 +614,7 @@ async fn handle_run_internal(
                 }
             }
             event = event_rx.recv() => match event {
-                Some(Ok(event)) if event.paths.iter().any(|path| same_path(path, &source) || same_path(path, &lock) || frontend_dependency_changed(path, &dependency_paths) || declared_asset_path(&session, &asset_root, path)) => {
+                Some(Ok(event)) if event.paths.iter().any(|path| same_path(path, &source) || same_path(path, &lock) || frontend_dependency_changed(path, &dependency_paths) || declared_ui_input_path(&session, &asset_root, path)) => {
                     let dependency_changed = event.paths.iter().any(|path| frontend_dependency_changed(path, &dependency_paths));
                     if dependency_changed {
                         if let Err(error) = crate::commands::run::prepare_frontend(&source, None, false).await {
@@ -1009,8 +1027,12 @@ async fn handle_run_web(
         asset_root: Some(asset_root.clone()),
     };
     let mut session = match package_lock {
-        Some(package_lock) => UiDevelopmentSession::new_with_package_lock(options, package_lock),
-        None => UiDevelopmentSession::new(options),
+        Some(package_lock) => UiDevelopmentSession::new_for_source_with_package_lock(
+            options,
+            source.clone(),
+            package_lock,
+        ),
+        None => UiDevelopmentSession::new_for_source(options, source.clone()),
     };
     let initial = apply_path(&mut session, &source)?;
     report_reload(&initial);
@@ -1098,7 +1120,7 @@ async fn handle_run_web(
                 else { eprintln!("UI {} {}: {}", diagnostic.severity, diagnostic.code, diagnostic.message); }
             }
             event = event_rx.recv() => match event {
-                Some(Ok(event)) if event.paths.iter().any(|path| same_path(path, &source) || same_path(path, &lock) || same_path(path, &extension_workflow) || frontend_dependency_changed(path, &dependency_paths) || declared_asset_path(&session, &asset_root, path)) => {
+                Some(Ok(event)) if event.paths.iter().any(|path| same_path(path, &source) || same_path(path, &lock) || same_path(path, &extension_workflow) || frontend_dependency_changed(path, &dependency_paths) || declared_ui_input_path(&session, &asset_root, path)) => {
                     let dependency_changed = event.paths.iter().any(|path| frontend_dependency_changed(path, &dependency_paths));
                     if dependency_changed {
                         if let Err(error) = crate::commands::run::prepare_frontend(&source, None, false).await {
@@ -1123,10 +1145,22 @@ async fn handle_run_web(
                                             Ok((assembly, app))
                                         }) {
                                         Ok((assembly, app)) => {
+                                            let previous_contracts = state.app.read().expect("web app lock poisoned");
+                                            let prior_contract_set = serde_json::from_slice::<serde_json::Value>(&previous_contracts)
+                                                .ok()
+                                                .and_then(|model| model.pointer("/runtimeConfig/contracts").cloned());
+                                            drop(previous_contracts);
+                                            let next_contract_set = serde_json::from_slice::<serde_json::Value>(&app)
+                                                .ok()
+                                                .and_then(|model| model.pointer("/runtimeConfig/contracts").cloned());
+                                            let contracts_unchanged = prior_contract_set.is_some()
+                                                && prior_contract_set == next_contract_set;
                                             *state.app.write().expect("web app lock poisoned") = app;
                                             *state.extension_files.write().expect("extension artifact lock poisoned") = assembly.files;
                                             *state.declared_assets.write().expect("asset lock poisoned") = web_declared_assets(compilation);
-                                            let preserve_state = !extension_changed && matches!(update.outcome, HotReloadOutcome::AppliedStatePreserved);
+                                            let preserve_state = !extension_changed
+                                                && contracts_unchanged
+                                                && matches!(update.outcome, HotReloadOutcome::AppliedStatePreserved);
                                             let _ = state.reload.send(serde_json::json!({"graphRevision": update.graph_revision, "preserveState": preserve_state}).to_string());
                                             println!("Updated browser.");
                                         }
@@ -1152,18 +1186,24 @@ fn development_web_host_files(
     _runtime_config: &serde_json::Value,
 ) -> Result<HashMap<String, Vec<u8>>> {
     let mut files = extract_web_host(host)?;
+    // A source checkout can evolve the development-only Inspector hooks before
+    // the next signed host archive. Prefer the complete checked-in web shell
+    // while developing the monorepo so its HTML semantics, CSS, and runtime
+    // stay in lockstep. Installed CLIs continue to use the verified archive.
+    let source_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../axiom-ui-host/web");
+    for name in ["index.html", "host.css", "host.js"] {
+        let source = source_root.join(name);
+        if source.is_file() {
+            files.insert(
+                name.to_string(),
+                std::fs::read(&source)
+                    .with_context(|| format!("could not read {}", source.display()))?,
+            );
+        }
+    }
     let host_js = files
         .get_mut("host.js")
         .context("verified Web UI Host archive is missing host.js")?;
-    // A source checkout can evolve the development-only Inspector hooks before
-    // the next signed host archive is published. Prefer that checked-in host
-    // while developing the monorepo; installed CLIs continue to use the
-    // verified archive, which contains the same hooks at release time.
-    let source_host = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../axiom-ui-host/web/host.js");
-    if source_host.is_file() {
-        *host_js = std::fs::read(&source_host)
-            .with_context(|| format!("could not read {}", source_host.display()))?;
-    }
     host_js.extend_from_slice(WEB_INSPECTOR_DEVELOPMENT_SOURCE.as_bytes());
     Ok(files)
 }
@@ -1432,11 +1472,14 @@ pub async fn handle_ai_check(
     let target = parse_target(&target)?;
     let source_text = std::fs::read_to_string(&source)?;
     let proposed_text = std::fs::read_to_string(&proposed)?;
-    let mut session = UiDevelopmentSession::new(UiCompileOptions {
-        target,
-        lock_path: lock,
-        asset_root: source.parent().map(Path::to_path_buf),
-    });
+    let mut session = UiDevelopmentSession::new_for_source(
+        UiCompileOptions {
+            target,
+            lock_path: lock,
+            asset_root: source.parent().map(Path::to_path_buf),
+        },
+        source.clone(),
+    );
     let initial = session.apply_source(&source_text);
     if !matches!(initial.outcome, HotReloadOutcome::InitialLoad) {
         bail!("AI validation requires a valid base UI source");
@@ -1676,11 +1719,14 @@ fn read_installed_ios_runtime_info(host: &UiHostInstallation) -> Option<Installe
 pub async fn handle_test(source: PathBuf, lock: PathBuf, target: String) -> Result<()> {
     let target = parse_target(&target)?;
     let source_text = std::fs::read_to_string(&source)?;
-    let mut session = UiDevelopmentSession::new(UiCompileOptions {
-        target,
-        lock_path: lock,
-        asset_root: source.parent().map(Path::to_path_buf),
-    });
+    let mut session = UiDevelopmentSession::new_for_source(
+        UiCompileOptions {
+            target,
+            lock_path: lock,
+            asset_root: source.parent().map(Path::to_path_buf),
+        },
+        source.clone(),
+    );
     let first = session.apply_source(&source_text);
     if !matches!(first.outcome, HotReloadOutcome::InitialLoad) {
         print_diagnostics(&source, &first.diagnostics);
@@ -2045,8 +2091,9 @@ fn write_deterministic_zip(output: &Path, files: &BTreeMap<String, Vec<u8>>) -> 
 
 fn compile_path(source: &Path, lock: PathBuf, target: UiTarget) -> Result<UiCompilation> {
     let text = read_ui_source(source)?;
-    let result = compile_ui_source(
+    let result = compile_ui_source_at_path(
         &text,
+        source,
         &UiCompileOptions {
             target,
             lock_path: lock,
@@ -2128,9 +2175,14 @@ fn parse_target(target: &str) -> Result<UiTarget> {
 
 fn print_diagnostics(source: &Path, diagnostics: &[axiom_ui::UiDiagnostic]) {
     for diagnostic in diagnostics {
+        let diagnostic_source = diagnostic
+            .source_path
+            .as_deref()
+            .map(|path| source.parent().unwrap_or_else(|| Path::new(".")).join(path))
+            .unwrap_or_else(|| source.to_path_buf());
         println!(
             "{}:{}:{}: {} {}",
-            source.display(),
+            diagnostic_source.display(),
             diagnostic.span.start,
             diagnostic.code,
             match diagnostic.severity {
@@ -2258,7 +2310,7 @@ fn watch_ui_source_root(watcher: &mut RecommendedWatcher, root: &Path) -> Result
     Ok(())
 }
 
-fn declared_asset_path(session: &UiDevelopmentSession, asset_root: &Path, path: &Path) -> bool {
+fn declared_ui_input_path(session: &UiDevelopmentSession, asset_root: &Path, path: &Path) -> bool {
     let path = canonical_or_original(path);
     let root = canonical_or_original(asset_root);
     let Ok(relative) = path.strip_prefix(&root) else {
@@ -2273,6 +2325,15 @@ fn declared_asset_path(session: &UiDevelopmentSession, asset_root: &Path, path: 
     ir.assets
         .iter()
         .any(|asset| Path::new(&asset.path) == relative)
+        || ir
+            .stylesheets
+            .iter()
+            .flat_map(|stylesheet| &stylesheet.imports)
+            .any(|import| Path::new(&import.path) == relative)
+        || ir
+            .local_modules
+            .iter()
+            .any(|module| Path::new(&module.path) == relative)
 }
 
 fn same_path(left: &Path, right: &Path) -> bool {
@@ -2735,7 +2796,7 @@ fn assemble_verified_extensions(
         // the signed release workflow exactly. This gives `axiom run` a normal
         // source-edit loop without allowing an unsigned cache artifact to
         // cross the target boundary.
-        let source_build = build_rust_source_extension(&SourceBuildOptions {
+        let source_build = build_source_extension(&SourceBuildOptions {
             deps: root.join("AxiomDeps.toml"),
             alias: alias.clone(),
             output_root: PathBuf::from(".axiom/extensions"),
@@ -4881,6 +4942,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn web_inspector_hooks_are_noops_without_a_live_configuration() {
+        assert!(!WEB_INSPECTOR_DEVELOPMENT_SOURCE
+            .contains("model.runtimeConfig.inspector.graphRevision"));
+        assert!(WEB_INSPECTOR_DEVELOPMENT_SOURCE.contains("if (!config?.enabled) return"));
+        assert!(WEB_INSPECTOR_DEVELOPMENT_SOURCE
+            .contains("if (!config?.enabled) return Promise.resolve(null)"));
+    }
+
+    #[test]
     fn native_inspector_is_an_explicit_development_instrumentation_step() {
         let project = std::env::temp_dir().join(format!(
             "axiom-native-inspector-{}-{}",
@@ -4975,7 +5045,8 @@ mod tests {
         assert!(!version_at_least("0.6.1", IOS_HOST_PROTOCOL_MINIMUM));
         assert!(!version_at_least("0.6.3", IOS_HOST_PROTOCOL_MINIMUM));
         assert!(!version_at_least("0.6.4", IOS_HOST_PROTOCOL_MINIMUM));
-        assert!(version_at_least("0.6.5", IOS_HOST_PROTOCOL_MINIMUM));
+        assert!(!version_at_least("0.6.5", IOS_HOST_PROTOCOL_MINIMUM));
+        assert!(version_at_least("0.6.6", IOS_HOST_PROTOCOL_MINIMUM));
         assert!(version_at_least("1.0.0", IOS_HOST_PROTOCOL_MINIMUM));
         assert!(!version_at_least(
             "not-a-release",
@@ -4987,7 +5058,8 @@ mod tests {
         assert!(!version_at_least("0.6.1", ANDROID_HOST_PROTOCOL_MINIMUM));
         assert!(!version_at_least("0.6.3", ANDROID_HOST_PROTOCOL_MINIMUM));
         assert!(!version_at_least("0.6.4", ANDROID_HOST_PROTOCOL_MINIMUM));
-        assert!(version_at_least("0.6.5", ANDROID_HOST_PROTOCOL_MINIMUM));
+        assert!(!version_at_least("0.6.5", ANDROID_HOST_PROTOCOL_MINIMUM));
+        assert!(version_at_least("0.6.6", ANDROID_HOST_PROTOCOL_MINIMUM));
         assert!(!version_at_least("0.6.0", WEB_HOST_PROTOCOL_MINIMUM));
         assert!(!version_at_least("0.6.3", WEB_HOST_PROTOCOL_MINIMUM));
         assert!(!version_at_least("0.6.4", WEB_HOST_PROTOCOL_MINIMUM));
@@ -5081,6 +5153,83 @@ mod tests {
             nonempty_parent(Path::new("axiom.ui.lock.json")),
             Path::new(".")
         );
+    }
+
+    #[test]
+    fn imported_stylesheets_are_declared_live_reload_inputs() {
+        let project = std::env::temp_dir().join(format!(
+            "axiom-ui-style-watch-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(project.join("styles")).unwrap();
+        let stylesheet = project.join("styles/card.acss");
+        std::fs::write(&stylesheet, ".card { color: #17201c }\n").unwrap();
+        let source = r#"module watcher.test.ui
+styles { @import "styles/card.acss" }
+app Watcher { route "/" => Home }
+page Home { view { Page { Text("Watched", class: "card") } } }
+"#;
+        let mut session = UiDevelopmentSession::new(UiCompileOptions {
+            target: UiTarget::Web,
+            lock_path: project.join("unused.lock"),
+            asset_root: Some(project.clone()),
+        });
+        let initial = session.apply_source(source);
+        assert!(matches!(initial.outcome, HotReloadOutcome::InitialLoad));
+        assert!(declared_ui_input_path(&session, &project, &stylesheet));
+        assert!(!declared_ui_input_path(
+            &session,
+            &project,
+            &project.join("styles/undeclared.acss")
+        ));
+        std::fs::remove_dir_all(project).unwrap();
+    }
+
+    #[test]
+    fn imported_acore_modules_are_declared_live_reload_inputs() {
+        let project = std::env::temp_dir().join(format!(
+            "axiom-ui-module-watch-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(project.join("components")).unwrap();
+        let entry = project.join("main.acore");
+        let component = project.join("components/card.acore");
+        let source = r#"module watcher.modules.ui
+use component Card from "./components/card.acore"
+app Watcher { route "/" => Home }
+page Home { view { Page { Card() } } }
+"#;
+        std::fs::write(&entry, source).unwrap();
+        std::fs::write(
+            &component,
+            "module watcher.modules.card\ncomponent Card() { view { Text(\"Watched\") } }\n",
+        )
+        .unwrap();
+        let mut session = UiDevelopmentSession::new_for_source(
+            UiCompileOptions {
+                target: UiTarget::Web,
+                lock_path: project.join("unused.lock"),
+                asset_root: Some(project.clone()),
+            },
+            entry,
+        );
+        let initial = session.apply_source(source);
+        assert!(matches!(initial.outcome, HotReloadOutcome::InitialLoad));
+        assert!(declared_ui_input_path(&session, &project, &component));
+        assert!(!declared_ui_input_path(
+            &session,
+            &project,
+            &project.join("components/unrelated.acore")
+        ));
+        std::fs::remove_dir_all(project).unwrap();
     }
 
     #[test]

@@ -32,8 +32,8 @@ const kinds = {
   source: ['source-unit', 'frontend-module', 'implementation-binding'],
   ui: ['route', 'page', 'component', 'primitive', 'action', 'action-step', 'state', 'derived-value', 'effect', 'style-rule', 'style-variable', 'responsive-branch', 'accessibility', 'asset'],
   backend: ['backend-service', 'operation', 'data-model', 'field', 'relationship', 'projection', 'validation-rule', 'auth-policy', 'security-policy', 'cache-policy', 'retry-policy', 'stream', 'implementation-binding'],
-  dependencies: ['contract', 'package', 'extension'],
-  security: ['permission', 'auth-policy', 'security-policy', 'finding', 'readiness-fact'],
+  dependencies: ['contract', 'package', 'dependency-environment', 'third-party-package', 'extension', 'extension-export', 'license', 'advisory', 'build-script', 'release-policy', 'release', 'implementation-binding', 'artifact'],
+  security: ['permission', 'auth-policy', 'security-policy', 'advisory', 'build-script', 'release-policy', 'finding', 'readiness-fact'],
 };
 
 function nodeById(id) { return S.e.nodes.find(node => node.id === id); }
@@ -161,6 +161,55 @@ function cardBody(node) {
         ['Release', attributes.releaseEligible ? 'eligible' : 'development'],
       ],
       note: `${(node.targets || []).join(' · ') || 'all targets'} · ${attributes.sourceAvailability || 'source availability unknown'}`,
+    };
+  }
+  if (node.kind === 'third-party-package') {
+    return {
+      signature: `${attributes.name || node.label}@${attributes.version || 'locked'}`,
+      details: [
+        ['Language', attributes.language || 'resolved ecosystem'],
+        ['Registry', attributes.registry || 'locked registry'],
+        ['Licenses', (attributes.licenses || []).join(', ') || 'not declared'],
+        ['Introduced by', (attributes.introducedBy || []).join(', ') || 'transitive dependency'],
+      ],
+      note: `${attributes.byteLength || 0} bytes · sha256 ${String(attributes.artifactSha256 || '').slice(0, 16)}…`,
+    };
+  }
+  if (node.kind === 'dependency-environment') {
+    return {
+      signature: `${attributes.language || 'guest'} ${attributes.runtimeVersion || ''}`.trim(),
+      details: [
+        ['Profile', attributes.profile || 'managed'],
+        ['Engine', attributes.engine || 'pinned'],
+        ['SDK', attributes.sdk || 'pinned'],
+        ['Extensions', (attributes.extensions || []).join(', ') || 'none'],
+      ],
+      note: `${attributes.targetFamily || 'wasm32'} · environment ${String(attributes.identitySha256 || '').slice(0, 16)}…`,
+    };
+  }
+  if (node.kind === 'release-policy') {
+    const summary = attributes.summary || {};
+    return {
+      signature: attributes.compliant ? 'Policy passed' : 'Release blocked',
+      details: [
+        ['Packages', summary.packages || 0],
+        ['Advisories', summary.advisories || 0],
+        ['Scripts', summary.scripts || 0],
+        ['Blockers', summary.blockers || 0],
+      ],
+      note: 'Evaluated only from canonical lock facts and the declared release policy.',
+    };
+  }
+  if (['extension-export', 'implementation-binding', 'artifact', 'release'].includes(node.kind)) {
+    return {
+      signature: attributes.interfaceSha256 || attributes.moduleSha256 || attributes.package?.name || node.label,
+      details: [
+        ['Extension', attributes.ownerExtension || attributes.extension || 'resolved owner'],
+        ['ABI', attributes.abi || 'verified package'],
+        ['SDK / engine', attributes.sdk || attributes.engine || 'verified runtime'],
+        ['Targets', (node.targets || []).join(', ') || 'all'],
+      ],
+      note: sourceLabel(node),
     };
   }
   return {
@@ -311,8 +360,8 @@ function graphSvg(model, compact = false) {
 
 function renderOverview() {
   const findings = S.e.nodes.filter(node => node.kind === 'finding');
-  const blockers = findings.filter(node => JSON.stringify(node.attributes).includes('block')).length;
-  const warnings = findings.length - blockers;
+  const blockers = findings.filter(node => ['error', 'blocker'].includes(node.attributes?.severity)).length;
+  const warnings = findings.filter(node => node.attributes?.severity === 'warning').length;
   const fresh = S.status?.source?.fresh !== false;
   const architecture = architectureModel();
   $('#main').innerHTML = title('Application overview', 'A deterministic map of what this application declares, resolves, and has observed.') +
@@ -336,7 +385,7 @@ function renderOverview() {
 }
 
 function importantGraphRoots() {
-  const accepted = new Set(['application', 'page', 'action', 'state', 'operation', 'contract', 'extension', 'data-model', 'field', 'permission']);
+  const accepted = new Set(['application', 'page', 'action', 'state', 'operation', 'contract', 'extension', 'extension-export', 'dependency-environment', 'third-party-package', 'release', 'data-model', 'field', 'permission', 'finding']);
   return nodes(S.e.nodes.filter(node => accepted.has(node.kind))).sort((a, b) => a.label.localeCompare(b.label));
 }
 
@@ -422,20 +471,29 @@ function renderDependencies() {
   const visible = nodes(S.e.nodes.filter(node => kinds.dependencies.includes(node.kind)));
   const contracts = visible.filter(node => node.kind === 'contract');
   const packages = visible.filter(node => node.kind === 'package');
-  $('#main').innerHTML = title('Dependency closure', 'Contracts are semantic dependencies; executable code and its authority remain visible separately.') +
-    `<section class="grid three"><div class="card metric"><small>Contracts</small><strong>${count('contract')}</strong></div><div class="card metric"><small>Packages</small><strong>${count('package')}</strong></div><div class="card metric"><small>Executable extensions</small><strong>${count('extension')}</strong></div></section>` +
-    semanticSection('Contracts', contracts, 'No imported contracts match the current filters.') +
-    `<h2>Packages</h2>${table(packages)}`;
+  const thirdParty = visible.filter(node => node.kind === 'third-party-package');
+  const environments = visible.filter(node => node.kind === 'dependency-environment');
+  const releases = visible.filter(node => ['release', 'implementation-binding', 'artifact'].includes(node.kind));
+  const metadata = visible.filter(node => ['license', 'advisory', 'build-script', 'release-policy'].includes(node.kind));
+  $('#main').innerHTML = title('Dependency closure', 'Every contract, executable module, language package, environment and release remains connected to authority and provenance.') +
+    `<section class="grid three"><div class="card metric"><small>Contracts</small><strong>${count('contract')}</strong></div><div class="card metric"><small>Third-party packages</small><strong>${count('third-party-package')}</strong></div><div class="card metric"><small>Executable extensions</small><strong>${count('extension')}</strong></div></section>` +
+    semanticSection('Pinned build environments', environments, 'No authored dependency environments were resolved.') +
+    semanticSection('Third-party code', thirdParty, 'No third-party language packages were locked.') +
+    semanticSection('Executable provenance', releases, 'No verified release artifacts were discovered.') +
+    `<h2>Contracts and Axiom packages</h2>${table([...contracts, ...packages])}` +
+    `<h2>Supply-chain metadata</h2>${table(metadata)}`;
 }
 
 function renderSecurity() {
   const findings = nodes(S.e.nodes.filter(node => node.kind === 'finding'));
   const permissions = nodes(S.e.nodes.filter(node => node.kind === 'permission'));
   const operations = nodes(S.e.nodes.filter(node => node.kind === 'operation' && node.attributes?.exposure));
+  const supplyChain = nodes(S.e.nodes.filter(node => ['release-policy', 'advisory', 'build-script'].includes(node.kind)));
   $('#main').innerHTML = title('Security & authority', 'Requested, granted and effective authority with explicit evidence—never an opaque score.') +
     `<section class="grid three"><div class="card metric"><small>Capability facts</small><strong>${permissions.length}</strong></div><div class="card metric"><small>Exposed operations</small><strong>${operations.length}</strong></div><div class="card metric"><small>Findings</small><strong>${findings.length}</strong></div></section>
     <h2>Capability matrix</h2>${capabilityMatrix()}
     ${semanticSection('Backend exposure', operations, 'No exposed operations match the current filters.')}
+    ${semanticSection('Supply-chain policy', supplyChain, 'No third-party release policy or supply-chain concerns were declared.')}
     <h2>Findings</h2>${table(findings)}`;
 }
 

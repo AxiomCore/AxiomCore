@@ -4,6 +4,7 @@
     "index",
     "acore-schema-reference",
     "executable-extensions",
+    "extension-dependencies",
     "security-rules",
     "error-codes",
     "troubleshooting",

@@ -1,14 +1,16 @@
 ---
 title: Executable extensions reference
-description: Experimental ABI, Rust SDK, authority, lifecycle, security, host support, and performance evidence for AxiomCore executable extensions.
+description: Experimental ABI, language SDKs, dependencies, authority, lifecycle, security, host support, and performance evidence for AxiomCore executable extensions.
 ---
 
 ## Status and compatibility
 
 Executable extensions are **Experimental**. The package payload is
 `axiom-extension/v2`; the current guest ABI is `axiom-extension-abi` version
-`1.0.0`; and the only supported guest SDK is Rust
-`axiom-extension-sdk`. The source-level command group is `axiom extensions`.
+`1.0.0`. Supported source profiles are typed Rust, managed TypeScript/Javy, and
+restricted Python 3.12 AOT/Javy. All three use the same canonical messages,
+authority intersection, host broker, lifecycle, and audit identities. The
+source-level command group is `axiom extensions`.
 Pin package, ABI, SDK, engine, broker, target policy, and host identities in
 the release provenance. None of these interfaces has a stable-major
 compatibility promise yet.
@@ -37,7 +39,7 @@ outcomes and event batches. A terminal response is accepted once. Invalid
 transitions, use after shutdown, malformed frames, version mismatch, oversize
 messages, and duplicate terminal replies fail closed.
 
-Generated Rust guests export memory and four core-Wasm functions:
+Generated guests export memory and four core-Wasm functions:
 
 ```text
 axiom_extension_abi_version() -> i32
@@ -47,10 +49,12 @@ axiom_extension_dealloc(pointer, length) -> 1 | 0
 ```
 
 These are ABI details, not a native application API. Extension authors use the
-Rust SDK; they do not use JNI, Swift/Objective-C, or FFI pointers. Those
-bridges remain trusted host implementation details on Android and iOS.
+language SDK; they do not use JNI, Swift/Objective-C, or FFI pointers. Those
+bridges remain trusted host implementation details on Android and iOS. A
+TypeScript extension does not run in Node or a browser realm, and a Python
+extension does not embed or call host CPython.
 
-## Rust SDK model
+## Language SDK model
 
 The SDK's `Extension` trait models initialization, invocation, resume,
 cancellation, and shutdown. `UiSelector`, `UiPatchBuilder`, `StoreSelector`,
@@ -71,6 +75,12 @@ invariants, expected revision, effective authority, deadline, and lifecycle
 are valid. Store transaction proposals use the same model and apply atomically
 or return a conflict. SDK assertions protect generated selector consistency;
 untrusted input is still revalidated by the host.
+
+TypeScript uses `defineExtension` with generated branded selectors. Python uses
+`@extension.export` with generated selector stubs. Both return the same typed
+completion, effect, patch, transaction, stream, cancellation, and error shapes
+as Rust. Language convenience never creates authority absent from
+`AxiomDeps.toml`.
 
 ## Authority surface
 
@@ -127,12 +137,13 @@ policy, and target deployment configuration in addition to module identity.
 ## Source-authored application flow
 
 An application author maintains one Acore UI, one permission/dependency file,
-and normal Rust source in any safe project-relative folder:
+and normal Rust, TypeScript, or Python source in any safe project-relative
+folder:
 
 ```text
 main.acore
 AxiomDeps.toml
-extension-code/interaction.rs
+logic/pricing.rs                 # or pricing.ts / pricing.py
 ```
 
 `AxiomDeps.toml` maps a stable alias to the source, exports, targets, explicitly
@@ -154,7 +165,10 @@ axiom run main.acore --target ios
 
 Normal target runs consume the verified `AxiomExtensions.toml` workflow. They
 do not require an author-owned Cargo project, FFI adapter, package builder, or
-host glue.
+host glue. Third-party crates, npm packages, and pure-Python wheels are declared
+with exact versions under the extension; authors do not maintain Cargo
+manifests, `package.json`, lockfiles, requirements files, or virtual
+environments.
 
 ## Reproducible acceptance evidence
 
@@ -167,11 +181,15 @@ just release
 just check
 ```
 
-The gate creates and verifies the signed local release, checks the Acore source
-on web, Android, and iOS, exercises every inspection view, compiles two modules
-that share nested Rust source while requesting different capabilities, and
-proves a source path cannot escape the application. Interactive target behavior
-is validated separately with `just web`, `just android`, and `just ios`.
+The shopping example creates and verifies the signed local release, checks the
+Acore source on web, Android, and iOS, exercises Inspector, and proves that the
+typed Rust pricing patch is capability-scoped. Separate compact TypeScript and
+Python examples demonstrate their source profiles without making the shopping
+application a language comparison.
+
+See [Extension dependencies](/reference/extension-dependencies) for exact
+ecosystem limits and [Migrate extension authoring](/workflows/migrating-extension-authoring)
+for v1 manifests and legacy raw Rust sources.
 
 The archived lower-level host fixture remains under `legacy-host-fixture/` for
 protocol and audit evidence. It is not the supported application-authoring

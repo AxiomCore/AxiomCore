@@ -256,6 +256,11 @@ enum Commands {
         #[command(subcommand)]
         action: ExtensionsAction,
     },
+    /// Resolve and audit third-party packages used by authored extensions
+    Dependencies {
+        #[command(subcommand)]
+        action: DependenciesAction,
+    },
     /// Check an Acore UI module and lower it only into an in-memory graph
     Ui {
         #[command(subcommand)]
@@ -428,7 +433,81 @@ enum PackagesAction {
 
 #[derive(Subcommand)]
 enum ExtensionsAction {
-    /// Compile one Rust source module registered in AxiomDeps.toml into verified core WASM
+    /// Emit the canonical language-neutral SDK interface for one authored extension
+    Interface {
+        alias: String,
+        #[arg(long, default_value = "AxiomDeps.toml")]
+        deps: PathBuf,
+        /// Optional resolved authority lock used to show a target-effective surface
+        #[arg(long)]
+        authority_lock: Option<PathBuf>,
+        /// Required with --authority-lock
+        #[arg(long, requires = "authority_lock")]
+        target: Option<String>,
+        /// Write the canonical requested-interface artifact
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Compare two canonical SDK interface artifacts semantically
+    InterfaceDiff {
+        before: PathBuf,
+        after: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect Rust macro lowering, generated bindings, interface, and hidden workspace
+    RustInspect {
+        alias: String,
+        #[arg(long, default_value = "AxiomDeps.toml")]
+        deps: PathBuf,
+        #[arg(long, default_value = "summary")]
+        view: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Move a legacy low-level Rust extension onto the explicit raw compatibility surface
+    MigrateRust {
+        /// Registered Rust extension alias
+        alias: String,
+        #[arg(long, default_value = "AxiomDeps.toml")]
+        deps: PathBuf,
+        /// Write the behavior-preserving migration to a new file
+        #[arg(long, conflicts_with_all = ["write", "check"])]
+        out: Option<PathBuf>,
+        /// Atomically replace the registered source
+        #[arg(long, conflicts_with_all = ["out", "check"])]
+        write: bool,
+        /// Fail when legacy top-level SDK imports remain
+        #[arg(long, conflicts_with_all = ["out", "write"])]
+        check: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect generated TypeScript declarations, bridge entry, interface, and dependencies
+    #[command(name = "typescript-inspect")]
+    TypeScriptInspect {
+        alias: String,
+        #[arg(long, default_value = "AxiomDeps.toml")]
+        deps: PathBuf,
+        #[arg(long, default_value = "summary")]
+        view: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect generated Python stubs, AOT lowering, source map, interface, and dependencies
+    #[command(name = "python-inspect")]
+    PythonInspect {
+        alias: String,
+        #[arg(long, default_value = "AxiomDeps.toml")]
+        deps: PathBuf,
+        #[arg(long, default_value = "summary")]
+        view: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Compile one Rust, TypeScript, or Python source module into verified WASM
     SourceBuild {
         /// Registered AxiomDeps.toml extension alias
         alias: String,
@@ -443,7 +522,7 @@ enum ExtensionsAction {
         #[arg(long)]
         clean: bool,
     },
-    /// Build and sign one registered Rust source module into a local release workflow
+    /// Build and sign one registered Rust, TypeScript, or Python source module into a local release workflow
     SourceRelease {
         /// Registered AxiomDeps.toml extension alias
         alias: String,
@@ -539,6 +618,120 @@ enum ExtensionsAction {
         /// explicit path in addition to the readable terminal report.
         #[arg(long)]
         audit_out: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+enum DependenciesAction {
+    /// Validate the complete AxiomDeps.toml v2 document without fetching
+    Check {
+        #[arg(long, default_value = "AxiomDeps.toml")]
+        deps: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Canonically format a v2 manifest
+    Format {
+        #[arg(long, default_value = "AxiomDeps.toml")]
+        deps: PathBuf,
+        /// Fail if formatting would change the file
+        #[arg(long, conflicts_with = "write")]
+        check: bool,
+        /// Replace the manifest after successful validation
+        #[arg(long)]
+        write: bool,
+    },
+    /// Convert a supported v1 manifest to the strict v2 schema
+    Migrate {
+        #[arg(long, default_value = "AxiomDeps.toml")]
+        deps: PathBuf,
+        #[arg(long, conflicts_with = "write")]
+        out: Option<PathBuf>,
+        /// Replace the input after a successful in-memory migration
+        #[arg(long)]
+        write: bool,
+    },
+    /// Print the checked-in AxiomDeps.toml v2 JSON Schema
+    Schema,
+    /// Return deterministic editor completion candidates for a TOML path
+    Completions {
+        #[arg(long, default_value = "")]
+        path: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Explain one AxiomDeps.toml v2 field
+    Hover {
+        path: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Resolve exact package graphs and write canonical AxiomDeps.lock
+    Resolve {
+        #[arg(long, default_value = "AxiomDeps.toml")]
+        deps: PathBuf,
+        #[arg(long, default_value = "AxiomDeps.lock")]
+        lock: PathBuf,
+        #[arg(long)]
+        cache: Option<PathBuf>,
+        #[arg(long, default_value = ".axiom/dependencies")]
+        workspace_view: PathBuf,
+        /// Require the existing lock and cache; never resolve or fetch
+        #[arg(long, conflicts_with = "offline")]
+        locked: bool,
+        /// Reuse the existing lock and cache without network access
+        #[arg(long)]
+        offline: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Validate the canonical lock and every referenced cached byte
+    Verify {
+        #[arg(long, default_value = "AxiomDeps.lock")]
+        lock: PathBuf,
+        #[arg(long)]
+        cache: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Explain environments, provenance, licenses, advisories, and package scripts
+    Inspect {
+        #[arg(long, default_value = "AxiomDeps.lock")]
+        lock: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Verify, prune, or recover the immutable authored-dependency cache
+    Cache {
+        #[command(subcommand)]
+        action: DependencyCacheAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum DependencyCacheAction {
+    Verify {
+        #[arg(long)]
+        cache: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+    Prune {
+        #[arg(long)]
+        cache: Option<PathBuf>,
+        /// Canonical locks whose objects must be retained
+        #[arg(long = "lock", required = true)]
+        locks: Vec<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+    Recover {
+        #[arg(long, default_value = "AxiomDeps.lock")]
+        lock: PathBuf,
+        #[arg(long)]
+        cache: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -777,6 +970,7 @@ async fn main() -> anyhow::Result<()> {
                 // starter, check, inspection, or virtual reload can run.
                 | Commands::Ui { .. }
                 | Commands::Extensions { .. }
+                | Commands::Dependencies { .. }
                 | Commands::Run { .. }
                 | Commands::Lsp
         ) {
@@ -884,6 +1078,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Contract { .. } => "contract",
         Commands::Packages { .. } => "packages",
         Commands::Extensions { .. } => "extensions",
+        Commands::Dependencies { .. } => "dependencies",
         Commands::Ui { .. } => "ui",
         Commands::Run { .. } => "run",
         Commands::Domain { .. } => "domain",
@@ -1038,6 +1233,92 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             }
         },
         Commands::Extensions { action } => match action {
+            ExtensionsAction::Interface {
+                alias,
+                deps,
+                authority_lock,
+                target,
+                out,
+                json,
+            } => {
+                commands::extensions::handle_interface(
+                    deps.clone(),
+                    alias.clone(),
+                    authority_lock.clone(),
+                    target.clone(),
+                    out.clone(),
+                    *json,
+                )
+                .await
+            }
+            ExtensionsAction::InterfaceDiff {
+                before,
+                after,
+                json,
+            } => {
+                commands::extensions::handle_interface_diff(before.clone(), after.clone(), *json)
+                    .await
+            }
+            ExtensionsAction::RustInspect {
+                alias,
+                deps,
+                view,
+                json,
+            } => {
+                commands::extensions::handle_rust_inspect(
+                    deps.clone(),
+                    alias.clone(),
+                    view.clone(),
+                    *json,
+                )
+                .await
+            }
+            ExtensionsAction::MigrateRust {
+                alias,
+                deps,
+                out,
+                write,
+                check,
+                json,
+            } => {
+                commands::extensions::handle_migrate_rust(
+                    deps.clone(),
+                    alias.clone(),
+                    out.clone(),
+                    *write,
+                    *check,
+                    *json,
+                )
+                .await
+            }
+            ExtensionsAction::TypeScriptInspect {
+                alias,
+                deps,
+                view,
+                json,
+            } => {
+                commands::extensions::handle_typescript_inspect(
+                    deps.clone(),
+                    alias.clone(),
+                    view.clone(),
+                    *json,
+                )
+                .await
+            }
+            ExtensionsAction::PythonInspect {
+                alias,
+                deps,
+                view,
+                json,
+            } => {
+                commands::extensions::handle_python_inspect(
+                    deps.clone(),
+                    alias.clone(),
+                    view.clone(),
+                    *json,
+                )
+                .await
+            }
             ExtensionsAction::SourceBuild {
                 alias,
                 deps,
@@ -1071,6 +1352,7 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                     application.clone(),
                     application_version.clone(),
                     *clean,
+                    true,
                 )
                 .await
             }
@@ -1126,6 +1408,63 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                 )
                 .await
             }
+        },
+        Commands::Dependencies { action } => match action {
+            DependenciesAction::Check { deps, json } => {
+                commands::dependencies::handle_check(deps.clone(), *json).await
+            }
+            DependenciesAction::Format { deps, check, write } => {
+                commands::dependencies::handle_format(deps.clone(), *check, *write).await
+            }
+            DependenciesAction::Migrate { deps, out, write } => {
+                commands::dependencies::handle_migrate(deps.clone(), out.clone(), *write).await
+            }
+            DependenciesAction::Schema => commands::dependencies::handle_schema().await,
+            DependenciesAction::Completions { path, json } => {
+                commands::dependencies::handle_completions(path.clone(), *json).await
+            }
+            DependenciesAction::Hover { path, json } => {
+                commands::dependencies::handle_hover(path.clone(), *json).await
+            }
+            DependenciesAction::Resolve {
+                deps,
+                lock,
+                cache,
+                workspace_view,
+                locked,
+                offline,
+                json,
+            } => {
+                commands::dependencies::handle_resolve(
+                    deps.clone(),
+                    lock.clone(),
+                    cache.clone(),
+                    workspace_view.clone(),
+                    *locked,
+                    *offline,
+                    *json,
+                )
+                .await
+            }
+            DependenciesAction::Verify { lock, cache, json } => {
+                commands::dependencies::handle_verify(lock.clone(), cache.clone(), *json).await
+            }
+            DependenciesAction::Inspect { lock, json } => {
+                commands::dependencies::handle_inspect(lock.clone(), *json).await
+            }
+            DependenciesAction::Cache { action } => match action {
+                DependencyCacheAction::Verify { cache, json } => {
+                    commands::dependencies::handle_cache_verify(cache.clone(), *json).await
+                }
+                DependencyCacheAction::Prune { cache, locks, json } => {
+                    commands::dependencies::handle_cache_prune(cache.clone(), locks.clone(), *json)
+                        .await
+                }
+                DependencyCacheAction::Recover { lock, cache, json } => {
+                    commands::dependencies::handle_cache_recover(lock.clone(), cache.clone(), *json)
+                        .await
+                }
+            },
         },
         Commands::Ui { action } => match action {
             UiAction::Host { action } => match action {

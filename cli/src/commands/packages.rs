@@ -11,7 +11,7 @@ use axiom_lib::package_resolver::{
     load_locked_package, read_package_lock, resolve_package_manifest, verify_package_lock,
     write_package_lock,
 };
-use axiom_ui::{compile_ui_source_with_package_lock, UiCompileOptions, UiTarget};
+use axiom_ui::{compile_ui_source_with_package_lock_at_path, UiCompileOptions, UiTarget};
 
 pub async fn handle_resolve(deps: PathBuf, lock: PathBuf) -> Result<()> {
     let resolved = resolve_package_manifest(&deps)?;
@@ -93,8 +93,9 @@ pub async fn handle_check_source(
         "web" => UiTarget::Web,
         _ => bail!("target must be android, ios, or web"),
     };
-    let compilation = compile_ui_source_with_package_lock(
+    let compilation = compile_ui_source_with_package_lock_at_path(
         &text,
+        &source,
         &UiCompileOptions {
             target,
             lock_path: ui_lock,

@@ -31,6 +31,11 @@ def versioned(component: dict) -> bool:
 
 def read_versions(path: Path, catalog: dict) -> dict:
     document = json.loads(path.read_text())
+    validate_versions(document, catalog)
+    return document
+
+
+def validate_versions(document: dict, catalog: dict) -> None:
     if document.get("format") != FORMAT or not isinstance(document.get("components"), dict):
         raise ctl.ReleaseError("unsupported component version ledger")
     definitions = {component["id"]: component for component in catalog["components"]}
@@ -50,7 +55,16 @@ def read_versions(path: Path, catalog: dict) -> dict:
                      if item.startswith("ui-host-") and item in entries and entries[item]["candidateVersion"] is not None}
     if len(host_versions) > 1:
         raise ctl.ReleaseError("all UI Host candidates must use one host release version")
-    return document
+    github_tags: dict[tuple[str, str], str] = {}
+    for component_id, definition in definitions.items():
+        candidate = entries[component_id]["candidateVersion"]
+        destination = definition.get("destination", "")
+        if candidate and destination.startswith("GitHub Releases:") and not component_id.startswith("ui-host-"):
+            key = (destination.split(";", 1)[0], candidate)
+            earlier = github_tags.get(key)
+            if earlier:
+                raise ctl.ReleaseError(f"{earlier} and {component_id} would both claim {candidate} at {key[0]}")
+            github_tags[key] = component_id
 
 
 def snapshot(ledger: dict, catalog: dict, workspace: Path) -> dict:
@@ -76,23 +90,27 @@ def snapshot(ledger: dict, catalog: dict, workspace: Path) -> dict:
 def set_candidate(path: Path, catalog: dict, component_id: str, version: str,
                   replace: bool = False, workspace: Path = ctl.WORKSPACE) -> dict:
     definitions = {component["id"]: component for component in catalog["components"]}
-    if component_id not in definitions or not versioned(definitions[component_id]):
+    targets = ("ui-host-web", "ui-host-android", "ui-host-ios") if component_id == "ui-host" else (component_id,)
+    if any(item not in definitions or not versioned(definitions[item]) for item in targets):
         raise ctl.ReleaseError(f"{component_id} has no SemVer candidate; use an immutable artifact/deployment identity")
     if not STABLE_VERSION.fullmatch(version):
         raise ctl.ReleaseError("candidate version must be stable X.Y.Z")
-    source = ctl.component_version(definitions[component_id], catalog, workspace)
-    if source and tuple(map(int, version.split("."))) < tuple(map(int, source.split("."))):
-        raise ctl.ReleaseError(f"{component_id} candidate {version} is older than source {source}")
     ledger = read_versions(path, catalog)
-    existing = ledger["components"][component_id]["candidateVersion"]
-    if existing and existing != version and not replace:
-        raise ctl.ReleaseError(f"{component_id} already targets {existing}; use --replace after reviewing the intent")
-    if component_id.startswith("ui-host-"):
+    for target in targets:
+        source = ctl.component_version(definitions[target], catalog, workspace)
+        if source and tuple(map(int, version.split("."))) < tuple(map(int, source.split("."))):
+            raise ctl.ReleaseError(f"{target} candidate {version} is older than source {source}")
+        existing = ledger["components"][target]["candidateVersion"]
+        if existing and existing != version and not replace:
+            raise ctl.ReleaseError(f"{target} already targets {existing}; use --replace after reviewing the intent")
+    if any(target.startswith("ui-host-") for target in targets):
         for host_id in ("ui-host-web", "ui-host-android", "ui-host-ios"):
             host_candidate = ledger["components"][host_id]["candidateVersion"]
-            if host_id != component_id and host_candidate not in (None, version):
+            if host_id not in targets and host_candidate not in (None, version):
                 raise ctl.ReleaseError("all UI Host targets must share the same candidate version")
-    ledger["components"][component_id]["candidateVersion"] = version
+    for target in targets:
+        ledger["components"][target]["candidateVersion"] = version
+    validate_versions(ledger, catalog)
     # The file itself is the reviewed ledger. Replace atomically, without
     # touching package manifests, changelogs, or any published asset.
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent,

@@ -24,8 +24,9 @@ idempotent by immutable version/digest and must not use `--clobber`.
 
 ## Current production gap (2026-09-24)
 
-The checked-in `release/control/intent.json` is a CLI-only draft train. The
-candidate version in `versions.json` is not a registry version or a release.
+The checked-in `release/control/intent.json` is a multi-component draft train
+with foundation and queued dependent waves. Candidate versions in
+`versions.json` are not registry versions or releases.
 The current GitHub Actions workflow only runs release-control tests. Before a
 production train, complete and rehearse each of these in protected CI:
 

@@ -8,6 +8,7 @@ from unittest.mock import patch
 import ctl
 import flow
 import gate
+import scan
 import train
 import versions
 
@@ -46,8 +47,22 @@ class ReleaseFlowTests(unittest.TestCase):
         self.assertEqual(set(ledger["components"]),
                          {component["id"] for component in catalog["components"]})
         intent = flow.read_intent(ctl.CONTROL_DIR / "intent.json", catalog, ledger)
-        self.assertEqual(intent["changes"][0]["version"], "0.147.0")
-        self.assertEqual(intent["changes"][0]["component"], "cli")
+        changes = {change["component"]: change for change in intent["changes"]}
+        queued = {change["component"]: change for change in intent["queued"]}
+        self.assertEqual(changes["runtime-apple"]["version"], "0.148.0")
+        self.assertEqual(queued["cli"]["version"], "0.147.0")
+        self.assertFalse(set(changes) & set(queued))
+
+    def test_local_changed_inputs_are_accounted_for_in_active_or_queued_intent(self):
+        catalog = ctl.read_catalog()
+        ledger = versions.read_versions(versions.VERSIONS, catalog)
+        intent = flow.read_intent(ctl.CONTROL_DIR / "intent.json", catalog, ledger)
+        if any(not (ctl.WORKSPACE / path / ".git").exists()
+               for path in catalog["repositories"].values()):
+            self.skipTest("the isolated CI checkout does not include sibling source repositories")
+        inventory = scan.inventory(catalog, ctl.WORKSPACE)
+        accounted = {change["component"] for change in [*intent["changes"], *intent["queued"]]}
+        self.assertEqual(set(inventory["affected"]), accounted)
 
     def test_ledger_rejects_missing_components_and_version_on_digest_component(self):
         catalog = {"components": [{"id": "cli", "version": "Cargo.toml"},
@@ -64,6 +79,36 @@ class ReleaseFlowTests(unittest.TestCase):
             with self.assertRaisesRegex(ctl.ReleaseError, "digest-based"):
                 versions.read_versions(path, catalog)
 
+    def test_ui_host_group_version_updates_all_targets_atomically(self):
+        ids = ("ui-host-web", "ui-host-android", "ui-host-ios")
+        catalog = {"components": [{"id": item} for item in ids]}
+        with tempfile.TemporaryDirectory(prefix="axiom-flow-test-") as temporary:
+            path = Path(temporary) / "versions.json"
+            path.write_text(json.dumps({"format": versions.FORMAT,
+                                        "components": {item: {"candidateVersion": None} for item in ids}}))
+            updated = versions.set_candidate(path, catalog, "ui-host", "0.6.7")
+            self.assertEqual({updated["components"][item]["candidateVersion"] for item in ids}, {"0.6.7"})
+            self.assertEqual(versions.read_versions(path, catalog)["components"], updated["components"])
+
+    def test_distinct_components_cannot_claim_one_github_release_tag(self):
+        catalog = {"components": [
+            {"id": "cli", "version": "Cargo.toml", "destination": "GitHub Releases: AxiomCore/AxiomCore"},
+            {"id": "runtime-apple", "destination": "GitHub Releases: AxiomCore/AxiomCore"}]}
+        with tempfile.TemporaryDirectory(prefix="axiom-flow-test-") as temporary:
+            path = Path(temporary) / "versions.json"
+            path.write_text(json.dumps({"format": versions.FORMAT,
+                                        "components": {"cli": {"candidateVersion": "0.147.0"},
+                                                       "runtime-apple": {"candidateVersion": "0.147.0"}}}))
+            with self.assertRaisesRegex(ctl.ReleaseError, "would both claim"):
+                versions.read_versions(path, catalog)
+            path.write_text(json.dumps({"format": versions.FORMAT,
+                                        "components": {"cli": {"candidateVersion": "0.147.0"},
+                                                       "runtime-apple": {"candidateVersion": None}}}))
+            before = path.read_bytes()
+            with self.assertRaisesRegex(ctl.ReleaseError, "would both claim"):
+                versions.set_candidate(path, catalog, "runtime-apple", "0.147.0")
+            self.assertEqual(path.read_bytes(), before)
+
     def test_ledger_intent_rejects_conflicting_inline_version(self):
         catalog = {"components": [{"id": "cli", "version": "Cargo.toml"}]}
         ledger = {"components": {"cli": {"candidateVersion": "1.2.4"}}}
@@ -74,6 +119,49 @@ class ReleaseFlowTests(unittest.TestCase):
                                                      "summary": "Fix it.", "version": "1.2.5"}]}))
             with self.assertRaisesRegex(ctl.ReleaseError, "differs from versions.json"):
                 flow.read_intent(path, catalog, ledger)
+
+    def test_queued_change_is_validated_and_not_prepared_in_active_wave(self):
+        catalog = {"components": [{"id": "cli", "version": "Cargo.toml"},
+                                  {"id": "backend-api"}]}
+        ledger = {"components": {"cli": {"candidateVersion": "1.2.4"},
+                                  "backend-api": {"candidateVersion": None}}}
+        with tempfile.TemporaryDirectory(prefix="axiom-flow-test-") as temporary:
+            path = Path(temporary) / "intent.json"
+            document = {"format": flow.INTENT_FORMAT, "trainId": "test.1",
+                        "changes": [{"component": "backend-api", "type": "fix", "summary": "Fix API."}],
+                        "queued": [{"component": "cli", "type": "feature", "summary": "Improve CLI."}]}
+            path.write_text(json.dumps(document))
+            intent = flow.read_intent(path, catalog, ledger)
+            self.assertEqual(intent["queued"][0]["version"], "1.2.4")
+            document["queued"][0]["component"] = "backend-api"
+            path.write_text(json.dumps(document))
+            with self.assertRaisesRegex(ctl.ReleaseError, "duplicate"):
+                flow.read_intent(path, catalog, ledger)
+
+    def test_prepared_cli_candidate_with_matching_lock_and_fragment_is_idempotent(self):
+        with tempfile.TemporaryDirectory(prefix="axiom-flow-test-") as temporary:
+            workspace = Path(temporary)
+            owner = workspace / "AxiomCore"
+            (owner / "cli").mkdir(parents=True)
+            git(owner, "init", "-q")
+            (owner / "cli/Cargo.toml").write_text('[package]\nname = "axiom-cli"\nversion = "0.147.0"\n')
+            (owner / "cli/Cargo.lock").write_text('[[package]]\nname = "axiom-cli"\nversion = "0.147.0"\n')
+            note = owner / "release-notes/unreleased/test.1-cli.json"
+            note.parent.mkdir(parents=True)
+            change = {"component": "cli", "type": "feature", "summary": "Improve CLI."}
+            note.write_text(json.dumps(change))
+            catalog = {"repositories": {"AxiomCore": "AxiomCore"}, "components": [
+                {"id": "cli", "owner": "AxiomCore", "version": "cli/Cargo.toml"}]}
+            report, edits, fragments = flow.make_preparation(
+                {"trainId": "test.1", "changes": [{**change, "version": "0.147.0"}]}, catalog, workspace)
+            self.assertEqual(edits, {})
+            self.assertEqual(fragments, {})
+            self.assertEqual(report["existingFragments"], [str(note.resolve())])
+            (owner / "cli/Cargo.lock").write_text('[[package]]\nname = "axiom-cli"\nversion = "0.146.0"\n')
+            with self.assertRaisesRegex(ctl.ReleaseError, "Cargo.lock does not match"):
+                flow.make_preparation(
+                    {"trainId": "test.1", "changes": [{**change, "version": "0.147.0"}]},
+                    catalog, workspace)
 
     def test_intent_requires_explicit_versions_and_unique_components(self):
         catalog = {"components": [
@@ -149,8 +237,10 @@ class ReleaseFlowTests(unittest.TestCase):
             self.assertEqual(json.loads(lock.read_text())["packages"][""]["version"], "1.2.4")
             self.assertEqual(json.loads((backup / owner.name / "package.json").read_text())["version"], "1.2.3")
             self.assertEqual(json.loads(next(iter(fragments)).read_text())["component"], "example")
-            with self.assertRaisesRegex(ctl.ReleaseError, "must exceed"):
-                flow.make_preparation(parsed, catalog, workspace)
+            second, second_edits, second_fragments = flow.make_preparation(parsed, catalog, workspace)
+            self.assertEqual(second_edits, {})
+            self.assertEqual(second_fragments, {})
+            self.assertEqual(len(second["existingFragments"]), 1)
 
     def test_prepare_does_not_edit_dirty_version_file(self):
         with tempfile.TemporaryDirectory(prefix="axiom-flow-test-") as temporary:

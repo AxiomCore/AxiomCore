@@ -306,6 +306,16 @@ class ReleaseControlTests(unittest.TestCase):
             owner_notes = ctl.release_notes(plan, catalog, workspace, enforce=True, owner_filter="sample")
             self.assertIn("# sample release notes", owner_notes)
             self.assertIn("Wire format changed", owner_notes)
+            with self.assertRaisesRegex(ctl.ReleaseError, "need committed release-note fragments"):
+                ctl.release_notes(plan, catalog, workspace, enforce=True, train_id="train.2")
+            current = folder / "train.2-sample-tool.json"
+            current.write_text(json.dumps({"component": "sample-tool", "type": "fix",
+                                           "summary": "Repair current train."}))
+            git(owner, "add", ".")
+            git(owner, "commit", "-qm", "current release note")
+            scoped = ctl.release_notes(plan, catalog, workspace, enforce=True, train_id="train.2")
+            self.assertIn("Repair current train", scoped)
+            self.assertNotIn("Wire format changed", scoped)
 
     def test_stage_requires_verified_receipt_and_never_claims_publication(self):
         with tempfile.TemporaryDirectory(prefix="axiom-release-test-") as temporary:

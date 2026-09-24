@@ -46,10 +46,13 @@ def read_intent(path: Path, catalog: dict, ledger: dict | None = None) -> dict:
     changes = intent.get("changes")
     if not isinstance(changes, list) or not changes:
         raise ctl.ReleaseError("release intent needs at least one change")
+    queued = intent.get("queued", [])
+    if not isinstance(queued, list):
+        raise ctl.ReleaseError("release intent queued changes must be a list")
     definitions = {component["id"]: component for component in catalog["components"]}
     seen = set()
     host_versions = set()
-    for change in changes:
+    for change in [*changes, *queued]:
         if not isinstance(change, dict) or change.get("component") not in definitions:
             raise ctl.ReleaseError(f"unknown component in release intent: {change}")
         component_id = change["component"]
@@ -145,11 +148,45 @@ def set_package_version(source: str, expected: str, version: str, lock: bool = F
     return json.dumps(document, indent=2, ensure_ascii=False) + "\n"
 
 
+def verify_prepared_mirrors(component_id: str, owner: Path, workspace: Path,
+                            version: str, change: dict) -> None:
+    """Accept an already applied version only when its known mirrors agree."""
+    if component_id == "cli":
+        lock = (owner / "cli/Cargo.lock").read_text()
+        block = re.search(r'(?ms)^\[\[package\]\]\n(?=[^\[]*^name = "axiom-cli"$)(.*?)(?=^\[\[package\]\]|\Z)', lock)
+        if not block or not re.search(rf'^version = "{re.escape(version)}"$', block.group(1), re.MULTILINE):
+            raise ctl.ReleaseError("CLI Cargo.lock does not match its already prepared Cargo.toml")
+    elif component_id in {"sdk-atmx-web", "sdk-atmx-react", "sdk-atmx-cli"}:
+        lock_path = owner / "package-lock.json"
+        if lock_path.is_file():
+            lock = json.loads(lock_path.read_text())
+            if lock.get("version") != version or lock.get("packages", {}).get("", {}).get("version") != version:
+                raise ctl.ReleaseError(f"{component_id} lockfile does not match its prepared package version")
+        if component_id == "sdk-atmx-web":
+            index = (owner / "src/index.ts").read_text()
+            if not re.search(rf'^export const ATMX_VERSION = "{re.escape(version)}";$', index, re.MULTILINE):
+                raise ctl.ReleaseError("atmx-web version constant does not match its package version")
+    elif component_id in {"sdk-flutter", "sdk-flutter-generator"}:
+        name = "AXIOM_FLUTTER_VERSION" if component_id == "sdk-flutter" else "AXIOM_FLUTTER_GENERATOR_VERSION"
+        util = (workspace / "axiom-build/src/core/utils.rs").read_text()
+        if not re.search(rf'^const {name}: &str = "\^{re.escape(version)}";$', util, re.MULTILINE):
+            raise ctl.ReleaseError(f"{component_id} generated-project version constant does not match")
+        if component_id == "sdk-flutter":
+            for platform_name in ("ios", "macos"):
+                podspec = (owner / f"flutter/axiom_flutter/{platform_name}/axiom_flutter.podspec").read_text()
+                if not re.search(rf"^\s*s\.version\s*=\s*'{re.escape(version)}'", podspec, re.MULTILINE):
+                    raise ctl.ReleaseError(f"Flutter {platform_name} podspec version does not match")
+                runtime_version = change.get("runtimeVersion")
+                if runtime_version and not re.search(rf"^\s*runtime_version\s*=\s*'{re.escape(runtime_version)}'", podspec, re.MULTILINE):
+                    raise ctl.ReleaseError(f"Flutter {platform_name} runtime pin does not match")
+
+
 def make_preparation(intent: dict, catalog: dict, workspace: Path) -> tuple[dict, dict[Path, str], dict[Path, str]]:
     definitions = {component["id"]: component for component in catalog["components"]}
     edits: dict[Path, str] = {}
     originals: dict[Path, str] = {}
     fragments: dict[Path, str] = {}
+    existing_fragments: list[Path] = []
     blockers: list[str] = []
 
     def edit(path: Path, transform) -> None:
@@ -166,43 +203,45 @@ def make_preparation(intent: dict, catalog: dict, workspace: Path) -> tuple[dict
         version = change.get("version")
         if definition.get("version"):
             previous = ctl.component_version(definition, catalog, workspace)
-            if stable_tuple(version) <= stable_tuple(previous):
-                raise ctl.ReleaseError(f"{component_id} version {version} must exceed {previous}")
+            if stable_tuple(version) < stable_tuple(previous):
+                raise ctl.ReleaseError(f"{component_id} version {version} must not be older than {previous}")
+            if version == previous:
+                verify_prepared_mirrors(component_id, owner, workspace, version, change)
             version_path = owner / definition["version"]
-            if version_path.suffix == ".json":
+            if version != previous and version_path.suffix == ".json":
                 edit(version_path, lambda source, old=previous, new=version:
                      set_package_version(source, old, new))
                 lock_path = version_path.with_name("package-lock.json")
                 if lock_path.is_file():
                     edit(lock_path, lambda source, old=previous, new=version:
                          set_package_version(source, old, new, lock=True))
-            elif version_path.suffix in (".yaml", ".yml"):
+            elif version != previous and version_path.suffix in (".yaml", ".yml"):
                 edit(version_path, lambda source, old=previous, new=version:
                      unique_substitution(source, rf'^version:\s*{re.escape(old)}(\s*(?:#.*)?)$',
                                          rf'version: {new}\g<1>', str(version_path)))
-            elif component_id == "cli":
+            elif version != previous and component_id == "cli":
                 edit(version_path, lambda source, old=previous, new=version:
                      set_toml_version(source, "package", old, new, str(version_path)))
                 edit(version_path.with_name("Cargo.lock"), lambda source, old=previous, new=version:
                      set_cargo_lock_version(source, "axiom-cli", old, new))
-            elif component_id == "extractor-fastapi":
+            elif version != previous and component_id == "extractor-fastapi":
                 edit(version_path, lambda source, old=previous, new=version:
                      set_toml_version(source, "tool.poetry", old, new, str(version_path)))
-            else:
+            elif version != previous:
                 raise ctl.ReleaseError(f"no reviewed version editor exists for {component_id}")
 
-            if component_id == "sdk-atmx-web":
+            if component_id == "sdk-atmx-web" and version != previous:
                 index = owner / "src/index.ts"
                 edit(index, lambda source, old=previous, new=version:
                      unique_substitution(source, rf'^(export const ATMX_VERSION = "){re.escape(old)}(";)$',
                                          rf'\g<1>{new}\g<2>', str(index)))
-            if component_id in {"sdk-flutter", "sdk-flutter-generator"}:
+            if component_id in {"sdk-flutter", "sdk-flutter-generator"} and version != previous:
                 util = workspace / "axiom-build/src/core/utils.rs"
                 name = "AXIOM_FLUTTER_VERSION" if component_id == "sdk-flutter" else "AXIOM_FLUTTER_GENERATOR_VERSION"
                 edit(util, lambda source, old=previous, new=version, constant=name:
                      unique_substitution(source, rf'^(const {constant}: &str = "\^){re.escape(old)}(";)$',
                                          rf'\g<1>{new}\g<2>', str(util)))
-            if component_id == "sdk-flutter":
+            if component_id == "sdk-flutter" and version != previous:
                 for platform_name in ("ios", "macos"):
                     podspec = owner / f"flutter/axiom_flutter/{platform_name}/axiom_flutter.podspec"
                     edit(podspec, lambda source, old=previous, new=version:
@@ -217,10 +256,13 @@ def make_preparation(intent: dict, catalog: dict, workspace: Path) -> tuple[dict
         fragment_path = owner / "release-notes" / "unreleased" / f"{intent['trainId']}-{component_id}.json"
         if not fragment_path.parent.resolve().is_relative_to(owner):
             raise ctl.ReleaseError(f"release-note path escapes its owning repository: {fragment_path}")
-        if fragment_path.exists():
-            raise ctl.ReleaseError(f"refusing to replace an existing release-note fragment: {fragment_path}")
         fragment = {key: change[key] for key in ("component", "type", "summary", "migration") if key in change}
-        fragments[fragment_path] = json.dumps(fragment, indent=2, ensure_ascii=False) + "\n"
+        if fragment_path.exists():
+            if fragment_path.is_symlink() or json.loads(fragment_path.read_text()) != fragment:
+                raise ctl.ReleaseError(f"existing release-note fragment differs from intent: {fragment_path}")
+            existing_fragments.append(fragment_path)
+        else:
+            fragments[fragment_path] = json.dumps(fragment, indent=2, ensure_ascii=False) + "\n"
 
     for path, changed in edits.items():
         if changed == originals[path]:
@@ -239,7 +281,8 @@ def make_preparation(intent: dict, catalog: dict, workspace: Path) -> tuple[dict
               "files": [{"path": str(path), "oldSha256": hashlib.sha256(originals[path].encode()).hexdigest(),
                          "newSha256": hashlib.sha256(changed.encode()).hexdigest()}
                         for path, changed in sorted(edits.items())],
-              "fragments": [str(path) for path in sorted(fragments)], "blocked": blockers,
+              "fragments": [str(path) for path in sorted(fragments)],
+              "existingFragments": [str(path) for path in sorted(existing_fragments)], "blocked": blockers,
               "next": "review, apply, test, commit changed owner repositories, then make a strict scoped plan"}
     return report, edits, fragments
 

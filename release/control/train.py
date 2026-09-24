@@ -59,7 +59,9 @@ def status(catalog: dict, workspace: Path, root: Path,
                     "version": next((change.get("version") for change in intent["changes"]
                                      if change["component"] == item["id"]), item.get("version"))}
                    for item in plan["components"]]
-    return {"trainId": intent["trainId"], "intent": str(intent_path),
+    return {"trainId": intent["trainId"], "wave": intent.get("wave"),
+            "queued": [{"component": change["component"], "version": change.get("version")}
+                       for change in intent.get("queued", [])], "intent": str(intent_path),
             "versionLedger": str(versions_path), "evidenceRoot": str(paths["directory"]),
             "storageAvailable": root.is_dir(),
             "evidence": {name: {"path": str(path), "exists": path.exists()}

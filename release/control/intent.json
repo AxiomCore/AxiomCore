@@ -1,11 +1,76 @@
 {
   "format": "axiom-platform-release-intent/v1",
-  "trainId": "2026.09.24.1",
+  "trainId": "2026.09.24.2",
+  "wave": "foundation",
+  "summary": "Add the centralized AxiomCore release control plane and stage changed runtime, host, SDK, runner, CLI, and documentation components through reviewed candidate versions and evidence.",
   "changes": [
+    {
+      "component": "runtime-apple",
+      "type": "feature",
+      "summary": "Add typed Rust extension APIs, Python and TypeScript SDK boundaries, and multilingual sandbox runtime support."
+    },
+    {
+      "component": "ui-host-web",
+      "type": "fix",
+      "summary": "Fix browser host rendering and interaction handling for Acore UI bundles and extension-backed actions."
+    },
+    {
+      "component": "ui-host-android",
+      "type": "fix",
+      "summary": "Repair the Android host's staged renderer build and align emulator delivery with the updated extension runtime."
+    },
+    {
+      "component": "ui-host-ios",
+      "type": "feature",
+      "summary": "Rebuild the iOS host against the updated extension runtime and native UI bundle contract."
+    },
+    {
+      "component": "sdk-atmx-web",
+      "type": "feature",
+      "summary": "Rebuild atmx-web against the typed extension runtime and shared browser SDK interface."
+    },
+    {
+      "component": "backend-worker",
+      "type": "internal",
+      "summary": "Rebuild the release worker with updated Acore server, UI module, and shared contract models."
+    },
+    {
+      "component": "mock-runner",
+      "type": "fix",
+      "summary": "Improve mock data generation, mutation responses, and server behavior for Acore backend demos."
+    },
+    {
+      "component": "contract-test-runner",
+      "type": "internal",
+      "summary": "Rebuild contract-test execution against updated Acore and UI models."
+    },
+    {
+      "component": "docs",
+      "type": "feature",
+      "summary": "Document extension dependencies, authoring migration, and current SDK support boundaries."
+    }
+  ],
+  "queued": [
+    {
+      "component": "sdk-atmx-react",
+      "type": "feature",
+      "summary": "Rebuild atmx-react against the verified atmx-web package and updated runtime interface."
+    },
+    {
+      "component": "sdk-flutter",
+      "type": "feature",
+      "summary": "Separate Flutter plugin and native runtime versions, then pin the verified Apple framework.",
+      "runtimeVersion": "0.148.0"
+    },
+    {
+      "component": "sdk-swift",
+      "type": "feature",
+      "summary": "Refresh the Swift package's immutable XCFramework checksum after the Apple runtime is verified."
+    },
     {
       "component": "cli",
       "type": "feature",
-      "summary": "Improve extension authoring, dependency resolution, and Inspector workflows in the Axiom CLI."
+      "summary": "Add extension dependency workflows, multilingual source builds, and Inspector improvements to the CLI; use the new central release control plane for its distribution."
     }
   ]
 }

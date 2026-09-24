@@ -382,7 +382,7 @@ def require_external_build_root() -> Path:
     root = Path(configured).expanduser().resolve()
     if not root.is_absolute() or not root.exists() or not root.is_dir():
         if not github_ci and root == DEFAULT_BUILD_ROOT:
-            raise ReleaseError("default release build volume is not mounted; run 'just release-mount'")
+            raise ReleaseError("default release build volume is not mounted; `just release prepare` mounts the existing image")
         raise ReleaseError("AXIOM_RELEASE_BUILD_ROOT must be an existing directory")
     if not github_ci:
         if platform.system() != "Darwin":
@@ -640,7 +640,7 @@ def stage_manifest(plan: dict, catalog: dict, workspace: Path, train_id: str,
 
 
 def release_notes(plan: dict, catalog: dict, workspace: Path, enforce: bool = False,
-                  owner_filter: str | None = None) -> str:
+                  owner_filter: str | None = None, train_id: str | None = None) -> str:
     if plan.get("format") != PLAN_FORMAT or plan.get("catalogSha256") != catalog["sha256"]:
         raise ReleaseError("release notes require a plan from the current catalog")
     if owner_filter and owner_filter not in catalog["repositories"]:
@@ -657,7 +657,8 @@ def release_notes(plan: dict, catalog: dict, workspace: Path, enforce: bool = Fa
         folder = owner_root / "release-notes" / "unreleased"
         if not folder.is_dir():
             continue
-        for path in sorted(folder.glob("*.json")):
+        pattern = f"{train_id}-*.json" if train_id else "*.json"
+        for path in sorted(folder.glob(pattern)):
             item = json.loads(path.read_text())
             component_id = item.get("component")
             if component_id not in catalog_owners:

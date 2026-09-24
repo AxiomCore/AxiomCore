@@ -46,7 +46,7 @@ def inspect_candidate(intent: dict, plan: dict, catalog: dict, workspace: Path,
     except ctl.ReleaseError as error:
         blockers.append(f"pinned source gate: {error}")
     try:
-        ctl.release_notes(plan, catalog, workspace, enforce=True)
+        ctl.release_notes(plan, catalog, workspace, enforce=True, train_id=intent["trainId"])
     except (ctl.ReleaseError, KeyError, ValueError) as error:
         blockers.append(f"release notes gate: {error}")
     for component_id in sorted(selected & changes.keys()):

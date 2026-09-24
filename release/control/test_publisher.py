@@ -167,6 +167,29 @@ class PublisherTests(unittest.TestCase):
             self.assertEqual(result["remote"], "https://abc.axiom-landing-efz.pages.dev")
             self.assertTrue((publication / "published.json").is_file())
 
+    def test_docs_secret_preflight_uses_docs_infisical_project(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            directory = root / "trains/test/components/docs"
+            publication = directory / "publication"
+            publication.mkdir(parents=True)
+            (publication / "deploy-intent.json").write_text("{}")
+            candidate = {
+                "root": root, "workspace": root, "catalog": {}, "directory": directory,
+                "receipts": [root / "receipt.json"], "intent": {"trainId": "test"},
+                "stage": {"status": "staged-not-published"},
+                "plan": {"repositories": {"AxiomCore": {"head": "abc123"}}},
+            }
+            with patch.object(publisher, "remote_source_heads"), \
+                    patch.object(publisher.ctl, "repo_path", return_value=root), \
+                    patch.object(publisher.ctl, "verify_receipt", return_value={
+                        "artifacts": [{"file": "axiom-docs-pages.tar.gz", "path": str(root / "site.tar.gz")}] }), \
+                    patch.object(publisher.ctl, "build_environment", return_value={}), \
+                    patch.object(publisher, "_check_secret_names") as secret_check, \
+                    patch.object(publisher, "_resume_pages_upload", return_value={"status": "remote-verified"}):
+                publisher.publish_docs(candidate)
+            self.assertEqual(secret_check.call_args.args[3], root / "docs")
+
 
 if __name__ == "__main__":
     unittest.main()

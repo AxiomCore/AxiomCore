@@ -304,7 +304,7 @@ def candidate(catalog: dict, intent: dict, component: str) -> None:
         raise ctl.ReleaseError("commit changed build inputs and use a new published version before candidate build")
     ci_only = sorted(item["id"] for item in plan["components"]
                      if item["selected"] and item["adapter"] == "ci-only"
-                     and not ctl.artifact_receipt_path(root, item).is_file())
+                     and not ctl.artifact_receipt_path(root, item, plan["repositories"]).is_file())
     if ci_only:
         raise ctl.ReleaseError("no verified build receipt for CI-only " + ", ".join(ci_only)
                                + "; run its selective builder and import the exact artifact first")
@@ -319,13 +319,13 @@ def candidate(catalog: dict, intent: dict, component: str) -> None:
     selected_entries = [entry for entry in plan["components"] if entry["selected"]]
     if any(entry["id"] == "ui-host-android" for entry in selected_entries):
         android = next(item for item in selected_entries if item["id"] == "ui-host-android")
-        android_receipt = ctl.artifact_receipt_path(root, android)
+        android_receipt = ctl.artifact_receipt_path(root, android, plan["repositories"])
         if not android_receipt.exists():
             signing_env = ctl.build_environment(root, "ui-host-android")
             ctl.verify_android_signing_access(signing_env, ctl.WORKSPACE / "axiom-ui-host")
             print("Android signing preflight passed; secret values were not displayed or saved.")
     for position, entry in enumerate(selected_entries, 1):
-        receipt = ctl.artifact_receipt_path(root, entry)
+        receipt = ctl.artifact_receipt_path(root, entry, plan["repositories"])
         if receipt.exists():
             verified = ctl.verify_receipt(receipt, entry["fingerprint"])
             if verified.get("component") != entry["id"] or verified.get("sourceHeads") != plan["repositories"]:
@@ -338,7 +338,7 @@ def candidate(catalog: dict, intent: dict, component: str) -> None:
             ctl.build_component(directory / "plan.json", entry["id"], catalog, ctl.WORKSPACE,
                                 command_runner=progress.command_runner(directory, entry["id"],
                                                                        position, len(selected_entries)))
-            receipt = ctl.artifact_receipt_path(root, entry)
+            receipt = ctl.artifact_receipt_path(root, entry, plan["repositories"])
             ctl.verify_receipt(receipt, entry["fingerprint"])
         receipts.append(receipt)
     stage = ctl.stage_manifest(plan, catalog, ctl.WORKSPACE, intent["trainId"],

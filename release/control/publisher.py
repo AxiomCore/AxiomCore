@@ -79,7 +79,8 @@ def load_candidate(component: str, root: Path, workspace: Path = ctl.WORKSPACE,
             or saved_gate.get("phase") != "candidate-ready-for-publisher"
             or saved_gate.get("blockers") or saved_gate.get("stageSha256") != ctl.sha256(ctl.canonical(stage))):
         raise ctl.ReleaseError("candidate stage or saved gate is incomplete, altered, or blocked")
-    receipt_paths = [ctl.artifact_receipt_path(root, item) for item in plan["components"]]
+    receipt_paths = [ctl.artifact_receipt_path(root, item, plan["repositories"])
+                     for item in plan["components"]]
     report = gate.inspect_candidate(intent, plan, catalog, workspace, stage, receipt_paths)
     if report["blockers"]:
         raise ctl.ReleaseError("candidate no longer passes the source/artifact gate: "
@@ -495,8 +496,9 @@ def publish_pages(candidate: dict, component: str) -> dict:
         ctl.write_json(published, result)
         return result
     env = ctl.build_environment(root, component)
+    secret_context = owner / "docs" if component == "docs" else owner
     _check_secret_names(("CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN"),
-                        _cloudflare_command, env, owner)
+                        _cloudflare_command, env, secret_context)
     if (publication / "deploy-intent.json").exists():
         tool_source = publication / "tooling"
         wrangler = (["pnpm", "--filter", "axiom-landing", "exec", "wrangler"]

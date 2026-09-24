@@ -547,15 +547,33 @@ def verify_locked_renderer(catalog: dict, workspace: Path) -> None:
         raise ReleaseError("renderer checkout has uncommitted source or generated files")
 
 
-def artifact_receipt_path(root: Path, entry: dict) -> Path:
-    """Address new receipts by build-input fingerprint, retaining old stages."""
+def artifact_receipt_path(root: Path, entry: dict,
+                          source_heads: dict | None = None) -> Path:
+    """Preserve a prior receipt when identical inputs came from another commit.
+
+    Build output may embed a commit ID even if selected source files have not
+    changed (the docs site does). In that case the fingerprint alone is not a
+    safe artifact identity; place the new receipt under a source-head subkey.
+    """
     current = root / "artifacts" / entry["id"] / entry["fingerprint"] / "receipt.json"
     if current.is_file():
+        if source_heads is not None:
+            try:
+                saved = json.loads(current.read_text())
+            except (OSError, ValueError):
+                return current  # Let receipt verification report corruption.
+            if (saved.get("fingerprint") == entry["fingerprint"]
+                    and isinstance(saved.get("sourceHeads"), dict)
+                    and saved["sourceHeads"] != source_heads):
+                key = sha256(canonical(source_heads))
+                return current.parent / f"source-{key}" / "receipt.json"
         return current
     legacy = root / "artifacts" / entry["id"] / "receipt.json"
     if legacy.is_file():
         try:
-            if json.loads(legacy.read_text()).get("fingerprint") == entry["fingerprint"]:
+            saved = json.loads(legacy.read_text())
+            if (saved.get("fingerprint") == entry["fingerprint"]
+                    and (source_heads is None or saved.get("sourceHeads") == source_heads)):
                 return legacy
         except (OSError, ValueError):
             pass
@@ -576,7 +594,9 @@ def build_component(plan_path: Path, component_id: str, catalog: dict, workspace
     if entry["adapter"].startswith("host-"):
         verify_locked_renderer(catalog, workspace)
     root = require_external_build_root()
-    artifact_dir = root / "artifacts" / component_id / entry["fingerprint"]
+    artifact_dir = artifact_receipt_path(root, entry, planned["repositories"]).parent
+    if root.resolve() not in artifact_dir.resolve().parents or artifact_dir.is_symlink():
+        raise ReleaseError(f"build artifact directory escapes the external release root: {artifact_dir}")
     if artifact_dir.exists() and any(artifact_dir.iterdir()):
         raise ReleaseError(f"refusing to overwrite existing build artifacts: {artifact_dir}")
     artifact_dir.mkdir(parents=True, exist_ok=True)

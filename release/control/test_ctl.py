@@ -90,6 +90,27 @@ class ReleaseControlTests(unittest.TestCase):
             current.write_text(json.dumps({"fingerprint": "b" * 64}))
             self.assertEqual(ctl.artifact_receipt_path(root, entry), current)
 
+    def test_changed_source_head_gets_new_receipt_without_overwriting_old_artifact(self):
+        with tempfile.TemporaryDirectory(prefix="axiom-release-test-") as temporary:
+            root = Path(temporary)
+            entry = {"id": "docs", "fingerprint": "a" * 64}
+            old_heads = {"AxiomCore": {"head": "old", "dirty": False}}
+            new_heads = {"AxiomCore": {"head": "new", "dirty": False}}
+            first = ctl.artifact_receipt_path(root, entry, old_heads)
+            first.parent.mkdir(parents=True)
+            first.write_text(json.dumps({"fingerprint": entry["fingerprint"],
+                                         "sourceHeads": old_heads}))
+            second = ctl.artifact_receipt_path(root, entry, new_heads)
+            self.assertNotEqual(second, first)
+            self.assertEqual(second.parent.parent, first.parent)
+            self.assertTrue(second.parent.name.startswith("source-"))
+            self.assertEqual(ctl.artifact_receipt_path(root, entry, old_heads), first)
+            second.parent.mkdir()
+            second.write_text(json.dumps({"fingerprint": entry["fingerprint"],
+                                          "sourceHeads": new_heads}))
+            self.assertEqual(ctl.artifact_receipt_path(root, entry, new_heads), second)
+            self.assertEqual(json.loads(first.read_text())["sourceHeads"], old_heads)
+
     def test_build_environment_routes_caches_off_internal_disk(self):
         with tempfile.TemporaryDirectory(prefix="axiom-release-test-") as temporary:
             root = Path(temporary).resolve()

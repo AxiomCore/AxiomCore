@@ -1,6 +1,6 @@
 # From candidate gate to production release
 
-The current platform control plane **cannot yet publish all 20 components**.
+The current platform control plane **cannot yet publish all 21 components**.
 `release-plan` is a source decision; `release-gate` proves a locally staged
 candidate is internally consistent. Neither proves that a remote registry or
 deployment has those bytes. Do not mark a staged manifest `published` or feed
@@ -23,6 +23,15 @@ partially published; it never creates a successful baseline. Retrying must be
 idempotent by immutable version/digest and must not use `--clobber`.
 
 ## Current production gap (2026-09-24)
+
+Destination adapters are now wired for every catalog target: the grouped UI
+Host, GitHub binary assets, npm plus versioned R2 objects, pub.dev, Swift source
+tags, Artifact Registry/Cloud Run, and Cloudflare Pages. They require complete
+staged candidates and remote verification; most still lack selective CI builders
+and all require disposable rehearsals before production cutover. They do not
+provide a signed whole-train baseline. The
+landing's custom-domain cutover is deliberately separate from deploying its
+new `axiom-landing` Pages project.
 
 The checked-in `release/control/intent.json` is a multi-component draft train
 with foundation and queued dependent waves. Candidate versions in
@@ -96,7 +105,7 @@ lock stops before building.
 | npm | `sdk-atmx-web`, `sdk-atmx-react`, `sdk-atmx-cli` | Publish one package/version at a time from its verified tarball; registry integrity equals staged bytes; React's lock and dependency range resolve to the already-published web version. |
 | pub.dev and Swift | `sdk-flutter-generator`, `sdk-flutter`, `sdk-swift` | Published package/tag resolves to the reviewed commit; Flutter plugin's independent Apple runtime pin and Swift's XCFramework checksum match a verified framework asset. Publish dependency first. |
 | GCP | `backend-api`, `backend-worker`, `mock-runner`, `contract-test-runner`, `dashboard-origin` | Cloud Build source SHA and immutable image digest match the candidate; Cloud Run service/job revision points to that digest; readiness/health and migration gates pass. |
-| Cloudflare Pages | `dashboard-proxy`, `docs` | Deployment ID, production URL, source SHA, build digest, and smoke checks are recorded. A changed dashboard origin URL forces a proxy rollout even with unchanged proxy source. |
+| Cloudflare Pages | `dashboard-proxy`, `docs`, `landing` | Deployment ID, production URL, source SHA, build digest, and smoke checks are recorded. A changed dashboard origin URL forces a proxy rollout even with unchanged proxy source. |
 
 Each adapter must be independently callable for its component, run only after
 the candidate gate passes, and refuse an existing version with different bytes.

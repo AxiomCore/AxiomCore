@@ -40,7 +40,10 @@ def stable_tuple(value: str) -> tuple[int, int, int]:
 
 
 def read_intent(path: Path, catalog: dict, ledger: dict | None = None) -> dict:
-    intent = json.loads(path.read_text())
+    return validate_intent(json.loads(path.read_text()), catalog, ledger)
+
+
+def validate_intent(intent: dict, catalog: dict, ledger: dict | None = None) -> dict:
     if intent.get("format") != INTENT_FORMAT or not TRAIN_ID.fullmatch(str(intent.get("trainId", ""))):
         raise ctl.ReleaseError("release intent needs the supported format and a safe trainId")
     changes = intent.get("changes")

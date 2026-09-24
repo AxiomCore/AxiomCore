@@ -46,12 +46,43 @@ class ReleaseControlTests(unittest.TestCase):
             source_repos = {source["repo"] for source in by_id[component_id]["sources"]}
             self.assertTrue({"axiom-runtime", "axiom-lib", "rod"} <= source_repos)
 
+    def test_dashboard_proxy_origin_changes_build_fingerprint(self):
+        catalog = {"sha256": "catalog", "repositories": {"frontend": "frontend"},
+                   "components": [{"id": "dashboard-proxy", "owner": "frontend",
+                                   "kind": "edge", "adapter": "dashboard-proxy", "destination": "pages",
+                                   "sources": [{"repo": "frontend", "paths": ["script"]}]}]}
+        with patch.object(ctl, "repo_path", return_value=Path("/unused")), \
+                patch.object(ctl, "git_snapshot", return_value={"head": "sha"}), \
+                patch.object(ctl, "source_fingerprint", return_value=("source", [])), \
+                patch.object(ctl, "component_version", return_value=None):
+            with patch.dict("os.environ", {"AXIOM_DASHBOARD_ORIGIN": "https://one.example"}):
+                first = ctl.make_plan(catalog)
+            with patch.dict("os.environ", {"AXIOM_DASHBOARD_ORIGIN": "https://two.example"}):
+                second = ctl.make_plan(catalog)
+        self.assertNotEqual(first["components"][0]["fingerprint"],
+                            second["components"][0]["fingerprint"])
+
+    def test_artifact_receipts_are_fingerprint_addressed_with_legacy_read(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            entry = {"id": "ui-host-web", "fingerprint": "a" * 64}
+            legacy = root / "artifacts/ui-host-web/receipt.json"
+            legacy.parent.mkdir(parents=True)
+            legacy.write_text(json.dumps({"fingerprint": "a" * 64}))
+            self.assertEqual(ctl.artifact_receipt_path(root, entry), legacy)
+            entry["fingerprint"] = "b" * 64
+            current = root / "artifacts/ui-host-web" / ("b" * 64) / "receipt.json"
+            self.assertEqual(ctl.artifact_receipt_path(root, entry), current)
+            current.parent.mkdir()
+            current.write_text(json.dumps({"fingerprint": "b" * 64}))
+            self.assertEqual(ctl.artifact_receipt_path(root, entry), current)
+
     def test_build_environment_routes_caches_off_internal_disk(self):
         with tempfile.TemporaryDirectory(prefix="axiom-release-test-") as temporary:
             root = Path(temporary).resolve()
             env = ctl.build_environment(root, "ui-host-android")
             for name in ("CARGO_HOME", "CARGO_TARGET_DIR", "GRADLE_USER_HOME",
-                         "npm_config_cache", "npm_config_store_dir", "PIP_CACHE_DIR",
+                         "npm_config_cache", "npm_config_store_dir", "COREPACK_HOME", "PIP_CACHE_DIR",
                          "HABITAT_CACHE_ROOT", "XDG_CACHE_HOME", "TMPDIR",
                          "AXIOM_UI_HOST_BUILD_ROOT", "AXIOM_UI_HOST_DIST_ROOT"):
                 self.assertTrue(Path(env[name]).is_relative_to(root), name)
@@ -66,6 +97,32 @@ class ReleaseControlTests(unittest.TestCase):
             (root / "artifacts").symlink_to(elsewhere, target_is_directory=True)
             with self.assertRaisesRegex(ctl.ReleaseError, "escapes the external build root"):
                 ctl.build_environment(root, "ui-host-android")
+
+    def test_android_release_command_scopes_infisical_and_rejects_partial_secrets(self):
+        command = ["/host/scripts/build-android.sh", "release"]
+        with patch.object(ctl.shutil, "which", return_value="/usr/local/bin/infisical"):
+            self.assertEqual(ctl.android_release_command(command, {"PATH": "/usr/local/bin"}),
+                             ["infisical", "run", "--env=prod", "--", *command])
+        signed = {name: "value" for name in ctl.ANDROID_SIGNING_VARIABLES}
+        self.assertEqual(ctl.android_release_command(command, signed), command)
+        with self.assertRaisesRegex(ctl.ReleaseError, "environment is incomplete"):
+            ctl.android_release_command(command, {ctl.ANDROID_SIGNING_VARIABLES[0]: "value"})
+        with patch.object(ctl.shutil, "which", return_value=None), \
+                self.assertRaisesRegex(ctl.ReleaseError, "needs Infisical"):
+            ctl.android_release_command(command, {})
+
+    def test_android_signing_preflight_checks_names_without_recording_values(self):
+        signed = {name: "private-value" for name in ctl.ANDROID_SIGNING_VARIABLES}
+        with patch.object(ctl, "run", return_value=b"") as execute:
+            ctl.verify_android_signing_access(signed, Path("/host"))
+        args = execute.call_args.args
+        self.assertEqual(args[:2], (ctl.sys.executable, "-c"))
+        self.assertNotIn("private-value", repr(args))
+        with patch.object(ctl.shutil, "which", return_value="/usr/local/bin/infisical"), \
+                patch.object(ctl, "run", return_value=b"") as execute:
+            ctl.verify_android_signing_access({"PATH": "/usr/local/bin"}, Path("/host"))
+        self.assertEqual(execute.call_args.args[:4],
+                         ("infisical", "run", "--env=prod", "--"))
 
     def test_renderer_checkout_must_match_lock_and_be_clean(self):
         with tempfile.TemporaryDirectory(prefix="axiom-release-test-") as temporary:

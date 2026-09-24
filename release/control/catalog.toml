@@ -250,14 +250,25 @@ sources = [{ repo = "axiom-frontend", paths = ["apps/dashboard/", "packages/", "
 id = "dashboard-proxy"
 owner = "axiom-frontend"
 kind = "edge"
-adapter = "ci-only"
+adapter = "dashboard-proxy"
+required_artifacts = ["_worker.js"]
 destination = "Cloudflare Pages dashboard proxy"
 sources = [{ repo = "axiom-frontend", paths = ["scripts/deploy-cloudflare.sh"] }]
+
+[[components]]
+id = "landing"
+owner = "axiom-frontend"
+kind = "site"
+adapter = "landing-pages"
+required_artifacts = ["axiom-landing-pages.tar.gz"]
+destination = "Cloudflare Pages: axiom-landing"
+sources = [{ repo = "axiom-frontend", paths = ["apps/landing/", "packages/design-system/", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml"] }]
 
 [[components]]
 id = "docs"
 owner = "AxiomCore"
 kind = "site"
-adapter = "ci-only"
+adapter = "docs-pages"
+required_artifacts = ["axiom-docs-pages.tar.gz"]
 destination = "Cloudflare Pages documentation"
-sources = [{ repo = "AxiomCore", paths = ["docs/", "README.md", "CONTRIBUTING.md"] }]
+sources = [{ repo = "AxiomCore", paths = ["docs/", "README.md", "CONTRIBUTING.md", "examples/"] }]

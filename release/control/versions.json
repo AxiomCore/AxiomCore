@@ -20,6 +20,7 @@
     "contract-test-runner": { "candidateVersion": null },
     "dashboard-origin": { "candidateVersion": null },
     "dashboard-proxy": { "candidateVersion": null },
+    "landing": { "candidateVersion": null },
     "docs": { "candidateVersion": null }
   }
 }

@@ -21,6 +21,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 import tomllib
 
 
@@ -33,6 +34,12 @@ EXTERNAL_SSD = Path("/Volumes/ExternalSSD")
 DEFAULT_BUILD_IMAGE = EXTERNAL_SSD / "AxiomReleaseBuild.sparsebundle"
 DEFAULT_BUILD_MOUNT = Path("/Volumes/AxiomReleaseBuild")
 DEFAULT_BUILD_ROOT = DEFAULT_BUILD_MOUNT / "axiom-release"
+ANDROID_SIGNING_VARIABLES = (
+    "AXIOM_UI_HOST_ANDROID_KEYSTORE_BASE64",
+    "AXIOM_UI_HOST_ANDROID_KEY_ALIAS",
+    "AXIOM_UI_HOST_ANDROID_KEYSTORE_PASSWORD",
+    "AXIOM_UI_HOST_ANDROID_KEY_PASSWORD",
+)
 
 
 class ReleaseError(Exception):
@@ -67,7 +74,10 @@ def canonical(value: object) -> bytes:
 
 
 def read_catalog(path: Path = CATALOG) -> dict:
-    raw = path.read_bytes()
+    return parse_catalog(path.read_bytes())
+
+
+def parse_catalog(raw: bytes) -> dict:
     catalog = tomllib.loads(raw.decode())
     if catalog.get("format") != "axiom-platform-release-catalog/v1":
         raise ReleaseError("unsupported release catalog format")
@@ -94,7 +104,7 @@ def read_catalog(path: Path = CATALOG) -> dict:
                 raise ReleaseError(f"invalid dependency {dependency!r} in {component['id']}")
         required = component.get("required_artifacts", [])
         if (not isinstance(required, list)
-                or any(not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name)
+                or any(not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9._-]*", name)
                        for name in required)
                 or len(required) != len(set(required))):
             raise ReleaseError(f"invalid required artifact names in {component['id']}")
@@ -276,6 +286,10 @@ def make_plan(catalog: dict, workspace: Path = WORKSPACE, baseline: dict | None 
         component_id = component["id"]
         direct_hash, sources = source_fingerprint(component, snapshots)
         definition = {key: value for key, value in component.items() if key != "destination"}
+        if component_id == "dashboard-proxy":
+            # The edge worker embeds the deployed Cloud Run origin. Treat that
+            # operator-supplied URL as an exact build input, not ambient state.
+            definition["deploymentOrigin"] = os.environ.get("AXIOM_DASHBOARD_ORIGIN", "").rstrip("/")
         fingerprint = sha256(canonical({"definition": definition, "inputs": direct_hash,
                                        "dependencies": {dep: fingerprints[dep] for dep in component.get("depends_on", [])}}))
         fingerprints[component_id] = fingerprint
@@ -412,8 +426,8 @@ def build_environment(root: Path, component_id: str) -> dict[str, str]:
     work = root / "work" / component_id
     folders = (work, root / "artifacts" / component_id, root / "cache" / "cargo",
                root / "cache" / "gradle", root / "cache" / "npm",
-               root / "cache" / "pnpm", root / "cache" / "pip",
-               root / "cache" / "habitat", root / "cache" / "xdg", root / "tmp")
+               root / "cache" / "pnpm", root / "cache" / "corepack", root / "cache" / "pip",
+               root / "cache" / "habitat", root / "cache" / "xdg", work / "pub-cache", root / "tmp")
     for folder in folders:
         if not folder.resolve().is_relative_to(root):
             raise ReleaseError(f"build output path escapes the external build root: {folder}")
@@ -425,7 +439,9 @@ def build_environment(root: Path, component_id: str) -> dict[str, str]:
         "GRADLE_USER_HOME": str(root / "cache" / "gradle"),
         "npm_config_cache": str(root / "cache" / "npm"),
         "npm_config_store_dir": str(root / "cache" / "pnpm"),
+        "COREPACK_HOME": str(root / "cache" / "corepack"),
         "PIP_CACHE_DIR": str(root / "cache" / "pip"),
+        "PUB_CACHE": str(work / "pub-cache"),
         "HABITAT_CACHE_ROOT": str(root / "cache" / "habitat"),
         "XDG_CACHE_HOME": str(root / "cache" / "xdg"),
         "TMPDIR": str(root / "tmp"),
@@ -435,6 +451,35 @@ def build_environment(root: Path, component_id: str) -> dict[str, str]:
         "AXIOM_UI_HOST_SIGNING_TEMP_ROOT": "/private/tmp" if platform.system() == "Darwin" else "/tmp",
     })
     return env
+
+
+def android_release_command(command: list[str], env: dict[str, str]) -> list[str]:
+    """Supply Android signing only to the build child, never the control process."""
+    present = [name for name in ANDROID_SIGNING_VARIABLES if env.get(name)]
+    if len(present) == len(ANDROID_SIGNING_VARIABLES):
+        return command
+    if present:
+        missing = sorted(set(ANDROID_SIGNING_VARIABLES) - set(present))
+        raise ReleaseError("Android signing environment is incomplete; missing "
+                           + ", ".join(missing) + "; provide all four values or unset them and use Infisical")
+    if not shutil.which("infisical", path=env.get("PATH")):
+        raise ReleaseError("Android release signing needs Infisical; install it and authenticate, "
+                           "or provide all four AXIOM_UI_HOST_ANDROID signing variables")
+    return ["infisical", "run", "--env=prod", "--", *command]
+
+
+def verify_android_signing_access(env: dict[str, str], host_dir: Path) -> None:
+    """Fail before expensive builds if scoped release signing is unavailable."""
+    check = [sys.executable, "-c",
+             "import os,sys; names=(" + ",".join(repr(name) for name in ANDROID_SIGNING_VARIABLES)
+             + "); missing=[name for name in names if not os.environ.get(name)]; "
+             "sys.exit('missing Android signing variables: '+', '.join(missing) if missing else 0)"]
+    command = android_release_command(check, env)
+    try:
+        run(*command, cwd=host_dir, env=env)
+    except ReleaseError as error:
+        raise ReleaseError("Android signing preflight failed; authenticate Infisical for prod "
+                           "or provide all four Android signing variables. " + str(error)) from error
 
 
 def package_cli(binary: Path, output: Path) -> None:
@@ -447,6 +492,45 @@ def package_cli(binary: Path, output: Path) -> None:
                 info.mtime = info.uid = info.gid = 0
                 with binary.open("rb") as source:
                     archive.addfile(info, source)
+
+
+def stage_tracked_source(repository: Path, destination: Path, selectors: tuple[str, ...]) -> None:
+    names = run("git", "ls-files", "-z", "--", *selectors, cwd=repository).split(b"\0")
+    for encoded in names:
+        if not encoded:
+            continue
+        name = encoded.decode("utf-8", "surrogateescape")
+        source = repository / name
+        if source.is_symlink() or not source.is_file():
+            raise ReleaseError(f"release build source is missing or linked: {name}")
+        target = destination / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+
+
+def stage_tracked_landing_source(repository: Path, destination: Path) -> None:
+    stage_tracked_source(repository, destination,
+                         ("apps/landing", "packages/design-system", "package.json",
+                          "pnpm-lock.yaml", "pnpm-workspace.yaml"))
+
+
+def package_static_site(directory: Path, output: Path) -> None:
+    if not (directory / "index.html").is_file():
+        raise ReleaseError(f"static site has no index.html: {directory}")
+    files = sorted(path for path in directory.rglob("*") if path.is_file())
+    if any(path.is_symlink() for path in directory.rglob("*")):
+        raise ReleaseError("static site contains symlinks; refusing to package")
+    with output.open("xb") as raw:
+        with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as compressed:
+            with tarfile.open(fileobj=compressed, mode="w") as archive:
+                for file in files:
+                    name = file.relative_to(directory).as_posix()
+                    info = tarfile.TarInfo(name)
+                    info.size = file.stat().st_size
+                    info.mode = 0o644
+                    info.mtime = info.uid = info.gid = 0
+                    with file.open("rb") as source:
+                        archive.addfile(info, source)
 
 
 def verify_locked_renderer(catalog: dict, workspace: Path) -> None:
@@ -463,7 +547,23 @@ def verify_locked_renderer(catalog: dict, workspace: Path) -> None:
         raise ReleaseError("renderer checkout has uncommitted source or generated files")
 
 
-def build_component(plan_path: Path, component_id: str, catalog: dict, workspace: Path = WORKSPACE) -> dict:
+def artifact_receipt_path(root: Path, entry: dict) -> Path:
+    """Address new receipts by build-input fingerprint, retaining old stages."""
+    current = root / "artifacts" / entry["id"] / entry["fingerprint"] / "receipt.json"
+    if current.is_file():
+        return current
+    legacy = root / "artifacts" / entry["id"] / "receipt.json"
+    if legacy.is_file():
+        try:
+            if json.loads(legacy.read_text()).get("fingerprint") == entry["fingerprint"]:
+                return legacy
+        except (OSError, ValueError):
+            pass
+    return current
+
+
+def build_component(plan_path: Path, component_id: str, catalog: dict, workspace: Path = WORKSPACE,
+                    command_runner=None) -> dict:
     planned = json.loads(plan_path.read_text())
     if planned.get("format") != PLAN_FORMAT or planned.get("catalogSha256") != catalog["sha256"]:
         raise ReleaseError("build plan is missing, stale, or uses a different release catalog")
@@ -476,14 +576,50 @@ def build_component(plan_path: Path, component_id: str, catalog: dict, workspace
     if entry["adapter"].startswith("host-"):
         verify_locked_renderer(catalog, workspace)
     root = require_external_build_root()
-    artifact_dir = root / "artifacts" / component_id
+    artifact_dir = root / "artifacts" / component_id / entry["fingerprint"]
     if artifact_dir.exists() and any(artifact_dir.iterdir()):
         raise ReleaseError(f"refusing to overwrite existing build artifacts: {artifact_dir}")
+    artifact_dir.mkdir(parents=True, exist_ok=True)
     env = build_environment(root, component_id)
+    work = root / "work" / component_id
+    execute = command_runner or run
     adapter = entry["adapter"]
-    if adapter == "cli":
-        run("cargo", "build", "--locked", "--release", "--manifest-path", str(workspace / "AxiomCore/cli/Cargo.toml"),
-            cwd=workspace, env=env, capture=False)
+    if adapter in ("landing-pages", "docs-pages"):
+        source_dir = Path(tempfile.mkdtemp(prefix=f"{component_id}-", dir=work))
+    if adapter == "dashboard-proxy":
+        origin = env.get("AXIOM_DASHBOARD_ORIGIN", "").rstrip("/")
+        if not origin.startswith("https://") or origin == "https://app.axiomcore.dev":
+            raise ReleaseError("dashboard-proxy build needs AXIOM_DASHBOARD_ORIGIN set to the HTTPS Cloud Run origin")
+        output_dir = Path(tempfile.mkdtemp(prefix="proxy-", dir=work))
+        env["AXIOM_DASHBOARD_PROXY_OUTPUT_DIR"] = str(output_dir)
+        execute(str(workspace / "axiom-frontend/scripts/deploy-cloudflare.sh"), "build",
+                cwd=workspace / "axiom-frontend", env=env, capture=False)
+        artifact = artifact_dir / "_worker.js"
+        with (output_dir / "_worker.js").open("rb") as source, artifact.open("xb") as target:
+            shutil.copyfileobj(source, target)
+    elif adapter == "landing-pages":
+        owner = repo_path(catalog, "axiom-frontend", workspace)
+        stage_tracked_landing_source(owner, source_dir)
+        execute("pnpm", "install", "--frozen-lockfile", "--filter", "axiom-landing...",
+                cwd=source_dir, env=env, capture=False)
+        execute("pnpm", "--filter", "axiom-landing", "build",
+                cwd=source_dir, env=env, capture=False)
+        artifact = artifact_dir / "axiom-landing-pages.tar.gz"
+        package_static_site(source_dir / "apps/landing/dist", artifact)
+    elif adapter == "docs-pages":
+        owner = repo_path(catalog, "AxiomCore", workspace)
+        execute("node", "docs/scripts/validate-content.mjs", cwd=owner, env=env, capture=False)
+        stage_tracked_source(owner, source_dir, ("docs", "README.md", "CONTRIBUTING.md"))
+        env["CF_PAGES_COMMIT_SHA"] = planned["repositories"]["AxiomCore"]["head"]
+        execute("pnpm", "install", "--frozen-lockfile", cwd=source_dir / "docs",
+                env=env, capture=False)
+        execute("pnpm", "types:check", cwd=source_dir / "docs", env=env, capture=False)
+        execute("pnpm", "static:build", cwd=source_dir / "docs", env=env, capture=False)
+        artifact = artifact_dir / "axiom-docs-pages.tar.gz"
+        package_static_site(source_dir / "docs/out", artifact)
+    elif adapter == "cli":
+        execute("cargo", "build", "--locked", "--release", "--manifest-path", str(workspace / "AxiomCore/cli/Cargo.toml"),
+                cwd=workspace, env=env, capture=False)
         binary = Path(env["CARGO_TARGET_DIR"]) / "release" / "axiom-cli"
         if not binary.is_file():
             raise ReleaseError("CLI build completed without an axiom-cli binary")
@@ -500,7 +636,9 @@ def build_component(plan_path: Path, component_id: str, catalog: dict, workspace
         command = [str(workspace / "axiom-ui-host/scripts" / script)]
         if argument:
             command.append(argument)
-        run(*command, cwd=workspace / "axiom-ui-host", env=env, capture=False)
+        if adapter == "host-android":
+            command = android_release_command(command, env)
+        execute(*command, cwd=workspace / "axiom-ui-host", env=env, capture=False)
         built = Path(env["AXIOM_UI_HOST_BUILD_ROOT"]) / "output" / filename
         if not built.is_file():
             raise ReleaseError(f"host build completed without {filename}")

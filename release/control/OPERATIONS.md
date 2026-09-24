@@ -16,10 +16,12 @@ selection, not proof that a component needs production publication.
 
 The checked-in [intent.json](./intent.json) is train `2026.09.24.2`. Its
 foundation wave contains the Apple runtime, three UI Hosts, `atmx-web`, the
-backend worker, mock runner, contract-test runner, and docs. Four affected
+backend worker, mock runner, contract-test runner, and docs. The affected
 consumers are queued: `atmx-react` (after web npm bytes), Flutter and Swift
 (after the Apple framework bytes/checksum), and the CLI (after its generated
-Flutter SDK pins are settled). The CLI's `0.147.0` manifest/lock edit and its
+Flutter SDK pins are settled). The new landing site and a dashboard-origin
+audit are also queued because the landing toolchain changed the shared pnpm
+lockfile. The CLI's `0.147.0` manifest/lock edit and its
 release-note fragment were already present in the worktree when this wave was
 organized; they are preserved, not published. Train `2026.09.24.1` already has
 CLI-only preparation evidence on the SSD, so the expanded foundation wave uses
@@ -27,7 +29,7 @@ a fresh train ID rather than overwriting it. The intent's top-level `summary`
 describes the release-control-plane theme; each component's `summary` becomes
 its own changelog fragment when that component is activated and prepared.
 
-Candidate versions for **all 20 components** live in
+Candidate versions for **all 21 components** live in
 [versions.json](./versions.json). Cargo, npm, and pubspec manifests remain
 package-manager-facing mirrors. The ledger is not a published-version record:
 the latter must come from a signed, remotely verified baseline. Services,
@@ -59,7 +61,7 @@ jobs, and sites use immutable image/deployment digests rather than SemVer.
    dirty-repository summary and asks you to run `just release review` in a
    terminal. After preflight, run each owner repo's tests and use
    `just release COMPONENT` for a component with a supported local builder
-   (`cli` or `ui-host`).
+   (`cli`, `ui-host`, `landing`, or `docs`).
 
 `prepare` mounts the **existing** SSD-backed APFS image if needed. It does not
 create or format a disk. The normal path is derived automatically from the
@@ -67,13 +69,38 @@ train ID: `/Volumes/AxiomReleaseBuild/axiom-release/trains/TRAIN/`. No command
 argument or shell-wide `AXIOM_RELEASE_BUILD_ROOT` export is needed. An
 advanced override must still pass the external-volume safety checks.
 
-The candidate command is intentionally immutable: it plans exact committed
-source SHAs, checks committed notes, builds supported targets into the SSD,
-verifies receipts, stages a candidate, and records the gate and notes under
-`trains/TRAIN/components/COMPONENT/`. If an input is dirty, an artifact folder
-already exists, a dependency is outside the active wave, or a component needs
-a CI-only builder, it stops before claiming success. `just release test` runs
-the control-plane tests; `just release help` prints the command summary.
+The candidate command plans exact committed source SHAs, checks committed
+notes, builds supported targets into the SSD, verifies receipts, stages a
+candidate, and records the gate and notes under
+`trains/TRAIN/components/COMPONENT/`. `just release ui-host` builds the three
+host targets together; `just release cli` works only when CLI is in the active
+wave. A local build shows a rotating progress indicator and elapsed time.
+Press `l` to attach to the live build terminal and inspect logs; press
+`Ctrl-]` to return to progress. `Ctrl-C` stops the build and reports the
+full log path on the release SSD.
+For the Android release APK, the control plane checks access to the four
+signing variables before starting the host builds. It invokes the Android
+build through `infisical run --env=prod` when they are not already all present
+in the environment, matching the UI Host's own release recipe. Secret values
+are not printed or copied to release evidence.
+
+An interrupted candidate can be retried only with the exact same intent and
+source plan. Verified receipts from completed targets are reused; attempt logs
+are retained. A staged candidate or a nonempty artifact directory without a
+receipt is never overwritten automatically. Dirty inputs, dependencies outside
+the active wave, and CI-only builders also stop candidate creation.
+`just release test` runs the control-plane tests; `just release help` prints the
+command summary.
+
+The current `.2` preparation evidence was recorded before the landing and
+dashboard-origin queue entries were added. The control plane authenticates
+that historical intent in Git and permits only unchanged existing entries plus
+new queued components. It does not rewrite `.2` evidence or let active changes
+slip in. The staged `.2` Host can be published from its saved candidate with
+`just release publish ui-host 2026.09.24.2` after required source commits are
+pushed. To build landing, begin a fresh train ID, move `landing` from `queued`
+to `changes`, review the dashboard-origin lockfile impact, then prepare and
+build the new train.
 
 ## Releasing one specific component later
 
@@ -82,7 +109,8 @@ For a CLI fix after SDK pins are settled, make a fresh intent with `cli` in
 `just release version cli 0.147.1` (choose the actual next verified version),
 then `just release prepare`. Review and commit the Cargo manifest, lockfile,
 and generated note. Run `just release cli` after its source tests.
-That command produces a verified local archive; it does **not** publish it.
+That command produces a verified local archive; CLI publication remains gated
+until the full platform asset matrix and Homebrew update can be verified.
 
 For a UI Host change, select all three host targets in the intent and set one
 shared candidate with `just release version ui-host X.Y.Z`. Build the group
@@ -101,12 +129,68 @@ make a candidate look complete.
 
 ## Production boundary
 
-`just release publish COMPONENT` currently **fails closed**. It will not call
-the old broad `release-all`, source-mutating publishers, or overwrite GitHub
-assets. Production release still needs a trusted signed baseline, selective CI
-builders for the CI-only components, publisher adapters that consume exact
-receipts, remote digest/health verification, partial-release retries, and
-changelog finalization. See [PUBLISHER_MIGRATION.md](./PUBLISHER_MIGRATION.md).
-Until those adapters exist, no single safe command can honestly deploy all
-components. Never rename a staged candidate to `published` or treat a local
-installed host version as the published baseline.
+`just release publish` opens a staged-candidate selector (arrows, Space,
+Enter, then `p` to confirm). `just release publish COMPONENT [TRAIN]` is the
+non-interactive form. Both consume staged receipts and check pinned source SHAs
+on tracked remotes. The destination adapters cover GitHub releases, npm/R2,
+pub.dev, Swift tags, Artifact Registry/Cloud Run, and Cloudflare Pages. They
+do not call source-mutating legacy deploy scripts. The landing Pages
+project is `axiom-landing`; it is created on the first publish, and the
+deployment is verified at its immutable URL and `axiom-landing.pages.dev`.
+That does **not** move `axiomcore.dev` from its current origin. Coordinate DNS
+and the existing `/join` route separately after reviewing the Pages URL; the
+control plane never changes a custom domain automatically.
+
+Targets without a complete gated candidate still **fail closed**. Most
+non-local components need selective CI builders and exact receipts before the
+publish adapters can be used. No live production publish was run during the
+adapter implementation; registry credentials and disposable rehearsal are
+still required. Production also needs a trusted signed baseline, partial-release
+retries, and changelog finalization. See
+[PUBLISHER_MIGRATION.md](./PUBLISHER_MIGRATION.md). Never rename a staged
+candidate to `published` or treat a local installed host version as the
+published baseline.
+
+## Exact receipt contract for CI-owned targets
+
+`just release capabilities` labels CI-only builders as a gap. To stage one of
+those targets, a selective CI build must check out the plan's pinned source
+commits, test the component, place its immutable output under the release
+root's `artifacts/COMPONENT/FINGERPRINT/`, and write the standard receipt there with
+`ctl.py receipt --plan ... --component ... --artifact ... --out ...`.
+`just release COMPONENT` then verifies and consumes that receipt. A receipt
+from an unrelated plan or changed bytes is rejected.
+
+| Target | Exact artifact expected by its publisher |
+| --- | --- |
+| `runtime-apple` | `AxiomRuntime.xcframework.zip` |
+| `sdk-atmx-web` | one npm `.tgz` plus `atmx.umd.js`, `atmx.es.js`, `axiom_runtime.wasm` matching its package |
+| `sdk-atmx-react`, `sdk-atmx-cli` | one npm `.tgz` with the staged package name and version |
+| `sdk-flutter-generator`, `sdk-flutter` | `<pub-package>-<version>.tar.gz` containing the exact publishable package tree |
+| `sdk-swift` | reviewed `Package.swift` with the published Apple runtime URL/checksum |
+| `extractor-fastapi`, `extractor-go` | one or more platform binaries prefixed `axiom-fastapi-` or `axiom-go-extractor-` |
+| `backend-api`, `backend-worker`, `mock-runner`, `contract-test-runner`, `dashboard-origin` | `image-ref.json` containing `image` as an Artifact Registry `@sha256:` URI, `sourceHeads` equal to the plan, and the Cloud Build `buildId` |
+
+The local dashboard proxy build needs `AXIOM_DASHBOARD_ORIGIN` set to the
+deployed HTTPS Cloud Run origin. It stages `_worker.js` with a source-bound
+release marker, then publishes to the existing `axiom-dashboard` Pages
+project. The proxy is a separate wave after its origin when the origin URL
+changes. This selector does not provision missing Cloud Run services/jobs,
+run backend migrations, or reconfigure production secrets; use the owning
+initial-provisioning workflow before the first image-only update.
+Each GCP selective builder must set Cloud Build substitution
+`_AXIOM_SOURCE_HEADS_SHA256` to SHA-256 of canonical plan `repositories` and
+record the successful build ID. The publisher checks that Cloud Build's
+reported image digest and Artifact Registry both match the staged descriptor.
+Set `AXIOM_GCP_REGION` explicitly for image publishers (and optionally
+`AXIOM_GCP_PROJECT_ID`, default `axiomcore`). npm publishing needs `NPM_TOKEN`
+from Infisical `prod`; the token is placed only in a short-lived local config
+under the system temporary directory, not the release SSD. pub.dev needs
+`PUB_TOKEN` from Infisical `prod`; Dart stores only the environment-variable
+reference in its component-scoped SSD cache, not the token value. The `atmx-web` publisher uses the
+existing R2 S3 credentials and does not mutate the `latest` alias.
+After verifying the CLI GitHub archive, the CLI publisher updates only
+`Formula/axiom.rb` in the clean `AxiomCore/homebrew-tap` checkout, pushes its
+single release commit, and reads the remote formula back. It refuses to
+overwrite unrelated tap commits or publish a CLI archive without the
+`axiom-macos-arm64.tar.gz` asset required by that formula.

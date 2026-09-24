@@ -52,6 +52,21 @@
   ],
   "queued": [
     {
+      "component": "dashboard-proxy",
+      "type": "feature",
+      "summary": "Publish the dashboard proxy from a staged, origin-pinned Pages worker and verify its deployed release marker."
+    },
+    {
+      "component": "landing",
+      "type": "feature",
+      "summary": "Publish the Astro landing site as a verified Cloudflare Pages deployment using the centralized release control plane."
+    },
+    {
+      "component": "dashboard-origin",
+      "type": "internal",
+      "summary": "Audit the shared pnpm lockfile change from the landing deployment toolchain before selecting a dashboard rebuild."
+    },
+    {
       "component": "sdk-atmx-react",
       "type": "feature",
       "summary": "Rebuild atmx-react against the verified atmx-web package and updated runtime interface."

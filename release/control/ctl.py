@@ -102,6 +102,9 @@ def parse_catalog(raw: bytes) -> dict:
         for dependency in component.get("depends_on", []):
             if dependency not in ids or dependency == component["id"]:
                 raise ReleaseError(f"invalid dependency {dependency!r} in {component['id']}")
+        for predecessor in component.get("release_after", []):
+            if predecessor not in ids or predecessor == component["id"]:
+                raise ReleaseError(f"invalid optional release predecessor {predecessor!r} in {component['id']}")
         required = component.get("required_artifacts", [])
         if (not isinstance(required, list)
                 or any(not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9._-]*", name)
@@ -427,7 +430,9 @@ def build_environment(root: Path, component_id: str) -> dict[str, str]:
     folders = (work, root / "artifacts" / component_id, root / "cache" / "cargo",
                root / "cache" / "gradle", root / "cache" / "npm",
                root / "cache" / "pnpm", root / "cache" / "corepack", root / "cache" / "pip",
-               root / "cache" / "habitat", root / "cache" / "xdg", work / "pub-cache", root / "tmp")
+               root / "cache" / "habitat", root / "cache" / "xdg", root / "cache" / "go-mod",
+               root / "cache" / "go-build", root / "cache" / "poetry", work / "pyinstaller-cache",
+               work / "pub-cache", root / "tmp")
     for folder in folders:
         if not folder.resolve().is_relative_to(root):
             raise ReleaseError(f"build output path escapes the external build root: {folder}")
@@ -441,6 +446,10 @@ def build_environment(root: Path, component_id: str) -> dict[str, str]:
         "npm_config_store_dir": str(root / "cache" / "pnpm"),
         "COREPACK_HOME": str(root / "cache" / "corepack"),
         "PIP_CACHE_DIR": str(root / "cache" / "pip"),
+        "GOMODCACHE": str(root / "cache" / "go-mod"),
+        "GOCACHE": str(root / "cache" / "go-build"),
+        "POETRY_CACHE_DIR": str(root / "cache" / "poetry"),
+        "PYINSTALLER_CONFIG_DIR": str(work / "pyinstaller-cache"),
         "PUB_CACHE": str(work / "pub-cache"),
         "HABITAT_CACHE_ROOT": str(root / "cache" / "habitat"),
         "XDG_CACHE_HOME": str(root / "cache" / "xdg"),

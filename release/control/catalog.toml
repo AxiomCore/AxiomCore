@@ -174,7 +174,7 @@ owner = "axiom-backend"
 kind = "service"
 adapter = "ci-only"
 destination = "Artifact Registry digest; Cloud Run API revision"
-sources = [{ repo = "axiom-backend", paths = ["cmd/api/", "internal/", "db/", "go.mod", "go.sum", "Dockerfile", "scripts/deploy-cloud-run.sh"] }]
+sources = [{ repo = "axiom-backend", paths = ["."] }]
 
 [[components]]
 id = "extractor-fastapi"
@@ -204,9 +204,10 @@ id = "backend-worker"
 owner = "axiom-backend"
 kind = "job"
 adapter = "ci-only"
+release_after = ["backend-api", "mock-runner", "contract-test-runner"]
 destination = "Artifact Registry digest; Cloud Run release-worker Job"
 sources = [
-  { repo = "axiom-backend", paths = ["cmd/worker/", "internal/", "go.mod", "go.sum", "Dockerfile.semantic-worker", "cloudbuild.semantic-worker.yaml", "scripts/deploy-cloud-run.sh"] },
+  { repo = "axiom-backend", paths = ["."] },
   { repo = "acore", paths = ["src/", "Cargo.toml", "Cargo.lock"] },
   { repo = "acore-diff", paths = ["acore-diff/src/", "acore-diff/Cargo.toml", "acore-diff/Cargo.lock"] },
   { repo = "axiom-lib", paths = ["src/", "Cargo.toml", "Cargo.lock"] },
@@ -243,14 +244,33 @@ id = "dashboard-origin"
 owner = "axiom-frontend"
 kind = "service"
 adapter = "ci-only"
+release_after = ["backend-api"]
 destination = "Artifact Registry digest; Cloud Run dashboard revision"
-sources = [{ repo = "axiom-frontend", paths = ["apps/dashboard/", "packages/", "lib/", "package.json", "pnpm-lock.yaml", "Dockerfile.dashboard", "cloudbuild.dashboard.yaml", "scripts/deploy-cloud-run.sh"] }]
+sources = [
+  { repo = "axiom-frontend", paths = ["apps/dashboard/", "packages/", "lib/", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "Dockerfile.dashboard", "justfile"] },
+  { repo = "axiom-backend", paths = ["contracts/axiom.axiom"] },
+  { repo = "atmx-web", paths = ["src/", "public/", "package.json", "package-lock.json", "vite.config.ts"] },
+  { repo = "axiom-sdk", paths = ["flutter/axiom_flutter/"] },
+  { repo = "AxiomCore", paths = ["cli/", "release/atmx-cli/", "release/scripts/wasm.sh"] },
+  { repo = "axiom-runtime", paths = ["src/", "Cargo.toml", "Cargo.lock"] },
+  { repo = "axiom-lib", paths = ["src/", "Cargo.toml", "Cargo.lock"] },
+  { repo = "rod", paths = ["core/", "macros/", "Cargo.lock"] },
+  { repo = "acore", paths = ["src/", "Cargo.toml", "Cargo.lock"] },
+  { repo = "acore-diff", paths = ["acore-diff/src/", "acore-diff/Cargo.toml", "acore-diff/Cargo.lock"] },
+  { repo = "axiom-build", paths = ["src/", "Cargo.toml", "Cargo.lock"] },
+  { repo = "axiom-cloud", paths = ["src/", "Cargo.toml", "Cargo.lock"] },
+  { repo = "axiom-extractor", paths = ["src/", "Cargo.toml", "Cargo.lock"] },
+  { repo = "axiom-mock", paths = ["src/", "Cargo.toml", "Cargo.lock"] },
+  { repo = "axiom-test-runner", paths = ["src/", "Cargo.toml", "Cargo.lock"] },
+  { repo = "axiom-ui", paths = ["src/", "Cargo.toml", "Cargo.lock", "registry/"] },
+]
 
 [[components]]
 id = "dashboard-proxy"
 owner = "axiom-frontend"
 kind = "edge"
 adapter = "dashboard-proxy"
+release_after = ["dashboard-origin"]
 required_artifacts = ["_worker.js"]
 destination = "Cloudflare Pages dashboard proxy"
 sources = [{ repo = "axiom-frontend", paths = ["scripts/deploy-cloudflare.sh"] }]

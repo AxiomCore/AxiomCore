@@ -1,5 +1,37 @@
 # AxiomCore platform release control
 
+## Local release dashboard
+
+Run `just release web` and open the printed `http://127.0.0.1:8716/` address.
+The Python server binds only to loopback; its browser UI is in
+[`web/index.html`](./web/index.html). Select components with a selective builder,
+enter the train summary, each component's change type/note/version, and review
+the generated sequence. Existing uncommitted files can be inspected and
+committed explicitly from the workspace panel. The production confirmation is
+`PUBLISH <train-id>`; it authorizes the dashboard to create the next train,
+prepare version mirrors and owned changelog fragments, commit only those
+managed paths, push the required tracked branches without force, build each
+candidate in dependency order, and publish each only after **all** builds pass.
+Selected-only rollout ordering places the backend API, managed runner and
+contract executor before the release worker, and the dashboard origin before
+its edge proxy, without forcing an unchanged component into the train.
+Each publisher still verifies remote bytes. A failed step stops the run;
+there is no automatic rollback of an already published component.
+
+The run and log are checkpointed under the external release root's `ui-runs/`
+directory. Reopen the dashboard to inspect or explicitly resume a stopped
+run. A resumed run never rewrites completed release evidence; if a partial
+step cannot be verified, it fails closed for manual inspection. The dashboard
+does not create or format the external SSD image.
+
+Former CI-only targets now have selective candidate builders: package and
+framework builds use tracked Git sources staged on the release SSD; container
+targets submit only staged sources to Cloud Build under immutable candidate
+tags. The build writes the same source-bound receipt as the existing local
+adapters. Production deployment and stable tags remain exclusively in the
+publisher step. Required platform tools, cloud credentials and provisioned
+destinations still need to be available; a missing prerequisite stops the run.
+
 The root `justfile` exposes one operator interface: `just release`. See the
 [operator guide](./OPERATIONS.md) for its short workflow and the
 [production migration](./PUBLISHER_MIGRATION.md) for what is still missing.
@@ -68,13 +100,12 @@ package, service image, or deployment marker before recording success. GitHub
 assets are downloaded and hashed; Pages sites are checked at their deployment
 and production alias. No command silently publishes at build time.
 
-The *publisher* paths are wired for all catalog targets, but most are not yet
-end-to-end releasable: the CI-only entries have no selective builder in this
-checkout, and no destination adapter has completed a disposable production-like
-rehearsal. `just release capabilities` shows the builder gap. This work does
-not claim a signed whole-train baseline or finalize changelogs. Keep the old
-scripts out of this operator path until the missing builders and rehearsal
-are completed.
+The *publisher* paths are wired for all catalog targets, but no destination
+adapter has completed a disposable production-like rehearsal. The selective
+builders have unit-tested receipt and isolation behavior; they are not a
+claim that every platform tool or cloud destination has been exercised on this
+machine. This work does not claim a signed whole-train baseline or finalize
+changelogs. Keep the old mutating deploy scripts out of this operator path.
 The checked-in GitHub Actions release-control workflow currently runs tests;
 it is not a production publisher. A candidate gate can only say
 `candidate-ready-for-publisher`, never `published`.

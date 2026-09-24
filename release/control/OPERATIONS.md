@@ -1,5 +1,13 @@
 # AxiomCore release operator guide
 
+For the guided local workflow, start `just release web` and use the loopback
+dashboard. It previews the next train, exact managed source edits, source
+pushes, and build/publish order before accepting a typed production
+confirmation. It stops before expensive builds when a required repository is
+dirty, divergent, or lacks an upstream. SSD and Cloud Build candidate builders
+run sequentially and produce the same pinned receipts. The
+terminal commands below remain available for inspection and recovery.
+
 Run every operator command from `/Users/yashmakan/AxiomCore/AxiomCore`:
 
 ```sh
@@ -87,12 +95,12 @@ jobs, and sites use immutable image/deployment digests rather than SemVer.
    Once every declared repository is clean, the screen asks whether to run a
    safe candidate preflight. If it was already clean, preflight runs directly.
    Preflight verifies preparation evidence and the committed source plan, then
-   identifies local builders and CI-only gaps. It does not build, push,
+   identifies SSD and Cloud Build candidates and any prerequisite gaps. It does not build, push,
    publish, or deploy. From a noninteractive shell, `prepare` prints a short
    dirty-repository summary and asks you to run `just release review` in a
    terminal. After preflight, run each owner repo's tests and use
-   `just release COMPONENT` for a component with a supported local builder
-   (`cli`, `ui-host`, `landing`, or `docs`).
+   `just release COMPONENT` for an individual component, or use the dashboard
+   for an ordered multi-component run.
 
 `prepare` mounts the **existing** SSD-backed APFS image if needed. It does not
 create or format a disk. The normal path is derived automatically from the
@@ -119,7 +127,7 @@ An interrupted candidate can be retried only with the exact same intent and
 source plan. Verified receipts from completed targets are reused; attempt logs
 are retained. A staged candidate or a nonempty artifact directory without a
 receipt is never overwritten automatically. Dirty inputs, dependencies outside
-the active wave, and CI-only builders also stop candidate creation.
+the active wave, and missing builder prerequisites also stop candidate creation.
 `just release test` runs the control-plane tests; `just release help` prints the
 command summary.
 
@@ -172,10 +180,11 @@ That does **not** move `axiomcore.dev` from its current origin. Coordinate DNS
 and the existing `/join` route separately after reviewing the Pages URL; the
 control plane never changes a custom domain automatically.
 
-Targets without a complete gated candidate still **fail closed**. Most
-non-local components need selective CI builders and exact receipts before the
-publish adapters can be used. No live production publish was run during the
-adapter implementation; registry credentials and disposable rehearsal are
+Targets without a complete gated candidate still **fail closed**. Selective
+builders now exist for the former CI-only targets; missing toolchains, cloud
+credentials or an unprovisioned destination still stop the run. No live
+production publish was run during the builder implementation; registry
+credentials and disposable rehearsal are
 still required. Production also needs a trusted signed baseline, partial-release
 retries, and changelog finalization. See
 [PUBLISHER_MIGRATION.md](./PUBLISHER_MIGRATION.md). Never rename a staged
@@ -184,13 +193,13 @@ published baseline.
 
 ## Exact receipt contract for CI-owned targets
 
-`just release capabilities` labels CI-only builders as a gap. To stage one of
-those targets, a selective CI build must check out the plan's pinned source
-commits, test the component, place its immutable output under the release
-root's `artifacts/COMPONENT/FINGERPRINT/`, and write the standard receipt there with
-`ctl.py receipt --plan ... --component ... --artifact ... --out ...`.
-`just release COMPONENT` then verifies and consumes that receipt. A receipt
-from an unrelated plan or changed bytes is rejected.
+`just release capabilities` labels these targets `selective`. `just release
+COMPONENT` stages committed source under the external release root, builds its
+immutable artifact and writes the standard receipt. GCP targets use Cloud
+Build with a source-head substitution and candidate-only image tag; the
+publisher independently verifies the build ID and registry digest before
+rolling a service/job or moving a managed tag. A receipt from an unrelated
+plan or changed bytes is rejected.
 
 | Target | Exact artifact expected by its publisher |
 | --- | --- |
@@ -201,6 +210,16 @@ from an unrelated plan or changed bytes is rejected.
 | `sdk-swift` | reviewed `Package.swift` with the published Apple runtime URL/checksum |
 | `extractor-fastapi`, `extractor-go` | one or more platform binaries prefixed `axiom-fastapi-` or `axiom-go-extractor-` |
 | `backend-api`, `backend-worker`, `mock-runner`, `contract-test-runner`, `dashboard-origin` | `image-ref.json` containing `image` as an Artifact Registry `@sha256:` URI, `sourceHeads` equal to the plan, and the Cloud Build `buildId` |
+
+The selective builder runner requires the relevant toolchain on its machine:
+Xcode, `cbindgen` and `wasm-pack` for Apple/WASM; Node/npm, pnpm, Dart/Flutter,
+Swift, Go and Python/Poetry/PyInstaller for their packages; and authenticated
+`gcloud` plus an explicit `AXIOM_GCP_REGION` for image candidates. A selected
+target fails before writing a receipt if a tool, remote build result, or
+expected output is missing. Container candidates create only immutable
+`candidate-*` tags; unlike the old deployment recipes, a build does not
+advance a stable runner tag or a Cloud Run revision. The release dashboard
+keeps all local source and artifact work on the external APFS build volume.
 
 The local dashboard proxy build needs `AXIOM_DASHBOARD_ORIGIN` set to the
 deployed HTTPS Cloud Run origin. It stages `_worker.js` with a source-bound

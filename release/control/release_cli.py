@@ -10,6 +10,7 @@ import subprocess
 import sys
 
 import ctl
+import ci_builders
 import cycle
 import flow
 import gate
@@ -25,6 +26,7 @@ import versions
 
 HOST_IDS = {"ui-host-web", "ui-host-android", "ui-host-ios"}
 HELP = """AxiomCore release commands:
+  just release web                     Open the local release dashboard (http://127.0.0.1:8716)
   just release                         Show changed builds and the next safe step
   just release new                     Choose components and create the next release cycle interactively
   just release new restart             Archive an unfinished draft and start a different cycle
@@ -142,7 +144,8 @@ def status(catalog: dict, ledger: dict, intent: dict) -> None:
 def capabilities(catalog: dict) -> None:
     print(f"{'Component':24} {'Build':12} {'Publisher':12} Destination")
     for entry in catalog["components"]:
-        build = "local" if entry["adapter"] != "ci-only" else "CI gap"
+        build = "local" if entry["adapter"] != "ci-only" else (
+            "selective" if entry["id"] in ci_builders.SUPPORTED else "CI gap")
         publisher_ready = (entry["id"].startswith("ui-host-") or entry["id"] in {"landing", "docs"}
                            or entry["id"] in publish_targets.GITHUB or entry["id"] in publish_targets.NPM
                            or entry["id"] in publish_targets.PUB or entry["id"] in publish_targets.GCP
@@ -150,7 +153,7 @@ def capabilities(catalog: dict) -> None:
         publish = "wired" if publisher_ready else "adapter gap"
         print(f"{entry['id']:24} {build:12} {publish:12} {entry['destination']}")
     print("Grouped Host publication: `just release publish ui-host [TRAIN]`.")
-    print("Wired = adapter implemented, not live-rehearsed. CI gap = no selective build receipt producer in this checkout.")
+    print("Selective = source-bound SSD/Cloud Build candidate builder; destination gates still apply.")
 
 
 def upstream_state(repository: Path) -> tuple[str | None, int]:
@@ -220,11 +223,13 @@ def candidate_preflight(catalog: dict, intent: dict) -> None:
         raise ctl.ReleaseError("release preflight selected dependencies outside the active wave: "
                                + ", ".join(sorted(unscoped)))
     local = sorted(item["id"] for item in plan["components"]
-                   if item["selected"] and item["adapter"] != "ci-only")
+                   if item["selected"] and (item["adapter"] != "ci-only"
+                                            or item["id"] in ci_builders.SUPPORTED))
     ci_only = sorted(item["id"] for item in plan["components"]
-                     if item["selected"] and item["adapter"] == "ci-only")
+                     if item["selected"] and item["adapter"] == "ci-only"
+                     and item["id"] not in ci_builders.SUPPORTED)
     print(f"Local candidate preflight passed for train {intent['trainId']}: {len(selected)} selected component(s).")
-    print("Local candidate builders: " + (", ".join(local) if local else "none"))
+    print("Available candidate builders: " + (", ".join(local) if local else "none"))
     if HOST_IDS <= set(local):
         print("Next local build: `just release ui-host` (live progress; press l for logs).")
     print("CI builder gap: " + (", ".join(ci_only) if ci_only else "none"))
@@ -302,8 +307,15 @@ def candidate(catalog: dict, intent: dict, component: str) -> None:
         raise ctl.ReleaseError("selected dependencies are not active: " + ", ".join(sorted(selected - active)))
     if plan["blocked"] or plan["blockedVersions"]:
         raise ctl.ReleaseError("commit changed build inputs and use a new published version before candidate build")
+    dependency_issues = ci_builders.dependency_blockers(selected, versions.read_versions(versions.VERSIONS, catalog), ctl.WORKSPACE)
+    if dependency_issues:
+        raise ctl.ReleaseError("; ".join(dependency_issues))
+    prerequisite_issues = ci_builders.prerequisite_issues(selected)
+    if prerequisite_issues:
+        raise ctl.ReleaseError("; ".join(prerequisite_issues))
     ci_only = sorted(item["id"] for item in plan["components"]
                      if item["selected"] and item["adapter"] == "ci-only"
+                     and item["id"] not in ci_builders.SUPPORTED
                      and not ctl.artifact_receipt_path(root, item, plan["repositories"]).is_file())
     if ci_only:
         raise ctl.ReleaseError("no verified build receipt for CI-only " + ", ".join(ci_only)
@@ -335,9 +347,12 @@ def candidate(catalog: dict, intent: dict, component: str) -> None:
             artifact_directory = receipt.parent
             if artifact_directory.exists() and any(artifact_directory.iterdir()):
                 raise ctl.ReleaseError(f"incomplete artifact directory has no receipt; inspect before retrying: {artifact_directory}")
-            ctl.build_component(directory / "plan.json", entry["id"], catalog, ctl.WORKSPACE,
-                                command_runner=progress.command_runner(directory, entry["id"],
-                                                                       position, len(selected_entries)))
+            if entry["adapter"] == "ci-only":
+                ci_builders.build_component(directory / "plan.json", entry["id"], catalog, ctl.WORKSPACE)
+            else:
+                ctl.build_component(directory / "plan.json", entry["id"], catalog, ctl.WORKSPACE,
+                                    command_runner=progress.command_runner(directory, entry["id"],
+                                                                           position, len(selected_entries)))
             receipt = ctl.artifact_receipt_path(root, entry, plan["repositories"])
             ctl.verify_receipt(receipt, entry["fingerprint"])
         receipts.append(receipt)
@@ -360,6 +375,9 @@ def main() -> int:
     if action in ("help", "--help", "-h"):
         print(HELP)
         return 0
+    if action == "web":
+        import web_server
+        return web_server.main([])
     if action == "test":
         return subprocess.run([sys.executable, "-B", "-m", "unittest", "discover",
                                "-s", str(ctl.CONTROL_DIR), "-p", "test_*.py", "-v"],

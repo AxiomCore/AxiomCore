@@ -243,10 +243,12 @@ def candidate_preflight(catalog: dict, intent: dict) -> None:
         elif ahead:
             ahead_repositories.append(f"{name} ({ahead} ahead of {upstream})")
     if ahead_repositories:
-        print("Remote/CI gap — push reviewed source commits: " + ", ".join(sorted(ahead_repositories)))
+        print("Committed source awaiting push (confirmed dashboard release pushes required repos): "
+              + ", ".join(sorted(ahead_repositories)))
     if missing_upstreams:
         print("Remote/CI gap — configure tracked upstreams: " + ", ".join(sorted(missing_upstreams)))
-    print("No candidate was built or published. `just release capabilities` shows destination adapters and builder gaps.")
+    print("Preflight only: no candidate was built or published. Build with `just release COMPONENT` "
+          "or run the reviewed release in the dashboard.")
 
 
 def publish_one(component: str, root: Path, train_id: str | None = None) -> dict:

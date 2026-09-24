@@ -80,7 +80,11 @@ def changed_files(repository: Path) -> list[dict]:
             if index >= len(records) or not records[index]:
                 raise ctl.ReleaseError(f"incomplete rename record in {repository}")
             item["oldPath"] = records[index].decode("utf-8", "surrogateescape")
-        result.append(item)
+        # With --untracked-files=all, Git still reports nested Git checkouts as
+        # directory entries. They belong to their own repositories, not this
+        # repository's review, commit, or release-push cleanliness check.
+        if state != "??" or not path.endswith("/"):
+            result.append(item)
         index += 1
     return result
 

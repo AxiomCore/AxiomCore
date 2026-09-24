@@ -20,6 +20,19 @@ def git(repository: Path, *args: str) -> str:
 
 
 class ReleaseWebTests(unittest.TestCase):
+    def test_review_ignores_untracked_nested_git_checkouts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = Path(temporary) / "aggregate"
+            repository.mkdir()
+            git(repository, "init", "-q")
+            nested = repository / "nested"
+            nested.mkdir()
+            git(nested, "init", "-q")
+            (nested / "source.txt").write_text("owned by nested repository\n")
+            (repository / "review.txt").write_text("owned by aggregate repository\n")
+            self.assertEqual([item["path"] for item in web_server.changed_files(repository)],
+                             ["review.txt"])
+
     def test_release_groups_follow_dependencies_and_group_hosts(self):
         catalog = {"components": [
             {"id": "sdk", "depends_on": ["runtime"]},

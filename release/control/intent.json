@@ -1,6 +1,6 @@
 {
   "format": "axiom-platform-release-intent/v1",
-  "trainId": "2026.09.24.2",
+  "trainId": "2026.09.24.3",
   "wave": "foundation",
   "summary": "Add the centralized AxiomCore release control plane and stage changed runtime, host, SDK, runner, CLI, and documentation components through reviewed candidate versions and evidence.",
   "changes": [

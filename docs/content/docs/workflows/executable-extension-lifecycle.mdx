@@ -1,12 +1,13 @@
 ---
 title: Executable extension lifecycle
-description: Review and release a Rust WebAssembly extension through signed authority, deterministic locks, target checks, and host audit evidence.
+description: Review and release a source-authored WebAssembly extension through deterministic dependencies, signed authority, target checks, and host audit evidence.
 ---
 
 Use an executable extension only when declarative Acore behavior and ordinary
 application integration are not the right fit. This is an **Experimental**
-workflow: it is source-level and Rust-only, and it requires target-specific
-validation before a release.
+workflow. Rust, TypeScript, and Python use different managed source profiles but
+the same runtime boundary, and every release requires target-specific
+validation.
 
 ## What the application author prepares
 
@@ -16,13 +17,13 @@ package or host integration:
 ```text
 main.acore
 AxiomDeps.toml
-logic/checkout.rs      # the folder name is author-selected
+logic/checkout.rs      # or .ts / .py; the folder name is author-selected
 ```
 
 The Acore source imports a stable extension alias. `AxiomDeps.toml` registers
-the Rust entry file, exports, targets, explicitly shared Rust files, and the
-module's maximum permissions. Rust is the only supported guest language in the
-current experimental source driver.
+the language entry file, exports, targets, explicitly shared source files, and
+the module's maximum permissions. Exact third-party dependencies and a pinned
+language environment are declared in the same file when needed.
 
 Generate or update the complete local release workflow with:
 
@@ -32,16 +33,16 @@ axiom extensions source-release checkout \
   --application example.checkout
 ```
 
-Axiom owns the generated Cargo crate, ABI wrapper, typed bindings, Wasm module,
-package draft, signatures, and locks. The author reviews and commits the
-generated workflow/release inputs, but never edits those files to introduce
-authority. Ignored Axiom-managed local keys keep repeat generation stable.
+Axiom owns generated Cargo/npm/Python build descriptions, ABI wrappers, typed
+bindings, Wasm, package metadata, signatures, and locks. The author reviews the
+release inputs but never edits generated files to introduce authority. Ignored
+Axiom-managed local keys keep repeat generation stable.
 
 ## Generated release inputs
 
 The command produces separate, content-addressed inputs:
 
-1. A Rust WebAssembly module built against the Axiom extension SDK.
+1. A WebAssembly module built by the pinned language profile against the Axiom extension SDK.
 2. An `axiom-extension/v2` package that declares the ABI, SDK identity,
    exported operations, imported operations, execution limits, provenance, and
    module digest.

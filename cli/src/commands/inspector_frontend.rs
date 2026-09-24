@@ -12,8 +12,9 @@ use axiom_lib::application_evidence::{
     EvidenceNode, EvidenceNodeKind, EvidenceReference, TruthLayer, VerificationState,
 };
 use axiom_ui::{
-    compile_ui_source, compile_ui_source_with_package_lock, expression_references_identifier,
-    SourceSpan, UiActionStep, UiCompileOptions, UiIr, UiNode, UiTarget,
+    compile_ui_source_at_path, compile_ui_source_with_package_lock_at_path,
+    expression_references_identifier, standard_component_contract, SourceSpan, UiActionStep,
+    UiCompileOptions, UiIr, UiNode, UiTarget,
 };
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -30,6 +31,7 @@ pub fn enrich(path: &Path, mut evidence: ApplicationEvidence) -> Result<Applicat
     };
     let mut sources = Vec::new();
     discover(&root, &mut sources)?;
+    let sources = entry_sources(sources)?;
     for source_path in sources {
         compile_source(&root, &source_path, &mut evidence)?;
     }
@@ -39,6 +41,30 @@ pub fn enrich(path: &Path, mut evidence: ApplicationEvidence) -> Result<Applicat
         "frontend facts come from typed Axiom UI IR; backend facts come from immutable .axiom artifacts".into(),
     );
     evidence.finalize()
+}
+
+fn entry_sources(sources: Vec<PathBuf>) -> Result<Vec<PathBuf>> {
+    let import_re = regex::Regex::new(
+        r#"(?m)^\s*use\s+(?:component|page)\s+[A-Za-z_][A-Za-z0-9_]*\s+from\s+\"([^\"]+)\"\s*$"#,
+    )?;
+    let mut imported = BTreeSet::new();
+    for source in &sources {
+        let text = fs::read_to_string(source)?;
+        for capture in import_re.captures_iter(&text) {
+            if let Ok(path) = fs::canonicalize(
+                source
+                    .parent()
+                    .unwrap_or_else(|| Path::new("."))
+                    .join(capture.get(1).unwrap().as_str()),
+            ) {
+                imported.insert(path);
+            }
+        }
+    }
+    Ok(sources
+        .into_iter()
+        .filter(|path| !imported.contains(path))
+        .collect())
 }
 
 fn discover(directory: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
@@ -96,9 +122,14 @@ fn compile_source(root: &Path, path: &Path, evidence: &mut ApplicationEvidence) 
                         asset_root: Some(asset_root),
                     };
                     if package_lock.is_file() {
-                        compile_ui_source_with_package_lock(source, &options, &package_lock)
+                        compile_ui_source_with_package_lock_at_path(
+                            source,
+                            path,
+                            &options,
+                            &package_lock,
+                        )
                     } else {
-                        compile_ui_source(source, &options)
+                        compile_ui_source_at_path(source, path, &options)
                     }
                 }),
             ));
@@ -119,12 +150,26 @@ fn compile_source(root: &Path, path: &Path, evidence: &mut ApplicationEvidence) 
             add_ir(evidence, &ir, &relative, &reference)?;
         }
         for diagnostic in compilation.diagnostics {
+            let diagnostic_path = diagnostic
+                .source_path
+                .as_deref()
+                .map(|local| {
+                    let parent = Path::new(&relative)
+                        .parent()
+                        .unwrap_or_else(|| Path::new(""));
+                    slash(&parent.join(local))
+                })
+                .unwrap_or_else(|| relative.clone());
             evidence.diagnostics.push(EvidenceDiagnostic {
                 code: diagnostic.code,
                 severity: format!("{:?}", diagnostic.severity).to_lowercase(),
                 message: format!("{} [{}]", diagnostic.message, target.as_str()),
                 node_id: None,
-                evidence: vec![span_reference(&relative, &diagnostic.span, &reference)],
+                evidence: vec![span_reference(
+                    &diagnostic_path,
+                    &diagnostic.span,
+                    &reference,
+                )],
             });
         }
     }
@@ -162,6 +207,48 @@ fn add_ir(
         reference.clone(),
         None,
     ));
+    for local in &ir.local_modules {
+        let local_path = local_graph_path(source, &local.path);
+        let local_id = semantic_id("local-acore-module", &local_path);
+        evidence.upsert_node(node(
+            local_id.clone(),
+            EvidenceNodeKind::SourceUnit,
+            &local_path,
+            vec![target.clone()],
+            BTreeMap::from([
+                ("sha256".into(), json!(local.sha256)),
+                ("compileTimeOnly".into(), json!(true)),
+                ("exports".into(), json!(local.exports)),
+            ]),
+            EvidenceReference {
+                kind: "source".into(),
+                path: Some(local_path.clone()),
+                sha256: Some(local.sha256.clone()),
+                detail: Some("local Acore module".into()),
+            },
+            None,
+        ));
+        add_edge(
+            evidence,
+            &module_id,
+            &local_id,
+            EvidenceEdgeKind::Contains,
+            vec![target.clone()],
+        );
+        for import in &local.imports {
+            let dependency = semantic_id(
+                "local-acore-module",
+                &local_graph_path(source, &import.resolved_path),
+            );
+            add_edge(
+                evidence,
+                &local_id,
+                &dependency,
+                EvidenceEdgeKind::Imports,
+                vec![target.clone()],
+            );
+        }
+    }
     if let Some(application) = evidence
         .nodes
         .iter()
@@ -261,7 +348,7 @@ fn add_ir(
             &page.name,
             vec![target.clone()],
             BTreeMap::from([("renderedSemanticId".into(), json!(page.semantic_id.value))]),
-            reference.clone(),
+            semantic_reference(ir, &page.semantic_id, source, reference),
             Some(&page.span),
         ));
         add_edge(
@@ -287,19 +374,22 @@ fn add_ir(
         let mut state_ids = BTreeMap::new();
         for state in &page.states {
             let id = semantic_id("state", &format!("{source}#{}", state.semantic_id.value));
-            state_ids.insert(state.name.clone(), id.clone());
+            let state_path = state.path();
+            state_ids.insert(state_path.clone(), id.clone());
             evidence.upsert_node(node(
                 id.clone(),
                 EvidenceNodeKind::State,
-                &format!("{}.{}", page.name, state.name),
+                &format!("{}.{}", page.name, state_path),
                 vec![target.clone()],
                 BTreeMap::from([
                     ("renderedSemanticId".into(), json!(state.semantic_id.value)),
                     ("name".into(), json!(state.name)),
+                    ("scope".into(), json!(state.scope)),
+                    ("path".into(), json!(state_path)),
                     ("type".into(), json!(state.declared_type)),
                     ("initializer".into(), json!(state.initializer)),
                 ]),
-                reference.clone(),
+                semantic_reference(ir, &state.semantic_id, source, reference),
                 Some(&state.span),
             ));
             add_edge(
@@ -335,7 +425,7 @@ fn add_ir(
                     ),
                     ("contractOperation".into(), json!(operation.operation)),
                 ]),
-                reference.clone(),
+                semantic_reference(ir, &operation.semantic_id, source, reference),
                 Some(&operation.span),
             ));
             add_edge(
@@ -382,7 +472,7 @@ fn add_ir(
                 &format!("{}.{}", page.name, action.name),
                 vec![target.clone()],
                 BTreeMap::from([("renderedSemanticId".into(), json!(action.semantic_id.value))]),
-                reference.clone(),
+                semantic_reference(ir, &action.semantic_id, source, reference),
                 Some(&action.span),
             ));
             add_edge(
@@ -401,7 +491,7 @@ fn add_ir(
                     &label,
                     vec![target.clone()],
                     BTreeMap::from([("step".into(), serde_json::to_value(step)?)]),
-                    reference.clone(),
+                    semantic_reference(ir, &action.semantic_id, source, reference),
                     Some(span),
                 ));
                 add_edge(
@@ -501,6 +591,7 @@ fn add_ir(
                 &target,
                 source,
                 reference,
+                ir,
             )?;
         }
     }
@@ -522,7 +613,7 @@ fn add_ir(
                 ),
                 ("props".into(), json!(component.props)),
             ]),
-            reference.clone(),
+            semantic_reference(ir, &component.semantic_id, source, reference),
             Some(&component.span),
         ));
         add_edge(
@@ -542,6 +633,7 @@ fn add_ir(
                 &target,
                 source,
                 reference,
+                ir,
             )?;
         }
     }
@@ -562,7 +654,7 @@ fn add_ir(
                 ),
                 ("expression".into(), json!(derived.expression)),
             ]),
-            reference.clone(),
+            semantic_reference(ir, &derived.semantic_id, source, reference),
             Some(&derived.span),
         ));
         add_edge(
@@ -584,7 +676,7 @@ fn add_ir(
                 ("renderedSemanticId".into(), json!(effect.semantic_id.value)),
                 ("trigger".into(), json!(effect.trigger)),
             ]),
-            reference.clone(),
+            semantic_reference(ir, &effect.semantic_id, source, reference),
             Some(&effect.span),
         ));
         add_edge(
@@ -603,7 +695,7 @@ fn add_ir(
             &asset.path,
             vec![target.clone()],
             BTreeMap::from([("sha256".into(), json!(asset.sha256))]),
-            reference.clone(),
+            semantic_reference(ir, &asset.semantic_id, source, reference),
             Some(&asset.span),
         ));
         add_edge(
@@ -722,6 +814,29 @@ fn add_ir(
     Ok(())
 }
 
+fn local_graph_path(entry: &str, local: &str) -> String {
+    let parent = Path::new(entry).parent().unwrap_or_else(|| Path::new(""));
+    slash(&parent.join(local))
+}
+
+fn semantic_reference(
+    ir: &UiIr,
+    semantic: &axiom_ui::SemanticId,
+    entry: &str,
+    fallback: &EvidenceReference,
+) -> EvidenceReference {
+    ir.source_evidence
+        .iter()
+        .find(|item| item.semantic_id == *semantic)
+        .map(|item| EvidenceReference {
+            kind: "source-span".into(),
+            path: Some(local_graph_path(entry, &item.source_path)),
+            sha256: Some(item.source_sha256.clone()),
+            detail: None,
+        })
+        .unwrap_or_else(|| fallback.clone())
+}
+
 fn add_view(
     evidence: &mut ApplicationEvidence,
     value: &UiNode,
@@ -731,6 +846,7 @@ fn add_view(
     target: &str,
     source: &str,
     reference: &EvidenceReference,
+    ir: &UiIr,
 ) -> Result<()> {
     let id = semantic_id(
         "primitive",
@@ -740,6 +856,12 @@ fn add_view(
         .component_name
         .clone()
         .unwrap_or_else(|| format!("{:?}", value.primitive));
+    let standard = standard_component_contract(&value.primitive).and_then(|expected| {
+        ir.standard_components
+            .iter()
+            .find(|contract| contract.name == expected.name)
+            .cloned()
+    });
     evidence.upsert_node(node(
         id.clone(),
         EvidenceNodeKind::Primitive,
@@ -752,8 +874,10 @@ fn add_view(
             ("properties".into(), json!(value.properties)),
             ("condition".into(), json!(value.condition)),
             ("iterator".into(), json!(value.iterator)),
+            ("authoredComponent".into(), json!(label)),
+            ("expandedComponentContract".into(), json!(standard)),
         ]),
-        reference.clone(),
+        semantic_reference(ir, &value.semantic_id, source, reference),
         Some(&value.span),
     ));
     add_edge(
@@ -813,19 +937,19 @@ fn add_view(
     }
     for child in &value.children {
         add_view(
-            evidence, child, &id, actions, states, target, source, reference,
+            evidence, child, &id, actions, states, target, source, reference, ir,
         )?;
     }
     for branch in &value.else_if {
         for child in &branch.children {
             add_view(
-                evidence, child, &id, actions, states, target, source, reference,
+                evidence, child, &id, actions, states, target, source, reference, ir,
             )?;
         }
     }
     for child in &value.else_children {
         add_view(
-            evidence, child, &id, actions, states, target, source, reference,
+            evidence, child, &id, actions, states, target, source, reference, ir,
         )?;
     }
     Ok(())
@@ -925,6 +1049,90 @@ fn add_cross_layer_edges(evidence: &mut ApplicationEvidence) {
             add_edge(evidence, &permission, state, kind, targets);
         }
     }
+    let operations = evidence
+        .nodes
+        .iter()
+        .filter(|node| node.kind == EvidenceNodeKind::Operation)
+        .map(|node| (node.label.clone(), node.id.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let contract_permissions = evidence
+        .nodes
+        .iter()
+        .filter(|node| node.kind == EvidenceNodeKind::Permission)
+        .filter_map(|node| {
+            let permission = node.attributes.get("permission")?;
+            (permission.get("kind")?.as_str()? == "contract-runtime").then(|| {
+                (
+                    node.id.clone(),
+                    permission
+                        .get("path")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    node.targets.clone(),
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    for (permission, path, targets) in contract_permissions {
+        let operation = path.rsplit('.').next().unwrap_or(&path);
+        if let Some(operation_id) = operations.get(operation) {
+            add_edge(
+                evidence,
+                &permission,
+                operation_id,
+                EvidenceEdgeKind::Calls,
+                targets,
+            );
+        }
+    }
+    let package_permissions = evidence
+        .edges
+        .iter()
+        .filter(|edge| edge.kind == EvidenceEdgeKind::Impacts)
+        .filter(|edge| {
+            evidence
+                .nodes
+                .iter()
+                .find(|node| node.id == edge.from)
+                .is_some_and(|node| node.kind == EvidenceNodeKind::ThirdPartyPackage)
+                && evidence
+                    .nodes
+                    .iter()
+                    .find(|node| node.id == edge.to)
+                    .is_some_and(|node| node.kind == EvidenceNodeKind::Permission)
+        })
+        .map(|edge| (edge.from.clone(), edge.to.clone(), edge.targets.clone()))
+        .collect::<Vec<_>>();
+    let permission_effects = evidence
+        .edges
+        .iter()
+        .filter(|edge| {
+            matches!(
+                edge.kind,
+                EvidenceEdgeKind::Reads
+                    | EvidenceEdgeKind::Writes
+                    | EvidenceEdgeKind::Subscribes
+                    | EvidenceEdgeKind::Dispatches
+                    | EvidenceEdgeKind::Calls
+            )
+        })
+        .map(|edge| (edge.from.clone(), edge.to.clone()))
+        .collect::<Vec<_>>();
+    for (package, permission, targets) in package_permissions {
+        for (_, affected) in permission_effects
+            .iter()
+            .filter(|(source, _)| source == &permission)
+        {
+            add_edge(
+                evidence,
+                &package,
+                affected,
+                EvidenceEdgeKind::Impacts,
+                targets.clone(),
+            );
+        }
+    }
     let mut field_candidates = BTreeMap::<String, Vec<String>>::new();
     for field in evidence
         .nodes
@@ -977,8 +1185,22 @@ fn add_cross_layer_edges(evidence: &mut ApplicationEvidence) {
 }
 
 fn add_readiness(evidence: &mut ApplicationEvidence) {
-    let mut blockers = 0usize;
-    let mut warnings = 0usize;
+    let mut blockers = evidence
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.kind == EvidenceNodeKind::Finding
+                && node.attributes.get("severity") == Some(&json!("error"))
+        })
+        .count();
+    let mut warnings = evidence
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.kind == EvidenceNodeKind::Finding
+                && node.attributes.get("severity") == Some(&json!("warning"))
+        })
+        .count();
     let application = evidence
         .nodes
         .iter()
@@ -1238,6 +1460,26 @@ mod tests {
             .iter()
             .any(|node| node.kind == EvidenceNodeKind::StyleRule));
         assert!(graph.nodes.iter().any(|node| {
+            node.kind == EvidenceNodeKind::SourceUnit
+                && node.label == "frontend/pages/home.acore"
+                && node.attributes.get("compileTimeOnly") == Some(&json!(true))
+        }));
+        assert!(graph.nodes.iter().any(|node| {
+            node.kind == EvidenceNodeKind::Page
+                && node.label == "Home"
+                && node
+                    .evidence
+                    .iter()
+                    .any(|reference| reference.path.as_deref() == Some("frontend/pages/home.acore"))
+        }));
+        assert!(graph.nodes.iter().any(|node| {
+            node.kind == EvidenceNodeKind::Component
+                && node.label == "ProductCard"
+                && node.evidence.iter().any(|reference| {
+                    reference.path.as_deref() == Some("frontend/components/product_card.acore")
+                })
+        }));
+        assert!(graph.nodes.iter().any(|node| {
             node.kind == EvidenceNodeKind::Operation
                 && node.label == "list_products"
                 && node.attributes.get("exposure") == Some(&json!("public"))
@@ -1270,9 +1512,11 @@ mod tests {
             .nodes
             .iter()
             .any(|node| node.kind == EvidenceNodeKind::Extension && node.label == "pricing"));
-        assert!(trace.nodes.iter().any(
-            |node| node.kind == EvidenceNodeKind::State && node.label == "Home.subtotal_cents"
-        ));
+        assert!(trace
+            .nodes
+            .iter()
+            .any(|node| node.kind == EvidenceNodeKind::State
+                && node.label == "Home.cart.subtotal_cents"));
         let checkout = graph
             .nodes
             .iter()
@@ -1289,9 +1533,10 @@ mod tests {
         assert_eq!(
             checkout
                 .attributes
-                .get("renderedSemanticId")
+                .get("expandedComponentContract")
+                .and_then(|value| value.get("name"))
                 .and_then(serde_json::Value::as_str),
-            Some("node:1cb68a1675e0f769")
+            Some("ActionButton")
         );
         let field = graph
             .nodes

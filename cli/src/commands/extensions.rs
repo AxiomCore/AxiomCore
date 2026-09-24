@@ -9,7 +9,11 @@ use std::{
 
 use anyhow::{bail, Context, Result};
 use axiom_build::core::extension_source::{
-    build_rust_source_extension, source_authority_request, SourceBuildOptions,
+    inspect_rust_source_extension, source_authority_request, SourceBuildOptions,
+};
+use axiom_build::core::python_source::inspect_python_source_extension;
+use axiom_build::core::typescript_source::{
+    build_source_extension, inspect_typescript_source_extension,
 };
 use axiom_extension_abi::{Field, Invocation, Value};
 use axiom_extension_broker::{DeterministicHost, InvocationContext};
@@ -37,6 +41,12 @@ use axiom_lib::{
         resolve_package_dependencies, write_package_lock, PackageDependencyManifest,
         PackageReference, PACKAGE_MANIFEST_FORMAT,
     },
+    rust_source_migration::migrate_legacy_rust_extension,
+    sdk_interface::{
+        decode_sdk_interface_artifact, diff_sdk_interfaces, encode_sdk_interface_artifact,
+        resolve_effective_sdk_interface, EffectiveSdkInterface, SdkInterfaceArtifact,
+        SdkInterfaceChangeImpact,
+    },
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use ed25519_dalek::{Signer, SigningKey};
@@ -53,6 +63,115 @@ struct PackageProof {
     public_key: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InterfaceInspection {
+    artifact: SdkInterfaceArtifact,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    effective: Option<EffectiveSdkInterface>,
+}
+
+pub async fn handle_interface(
+    deps: PathBuf,
+    alias: String,
+    authority_lock: Option<PathBuf>,
+    target: Option<String>,
+    out: Option<PathBuf>,
+    json: bool,
+) -> Result<()> {
+    let sources = resolve_extension_sources(&deps)?;
+    let source = sources
+        .get(&alias)
+        .with_context(|| format!("AxiomDeps.toml has no extension `{alias}`"))?;
+    let binding = generate_extension_binding(source)?;
+    let effective = match (authority_lock, target) {
+        (Some(path), Some(target)) => {
+            let target = parse_target(&target)?;
+            let lock = decode_authority_lock(&fs::read(&path)?)?;
+            if lock.interface_sha256 != binding.interface_sha256 {
+                bail!("authority lock interface digest does not match the generated SDK IR");
+            }
+            let authority = lock
+                .effective
+                .get(&target)
+                .with_context(|| format!("authority lock has no effective {target:?} surface"))?;
+            Some(resolve_effective_sdk_interface(
+                &binding.interface,
+                target,
+                &authority.permissions,
+            )?)
+        }
+        (None, None) => None,
+        _ => bail!("--authority-lock and --target must be supplied together"),
+    };
+    if let Some(path) = out {
+        fs::write(&path, encode_sdk_interface_artifact(&binding.interface)?)
+            .with_context(|| format!("write SDK interface artifact {}", path.display()))?;
+    }
+    let inspection = InterfaceInspection {
+        artifact: binding.interface,
+        effective,
+    };
+    if json {
+        println!("{}", serde_json::to_string_pretty(&inspection)?);
+    } else {
+        println!("{}", inspection.artifact.interface.module_alias);
+        println!("  interface: {}", inspection.artifact.interface_sha256);
+        println!(
+            "  generator: {}@{}",
+            inspection.artifact.generator.name, inspection.artifact.generator.version
+        );
+        println!(
+            "  ABI: {}@{} (unchanged)",
+            inspection.artifact.interface.abi.name, inspection.artifact.interface.abi.version
+        );
+        println!("  exports: {}", inspection.artifact.interface.exports.len());
+        println!(
+            "  requested imports: {}",
+            inspection.artifact.interface.imports.len()
+        );
+        println!("  types: {}", inspection.artifact.interface.types.len());
+        println!(
+            "  language mappings: {}",
+            inspection
+                .artifact
+                .interface
+                .language_mappings
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        if let Some(effective) = inspection.effective {
+            println!("  effective target: {:?}", effective.target);
+            println!("  effective imports: {}", effective.imports.len());
+            println!("  effective digest: {}", effective.effective_sha256);
+        }
+    }
+    Ok(())
+}
+
+pub async fn handle_interface_diff(before: PathBuf, after: PathBuf, json: bool) -> Result<()> {
+    let before = decode_sdk_interface_artifact(&fs::read(&before)?)?;
+    let after = decode_sdk_interface_artifact(&fs::read(&after)?)?;
+    let changes = diff_sdk_interfaces(&before, &after)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&changes)?);
+    } else if changes.is_empty() {
+        println!("SDK interfaces are semantically identical.");
+    } else {
+        for change in changes {
+            let impact = match change.impact {
+                SdkInterfaceChangeImpact::Compatible => "compatible",
+                SdkInterfaceChangeImpact::AuthorityIncrease => "authority-increase",
+                SdkInterfaceChangeImpact::Breaking => "breaking",
+            };
+            println!("{impact:18} {}: {}", change.path, change.summary);
+        }
+    }
+    Ok(())
+}
+
 pub async fn handle_source_build(
     deps: PathBuf,
     alias: String,
@@ -61,7 +180,7 @@ pub async fn handle_source_build(
     clean: bool,
 ) -> Result<()> {
     let target = parse_target(&target)?;
-    let result = build_rust_source_extension(&SourceBuildOptions {
+    let result = build_source_extension(&SourceBuildOptions {
         deps,
         alias,
         output_root: out,
@@ -72,10 +191,261 @@ pub async fn handle_source_build(
     Ok(())
 }
 
+pub async fn handle_typescript_inspect(
+    deps: PathBuf,
+    alias: String,
+    view: String,
+    json: bool,
+) -> Result<()> {
+    let inspection = inspect_typescript_source_extension(&deps, &alias)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&inspection)?);
+        return Ok(());
+    }
+    match view.as_str() {
+        "summary" => {
+            println!("TypeScript extension: {}", inspection.alias);
+            println!("Driver: axiom-typescript-source-driver/v1");
+            println!("Sources: {}", inspection.source_files.join(", "));
+            println!("Interface: {}", inspection.interface.interface_sha256);
+            println!(
+                "Dependencies: {}",
+                inspection
+                    .dependencies
+                    .as_ref()
+                    .map(|value| value.packages.len())
+                    .unwrap_or_default()
+            );
+            println!("Use --view declarations|entry|interface for generated evidence.");
+        }
+        "declarations" => print!("{}", inspection.declarations),
+        "entry" => print!("{}", inspection.generated_entry),
+        "interface" => println!("{}", serde_json::to_string_pretty(&inspection.interface)?),
+        _ => bail!("--view must be summary, declarations, entry, or interface"),
+    }
+    Ok(())
+}
+
+pub async fn handle_python_inspect(
+    deps: PathBuf,
+    alias: String,
+    view: String,
+    json: bool,
+) -> Result<()> {
+    let inspection = inspect_python_source_extension(&deps, &alias)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&inspection)?);
+        return Ok(());
+    }
+    match view.as_str() {
+        "summary" => {
+            println!("Python extension: {}", inspection.alias);
+            println!("Driver: axiom-python-source-driver/v1");
+            println!("Profile: {}", inspection.profile);
+            println!("Sources: {}", inspection.source_files.join(", "));
+            println!("Interface: {}", inspection.interface.interface_sha256);
+            println!(
+                "Dependencies: {}",
+                inspection
+                    .dependencies
+                    .as_ref()
+                    .map(|value| value.packages.len())
+                    .unwrap_or_default()
+            );
+            println!("Use --view stubs|lowering|source-map|interface for generated evidence.");
+        }
+        "stubs" => print!("{}", inspection.type_stubs),
+        "lowering" => print!("{}", inspection.generated_program),
+        "source-map" => println!("{}", serde_json::to_string_pretty(&inspection.source_map)?),
+        "interface" => println!("{}", serde_json::to_string_pretty(&inspection.interface)?),
+        _ => bail!("--view must be summary, stubs, lowering, source-map, or interface"),
+    }
+    Ok(())
+}
+
+pub async fn handle_rust_inspect(
+    deps: PathBuf,
+    alias: String,
+    view: String,
+    json: bool,
+) -> Result<()> {
+    let inspection = inspect_rust_source_extension(&deps, &alias)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&inspection)?);
+        return Ok(());
+    }
+    match view.as_str() {
+        "summary" => {
+            println!("Rust extension: {}", inspection.alias);
+            println!("Driver: {}", inspection.source_driver);
+            println!("Sources: {}", inspection.source_files.join(", "));
+            println!(
+                "Exports: {}",
+                inspection
+                    .interface
+                    .interface
+                    .exports
+                    .iter()
+                    .map(|export| export.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            println!(
+                "Requested imports: {}",
+                inspection.interface.interface.imports.len()
+            );
+            println!(
+                "Third-party packages: {}",
+                inspection
+                    .authored_dependencies
+                    .as_ref()
+                    .map(|graph| graph.packages.len())
+                    .unwrap_or_default()
+            );
+            println!("Use --view macros|interface|workspace|bindings for evidence.");
+        }
+        "macros" => print!("{}", inspection.macro_expansion),
+        "interface" => println!("{}", serde_json::to_string_pretty(&inspection.interface)?),
+        "workspace" => print!("{}", inspection.generated_workspace_manifest),
+        "bindings" => print!("{}", inspection.generated_bindings),
+        _ => bail!("--view must be summary, macros, interface, workspace, or bindings"),
+    }
+    Ok(())
+}
+
+pub async fn handle_migrate_rust(
+    deps: PathBuf,
+    alias: String,
+    out: Option<PathBuf>,
+    write: bool,
+    check: bool,
+    json: bool,
+) -> Result<()> {
+    let sources = resolve_extension_sources(&deps)?;
+    let extension = sources
+        .get(&alias)
+        .with_context(|| format!("AxiomDeps.toml has no extension `{alias}`"))?;
+    if extension.language != "rust" {
+        bail!(
+            "extension `{alias}` uses `{}`; migrate-rust accepts only Rust sources",
+            extension.language
+        );
+    }
+    let source = fs::read_to_string(&extension.source)
+        .with_context(|| format!("read {}", extension.source.display()))?;
+    let migration = migrate_legacy_rust_extension(&alias, &source, &extension.exports)?;
+
+    if check && migration.report.changed {
+        bail!(
+            "{} still uses legacy SDK imports; run `axiom extensions migrate-rust {alias} --deps {} --write`",
+            extension.source.display(),
+            deps.display()
+        );
+    }
+
+    let destination = if write {
+        write_migrated_source(&extension.source, &migration.source)?;
+        Some(extension.source.clone())
+    } else if let Some(path) = out {
+        let path = if path.is_absolute() {
+            path
+        } else {
+            std::env::current_dir()?.join(path)
+        };
+        if path == extension.source {
+            bail!("use --write to replace the registered source atomically");
+        }
+        if path.exists() {
+            bail!("migration output already exists: {}", path.display());
+        }
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .with_context(|| format!("create migration output {}", path.display()))?;
+        file.write_all(migration.source.as_bytes())?;
+        file.sync_all()?;
+        Some(path)
+    } else {
+        None
+    };
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "source": extension.source,
+                "destination": destination,
+                "report": migration.report,
+            }))?
+        );
+    } else {
+        println!("Rust extension migration: {alias}");
+        println!("Source: {}", extension.source.display());
+        println!("Classification: {:?}", migration.report.classification);
+        println!("Behavior preserved: yes");
+        println!(
+            "Source changed: {}",
+            if migration.report.changed {
+                "yes"
+            } else {
+                "no"
+            }
+        );
+        for change in &migration.report.changes {
+            println!("  changed: {change}");
+        }
+        for step in &migration.report.next_steps {
+            println!("  next: {step}");
+        }
+        if let Some(path) = destination {
+            println!("Wrote: {}", path.display());
+        } else if migration.report.changed {
+            println!("Dry run only. Use --out or --write after review.");
+        }
+    }
+    Ok(())
+}
+
+fn write_migrated_source(path: &Path, contents: &str) -> Result<()> {
+    let parent = path
+        .parent()
+        .context("Rust source has no parent directory")?;
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .context("Rust source filename is not UTF-8")?;
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("system clock is before Unix epoch")?
+        .as_nanos();
+    let temporary = parent.join(format!(".{file_name}.axiom-migrate-{nonce}.tmp"));
+    let result = (|| -> Result<()> {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .with_context(|| format!("create {}", temporary.display()))?;
+        file.write_all(contents.as_bytes())?;
+        file.sync_all()?;
+        fs::set_permissions(&temporary, fs::metadata(path)?.permissions())?;
+        fs::rename(&temporary, path)
+            .with_context(|| format!("replace migrated Rust source {}", path.display()))?;
+        Ok(())
+    })();
+    if result.is_err() && temporary.exists() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
 /// Turn a registered source module into the complete signed local workflow
 /// consumed by ordinary UI run/build commands. Generated Cargo/WASM/package
 /// machinery stays below `out`; the application owns only Acore, AxiomDeps,
-/// and Rust source. Signing keys are ephemeral and never written to disk.
+/// and authored source. Signing keys are ephemeral and never written to disk.
 pub async fn handle_source_release(
     deps: PathBuf,
     alias: String,
@@ -84,6 +454,7 @@ pub async fn handle_source_release(
     application: String,
     application_version: String,
     clean: bool,
+    print_report: bool,
 ) -> Result<()> {
     let deps = fs::canonicalize(&deps)
         .with_context(|| format!("resolve source manifest {}", deps.display()))?;
@@ -109,7 +480,7 @@ pub async fn handle_source_release(
         .targets
         .first()
         .context("source extension declares no targets")?;
-    let build = build_rust_source_extension(&SourceBuildOptions {
+    let build = build_source_extension(&SourceBuildOptions {
         deps: deps.clone(),
         alias: alias.clone(),
         output_root: out.clone(),
@@ -264,7 +635,12 @@ pub async fn handle_source_release(
                 policies: policy_paths,
                 dependencies: Vec::new(),
                 runtime: RuntimeIdentities {
-                    engine: "wasmi@2.0.0".into(),
+                    engine: match executable.sdk.language.as_str() {
+                        "typescript" => "javy@9.1.0+wasmi@2.0.0",
+                        "python" => "axiom-python-aot-javy@0.1.0+javy@9.1.0+wasmi@2.0.0",
+                        _ => "wasmi@2.0.0",
+                    }
+                    .into(),
                     broker: "axiom-extension-broker@0.1.0".into(),
                     host: "axiom-extension-host@0.1.0".into(),
                     translator: None,
@@ -274,18 +650,20 @@ pub async fn handle_source_release(
     };
     fs::write(&workflow, toml::to_string(&workflow_manifest)?)?;
     verify_extension_workflow(&workflow)?;
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&serde_json::json!({
-            "format": "axiom-extension-source-release/v1",
-            "alias": alias,
-            "sourceSha256": build.source_sha256,
-            "moduleSha256": build.module_sha256,
-            "workflow": workflow,
-            "generatedRoot": release_root,
-            "status": "signed-and-verified",
-        }))?
-    );
+    if print_report {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "format": "axiom-extension-source-release/v1",
+                "alias": alias,
+                "sourceSha256": build.source_sha256,
+                "moduleSha256": build.module_sha256,
+                "workflow": workflow,
+                "generatedRoot": release_root,
+                "status": "signed-and-verified",
+            }))?
+        );
+    }
     Ok(())
 }
 
@@ -538,16 +916,36 @@ pub async fn handle_run(
         &KernelPolicy::default(),
         false,
     )?;
-    let host = TargetExtensionHost::load(
-        HostProfile::backend(),
-        &kernel,
-        authorized,
-        &effective,
-        Arc::clone(&services),
-        1,
-        executable.limits.max_effects,
-        executable.limits.max_stream_batch,
-    )?;
+    let host = match executable.sdk.language.as_str() {
+        "typescript" => TargetExtensionHost::load_typescript(
+            HostProfile::backend(),
+            authorized,
+            &effective,
+            Arc::clone(&services),
+            1,
+            executable.limits.max_effects,
+            executable.limits.max_stream_batch,
+        )?,
+        "python" => TargetExtensionHost::load_python(
+            HostProfile::backend(),
+            authorized,
+            &effective,
+            Arc::clone(&services),
+            1,
+            executable.limits.max_effects,
+            executable.limits.max_stream_batch,
+        )?,
+        _ => TargetExtensionHost::load(
+            HostProfile::backend(),
+            &kernel,
+            authorized,
+            &effective,
+            Arc::clone(&services),
+            1,
+            executable.limits.max_effects,
+            executable.limits.max_stream_batch,
+        )?,
+    };
     let export = export.expect("checked above");
     let input_json: serde_json::Value = serde_json::from_str(&input)
         .context("AXIOM_EXTENSION_REFERENCE_HOST: --input must be valid JSON")?;

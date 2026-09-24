@@ -198,7 +198,10 @@ name = "axiom-build"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axiom-extension-abi",
  "axiom-extension-host",
+ "axiom-extension-kernel",
+ "axiom-extension-typescript-kernel",
  "axiom-extractor",
  "axiom-lib",
  "base64 0.21.7",
@@ -209,20 +212,25 @@ dependencies = [
  "dirs",
  "dotenvy",
  "ed25519-dalek",
+ "flate2",
  "glob",
  "heck 0.4.1",
  "hex",
  "indicatif",
+ "quote",
  "reqwest 0.11.27",
  "serde",
  "serde_jcs",
  "serde_json",
  "serde_yaml",
  "sha2",
+ "syn 2.0.115",
+ "tar",
  "target-lexicon",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
+ "toml",
  "wasmparser 0.240.0",
  "zip",
 ]
@@ -329,6 +337,7 @@ dependencies = [
  "axiom-extension-abi",
  "axiom-extension-broker",
  "axiom-extension-kernel",
+ "axiom-extension-typescript-kernel",
  "axiom-lib",
  "futures",
  "serde",
@@ -345,6 +354,20 @@ dependencies = [
  "axiom-lib",
  "crossbeam-channel",
  "hex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
+ "wasmi",
+]
+
+[[package]]
+name = "axiom-extension-typescript-kernel"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axiom-extension-abi",
+ "axiom-extension-kernel",
  "serde",
  "serde_json",
  "sha2",
@@ -4682,6 +4705,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tar"
+version = "0.4.46"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f6221d9a6003c78398e3b239969f352578258df48c8eb051caadae0015bc840"
+dependencies = [
+ "filetime",
+ "libc",
+ "xattr",
+]
+
+[[package]]
 name = "target-lexicon"
 version = "0.12.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5998,6 +6032,16 @@ name = "writeable"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
+
+[[package]]
+name = "xattr"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32e45ad4206f6d2479085147f02bc2ef834ac85886624a23575ae137c8aa8156"
+dependencies = [
+ "libc",
+ "rustix",
+]
 
 [[package]]
 name = "yaml-rust"

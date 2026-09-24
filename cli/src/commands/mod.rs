@@ -2,6 +2,7 @@ pub mod app;
 pub mod benchmark;
 pub mod cache;
 pub mod contract;
+pub mod dependencies;
 pub mod deploy;
 pub mod diff;
 pub mod doctor;

@@ -1,0 +1,73 @@
+---
+title: Migrate extension authoring
+description: Move v1 dependency manifests and low-level Rust extensions to the current explicit authoring surfaces safely.
+---
+
+Migration is split into two independently reviewable operations. Manifest
+migration is structural. Legacy Rust lifecycle migration preserves behavior
+and makes the low-level compatibility surface explicit; converting arbitrary
+state machines to typed macros is a later semantic refactor.
+
+## Migrate `AxiomDeps.toml`
+
+Preview canonical v2 output:
+
+```bash
+laxiom dependencies migrate --deps AxiomDeps.toml
+```
+
+Write to a review file or atomically replace the input:
+
+```bash
+laxiom dependencies migrate --deps AxiomDeps.toml --out AxiomDeps.v2.toml
+laxiom dependencies migrate --deps AxiomDeps.toml --write
+laxiom dependencies check --deps AxiomDeps.toml
+laxiom dependencies format --deps AxiomDeps.toml --check
+```
+
+Unknown fields, version ranges, unsafe paths, unresolved environments, and
+ambient dependency sources are rejected rather than guessed.
+
+## Migrate low-level Rust SDK imports
+
+Register the existing source under its alias, then run a dry assessment:
+
+```bash
+laxiom extensions migrate-rust pricing --deps AxiomDeps.toml
+laxiom extensions migrate-rust pricing --deps AxiomDeps.toml --json
+```
+
+Write a separate review file or atomically replace the source:
+
+```bash
+laxiom extensions migrate-rust pricing --out pricing.compat.rs
+laxiom extensions migrate-rust pricing --write
+laxiom extensions migrate-rust pricing --check
+```
+
+The automated migration changes legacy top-level SDK imports to
+`axiom_extension_sdk::raw::*`. It preserves `invoke`, `resume`, `cancel`,
+`shutdown`, encoding, effects, and business logic. The report identifies each
+manual surface and states that a typed refactor remains.
+
+Do not mechanically translate a continuation or lifecycle state machine into
+macros. Refactor and test it separately with `#[extension]`, `#[export]`,
+`TypedInvocation`, `ExtensionResponse`, generated scoped bindings, the in-memory
+test host, denial tests, and semantic authority diff. The raw namespace remains
+supported as advanced compatibility surface; it never grants additional
+authority.
+
+## Final review
+
+```bash
+laxiom extensions rust-inspect pricing
+laxiom inspect authority .
+laxiom inspect security .
+laxiom inspect snapshot . --output migrated.jcs.json
+laxiom inspect diff before.jcs.json migrated.jcs.json \
+  --fail-on permission-increase
+```
+
+The application should show no unreviewed permission increase and should retain
+the same target, lifecycle, and audit behavior before replacing the previous
+release.

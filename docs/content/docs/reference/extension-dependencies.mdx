@@ -1,0 +1,89 @@
+---
+title: Extension dependencies
+description: Exact dependency environments, supported Rust/npm/Python package subsets, locks, policy, and offline behavior.
+---
+
+Extension dependencies are build inputs, not runtime capabilities. Declare
+them under one extension in `AxiomDeps.toml`; Axiom resolves the complete graph
+once per compatible environment, verifies immutable bytes, writes canonical
+`AxiomDeps.lock`, and materializes a content-addressed build view. Sharing bytes
+does not share guest memory, instances, permissions, handles, or audit streams.
+
+```toml
+[dependencyEnvironments.rust-release]
+language = "rust"
+profile = "release"
+runtimeVersion = "1.82.0"
+toolchainSha256 = "<sha256>"
+engine = "cargo"
+engineSha256 = "<sha256>"
+abi = "axiom-extension-abi@1.0.0"
+sdk = "axiom-extension-sdk@0.1.0"
+bindingSchema = "axiom-sdk-interface-ir/v1"
+targetFamily = "wasm32"
+
+[extensions.pricing]
+language = "rust"
+source = "logic/pricing.rs"
+environment = "rust-release"
+
+[extensions.pricing.packages.portable-money]
+version = "1.0.0"
+registry = "crates"
+```
+
+Versions are exact. If two extensions in one compatible environment request
+different exact versions, resolution fails and names both introducing
+extensions. Axiom does not choose a winner or create an accidental second
+runtime environment.
+
+## Supported subsets
+
+| Ecosystem | Accepted initial form | Rejected examples |
+| --- | --- | --- |
+| Rust | Reviewed `.crate` source packages compatible with the pinned Wasm environment | Extension-local Cargo/workspace control, build scripts, native links, proc macros, Git/path dependencies, undeclared features |
+| TypeScript | Integrity-locked `.tgz` packages that are pure, statically bundleable ESM | Lifecycle scripts, native `.node`, CommonJS/dynamic loading, Node/DOM/process/network assumptions, `eval`/`Function` |
+| Python | Exact pure-Python `py3-none-any.whl` modules accepted by the restricted AOT profile | Native/platform wheels, source distributions, build backends, ambient stdlib, reflection, dynamic imports, unsupported syntax |
+
+Archives with traversal, unsafe links, wrong identity, wrong length, or wrong
+digest fail before compilation. Package scripts are recorded for review and are
+not executed.
+
+## Resolve and verify
+
+```bash
+laxiom dependencies check
+laxiom dependencies resolve
+laxiom dependencies resolve --locked
+laxiom dependencies resolve --offline
+laxiom dependencies verify
+laxiom dependencies inspect
+```
+
+Frozen and offline modes never resolve or fetch. Missing or corrupt locked
+content fails closed; recovery is an explicit online command.
+
+## Release policy and Inspector
+
+```toml
+[dependencyPolicy]
+approvedRegistries = ["crates", "npm", "pypi"]
+forbiddenLicenses = ["GPL-3.0-only", "AGPL-3.0-only"]
+allowedAdvisories = []
+allowPackageScripts = false
+allowDuplicateVersions = false
+allowUnsupportedPackageForms = false
+```
+
+```bash
+laxiom inspect dependencies .
+laxiom inspect security .
+laxiom inspect provenance portable-money .
+laxiom inspect impact portable-money . --against release.snapshot.json
+laxiom inspect release-check . --enforce
+```
+
+Inspector shows the package graph, environment, compiler/interpreter engine,
+SDK, ABI, hashes, licenses, advisories, scripts, introducing extensions,
+authority consequences, targets, artifacts, and releases. Findings have stable
+rule codes and evidence; there is no opaque security score.

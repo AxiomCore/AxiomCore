@@ -1,6 +1,6 @@
 # Documentation release readiness
 
-Last verified: **2026-09-21**
+Last verified: **2026-09-22**
 
 This internal record covers the public documentation application in
 `content/docs`, its checked-in example entry points, and its discovery output.
@@ -10,14 +10,14 @@ matrix.
 
 ## Completed gates
 
-- 93 MDX pages have unique titles and descriptions.
+- 95 MDX pages have unique titles and descriptions.
 - All checked internal page routes resolve.
 - Public content and catalogued examples contain no numbered internal
   milestone names, developer home-directory paths, or credential-shaped demo
   values found by the repository scan.
 - `pnpm install --frozen-lockfile` succeeds against the committed pnpm lock.
 - `pnpm check` passes the content policy, type, build, and HTTP smoke stages.
-- `pnpm build` completes 289 static-generation tasks and records 289
+- `pnpm build` completes 295 static-generation tasks and records 295
   prerendered routes, including page HTML, processed MDX, Open Graph images,
   `llms.txt`, `llms-full.txt`, `sitemap.xml`, and `robots.txt`.
 - The release gate generates a content-addressed manifest covering source and
@@ -29,7 +29,7 @@ matrix.
   that the framework identity header is absent.
 - The repository documentation workflow runs the same release gate for public
   docs, example, and policy changes without holding deployment authority.
-- The complete-corpus audit checks all 93 HTML pages, 93 Open Graph images, 92
+- The complete-corpus audit checks all 95 HTML pages, 95 Open Graph images, 94
   per-page processed MDX routes, exact sitemap/LLM-reader inventory parity, and
   every legacy redirect against the production server.
 - The Axiom Inspector documentation track covers canonical evidence, facts and

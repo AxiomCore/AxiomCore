@@ -434,6 +434,7 @@ async fn prepare_extensions(root: &Path, source: &Path, frozen: bool) -> Result<
             application.name.clone(),
             application.version.clone(),
             false,
+            false,
         )
         .await?;
     }

@@ -2,7 +2,7 @@
 
 This internal ledger anchors public capability claims to the implementation.
 Paths are repository-relative within the AxiomCore organization/workspace.
-Last full review: **2026-09-21**.
+Last full review: **2026-09-22**.
 
 | Capability or term | Public status | Primary implementation evidence | Verification evidence / boundary |
 | --- | --- | --- | --- |
@@ -15,7 +15,7 @@ Last full review: **2026-09-21**.
 | Canonical `.axiom` package envelope | Alpha | `axiom-lib/src/package.rs` | Package encode/decode, canonicalization, kind validation, and non-executable-boundary tests. |
 | Package resolution and semantic diff | Alpha | `axiom-lib/src/package_resolver.rs`, `axiom-lib/src/package_diff.rs` | Resolver and diff test suites; a committed lock is required for deterministic consumption. |
 | Package kinds | Alpha | `axiom-lib/src/package.rs::PackageKind` | Service, theme, component-library, database-schema, extension, application-policy. Extension packages contain metadata and content-addressed references to separately verified executable bytes. |
-| Sandboxed executable extensions | Experimental | `axiom-runtime/extensions/{abi,sdk,kernel,broker,host}`, `axiom-lib/src/{package,extension_authority,extension_workflow}.rs`, `AxiomCore/cli/src/commands/extensions.rs` | Rust-only `axiom-extension/v2` Wasm modules with signed authority locks, bounded state/store proposals, target hosts, and audit records. `validate-phase-5l.sh` covers server/headless, Chromium Worker, Android Emulator, and iOS Simulator; physical devices, durable production stores, native foreign islands, broad browser coverage, and a stable-major API are not claimed. |
+| Sandboxed executable extensions | Experimental | `axiom-runtime/extensions/{abi,sdk,kernel,broker,host,typescript}`, `axiom-build/src/core/{extension_source,typescript_source,python_source}.rs`, `axiom-lib/src/{package,extension_authority,extension_workflow,authored_dependencies}.rs`, `AxiomCore/cli/src/commands/extensions.rs` | Rust, managed TypeScript/Javy, and restricted Python AOT/Javy sources lower to `axiom-extension/v2` Wasm with signed authority locks, bounded state/store proposals, target hosts, dependency provenance, and audit records. The portability/release gates cover server/headless, browser Worker, Android, and iOS paths; arbitrary ecosystem compatibility, physical-device certification, durable production stores, broad browser coverage, and a stable-major API are not claimed. |
 | Typed themes and component libraries | Alpha | `axiom-lib/src/theme.rs`, `axiom-lib/src/component.rs`, `axiom-ui/src/package_contracts.rs` | Kind/target/export validation and package contract tests. |
 | FastAPI extraction | Available | `axiom-extractor/axiom-fastapi/axiom_fastapi/cli.py::load_app_from_path`, extractor integration in Axiom CLI | The extractor executes module initialization with `exec_module`; service dependencies must be present and imports must be safe. AST analysis and import shims do not make this a no-execution boundary. |
 | Go extraction | Alpha | Go extractor integration used by Axiom CLI | Validate extracted routes and types in each service. |

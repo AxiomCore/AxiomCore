@@ -1,12 +1,13 @@
 ---
 title: Sandboxed executable extensions
-description: Add bounded Rust and WebAssembly behavior to an AxiomCore application without handing it ambient application authority.
+description: Add bounded Rust, TypeScript, or Python behavior to an AxiomCore application without handing it ambient application authority.
 ---
 
 Executable extensions let an application use imperative logic for work that is
 not practical to express declaratively—for example, a bounded pricing rule,
 format conversion, or a domain workflow step. They are an **Experimental**
-source-level capability. Rust is the only supported guest language today.
+source-level capability. Rust, a restricted TypeScript profile, and a
+restricted Python profile all lower to the same WebAssembly ABI and broker.
 
 An extension is not ordinary application code running inside the host process.
 It is a separately distributed WebAssembly module with a declared interface,
@@ -58,7 +59,8 @@ subscriber notification, cancellation, and teardown.
 
 ## State, durable store, and streams
 
-Generated Rust selectors identify one declared UI path or backend-store field.
+Generated language-specific selectors identify one declared UI path or
+backend-store field.
 They are used to create host-validated effects and patches rather than to
 obtain a reference to host memory. UI patches and store transactions include an
 expected revision and commit atomically or fail with a conflict.
@@ -76,7 +78,9 @@ the handle during cancellation or teardown.
 | Web | Dedicated Chromium Worker host and a separate sandboxed foreign-island host | This is not a claim for every browser or deployment topology. |
 | Android | Shared Rust host exercised on Android Emulator | Physical Android devices are not certified. |
 | iOS | Shared Rust host exercised on iOS Simulator | Physical Apple devices are not certified. |
-| Rust guest SDK | First and only supported guest language | Other guest languages are not supported yet. |
+| Rust guest SDK | Typed macros, deterministic primitives, and exact crate subset | No arbitrary Cargo workspace, native link, proc macro, or package build script. |
+| TypeScript guest SDK | Managed TypeScript/esbuild/Javy profile | Pure statically bundleable ESM only; no Node, DOM, dynamic import, `eval`, timers, or persistent JS heap. |
+| Python guest SDK | Restricted Python 3.12 AOT/Javy profile | Reviewed syntax and pure `py3-none-any` wheels only; no host Python, native wheels, ambient stdlib, reflection, or dynamic imports. |
 
 Runtime-dependent React, Vue, or DOM UI is a separate, visibly foreign,
 Web-only iframe island. It cannot share the application document or native
@@ -88,5 +92,5 @@ a framework runtime.
 
 Use [Executable extension lifecycle](/workflows/executable-extension-lifecycle)
 to review, lock, and verify an extension. See [Executable extensions reference](/reference/executable-extensions)
-for the ABI, Rust SDK surface, authority model, lifecycle, security limits, and
+for the ABI, language SDK surfaces, authority model, lifecycle, security limits, and
 measured evidence.

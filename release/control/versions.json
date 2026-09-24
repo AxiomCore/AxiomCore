@@ -23,7 +23,7 @@
       "candidateVersion": "0.147.0"
     },
     "sdk-atmx-cli": {
-      "candidateVersion": null
+      "candidateVersion": "0.146.0"
     },
     "sdk-flutter-generator": {
       "candidateVersion": "0.146.0"

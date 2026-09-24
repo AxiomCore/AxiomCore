@@ -1,106 +1,116 @@
 {
   "format": "axiom-platform-release-intent/v1",
-  "trainId": "2026.09.25.1",
+  "trainId": "2026.09.25.2",
   "wave": "release",
-  "summary": "Release cli 0.147.0, runtime-apple 0.148.0, ui-host-web 0.6.7, ui-host-android 0.6.7, ui-host-ios 0.6.7, sdk-flutter-generator 0.146.0, sdk-flutter 0.147.0, sdk-swift 0.147.0, backend-api (digest), extractor-fastapi 0.1.0, extractor-go 0.1.1, backend-worker (digest), mock-runner (digest), contract-test-runner (digest), dashboard-origin (digest), dashboard-proxy (digest), docs (digest) through the Axiom release control plane.",
+  "summary": "Release 19 Axiom components; sdk-atmx-react, sdk-swift remain queued for verified dependency pins.",
   "changes": [
     {
       "component": "cli",
       "type": "feature",
-      "summary": "Release cli 0.147.0 through the verified Axiom release control plane."
+      "summary": "Add cli improvements in 0.147.0."
     },
     {
       "component": "runtime-apple",
       "type": "feature",
-      "summary": "Release runtime-apple 0.148.0 through the verified Axiom release control plane."
+      "summary": "Add runtime apple improvements in 0.148.0."
     },
     {
       "component": "ui-host-web",
-      "type": "fix",
-      "summary": "Release ui-host-web 0.6.7 through the verified Axiom release control plane."
+      "type": "feature",
+      "summary": "Add ui host web improvements in 0.6.7."
     },
     {
       "component": "ui-host-android",
-      "type": "fix",
-      "summary": "Release ui-host-android 0.6.7 through the verified Axiom release control plane."
+      "type": "feature",
+      "summary": "Add ui host android improvements in 0.6.7."
     },
     {
       "component": "ui-host-ios",
       "type": "feature",
-      "summary": "Release ui-host-ios 0.6.7 through the verified Axiom release control plane."
+      "summary": "Add ui host ios improvements in 0.6.7."
+    },
+    {
+      "component": "sdk-atmx-web",
+      "type": "feature",
+      "summary": "Add sdk atmx web improvements in 0.147.0."
+    },
+    {
+      "component": "sdk-atmx-cli",
+      "type": "feature",
+      "summary": "Add sdk atmx cli improvements in 0.146.0."
     },
     {
       "component": "sdk-flutter-generator",
       "type": "feature",
-      "summary": "Release sdk-flutter-generator 0.146.0 through the verified Axiom release control plane."
+      "summary": "Add sdk flutter generator improvements in 0.146.0."
     },
     {
       "component": "sdk-flutter",
       "type": "feature",
-      "summary": "Release sdk-flutter 0.147.0 through the verified Axiom release control plane.",
+      "summary": "Add sdk flutter improvements in 0.147.0.",
       "runtimeVersion": "0.148.0"
-    },
-    {
-      "component": "sdk-swift",
-      "type": "feature",
-      "summary": "Release sdk-swift 0.147.0 through the verified Axiom release control plane."
     },
     {
       "component": "backend-api",
       "type": "feature",
-      "summary": "Release backend-api as a verified digest-based deployment."
+      "summary": "Add backend api improvements."
     },
     {
       "component": "extractor-fastapi",
       "type": "feature",
-      "summary": "Release extractor-fastapi 0.1.0 through the verified Axiom release control plane."
+      "summary": "Add extractor fastapi improvements in 0.1.0."
     },
     {
       "component": "extractor-go",
       "type": "feature",
-      "summary": "Release extractor-go 0.1.1 through the verified Axiom release control plane."
+      "summary": "Add extractor go improvements in 0.1.1."
     },
     {
       "component": "backend-worker",
-      "type": "internal",
-      "summary": "Release backend-worker as a verified digest-based deployment."
+      "type": "feature",
+      "summary": "Add backend worker improvements."
     },
     {
       "component": "mock-runner",
-      "type": "fix",
-      "summary": "Release mock-runner as a verified digest-based deployment."
+      "type": "feature",
+      "summary": "Add mock runner improvements."
     },
     {
       "component": "contract-test-runner",
-      "type": "internal",
-      "summary": "Release contract-test-runner as a verified digest-based deployment."
+      "type": "feature",
+      "summary": "Add contract test runner improvements."
     },
     {
       "component": "dashboard-origin",
-      "type": "internal",
-      "summary": "Release dashboard-origin as a verified digest-based deployment."
+      "type": "feature",
+      "summary": "Add dashboard origin improvements."
     },
     {
       "component": "dashboard-proxy",
       "type": "feature",
-      "summary": "Release dashboard-proxy as a verified digest-based deployment."
+      "summary": "Add dashboard proxy improvements."
+    },
+    {
+      "component": "landing",
+      "type": "feature",
+      "summary": "Add landing improvements."
     },
     {
       "component": "docs",
       "type": "feature",
-      "summary": "Release docs as a verified digest-based deployment."
+      "summary": "Add docs improvements."
     }
   ],
   "queued": [
     {
-      "component": "sdk-atmx-web",
-      "type": "feature",
-      "summary": "Rebuild atmx-web against the typed extension runtime and shared browser SDK interface."
-    },
-    {
       "component": "sdk-atmx-react",
       "type": "feature",
-      "summary": "Rebuild atmx-react against the verified atmx-web package and updated runtime interface."
+      "summary": "Add sdk atmx react improvements in 0.147.0."
+    },
+    {
+      "component": "sdk-swift",
+      "type": "feature",
+      "summary": "Add sdk swift improvements in 0.147.0."
     }
   ]
 }

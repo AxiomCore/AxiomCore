@@ -22,8 +22,8 @@ INTENT = ctl.CONTROL_DIR / "intent.json"
 DRAFT_FORMAT = "axiom-platform-release-cycle-draft/v1"
 
 
-def draft_path(root: Path) -> Path:
-    return root / "drafts" / "active-new-release.json"
+def draft_path(root: Path, *, update: bool = False) -> Path:
+    return root / "drafts" / ("active-update-release.json" if update else "active-new-release.json")
 
 
 def _checkpoint(path: Path, draft: dict) -> None:
@@ -202,7 +202,7 @@ def _put(screen, row: int, value: str, attr: int = 0) -> None:
 
 def choose_components(catalog: dict, ledger: dict, root: Path,
                       published: dict[str, dict], *, initial: list[str] | None = None,
-                      on_change=None) -> list[str]:
+                      on_change=None, update: bool = False) -> list[str]:
     if not sys.stdin.isatty() or not sys.stdout.isatty() or os.environ.get("TERM", "dumb") == "dumb":
         raise ctl.ReleaseError("new release selection needs an interactive arrow-key terminal")
     import curses
@@ -229,8 +229,10 @@ def choose_components(catalog: dict, ledger: dict, root: Path,
         while True:
             height, width = screen.getmaxyx()
             screen.erase()
-            _put(screen, 0, "New release · choose components")
-            _put(screen, 1, "↑/↓ move · Space select · Enter continue · q cancel")
+            _put(screen, 0, "Update release · choose active components" if update else
+                 "New release · choose components")
+            _put(screen, 1, ("↑/↓ move · Space toggle · c clear all · Enter continue · q cancel" if update
+                             else "↑/↓ move · Space select · Enter continue · q cancel"))
             visible = max(1, height - 5)
             start = max(0, min(position - visible + 1, len(entries) - visible))
             for row, entry in enumerate(entries[start:start + visible], 2):
@@ -260,6 +262,11 @@ def choose_components(catalog: dict, ledger: dict, root: Path,
                 if on_change is not None:
                     on_change([entry["id"] for entry in entries if entry["id"] in selected])
                 notice = "UI Host web, Android, and iOS release together." if component_id in HOST_IDS else ""
+            elif update and key == ord("c"):
+                selected.clear()
+                if on_change is not None:
+                    on_change([])
+                notice = "Selection cleared; choose only the components to activate."
             elif key in (10, 13):
                 if not selected:
                     notice = "Select at least one component."
@@ -267,7 +274,8 @@ def choose_components(catalog: dict, ledger: dict, root: Path,
                 expanded = expand_selection(set(selected), catalog)
                 extras = sorted(expanded - selected)
                 screen.erase()
-                _put(screen, 0, f"Create a new cycle for {len(expanded)} component(s)?")
+                _put(screen, 0, f"Create a safe successor cycle for {len(expanded)} component(s)?" if update
+                     else f"Create a new cycle for {len(expanded)} component(s)?")
                 for row, component_id in enumerate(sorted(expanded)[:max(0, height - 5)], 2):
                     _put(screen, row, f"  {component_id}")
                 _put(screen, height - 2, ("Required dependencies added: " + ", ".join(extras) if extras else
@@ -571,18 +579,62 @@ def save_cycle(root: Path, train_id: str, intent_path: Path, ledger_path: Path,
     return backup
 
 
+def unfinished_candidate_paths(root: Path, train_id: str,
+                               published: dict[str, dict]) -> list[Path]:
+    """Do not strand staged or interrupted candidates by advancing their source tips."""
+    directory = root / "trains" / train_id / "components"
+    if not directory.is_dir():
+        return []
+    unfinished = []
+    for candidate in directory.iterdir():
+        if candidate.is_symlink():
+            raise ctl.ReleaseError(f"candidate evidence is linked: {candidate}")
+        if not candidate.is_dir() or not any(candidate.iterdir()):
+            continue
+        targets = set(HOST_IDS) if candidate.name == "ui-host" else {candidate.name}
+        if not targets <= published.keys():
+            unfinished.append(candidate)
+    return sorted(unfinished)
+
+
+def update_defaults(intent: dict, ledger: dict, catalog: dict,
+                    published: dict[str, dict]) -> tuple[list[str], dict[str, dict]]:
+    """Carry unfinished active work forward without re-asking its release notes."""
+    active = {change["component"]: change for change in intent["changes"]
+              if published.get(change["component"], {}).get("trainId") != intent["trainId"]}
+    selected = [entry["id"] for entry in catalog["components"] if entry["id"] in active]
+    answers = {}
+    for component_id in selected:
+        change = active[component_id]
+        answer = {"type": change["type"], "summaryMode": "write",
+                  "summary": change["summary"]}
+        version = ledger["components"][component_id]["candidateVersion"]
+        if version is not None:
+            answer["version"] = version
+        if "migration" in change:
+            answer["migration"] = change["migration"]
+        answers[component_id] = answer
+    return selected, answers
+
+
 def run(catalog: dict, ledger: dict, intent: dict,
         root: Path, intent_path: Path = INTENT, ledger_path: Path = versions.VERSIONS,
-        *, restart: bool = False) -> bool:
+        *, restart: bool = False, update: bool = False) -> bool:
     old_intent = intent_path.read_bytes()
     old_ledger = ledger_path.read_bytes()
-    checkpoint = draft_path(root)
+    checkpoint = draft_path(root, update=update)
     if checkpoint.exists() and finish_saved_draft(checkpoint, root, old_intent, old_ledger):
         return True
     if restart and checkpoint.exists():
         if archive_draft(checkpoint, root) is None:
             return False
     published = published_evidence(root, catalog)
+    if update:
+        current_published = published_evidence(root, catalog, intent["trainId"])
+        unfinished = unfinished_candidate_paths(root, intent["trainId"], current_published)
+        if unfinished:
+            raise ctl.ReleaseError("finish or inspect unfinished candidate evidence before updating: "
+                                   + ", ".join(str(path) for path in unfinished))
     if checkpoint.exists():
         draft = read_draft(checkpoint, catalog, old_intent, old_ledger)
         if (root / "trains" / draft["trainId"]).exists():
@@ -590,21 +642,27 @@ def run(catalog: dict, ledger: dict, intent: dict,
             _checkpoint(checkpoint, draft)
         print(f"Resuming saved release draft {draft['trainId']} at {checkpoint}")
     else:
+        initial, answers = (update_defaults(intent, ledger, catalog, published) if update
+                            else ([], {}))
         draft = {"format": DRAFT_FORMAT, "trainId": next_train_id(intent["trainId"], root),
                  "intentSha256": ctl.sha256(old_intent), "versionsSha256": ctl.sha256(old_ledger),
-                 "catalogSha256": catalog["sha256"], "selected": [], "selectionConfirmed": False,
-                 "answers": {}, "summary": None}
+                 "catalogSha256": catalog["sha256"], "selected": initial,
+                 "selectionConfirmed": False, "answers": answers, "summary": None}
         _checkpoint(checkpoint, draft)
         print(f"Saved release draft: {checkpoint}")
     if not draft.get("selectionConfirmed", True):
         def remember_selection(selected: list[str]) -> None:
             draft["selected"] = selected
+            draft["answers"] = {name: answer for name, answer in draft["answers"].items()
+                                if name in selected}
             _checkpoint(checkpoint, draft)
 
         selected = choose_components(catalog, ledger, root, published,
-                                     initial=draft["selected"], on_change=remember_selection)
+                                     initial=draft["selected"], on_change=remember_selection,
+                                     update=update)
         if not selected:
-            print(f"Selection paused. Your draft remains at {checkpoint}; run `just release new` to resume.")
+            command = "update" if update else "new"
+            print(f"Selection paused. Your draft remains at {checkpoint}; run `just release {command}` to resume.")
             return False
         draft["selected"] = selected
         draft["selectionConfirmed"] = True
@@ -630,12 +688,13 @@ def run(catalog: dict, ledger: dict, intent: dict,
     # Validation injects ledger versions into the supplied dict. Keep the
     # stored intent version-free so the ledger remains the sole version editor.
     flow.validate_intent(json.loads(json.dumps(drafted)), catalog, updated_ledger)
-    print(f"\nNew cycle {train_id}: {', '.join(selected)}")
+    print(f"\n{'Updated release cycle' if update else 'New cycle'} {train_id}: {', '.join(selected)}")
     print(f"Summary: {summary}")
     print(f"Other unfinished changes retained as queued: {len(drafted['queued'])}")
     print("No build or publication will start. The previous intent and version ledger will be backed up on the release SSD.")
     if ask_line("Type yes to save this cycle", required=False) != "yes":
-        print(f"Cycle not created. Your answers remain saved at {checkpoint}; run `just release new` to resume.")
+        command = "update" if update else "new"
+        print(f"Cycle not created. Your answers remain saved at {checkpoint}; run `just release {command}` to resume.")
         return False
     backup = save_cycle(root, train_id, intent_path, ledger_path, old_intent, old_ledger,
                         drafted, updated_ledger)

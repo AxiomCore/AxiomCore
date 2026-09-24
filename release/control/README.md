@@ -23,6 +23,13 @@ The source of truth is split deliberately:
   `just release new restart` archives an unfinished draft before restarting.
   Final confirmation backs up previous source files on the SSD, but does not
   prepare, build, commit, push, or publish.
+- `just release update` changes the active selection without editing JSON by
+  hand. It preselects unfinished active components, retains their answers,
+  and lets you add queued components with arrows and Space. Published components
+  are deselected by default. To preserve prepared and published evidence, it
+  automatically creates a successor train; it refuses to strand an interrupted
+  or staged-but-unpublished candidate. An interrupted update resumes from its
+  own SSD draft; `just release update restart` archives that draft.
 - [intent.json](./intent.json) groups one wave's user-visible changes and
   release-note summaries. Its `queued` list records affected dependent
   components awaiting an earlier artifact. A new wave gets a new train ID.

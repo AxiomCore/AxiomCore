@@ -9,6 +9,92 @@ import cycle
 
 
 class ReleaseCycleTests(unittest.TestCase):
+    def test_update_defaults_preserve_unpublished_work_and_skip_published(self):
+        intent = {"trainId": "2026.09.24.5", "changes": [
+            {"component": "landing", "type": "feature", "summary": "Published site."},
+            {"component": "cli", "type": "breaking", "summary": "CLI change.",
+             "migration": "Update scripts."}], "queued": [
+                 {"component": "docs", "type": "fix", "summary": "Docs change."}]}
+        catalog = {"components": [{"id": name} for name in ("cli", "docs", "landing")]}
+        ledger = {"components": {"cli": {"candidateVersion": "0.147.0"},
+                                 "docs": {"candidateVersion": None},
+                                 "landing": {"candidateVersion": None}}}
+        selected, answers = cycle.update_defaults(intent, ledger, catalog, {
+            "landing": {"trainId": "2026.09.24.5"}})
+        self.assertEqual(selected, ["cli"])
+        self.assertEqual(answers["cli"], {
+            "type": "breaking", "summaryMode": "write", "summary": "CLI change.",
+            "version": "0.147.0", "migration": "Update scripts."})
+
+    def test_update_refuses_unfinished_candidate_but_preserves_its_evidence(self):
+        with tempfile.TemporaryDirectory(prefix="axiom-cycle-test-") as temporary:
+            root = Path(temporary)
+            candidate = root / "trains/2026.09.24.5/components/landing"
+            candidate.mkdir(parents=True)
+            (candidate / "staged.json").write_text("staged")
+            self.assertEqual(cycle.unfinished_candidate_paths(root, "2026.09.24.5", {}),
+                             [candidate])
+            self.assertEqual(cycle.unfinished_candidate_paths(root, "2026.09.24.5",
+                             {"landing": {"trainId": "2026.09.24.5"}}), [])
+            self.assertEqual((candidate / "staged.json").read_text(), "staged")
+
+    def test_update_does_not_start_draft_while_candidate_is_unpublished(self):
+        with tempfile.TemporaryDirectory(prefix="axiom-cycle-test-") as temporary:
+            root = Path(temporary)
+            intent_path = root / "intent.json"
+            ledger_path = root / "versions.json"
+            intent = {"trainId": "2026.09.24.5", "changes": [
+                {"component": "landing", "type": "feature", "summary": "Site."}], "queued": []}
+            ledger = {"components": {"landing": {"candidateVersion": None}}}
+            catalog = {"sha256": "catalog", "components": [{"id": "landing"}]}
+            intent_path.write_text(json.dumps(intent))
+            ledger_path.write_text(json.dumps(ledger))
+            candidate = root / "trains/2026.09.24.5/components/landing"
+            candidate.mkdir(parents=True)
+            (candidate / "staged.json").write_text("staged")
+            with self.assertRaisesRegex(ctl.ReleaseError, "unfinished candidate evidence"):
+                cycle.run(catalog, ledger, intent, root, intent_path, ledger_path, update=True)
+            self.assertEqual(json.loads(intent_path.read_text()), intent)
+            self.assertFalse(cycle.draft_path(root, update=True).exists())
+
+    def test_update_creates_successor_and_activates_queued_component(self):
+        with tempfile.TemporaryDirectory(prefix="axiom-cycle-test-") as temporary:
+            root = Path(temporary)
+            intent_path = root / "intent.json"
+            versions_path = root / "versions.json"
+            previous = {"format": "axiom-platform-release-intent/v1", "trainId": "2026.09.24.5",
+                        "wave": "release", "summary": "Previous", "changes": [
+                            {"component": "landing", "type": "feature", "summary": "Live site."}],
+                        "queued": [{"component": "docs", "type": "fix", "summary": "Docs."}]}
+            ledger = {"format": "axiom-platform-component-versions/v1", "components": {
+                "landing": {"candidateVersion": None}, "docs": {"candidateVersion": None}}}
+            catalog = {"sha256": "catalog-sha", "components": [
+                {"id": "landing"}, {"id": "docs"}]}
+            intent_path.write_text(json.dumps(previous))
+            versions_path.write_text(json.dumps(ledger))
+            change = {"component": "docs", "type": "fix", "summary": "Docs."}
+
+            def choose(*args, **kwargs):
+                self.assertEqual(kwargs["initial"], [])
+                kwargs["on_change"](["docs"])
+                return ["docs"]
+
+            with patch.object(cycle, "choose_components", side_effect=choose), \
+                    patch.object(cycle, "collect_changes", return_value=([change], ledger)), \
+                    patch.object(cycle, "choose_summary_mode", return_value="template"), \
+                    patch.object(cycle, "ask_line", return_value="yes"), \
+                    patch.object(cycle, "next_train_id", return_value="2026.09.25.1"), \
+                    patch.object(cycle, "published_evidence", return_value={
+                        "landing": {"trainId": "2026.09.24.5"}}):
+                self.assertTrue(cycle.run(catalog, ledger, previous, root, intent_path,
+                                          versions_path, update=True))
+            saved = json.loads(intent_path.read_text())
+            self.assertEqual(saved["trainId"], "2026.09.25.1")
+            self.assertEqual(saved["changes"], [change])
+            self.assertEqual(saved["queued"], [])
+            self.assertTrue((root / "trains/2026.09.25.1/cycle-backup/intent-before.json").is_file())
+            self.assertFalse(cycle.draft_path(root, update=True).exists())
+
     def test_versioned_summary_template_and_explicit_custom_choice(self):
         self.assertIn("ui-host-web 0.6.7", cycle.component_summary_template("ui-host-web", "0.6.7"))
         self.assertIn("digest-based", cycle.component_summary_template("landing", None))

@@ -1,8 +1,8 @@
 {
   "format": "axiom-platform-release-intent/v1",
-  "trainId": "2026.09.24.5",
+  "trainId": "2026.09.25.1",
   "wave": "release",
-  "summary": "Release cli 0.147.0, runtime-apple 0.148.0, ui-host-web 0.6.7, ui-host-android 0.6.7, ui-host-ios 0.6.7, sdk-flutter-generator 0.146.0, sdk-flutter 0.147.0, sdk-swift 0.147.0, backend-api (digest), extractor-fastapi 0.1.0, extractor-go 0.1.1, backend-worker (digest), mock-runner (digest), contract-test-runner (digest), dashboard-origin (digest), dashboard-proxy (digest), landing (digest) through the Axiom release control plane.",
+  "summary": "Release cli 0.147.0, runtime-apple 0.148.0, ui-host-web 0.6.7, ui-host-android 0.6.7, ui-host-ios 0.6.7, sdk-flutter-generator 0.146.0, sdk-flutter 0.147.0, sdk-swift 0.147.0, backend-api (digest), extractor-fastapi 0.1.0, extractor-go 0.1.1, backend-worker (digest), mock-runner (digest), contract-test-runner (digest), dashboard-origin (digest), dashboard-proxy (digest), docs (digest) through the Axiom release control plane.",
   "changes": [
     {
       "component": "cli",
@@ -86,9 +86,9 @@
       "summary": "Release dashboard-proxy as a verified digest-based deployment."
     },
     {
-      "component": "landing",
+      "component": "docs",
       "type": "feature",
-      "summary": "Release landing as a verified digest-based deployment."
+      "summary": "Release docs as a verified digest-based deployment."
     }
   ],
   "queued": [
@@ -96,11 +96,6 @@
       "component": "sdk-atmx-web",
       "type": "feature",
       "summary": "Rebuild atmx-web against the typed extension runtime and shared browser SDK interface."
-    },
-    {
-      "component": "docs",
-      "type": "feature",
-      "summary": "Document extension dependencies, authoring migration, and current SDK support boundaries."
     },
     {
       "component": "sdk-atmx-react",

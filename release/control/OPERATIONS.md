@@ -59,6 +59,19 @@ jobs, and sites use immutable image/deployment digests rather than SemVer.
    than discarding the answers already entered.
    The intent is still reviewable source of truth, but routine releases no
    longer require hand-editing it.
+
+   To activate a queued component in an existing prepared cycle, run
+   `just release update`. The picker starts with the current unfinished active
+   components selected; add or remove components with Space, or press `c` to
+   clear the selection before choosing just one component. Already-published
+   components start deselected. Existing type, summary, migration guidance and
+   candidate version for retained active components are carried forward. The
+   command allocates a successor train ID internally rather than changing
+   preparation or publication evidence in place. It stops if the current train
+   has an interrupted or staged-but-unpublished candidate: finish or inspect
+   that candidate before changing the active selection. Update answers are
+   checkpointed separately from `new`; rerun `just release update` to resume.
+   After confirmation, continue with `just release prepare`.
 2. If a SemVer candidate needs correcting outside the wizard, run
    `just release version COMPONENT X.Y.Z`. Use `ui-host` as `COMPONENT` to set
    web, Android, and iOS together. This edits only the ledger. Review its diff.

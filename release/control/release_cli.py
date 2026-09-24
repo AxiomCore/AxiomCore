@@ -6,6 +6,8 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import re
+import shutil
 import subprocess
 import sys
 
@@ -63,6 +65,25 @@ def load() -> tuple[dict, dict, dict]:
     ledger = versions.read_versions(versions.VERSIONS, catalog)
     intent = flow.read_intent(ctl.CONTROL_DIR / "intent.json", catalog, ledger)
     return catalog, ledger, intent
+
+
+def web_with_production_environment() -> int:
+    """Inject production configuration once, without writing secrets to disk."""
+    if os.environ.get("AXIOM_RELEASE_INFISICAL_READY") == "1":
+        import web_server
+        return web_server.main([])
+    if not shutil.which("infisical"):
+        raise ctl.ReleaseError("release dashboard needs the Infisical CLI and prod authentication")
+    config = ctl.WORKSPACE / "AxiomCore/docs/.infisical.json"
+    project_id = json.loads(config.read_text()).get("workspaceId", "")
+    if not isinstance(project_id, str) or not re.fullmatch(r"[a-f0-9-]{36}", project_id):
+        raise ctl.ReleaseError("release dashboard has no valid Infisical project ID")
+    environment = dict(os.environ)
+    environment["AXIOM_RELEASE_INFISICAL_READY"] = "1"
+    command = ["infisical", "run", "--env=prod", f"--projectId={project_id}", "--",
+               sys.executable, "-B", str(ctl.CONTROL_DIR / "release_cli.py"), "web"]
+    os.execvpe("infisical", command, environment)
+    raise AssertionError("Infisical exec returned unexpectedly")
 
 
 def prepared_intent_matches(prepared: dict, intent: dict, catalog: dict,
@@ -247,7 +268,7 @@ def candidate_preflight(catalog: dict, intent: dict) -> None:
               + ", ".join(sorted(ahead_repositories)))
     if missing_upstreams:
         print("Remote/CI gap — configure tracked upstreams: " + ", ".join(sorted(missing_upstreams)))
-    print("Preflight only: no candidate was built or published. Build with `just release COMPONENT` "
+    print("No candidate was built or published (preflight only). Build with `just release COMPONENT` "
           "or run the reviewed release in the dashboard.")
 
 
@@ -378,8 +399,11 @@ def main() -> int:
         print(HELP)
         return 0
     if action == "web":
-        import web_server
-        return web_server.main([])
+        try:
+            return web_with_production_environment()
+        except (ctl.ReleaseError, OSError, ValueError, KeyError, json.JSONDecodeError) as error:
+            print(f"release: {error}", file=sys.stderr)
+            return 2
     if action == "test":
         return subprocess.run([sys.executable, "-B", "-m", "unittest", "discover",
                                "-s", str(ctl.CONTROL_DIR), "-p", "test_*.py", "-v"],

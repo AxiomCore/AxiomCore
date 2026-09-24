@@ -20,6 +20,17 @@ def git(repository: Path, *args: str) -> str:
 
 
 class ReleaseWebTests(unittest.TestCase):
+    def test_unpublished_dependency_pin_consumers_are_deferred_not_dropped(self):
+        changes = [{"component": "runtime-apple", "summary": "Runtime"},
+                   {"component": "sdk-swift", "summary": "Swift"},
+                   {"component": "sdk-atmx-react", "summary": "React"}]
+        with patch.object(web_server.ci_builders, "dependency_blockers",
+                          side_effect=lambda selected, *_: ["pin unavailable"] if selected != {"runtime-apple"} else []):
+            ready, deferred = web_server.split_deferred_changes(changes, {}, Path("/unused"))
+        self.assertEqual([item["component"] for item in ready], ["runtime-apple"])
+        self.assertEqual([item["id"] for item in deferred], ["sdk-swift", "sdk-atmx-react"])
+        self.assertEqual([item["change"]["summary"] for item in deferred], ["Swift", "React"])
+
     def test_review_ignores_untracked_nested_git_checkouts(self):
         with tempfile.TemporaryDirectory() as temporary:
             repository = Path(temporary) / "aggregate"

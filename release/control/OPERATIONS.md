@@ -212,7 +212,7 @@ plan or changed bytes is rejected.
 | `backend-api`, `backend-worker`, `mock-runner`, `contract-test-runner`, `dashboard-origin` | `image-ref.json` containing `image` as an Artifact Registry `@sha256:` URI, `sourceHeads` equal to the plan, and the Cloud Build `buildId` |
 
 The selective builder runner requires the relevant toolchain on its machine:
-Xcode, `cbindgen` and `wasm-pack` for Apple/WASM; Node/npm, pnpm, Dart/Flutter,
+Xcode, `cbindgen` and `wasm-pack` for Apple/WASM; Node/npm, pnpm, FVM (`fvm dart`/`fvm flutter`),
 Swift, Go and Python/Poetry/PyInstaller for their packages; and authenticated
 `gcloud` plus an explicit `AXIOM_GCP_REGION` for image candidates. A selected
 target fails before writing a receipt if a tool, remote build result, or

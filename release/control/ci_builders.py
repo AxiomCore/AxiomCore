@@ -43,8 +43,8 @@ TOOLS = {
     "sdk-atmx-web": ("cargo", "wasm-pack", "npm"),
     "sdk-atmx-react": ("npm",),
     "sdk-atmx-cli": ("npm",),
-    "sdk-flutter-generator": ("dart",),
-    "sdk-flutter": ("cargo", "wasm-pack", "flutter"),
+    "sdk-flutter-generator": ("fvm",),
+    "sdk-flutter": ("cargo", "wasm-pack", "fvm"),
     "sdk-swift": ("swift",),
     "extractor-fastapi": ("python3",),
     "extractor-go": ("go",),
@@ -267,8 +267,8 @@ def _local(entry: dict, catalog: dict, workspace: Path, root: Path,
         name = "axiom_flutter" if component == "sdk-flutter" else "axiom_flutter_generator"
         package = source / "axiom-sdk/flutter" / name
         tool = "flutter" if component == "sdk-flutter" else "dart"
-        _run(tool, "pub", "get", cwd=package, env=env)
-        _run(tool, "pub", "publish", "--dry-run", cwd=package, env=env)
+        _run("fvm", tool, "pub", "get", cwd=package, env=env)
+        _run("fvm", tool, "pub", "publish", "--dry-run", cwd=package, env=env)
         manifest = package / "pubspec.yaml"
         match = re.search(r"(?m)^version:\s*([0-9]+\.[0-9]+\.[0-9]+)\s*$", manifest.read_text())
         if not match:

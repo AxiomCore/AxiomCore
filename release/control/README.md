@@ -3,6 +3,10 @@
 ## Local release dashboard
 
 Run `just release web` and open the printed `http://127.0.0.1:8716/` address.
+The launcher injects Infisical `prod` using the checked-in project ID from
+`docs/.infisical.json`; do not print or export secrets manually. Authenticate
+the Infisical CLI before starting the dashboard. Flutter package builds and
+pub.dev publication use `fvm flutter` / `fvm dart`.
 The Python server binds only to loopback; its browser UI is in
 [`web/index.html`](./web/index.html). Select components with a selective builder,
 enter the train summary, each component's change type/note/version, and review
@@ -17,6 +21,11 @@ contract executor before the release worker, and the dashboard origin before
 its edge proxy, without forcing an unchanged component into the train.
 Each publisher still verifies remote bytes. A failed step stops the run;
 there is no automatic rollback of an already published component.
+When Swift or React is selected before its new runtime or `atmx-web` bytes
+exist, the preview explicitly queues that consumer for the next cycle and
+offers a run of the release-ready components. It never invents the Swift
+XCFramework checksum or a future npm lockfile resolution. The confirmation
+shows the reduced scope and the effective train summary before any writes.
 
 The run and log are checkpointed under the external release root's `ui-runs/`
 directory. Reopen the dashboard to inspect or explicitly resume a stopped

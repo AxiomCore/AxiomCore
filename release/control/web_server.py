@@ -38,6 +38,7 @@ MAX_REQUEST = 128 * 1024
 MAX_DIFF = 128 * 1024
 HOST_IDS = ("ui-host-web", "ui-host-android", "ui-host-ios")
 TRAIN_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{2,79}")
+DEFERRED_PIN_CONSUMERS = frozenset({"sdk-swift", "sdk-atmx-react"})
 
 
 def now() -> str:
@@ -87,6 +88,22 @@ def changed_files(repository: Path) -> list[dict]:
             result.append(item)
         index += 1
     return result
+
+
+def split_deferred_changes(changes: list[dict], ledger: dict, workspace: Path
+                           ) -> tuple[list[dict], list[dict]]:
+    """Keep consumers needing unpublished dependency bytes out of this train."""
+    ready = []
+    deferred = []
+    for change in changes:
+        component = change["component"]
+        issues = (ci_builders.dependency_blockers({component}, ledger, workspace)
+                  if component in DEFERRED_PIN_CONSUMERS else [])
+        if issues:
+            deferred.append({"id": component, "reason": issues[0], "change": change})
+        else:
+            ready.append(change)
+    return ready, deferred
 
 
 def release_groups(catalog: dict, selected: set[str]) -> list[str]:
@@ -303,6 +320,11 @@ class ReleaseDashboard:
                 updated["components"][component_id]["candidateVersion"] = version
             changes.append(change)
         versions.validate_versions(updated, catalog)
+        changes, deferred = split_deferred_changes(changes, updated, self.workspace)
+        ids = [change["component"] for change in changes]
+        selected = set(ids)
+        if not changes:
+            raise ctl.ReleaseError("No component is release-ready; publish upstream dependencies and update their source pins first")
         blockers.extend(ci_builders.dependency_blockers(selected, updated, self.workspace))
         blockers.extend(ci_builders.prerequisite_issues(selected))
         for component_id in selected:
@@ -310,7 +332,16 @@ class ReleaseDashboard:
             if missing:
                 blockers.append(f"{component_id}: select dependency {', '.join(sorted(missing))}")
         train_id = cycle.next_train_id(old_intent["trainId"], self.root)
-        intent = cycle.compose_intent(old_intent, train_id, changes, summary.strip(), published)
+        effective_summary = (f"Release {len(changes)} Axiom components; "
+                             f"{', '.join(item['id'] for item in deferred)} remain queued for verified dependency pins."
+                             if deferred else summary.strip())
+        intent = cycle.compose_intent(old_intent, train_id, changes, effective_summary, published)
+        if deferred:
+            deferred_ids = {item["id"] for item in deferred}
+            intent["queued"] = [change for change in intent["queued"]
+                                if change["component"] not in deferred_ids]
+            intent["queued"].extend({key: value for key, value in item["change"].items()
+                                     if key != "version"} for item in deferred)
         normalized = flow.validate_intent(copy.deepcopy(intent), catalog, updated)
         report, edits, fragments = flow.make_preparation(normalized, catalog, self.workspace)
         blockers.extend(report["blocked"])
@@ -371,6 +402,9 @@ class ReleaseDashboard:
         digest = ctl.sha256(ctl.canonical({"form": form, "trainId": train_id, "inputs": inputs,
                                            "catalog": catalog["sha256"]}))
         public = {"previewId": digest, "trainId": train_id, "components": ids,
+                  "requestedCount": len(requested),
+                  "deferred": [{"id": item["id"], "reason": item["reason"]} for item in deferred],
+                  "summary": effective_summary,
                   "order": release_groups(catalog, selected), "repositories": repositories,
                   "versionFiles": [str(path) for path in edits],
                   "notes": [str(path) for path in fragments], "storage": storage,

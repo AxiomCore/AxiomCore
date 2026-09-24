@@ -101,7 +101,7 @@ class SelectiveBuilderTests(unittest.TestCase):
             issues = ci_builders.prerequisite_issues({"backend-api", "sdk-flutter"},
                                                       {"PATH": "/empty"})
         self.assertTrue(any("AXIOM_GCP_REGION" in item for item in issues))
-        self.assertTrue(any("flutter" in item for item in issues))
+        self.assertTrue(any("fvm" in item for item in issues))
 
 
 if __name__ == "__main__":

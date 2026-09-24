@@ -12,9 +12,9 @@ def main() -> int:
     if not os.environ.get("PUB_TOKEN"):
         print("release: PUB_TOKEN is required for the scoped pub.dev publisher", file=sys.stderr)
         return 2
-    for command in (("dart", "pub", "token", "add", "https://pub.dev", "--env-var", "PUB_TOKEN"),
-                    ("dart", "pub", "publish", "--dry-run"),
-                    ("dart", "pub", "publish", "--force")):
+    for command in (("fvm", "dart", "pub", "token", "add", "https://pub.dev", "--env-var", "PUB_TOKEN"),
+                    ("fvm", "dart", "pub", "publish", "--dry-run"),
+                    ("fvm", "dart", "pub", "publish", "--force")):
         result = subprocess.run(command, check=False)
         if result.returncode:
             return result.returncode

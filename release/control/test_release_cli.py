@@ -12,6 +12,17 @@ import release_cli
 
 
 class CandidatePreflightTests(unittest.TestCase):
+    def test_dashboard_launch_uses_pinned_infisical_project(self):
+        with patch.object(release_cli.shutil, "which", return_value="/usr/bin/infisical"), \
+                patch.object(release_cli.os, "execvpe", side_effect=RuntimeError("exec captured")) as execute:
+            with self.assertRaisesRegex(RuntimeError, "exec captured"):
+                release_cli.web_with_production_environment()
+        command = execute.call_args.args[1]
+        environment = execute.call_args.args[2]
+        self.assertEqual(command[:3], ["infisical", "run", "--env=prod"])
+        self.assertTrue(any(item.startswith("--projectId=") for item in command))
+        self.assertEqual(environment["AXIOM_RELEASE_INFISICAL_READY"], "1")
+
     def test_status_marks_only_current_train_remote_verified_components_published(self):
         catalog = {"components": [{"id": "landing"}, {"id": "docs"}]}
         ledger = {"components": {name: {"candidateVersion": None}

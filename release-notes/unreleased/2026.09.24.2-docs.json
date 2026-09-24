@@ -1,0 +1,5 @@
+{
+  "component": "docs",
+  "type": "feature",
+  "summary": "Document extension dependencies, authoring migration, and current SDK support boundaries."
+}

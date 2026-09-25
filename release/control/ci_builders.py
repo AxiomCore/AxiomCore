@@ -197,15 +197,38 @@ def _copy(source: Path, destination: Path) -> Path:
     return destination
 
 
-def _archive_package(source: Path, destination: Path) -> Path:
+def _pub_files(source: Path) -> list[Path]:
+    """Mirror pub's hidden-file and gitignore selection before sealing a receipt."""
     if not (source / "pubspec.yaml").is_file():
         raise ctl.ReleaseError(f"pub package is missing pubspec.yaml: {source}")
-    excluded = {".dart_tool", "build", ".git", ".idea", "node_modules"}
-    files = sorted(path for path in source.rglob("*") if path.is_file()
-                   and not any(part in excluded for part in path.relative_to(source).parts)
-                   and path.name != "pubspec.lock")
     if any(path.is_symlink() for path in source.rglob("*")):
         raise ctl.ReleaseError("pub package contains a symlink; refusing to archive")
+    if any(source.rglob(".pubignore")):
+        raise ctl.ReleaseError("pub package uses .pubignore; extend the receipt builder before publishing")
+    files = sorted(path for path in source.rglob("*") if path.is_file()
+                   and not any(part.startswith(".") for part in path.relative_to(source).parts)
+                   and path.name != "pubspec.lock")
+    # Pub applies .gitignore to package contents even when the pinned source
+    # was exported with git archive and no .git directory accompanies it.
+    with tempfile.TemporaryDirectory(prefix="axiom-pub-ignore-") as temporary:
+        git_dir = Path(temporary) / "ignore.git"
+        subprocess.run(["git", "init", "--bare", "--quiet", str(git_dir)], check=True)
+        environment = {**os.environ, "GIT_DIR": str(git_dir), "GIT_WORK_TREE": str(source)}
+        names = [path.relative_to(source).as_posix() for path in files]
+        checked = subprocess.run(["git", "check-ignore", "--no-index", "-z", "--stdin"],
+                                 cwd=source, env=environment,
+                                 input=("\0".join(names) + "\0").encode(),
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        if checked.returncode not in (0, 1):
+            raise ctl.ReleaseError("cannot evaluate pub package .gitignore: " +
+                                   checked.stderr.decode(errors="replace")[-300:])
+        ignored = {item.decode() for item in checked.stdout.split(b"\0") if item}
+    files = [path for path in files if path.relative_to(source).as_posix() not in ignored]
+    return files
+
+
+def _archive_package(source: Path, destination: Path) -> Path:
+    files = _pub_files(source)
     with destination.open("xb") as raw:
         with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as compressed:
             with tarfile.open(fileobj=compressed, mode="w") as archive:

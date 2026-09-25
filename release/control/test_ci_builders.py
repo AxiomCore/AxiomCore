@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 import subprocess
+import tarfile
 import tempfile
 import unittest
 from unittest import mock
@@ -12,6 +13,21 @@ import ctl
 
 
 class SelectiveBuilderTests(unittest.TestCase):
+    def test_pub_archive_excludes_hidden_and_gitignored_files(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            package = Path(temporary) / "package"
+            (package / "lib").mkdir(parents=True)
+            (package / ".summary_files").mkdir()
+            (package / "pubspec.yaml").write_text("name: sample\nversion: 1.0.0\n")
+            (package / "lib/main.dart").write_text("void main() {}\n")
+            (package / ".gitignore").write_text("*.iml\n")
+            (package / ".DS_Store").write_text("local")
+            (package / ".summary_files/report.md").write_text("private")
+            (package / "sample.iml").write_text("local")
+            archive = ci_builders._archive_package(package, Path(temporary) / "sample.tar.gz")
+            with tarfile.open(archive, "r:gz") as opened:
+                self.assertEqual(set(opened.getnames()), {"pubspec.yaml", "lib/main.dart"})
+
     def test_flutter_staged_changelog_comes_from_reviewed_intent(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

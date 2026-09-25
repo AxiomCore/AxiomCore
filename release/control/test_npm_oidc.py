@@ -54,6 +54,7 @@ class NpmOidcTests(unittest.TestCase):
                                  return_value={"NPM_TOKEN": "old-secret", "NODE_AUTH_TOKEN": "old-secret"}), \
                     patch.object(publish_targets, "_npm_metadata", return_value={
                         "name": "atmx-cli", "version": "1.2.3", "dist": {"integrity": integrity}}) as metadata, \
+                    patch.object(publish_targets, "_verify_npm_tarball"), \
                     patch.object(publish_targets.npm_oidc, "publish") as dispatch:
                 result = publish_targets.publish_npm(candidate, "sdk-atmx-cli")
             self.assertEqual(result["status"], "remote-verified")
@@ -76,11 +77,59 @@ class NpmOidcTests(unittest.TestCase):
                     patch.object(publish_targets.ctl, "build_environment", return_value={}), \
                     patch.object(publish_targets, "_npm_metadata", side_effect=[None, {
                         "name": "atmx-cli", "version": "1.2.3", "dist": {"integrity": integrity}}]), \
+                    patch.object(publish_targets, "_verify_npm_tarball"), \
                     patch.object(publish_targets.npm_oidc, "publish",
                                  return_value={"workflowRun": "https://example.test/run"}) as dispatch:
                 result = publish_targets.publish_npm(candidate, "sdk-atmx-cli")
             dispatch.assert_called_once_with(candidate, "sdk-atmx-cli", archive)
             self.assertEqual(result["details"]["oidc"]["workflowRun"], "https://example.test/run")
+
+    def test_existing_version_with_handoff_recovers_oidc_receipt(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive = root / "atmx-cli.tgz"
+            archive.write_bytes(b"staged")
+            integrity = "sha512-" + base64.b64encode(hashlib.sha512(b"staged").digest()).decode()
+            directory = root / "sdk-atmx-cli"
+            (directory / "publication").mkdir(parents=True)
+            (directory / "publication/oidc-dispatch.json").write_text("{}")
+            candidate = {"root": root, "directory": directory,
+                         "intent": {"trainId": "train"},
+                         "stage": {"components": [{"id": "sdk-atmx-cli", "releaseVersion": "1.2.3"}]}}
+            with patch.object(publish_targets.publisher, "remote_source_heads"), \
+                    patch.object(publish_targets, "_npm_archive", return_value=(archive, {})), \
+                    patch.object(publish_targets.ctl, "build_environment", return_value={}), \
+                    patch.object(publish_targets, "_npm_metadata", return_value={
+                        "name": "atmx-cli", "version": "1.2.3", "dist": {"integrity": integrity}}), \
+                    patch.object(publish_targets, "_verify_npm_tarball"), \
+                    patch.object(publish_targets.npm_oidc, "publish",
+                                 return_value={"workflowRun": "https://example.test/run"}) as dispatch:
+                result = publish_targets.publish_npm(candidate, "sdk-atmx-cli")
+            dispatch.assert_called_once_with(candidate, "sdk-atmx-cli", archive)
+            self.assertEqual(result["details"]["oidc"]["workflowRun"], "https://example.test/run")
+
+    def test_existing_different_version_fails_immediately_without_dispatch(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive = root / "atmx-cli.tgz"
+            archive.write_bytes(b"new staged bytes")
+            directory = root / "sdk-atmx-cli"
+            directory.mkdir()
+            candidate = {"root": root, "directory": directory,
+                         "intent": {"trainId": "train"},
+                         "stage": {"components": [{"id": "sdk-atmx-cli", "releaseVersion": "1.2.3"}]}}
+            with patch.object(publish_targets.publisher, "remote_source_heads"), \
+                    patch.object(publish_targets, "_npm_archive", return_value=(archive, {})), \
+                    patch.object(publish_targets.ctl, "build_environment", return_value={}), \
+                    patch.object(publish_targets, "_npm_metadata", return_value={
+                        "name": "atmx-cli", "version": "1.2.3",
+                        "dist": {"integrity": "sha512-existing-different"}}), \
+                    patch.object(publish_targets.npm_oidc, "publish") as dispatch, \
+                    patch.object(publish_targets.time, "sleep") as sleep:
+                with self.assertRaisesRegex(ctl.ReleaseError, "already occupied by different bytes"):
+                    publish_targets.publish_npm(candidate, "sdk-atmx-cli")
+            dispatch.assert_not_called()
+            sleep.assert_not_called()
 
     def test_changed_handoff_marker_blocks_another_dispatch(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from http.server import ThreadingHTTPServer
+import io
 import json
 from pathlib import Path
 import subprocess
@@ -28,6 +29,167 @@ class ReleaseWebTests(unittest.TestCase):
         self.assertEqual(web_server.suggested_version("0.147.0", "0.147.0", "0.147.0"), "0.147.1")
         self.assertEqual(web_server.suggested_version("0.148.0", "0.148.0", "0.147.0"), "0.148.0")
         self.assertEqual(web_server.suggested_version("0.147.0", "0.147.0", None), "0.147.0")
+
+    def test_npm_latest_version_is_cached_and_uses_highest_stable_version(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            dashboard = web_server.ReleaseDashboard(workspace=Path(temporary), root=Path(temporary))
+            (Path(temporary) / "AxiomCore").mkdir()
+            reply = subprocess.CompletedProcess([], 0, b'["0.146.0", "0.146.1-beta.1", "0.145.9"]', b"")
+            with patch.object(web_server.subprocess, "run", return_value=reply) as query:
+                self.assertEqual(dashboard._npm_latest_version("atmx-cli"), "0.146.0")
+                self.assertEqual(dashboard._npm_latest_version("atmx-cli"), "0.146.0")
+            query.assert_called_once()
+            self.assertEqual(query.call_args.kwargs["env"]["NPM_CONFIG_USERCONFIG"], web_server.os.devnull)
+
+    def test_pub_latest_version_is_cached_and_uses_highest_stable_version(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            dashboard = web_server.ReleaseDashboard(root=Path(temporary))
+            reply = b'{"versions":[{"version":"0.146.0"},{"version":"0.146.1-dev.1"},{"version":"0.145.9"}]}'
+            with patch.object(web_server.urllib.request, "urlopen", return_value=io.BytesIO(reply)) as query:
+                self.assertEqual(dashboard._pub_latest_version("axiom_flutter_generator"), "0.146.0")
+                self.assertEqual(dashboard._pub_latest_version("axiom_flutter_generator"), "0.146.0")
+            query.assert_called_once()
+
+    def test_npm_collision_replan_preserves_original_and_requires_confirmation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            dashboard = web_server.ReleaseDashboard(root=root)
+            train = "2026.09.25.4"
+            job = {"format": "axiom-release-web-run/v1", "trainId": train,
+                   "status": "blocked", "currentStep": "publish:sdk-atmx-cli", "completed": [],
+                   "intent": {"changes": [{"component": "sdk-atmx-cli", "type": "feature",
+                                            "summary": "CLI update in 0.146.0."}]},
+                   "followup": {"trainId": "2026.09.25.5", "changes": [
+                       {"component": "sdk-atmx-react", "summary": "React update", "type": "feature"}],
+                       "order": ["sdk-atmx-react"], "requiredRepos": ["AxiomCore", "atmx-react"]}}
+            web_server.atomic_json(dashboard._job_path(train), job)
+            recovery = {"trainId": train, "component": "sdk-atmx-cli", "package": "atmx-cli",
+                        "occupiedVersion": "0.146.0", "nextVersion": "0.146.1",
+                        "followupTrainId": "2026.09.25.5"}
+            catalog = {"components": [{"id": "sdk-atmx-cli", "owner": "AxiomCore", "sources": []},
+                                      {"id": "sdk-atmx-react", "owner": "atmx-react", "sources": []}]}
+            with patch.object(dashboard, "npm_collision_recovery", return_value=recovery), \
+                    patch.object(dashboard, "_npm_latest_version", return_value="0.146.0"), \
+                    patch.object(web_server.ctl, "read_catalog", return_value=catalog), \
+                    patch.object(web_server.publish_targets, "_npm_metadata", return_value=None):
+                with self.assertRaisesRegex(web_server.ctl.ReleaseError, "type REPLAN"):
+                    dashboard.replan_npm_collision(train, "0.146.1", "CLI update in 0.146.1.", "wrong")
+                self.assertEqual(json.loads(dashboard._job_path(train).read_text()), job)
+                result = dashboard.replan_npm_collision(
+                    train, "0.146.1", "CLI update in 0.146.1.",
+                    f"REPLAN {train} sdk-atmx-cli 0.146.1")
+            saved = json.loads(dashboard._job_path(train).read_text())
+            backup = root / f"ui-runs/recovery-backups/{train}-sdk-atmx-cli.json"
+            self.assertEqual(json.loads(backup.read_text()), job)
+            self.assertEqual(saved["followup"]["versionOverrides"], {"sdk-atmx-cli": "0.146.1"})
+            self.assertEqual(saved["followup"]["order"], ["sdk-atmx-cli", "sdk-atmx-react"])
+            self.assertEqual(saved["followup"]["changes"][-1]["summary"], "CLI update in 0.146.1.")
+            self.assertIn("publish:sdk-atmx-cli", saved["completed"])
+            self.assertEqual(saved["deferredPublications"][0]["nextVersion"], "0.146.1")
+            self.assertEqual(result["status"], "ready-to-resume")
+
+    def test_resume_rejects_unchanged_occupied_npm_candidate(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            dashboard = web_server.ReleaseDashboard(root=Path(temporary))
+            train = "2026.09.25.4"
+            job = {"format": "axiom-release-web-run/v1", "trainId": train,
+                   "status": "blocked", "currentStep": "publish:sdk-atmx-cli",
+                   "completed": [], "intent": {"trainId": train}}
+            web_server.atomic_json(dashboard._job_path(train), job)
+            recovery = {"package": "atmx-cli", "occupiedVersion": "0.146.0"}
+            with patch.object(dashboard, "npm_collision_recovery", return_value=recovery):
+                with self.assertRaisesRegex(web_server.ctl.ReleaseError,
+                                            "confirm 'Move package candidate to successor train' first"):
+                    dashboard.resume(train, f"RESUME {train}")
+            self.assertEqual(json.loads(dashboard._job_path(train).read_text()), job)
+
+    def test_pub_collision_replan_defers_old_flutter_archive_too(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            dashboard = web_server.ReleaseDashboard(root=root)
+            train = "2026.09.25.4"
+            job = {"format": "axiom-release-web-run/v1", "trainId": train,
+                   "status": "blocked", "currentStep": "publish:sdk-flutter-generator",
+                   "completed": [], "intent": {"changes": [
+                       {"component": "sdk-flutter-generator", "type": "feature", "version": "0.146.0",
+                        "summary": "Generator update in 0.146.0."},
+                       {"component": "sdk-flutter", "type": "feature", "version": "0.147.0",
+                        "summary": "Flutter update in 0.147.0."}]}}
+            web_server.atomic_json(dashboard._job_path(train), job)
+            recovery = {"trainId": train, "component": "sdk-flutter-generator",
+                        "package": "axiom_flutter_generator", "occupiedVersion": "0.146.0",
+                        "nextVersion": "0.146.1", "followupTrainId": "2026.09.25.5",
+                        "rebuildWithSuccessor": ["sdk-flutter"]}
+            catalog = {"components": [
+                {"id": "sdk-flutter-generator", "owner": "axiom-sdk",
+                 "sources": [{"repo": "axiom-sdk", "paths": ["flutter/axiom_flutter_generator/"]}]},
+                {"id": "sdk-flutter", "owner": "axiom-sdk",
+                 "sources": [{"repo": "axiom-sdk", "paths": ["flutter/axiom_flutter/"]}]}]}
+            with patch.object(dashboard, "pub_collision_recovery", return_value=recovery), \
+                    patch.object(web_server.ctl, "read_catalog", return_value=catalog), \
+                    patch.object(web_server.ctl, "component_version", return_value="0.146.0"), \
+                    patch.object(web_server.publish_targets, "_pub_metadata", return_value=None):
+                result = dashboard.replan_pub_collision(
+                    train, "0.146.1", "Generator update in 0.146.1.",
+                    f"REPLAN {train} sdk-flutter-generator 0.146.1")
+            saved = json.loads(dashboard._job_path(train).read_text())
+            self.assertEqual(result["status"], "ready-to-resume")
+            self.assertEqual(saved["followup"]["versionOverrides"],
+                             {"sdk-flutter-generator": "0.146.1"})
+            self.assertEqual(saved["followup"]["order"], ["sdk-flutter-generator", "sdk-flutter"])
+            self.assertEqual(set(saved["completed"]),
+                             {"publish:sdk-flutter-generator", "publish:sdk-flutter"})
+            self.assertEqual(len(saved["deferredPublications"]), 2)
+            self.assertEqual(json.loads((root / f"ui-runs/recovery-backups/{train}-sdk-flutter-generator.json").read_text()), job)
+
+    def test_followup_applies_replanned_npm_version_only_to_successor_ledger(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            control = root / "control"
+            control.mkdir()
+            original_intent = {"trainId": "2026.09.25.4"}
+            original_ledger = {"components": {"sdk-atmx-cli": {"candidateVersion": "0.146.0"}}}
+            (control / "intent.json").write_text(json.dumps(original_intent))
+            (control / "versions.json").write_text(json.dumps(original_ledger))
+            dashboard = web_server.ReleaseDashboard(root=root)
+            job = {"trainId": "2026.09.25.4", "intent": original_intent,
+                   "ledger": original_ledger, "followup": {
+                       "trainId": "2026.09.25.5", "changes": [{"component": "sdk-atmx-cli"}],
+                       "versionOverrides": {"sdk-atmx-cli": "0.146.1"}}}
+            catalog = {"components": [{"id": "sdk-atmx-cli", "owner": "AxiomCore", "sources": []}]}
+            with patch.object(web_server.ctl, "CONTROL_DIR", control), \
+                    patch.object(web_server.versions, "VERSIONS", control / "versions.json"), \
+                    patch.object(web_server.versions, "validate_versions"), \
+                    patch.object(web_server.cycle, "published_evidence", return_value={}), \
+                    patch.object(web_server.cycle, "compose_intent", return_value={}), \
+                    patch.object(web_server.flow, "validate_intent", return_value={}), \
+                    patch.object(web_server.flow, "make_preparation", return_value=({"blocked": []}, {}, {})):
+                dashboard._plan_followup(job, catalog)
+            self.assertEqual(job["ledger"]["components"]["sdk-atmx-cli"]["candidateVersion"], "0.146.0")
+            self.assertEqual(job["followup"]["ledger"]["components"]["sdk-atmx-cli"]["candidateVersion"], "0.146.1")
+
+    def test_replanned_npm_publish_skips_old_train_and_runs_successor(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            dashboard = web_server.ReleaseDashboard(root=Path(temporary))
+            job = {"trainId": "old", "status": "running", "completed": ["publish:sdk-atmx-cli"],
+                   "order": ["sdk-atmx-cli", "docs"], "error": None,
+                   "deferredPublications": [{"component": "sdk-atmx-cli", "nextVersion": "0.146.1"}],
+                   "followup": {"trainId": "new", "changes": [{"component": "sdk-atmx-cli"}],
+                                "order": ["sdk-atmx-cli"]}}
+            calls = []
+            with patch.object(web_server.ctl, "read_catalog", return_value={}), \
+                    patch.object(dashboard, "_create_cycle"), \
+                    patch.object(dashboard, "_prepare"), \
+                    patch.object(dashboard, "_commit_managed"), \
+                    patch.object(dashboard, "_push_sources"), \
+                    patch.object(dashboard, "_build"), \
+                    patch.object(dashboard, "_pin_followup"), \
+                    patch.object(dashboard, "_plan_followup"), \
+                    patch.object(dashboard, "_publish", side_effect=lambda active, target:
+                                 calls.append((active.get("phase", "primary"), target))):
+                dashboard._run(job)
+            self.assertEqual(calls, [("primary", "docs"), ("followup", "sdk-atmx-cli")])
+            self.assertEqual(job["status"], "complete")
 
     def test_swift_pin_parser_accepts_checksum_on_separate_line(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -8,6 +8,7 @@ let draft = {};
 let preview = null;
 let currentJob = null;
 let polling = null;
+let recoveryLookup = null;
 
 async function api(path, value) {
   const options = {headers: {"X-Axiom-Release-Token": token}, cache: "no-store"};
@@ -301,7 +302,8 @@ function renderJob(job) {
   $("#job-train").textContent = job.trainId;
   $("#job-elapsed").textContent = elapsed(job.startedAt);
   const names = ["cycle", "prepare", "commit", "push", ...job.order.map((item) => `build:${item}`), ...job.order.map((item) => `publish:${item}`), ...(job.followup ? ["followup:pins", "followup:plan", "followup:cycle", "followup:prepare", "followup:commit", "followup:push", ...job.followup.order.map((item) => `followup:build:${item}`), ...job.followup.order.map((item) => `followup:publish:${item}`)] : [])];
-  $("#job-steps").innerHTML = names.map((name) => `<div class="step ${job.completed.includes(name) ? "done" : job.currentStep === name ? job.status === "running" ? "running" : "blocked" : ""}">${escapeHtml(name.replace(":", " · "))}</div>`).join("");
+  const deferred = new Set((job.deferredPublications || []).map((item) => `publish:${item.component}`));
+  $("#job-steps").innerHTML = names.map((name) => `<div class="step ${deferred.has(name) ? "deferred" : job.completed.includes(name) ? "done" : job.currentStep === name ? job.status === "running" ? "running" : "blocked" : ""}">${escapeHtml(name.replace(":", " · "))}${deferred.has(name) ? " — moved to successor train" : ""}</div>`).join("");
   const log = $("#job-log");
   const nearBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 35;
   log.textContent = job.logTail || "Waiting for output…";
@@ -311,7 +313,57 @@ function renderJob(job) {
   const canResume = ["blocked", "interrupted"].includes(job.status);
   $("#resume-area").classList.toggle("hidden", !canResume);
   if (canResume) $("#resume-confirm").placeholder = `RESUME ${job.trainId}`;
+  const canReplan = job.status === "blocked" && /^publish:(sdk-atmx-(web|react|cli)|sdk-flutter(-generator)?)$/.test(job.currentStep || "") && !deferred.has(job.currentStep);
+  if (!canReplan) { $("#npm-recovery-area").classList.add("hidden"); recoveryLookup = null; }
+  else {
+    $("#resume-area").classList.add("hidden");
+    const key = `${job.trainId}:${job.currentStep}`;
+    if (recoveryLookup !== key) { recoveryLookup = key; loadNpmRecovery(job.trainId); }
+  }
+  if (deferred.size) $("#resume-button").textContent = "Step 2 — Resume saved run";
+  else $("#resume-button").textContent = "Resume saved run";
   if (job.status === "complete" && snapshot?.trainId !== job.trainId) loadState();
+}
+
+async function loadNpmRecovery(trainId) {
+  const box = $("#npm-recovery-area");
+  const isPub = /^publish:sdk-flutter(-generator)?$/.test(currentJob?.currentStep || "");
+  const endpoint = isPub ? "/api/pub-recovery" : "/api/npm-recovery";
+  const registry = isPub ? "pub.dev" : "npm";
+  try {
+    const recovery = await api(`${endpoint}?train=${encodeURIComponent(trainId)}`);
+    if (!currentJob || currentJob.trainId !== trainId || currentJob.status !== "blocked") return;
+    const extra = recovery.rebuildWithSuccessor?.length ? ` The existing ${recovery.rebuildWithSuccessor.map(escapeHtml).join(", ")} archive also contains files ${registry} would omit, so it will be rebuilt in the successor without changing its version.` : "";
+    box.innerHTML = `<strong>Step 1 — move the occupied ${registry} version</strong><p>${escapeHtml(recovery.package)}@${escapeHtml(recovery.occupiedVersion)} has different published files. Its staged candidate will remain intact. Confirm a new version below; only then can you resume. The run will publish the remaining components, then rebuild ${escapeHtml(recovery.component)} in successor train ${escapeHtml(recovery.followupTrainId)}.${extra}</p><label class="field-label" for="npm-recovery-version">New candidate version</label><input id="npm-recovery-version" class="text-input" value="${escapeHtml(recovery.nextVersion)}" autocomplete="off"><label class="field-label" for="npm-recovery-summary">Successor changelog note</label><input id="npm-recovery-summary" class="text-input" maxlength="500" value="${escapeHtml(recovery.suggestedSummary)}"><label class="field-label" for="npm-recovery-confirm">Confirm replan</label><input id="npm-recovery-confirm" class="text-input" autocomplete="off"><small id="npm-recovery-phrase"></small><button id="npm-recovery-button" class="secondary-button" type="button" disabled>Step 1 — Save successor version</button>`;
+    box.classList.remove("hidden");
+    let generatedNote = recovery.suggestedSummary;
+    const syncConfirmation = () => { $("#npm-recovery-button").disabled = $("#npm-recovery-confirm").value !== `REPLAN ${trainId} ${recovery.component} ${$("#npm-recovery-version").value.trim()}`; };
+    const updatePhrase = () => {
+      const version = $("#npm-recovery-version").value.trim();
+      if ($("#npm-recovery-summary").value === generatedNote) {
+        generatedNote = recovery.suggestedSummary.replaceAll(recovery.nextVersion, version);
+        $("#npm-recovery-summary").value = generatedNote;
+      }
+      $("#npm-recovery-phrase").textContent = `Type REPLAN ${trainId} ${recovery.component} ${version}`;
+      syncConfirmation();
+    };
+    $("#npm-recovery-version").addEventListener("input", updatePhrase); updatePhrase();
+    $("#npm-recovery-confirm").addEventListener("input", syncConfirmation);
+    $("#npm-recovery-button").addEventListener("click", async () => {
+      const button = $("#npm-recovery-button"); button.disabled = true;
+      try {
+        const version = $("#npm-recovery-version").value.trim();
+        await api(endpoint, {trainId, version, summary: $("#npm-recovery-summary").value, confirmation: $("#npm-recovery-confirm").value});
+        notice(`${recovery.component} will be rebuilt as ${version} after the remaining publications. Resume the saved run to continue.`, "success");
+        recoveryLookup = null; await loadJob(trainId);
+      } catch (error) { notice(error.message, "error"); button.disabled = false; }
+    });
+  } catch (error) {
+    const resumable = /(?:has not published this version|now serves the exact staged archive)/.test(error.message);
+    box.classList.toggle("hidden", resumable);
+    if (!resumable) box.textContent = `Could not verify package recovery: ${error.message}`;
+    if (resumable && currentJob?.trainId === trainId) $("#resume-area").classList.remove("hidden");
+  }
 }
 
 async function loadJob(train) {

@@ -8,8 +8,10 @@ only from a reviewed preview and an explicit train-ID confirmation.
 from __future__ import annotations
 
 import argparse
+import base64
 import copy
 from datetime import datetime, timezone
+import hashlib
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -19,10 +21,12 @@ import re
 import secrets
 import subprocess
 import sys
+import tarfile
 import tempfile
 import threading
 import time
 from urllib.parse import parse_qs, urlsplit
+import urllib.request
 
 import ctl
 import auto_pins
@@ -30,6 +34,7 @@ import ci_builders
 import cycle
 import flow
 import publisher
+import publish_targets
 import release_cli
 import versions
 
@@ -162,6 +167,58 @@ class ReleaseDashboard:
         self.lock = threading.RLock()
         self.previews: dict[str, dict] = {}
         self.worker: threading.Thread | None = None
+        self.npm_versions: dict[str, tuple[float, str | None]] = {}
+        self.pub_versions: dict[str, tuple[float, str | None]] = {}
+
+    def _npm_latest_version(self, package: str) -> str | None:
+        cached = self.npm_versions.get(package)
+        if cached and time.monotonic() - cached[0] < 120:
+            return cached[1]
+        environment = self._npm_public_environment()
+        result = subprocess.run(["npm", "view", package, "versions", "--json", "--prefer-online",
+                                 "--registry=https://registry.npmjs.org"],
+                                cwd=self.workspace / "AxiomCore", env=environment,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                timeout=20, check=False)
+        if result.returncode:
+            if "E404" in result.stderr.decode(errors="replace"):
+                self.npm_versions[package] = (time.monotonic(), None)
+                return None
+            raise ctl.ReleaseError(f"could not verify npm versions for {package}: " +
+                                   result.stderr.decode(errors="replace")[-300:])
+        values = json.loads(result.stdout)
+        if isinstance(values, str):
+            values = [values]
+        if not isinstance(values, list):
+            raise ctl.ReleaseError(f"npm returned an invalid version list for {package}")
+        stable = [value for value in values if isinstance(value, str) and
+                  versions.STABLE_VERSION.fullmatch(value)]
+        latest = max(stable, key=flow.stable_tuple) if stable else None
+        self.npm_versions[package] = (time.monotonic(), latest)
+        return latest
+
+    def _pub_latest_version(self, package: str) -> str | None:
+        cached = self.pub_versions.get(package)
+        if cached and time.monotonic() - cached[0] < 120:
+            return cached[1]
+        with urllib.request.urlopen(f"https://pub.dev/api/packages/{package}", timeout=20) as response:
+            payload = json.load(response)
+        values = payload.get("versions") if isinstance(payload, dict) else None
+        if not isinstance(values, list):
+            raise ctl.ReleaseError(f"pub.dev returned an invalid version list for {package}")
+        stable = [item["version"] for item in values if isinstance(item, dict) and
+                  isinstance(item.get("version"), str) and
+                  versions.STABLE_VERSION.fullmatch(item["version"])]
+        latest = max(stable, key=flow.stable_tuple) if stable else None
+        self.pub_versions[package] = (time.monotonic(), latest)
+        return latest
+
+    @staticmethod
+    def _npm_public_environment() -> dict[str, str]:
+        environment = {key: value for key, value in os.environ.items()
+                       if key not in ("NPM_TOKEN", "NODE_AUTH_TOKEN", "NPM_CONFIG_USERCONFIG")}
+        environment["NPM_CONFIG_USERCONFIG"] = os.devnull
+        return environment
 
     def _load(self) -> tuple[dict, dict, dict]:
         catalog = ctl.read_catalog()
@@ -197,6 +254,24 @@ class ReleaseDashboard:
                 source_version = ctl.component_version(entry, catalog, self.workspace)
             except (ctl.ReleaseError, OSError):
                 source_version = None
+            published_version = published.get(component_id, {}).get("version")
+            registry_error = None
+            if component_id in publish_targets.NPM:
+                try:
+                    remote_version = self._npm_latest_version(publish_targets.NPM[component_id])
+                    if remote_version and (not published_version or
+                                           flow.stable_tuple(remote_version) > flow.stable_tuple(published_version)):
+                        published_version = remote_version
+                except (ctl.ReleaseError, OSError, subprocess.TimeoutExpired) as error:
+                    registry_error = str(error)
+            elif component_id in publish_targets.PUB:
+                try:
+                    remote_version = self._pub_latest_version(publish_targets.PUB[component_id])
+                    if remote_version and (not published_version or
+                                           flow.stable_tuple(remote_version) > flow.stable_tuple(published_version)):
+                        published_version = remote_version
+                except (ctl.ReleaseError, OSError, ValueError) as error:
+                    registry_error = str(error)
             state = ("published" if component_id in current else "active" if component_id in active
                      else "queued" if component_id in queued else "unselected")
             candidate_error = None
@@ -229,14 +304,14 @@ class ReleaseDashboard:
                 "versioned": versions.versioned(entry),
                 "sourceVersion": source_version,
                 "candidateVersion": ledger["components"][component_id]["candidateVersion"],
-                "lastReleased": (published.get(component_id, {}).get("version")
-                                 or published.get(component_id, {}).get("trainId")),
+                "lastReleased": (published_version or published.get(component_id, {}).get("trainId")),
                 "suggestedVersion": (suggested_version(source_version,
                                      ledger["components"][component_id]["candidateVersion"],
-                                     published.get(component_id, {}).get("version"))
+                                     published_version)
                                      if versions.versioned(entry) else None),
                 "stagedVersion": staged_version,
                 "state": state, "candidateError": candidate_error,
+                "registryError": registry_error,
             })
         repositories = []
         for name in catalog["repositories"]:
@@ -353,6 +428,34 @@ class ReleaseDashboard:
                 released = published.get(component_id, {}).get("version")
                 if released and flow.stable_tuple(version) <= flow.stable_tuple(released):
                     raise ctl.ReleaseError(f"{component_id}: version must be newer than published {released}")
+                if component_id in publish_targets.NPM:
+                    try:
+                        remote = self._npm_latest_version(publish_targets.NPM[component_id])
+                    except (ctl.ReleaseError, OSError, subprocess.TimeoutExpired) as error:
+                        blockers.append(f"{component_id}: cannot verify npm version availability: {error}")
+                    else:
+                        if remote and flow.stable_tuple(version) <= flow.stable_tuple(remote):
+                            blockers.append(f"{component_id}: npm already has {remote}; choose a version newer than it")
+                        else:
+                            try:
+                                occupied = publish_targets._npm_metadata(
+                                    publish_targets.NPM[component_id], version,
+                                    self.workspace / "AxiomCore",
+                                    self._npm_public_environment())
+                            except ctl.ReleaseError as error:
+                                blockers.append(f"{component_id}: cannot verify npm candidate availability: {error}")
+                            else:
+                                if occupied:
+                                    blockers.append(f"{component_id}: npm {version} is already occupied; choose a new version")
+                elif component_id in publish_targets.PUB:
+                    try:
+                        remote = self._pub_latest_version(publish_targets.PUB[component_id])
+                        occupied = publish_targets._pub_metadata(publish_targets.PUB[component_id], version)
+                    except (ctl.ReleaseError, OSError, ValueError) as error:
+                        blockers.append(f"{component_id}: cannot verify pub.dev version availability: {error}")
+                    else:
+                        if occupied or (remote and flow.stable_tuple(version) <= flow.stable_tuple(remote)):
+                            blockers.append(f"{component_id}: pub.dev already has {version if occupied else remote}; choose a newer free version")
                 updated["components"][component_id]["candidateVersion"] = version
             changes.append(change)
         versions.validate_versions(updated, catalog)
@@ -581,6 +684,30 @@ class ReleaseDashboard:
                 raise ctl.ReleaseError("this release run cannot be resumed")
             if confirmation != f"RESUME {train_id}":
                 raise ctl.ReleaseError(f"type RESUME {train_id} to continue the saved run")
+            step = job.get("currentStep", "")
+            if (job.get("status") == "blocked" and step.startswith("publish:")
+                    and step not in job.get("completed", [])):
+                component = step.removeprefix("publish:")
+                try:
+                    if component in publish_targets.NPM:
+                        recovery = self.npm_collision_recovery(train_id)
+                    elif component in publish_targets.PUB:
+                        recovery = self.pub_collision_recovery(train_id)
+                    else:
+                        recovery = None
+                except ctl.ReleaseError as error:
+                    # A missing npm version or an exact registry match is not
+                    # an immutable collision; ordinary resume remains valid.
+                    if not str(error).startswith(("npm has not published this version;",
+                                                   "npm now serves the exact staged archive;",
+                                                   "pub.dev has not published this version;",
+                                                   "pub.dev now serves the exact staged archive;")):
+                        raise
+                else:
+                    if recovery:
+                        raise ctl.ReleaseError(
+                            f"{recovery['package']}@{recovery['occupiedVersion']} cannot be retried: "
+                            "confirm 'Move package candidate to successor train' first, then resume")
             child_pid = job.get("childPid")
             if isinstance(child_pid, int):
                 try:
@@ -605,6 +732,260 @@ class ReleaseDashboard:
             self.worker = threading.Thread(target=self._run, args=(job,), daemon=True)
             self.worker.start()
             return {"trainId": train_id, "status": "running"}
+
+    def npm_collision_recovery(self, train_id: str) -> dict:
+        """Read-only proof that a blocked npm candidate needs a successor version."""
+        path = self._job_path(train_id)
+        if not path.is_file() or path.is_symlink():
+            raise ctl.ReleaseError("release run does not exist")
+        job = json.loads(path.read_text())
+        step = job.get("currentStep", "")
+        if (job.get("status") != "blocked" or job.get("phase") == "followup"
+                or not step.startswith("publish:") or step in job.get("completed", [])):
+            raise ctl.ReleaseError("this run is not blocked at a primary npm publication")
+        component = step.removeprefix("publish:")
+        if component not in publish_targets.NPM or component in {
+                item["component"] for item in job.get("deferredPublications", [])}:
+            raise ctl.ReleaseError("the blocked component has no npm version-collision recovery")
+        candidate = publisher.load_candidate(component, self.root, self.workspace, train_id)
+        archive, _ = publish_targets._npm_archive(candidate, component)
+        package = publish_targets.NPM[component]
+        version = publish_targets._version(candidate, component)
+        npm_env = self._npm_public_environment()
+        metadata = publish_targets._npm_metadata(package, version, candidate["directory"], npm_env)
+        if metadata is None:
+            raise ctl.ReleaseError("npm has not published this version; resume the saved run normally")
+        expected = "sha512-" + base64.b64encode(hashlib.sha512(archive.read_bytes()).digest()).decode()
+        if metadata.get("dist", {}).get("integrity") == expected:
+            raise ctl.ReleaseError("npm now serves the exact staged archive; resume the saved run normally")
+        if (candidate["directory"] / "publication/oidc-dispatch.json").exists():
+            raise ctl.ReleaseError("an OIDC handoff exists for this version; inspect its workflow before replanning")
+        # Do not treat stale metadata alone as an immutable conflict. The
+        # registry tarball must independently disagree with the staged bytes.
+        try:
+            publish_targets._verify_npm_tarball(package, version, metadata, archive)
+        except ctl.ReleaseError as error:
+            if "differs from the exact staged bytes" not in str(error):
+                raise
+        else:
+            raise ctl.ReleaseError("npm metadata disagrees but its tarball matches; retry publication")
+        if (candidate["directory"] / "publication/published.json").exists():
+            raise ctl.ReleaseError("publication evidence already exists; inspect before replanning")
+        entry = next(item for item in candidate["catalog"]["components"] if item["id"] == component)
+        source_version = ctl.component_version(entry, candidate["catalog"], self.workspace)
+        remote_latest = self._npm_latest_version(package)
+        base_version = max((item for item in (version, source_version, remote_latest) if item),
+                           key=flow.stable_tuple)
+        major, minor, patch = flow.stable_tuple(base_version)
+        suggested = None
+        for offset in range(1, 101):
+            proposal = f"{major}.{minor}.{patch + offset}"
+            if publish_targets._npm_metadata(package, proposal, candidate["directory"], npm_env) is None:
+                suggested = proposal
+                break
+        if suggested is None:
+            raise ctl.ReleaseError("the next 100 patch versions are occupied; choose a new release manually")
+        original_note = next(item["summary"] for item in job["intent"]["changes"]
+                             if item["component"] == component)
+        return {"trainId": train_id, "component": component, "package": package,
+                "occupiedVersion": version, "nextVersion": suggested,
+                "suggestedSummary": original_note.replace(version, suggested),
+                "followupTrainId": job.get("followup", {}).get("trainId") or
+                                   cycle.next_train_id(train_id, self.root)}
+
+    def pub_collision_recovery(self, train_id: str) -> dict:
+        """Read-only proof of an immutable pub.dev version collision."""
+        path = self._job_path(train_id)
+        if not path.is_file() or path.is_symlink():
+            raise ctl.ReleaseError("release run does not exist")
+        job = json.loads(path.read_text())
+        step = job.get("currentStep", "")
+        if (job.get("status") != "blocked" or job.get("phase") == "followup"
+                or not step.startswith("publish:") or step in job.get("completed", [])):
+            raise ctl.ReleaseError("this run is not blocked at a primary pub.dev publication")
+        component = step.removeprefix("publish:")
+        if component not in publish_targets.PUB or component in {
+                item["component"] for item in job.get("deferredPublications", [])}:
+            raise ctl.ReleaseError("the blocked component has no pub.dev collision recovery")
+        candidate = publisher.load_candidate(component, self.root, self.workspace, train_id)
+        package = publish_targets.PUB[component]
+        version = publish_targets._version(candidate, component)
+        archive = publish_targets._single(candidate, component, f"{package}-{version}.tar.gz")
+        data = publish_targets._pub_metadata(package, version)
+        if data is None:
+            raise ctl.ReleaseError("pub.dev has not published this version; resume the saved run normally")
+        remote = publish_targets._pub_remote_archive(data)
+        if publish_targets._pub_manifest(archive) == publish_targets._pub_manifest(remote):
+            raise ctl.ReleaseError("pub.dev now serves the exact staged archive; resume the saved run normally")
+        if (candidate["directory"] / "publication/published.json").exists():
+            raise ctl.ReleaseError("publication evidence already exists; inspect before replanning")
+        entry = next(item for item in candidate["catalog"]["components"] if item["id"] == component)
+        source_version = ctl.component_version(entry, candidate["catalog"], self.workspace)
+        base = max((item for item in (version, source_version) if item), key=flow.stable_tuple)
+        major, minor, patch = flow.stable_tuple(base)
+        suggested = None
+        for offset in range(1, 101):
+            proposal = f"{major}.{minor}.{patch + offset}"
+            if publish_targets._pub_metadata(package, proposal) is None:
+                suggested = proposal
+                break
+        if suggested is None:
+            raise ctl.ReleaseError("the next 100 pub.dev patch versions are occupied")
+        original_note = next(item["summary"] for item in job["intent"]["changes"]
+                             if item["component"] == component)
+        # The old Flutter SDK receipt uses the same over-inclusive archiver.
+        # Move it to the successor too, before an irreversible upload occurs.
+        rebuild = []
+        if component == "sdk-flutter-generator" and "sdk-flutter" in {
+                item["component"] for item in job["intent"]["changes"]}:
+            flutter_step = "publish:sdk-flutter"
+            if flutter_step not in job.get("completed", []):
+                flutter = publisher.load_candidate("sdk-flutter", self.root, self.workspace, train_id)
+                flutter_version = publish_targets._version(flutter, "sdk-flutter")
+                flutter_archive = publish_targets._single(
+                    flutter, "sdk-flutter", f"axiom_flutter-{flutter_version}.tar.gz")
+                with tarfile.open(flutter_archive, "r:gz") as opened:
+                    archive_files = {member.name.removeprefix("./") for member in opened if member.isfile()}
+                if any(part.startswith(".") for name in archive_files for part in Path(name).parts):
+                    rebuild.append("sdk-flutter")
+        return {"trainId": train_id, "component": component, "package": package,
+                "occupiedVersion": version, "nextVersion": suggested,
+                "suggestedSummary": original_note.replace(version, suggested),
+                "rebuildWithSuccessor": rebuild,
+                "followupTrainId": job.get("followup", {}).get("trainId") or
+                                   cycle.next_train_id(train_id, self.root)}
+
+    def replan_npm_collision(self, train_id: str, version: str, summary: str,
+                             confirmation: str) -> dict:
+        """Explicitly defer one immutable npm collision to a new built train."""
+        with self.lock:
+            if self.worker and self.worker.is_alive():
+                raise ctl.ReleaseError("a release is already running")
+            recovery = self.npm_collision_recovery(train_id)
+            component = recovery["component"]
+            if not isinstance(version, str) or not versions.STABLE_VERSION.fullmatch(version):
+                raise ctl.ReleaseError("enter a stable X.Y.Z successor version")
+            if flow.stable_tuple(version) <= flow.stable_tuple(recovery["occupiedVersion"]):
+                raise ctl.ReleaseError(f"successor version must be newer than {recovery['occupiedVersion']}")
+            if not isinstance(summary, str) or not summary.strip() or len(summary) > 500 or "\n" in summary:
+                raise ctl.ReleaseError("enter a one-line successor changelog note (up to 500 characters)")
+            expected = f"REPLAN {train_id} {component} {version}"
+            if confirmation != expected:
+                raise ctl.ReleaseError(f"type {expected} to authorize this successor version")
+            path = self._job_path(train_id)
+            job = json.loads(path.read_text())
+            if job.get("currentStep") != f"publish:{component}":
+                raise ctl.ReleaseError("the blocked release step changed; review it again")
+            catalog = ctl.read_catalog()
+            entry = next(item for item in catalog["components"] if item["id"] == component)
+            source_version = ctl.component_version(entry, catalog, self.workspace)
+            if source_version and flow.stable_tuple(version) < flow.stable_tuple(source_version):
+                raise ctl.ReleaseError(f"successor version must not be older than source {source_version}")
+            remote_latest = self._npm_latest_version(publish_targets.NPM[component])
+            if remote_latest and flow.stable_tuple(version) <= flow.stable_tuple(remote_latest):
+                raise ctl.ReleaseError(f"successor version must be newer than npm's latest {remote_latest}")
+            candidate_dir = self.root / "trains" / train_id / "components" / component
+            npm_env = self._npm_public_environment()
+            if publish_targets._npm_metadata(publish_targets.NPM[component], version,
+                                             candidate_dir, npm_env) is not None:
+                raise ctl.ReleaseError(f"npm {component}@{version} is already occupied; choose another version")
+            change = next(item for item in job["intent"]["changes"] if item["component"] == component)
+            followup = job.setdefault("followup", {"trainId": recovery["followupTrainId"],
+                                                "changes": [], "order": [], "requiredRepos": ["AxiomCore"]})
+            if "intent" in followup or any(item["component"] == component for item in followup["changes"]):
+                raise ctl.ReleaseError("follow-up train was already planned; inspect before changing it")
+            backup = self.root / "ui-runs/recovery-backups" / f"{train_id}-{component}.json"
+            if backup.exists() or backup.is_symlink():
+                raise ctl.ReleaseError(f"a recovery backup already exists; inspect {backup}")
+            atomic_json(backup, job)
+            revised_change = copy.deepcopy(change)
+            revised_change["summary"] = summary.strip()
+            followup["changes"].append(revised_change)
+            followup["versionOverrides"] = {**followup.get("versionOverrides", {}), component: version}
+            followup["order"] = release_groups(catalog, {item["component"] for item in followup["changes"]})
+            required = set(followup["requiredRepos"])
+            required.add(entry["owner"])
+            required.update(source["repo"] for source in entry["sources"])
+            followup["requiredRepos"] = sorted(required)
+            job.setdefault("deferredPublications", []).append({
+                "component": component, "occupiedVersion": recovery["occupiedVersion"],
+                "nextVersion": version, "trainId": followup["trainId"]})
+            job["completed"].append(f"publish:{component}")
+            job["error"] = (f"{component}@{recovery['occupiedVersion']} remains unpublished in {train_id}. "
+                            f"It will be rebuilt and published as {version} in {followup['trainId']}. "
+                            "Resume to continue the other selected publications.")
+            self._log(job, f"Operator deferred occupied npm {component}@{recovery['occupiedVersion']} "
+                      f"to successor train {followup['trainId']} as {version}; original candidate remains intact")
+            self._save_job(job)
+            return {"trainId": train_id, "component": component, "nextVersion": version,
+                    "followupTrainId": followup["trainId"], "status": "ready-to-resume"}
+
+    def replan_pub_collision(self, train_id: str, version: str, summary: str,
+                             confirmation: str) -> dict:
+        """Keep occupied pub.dev receipts immutable and rebuild in the successor."""
+        with self.lock:
+            if self.worker and self.worker.is_alive():
+                raise ctl.ReleaseError("a release is already running")
+            recovery = self.pub_collision_recovery(train_id)
+            component = recovery["component"]
+            if not isinstance(version, str) or not versions.STABLE_VERSION.fullmatch(version):
+                raise ctl.ReleaseError("enter a stable X.Y.Z successor version")
+            if flow.stable_tuple(version) <= flow.stable_tuple(recovery["occupiedVersion"]):
+                raise ctl.ReleaseError(f"successor version must be newer than {recovery['occupiedVersion']}")
+            if not isinstance(summary, str) or not summary.strip() or len(summary) > 500 or "\n" in summary:
+                raise ctl.ReleaseError("enter a one-line successor changelog note (up to 500 characters)")
+            expected = f"REPLAN {train_id} {component} {version}"
+            if confirmation != expected:
+                raise ctl.ReleaseError(f"type {expected} to authorize this successor version")
+            job = json.loads(self._job_path(train_id).read_text())
+            if job.get("currentStep") != f"publish:{component}":
+                raise ctl.ReleaseError("the blocked release step changed; review it again")
+            catalog = ctl.read_catalog()
+            entry = next(item for item in catalog["components"] if item["id"] == component)
+            source_version = ctl.component_version(entry, catalog, self.workspace)
+            if source_version and flow.stable_tuple(version) < flow.stable_tuple(source_version):
+                raise ctl.ReleaseError(f"successor version must not be older than source {source_version}")
+            package = publish_targets.PUB[component]
+            if publish_targets._pub_metadata(package, version) is not None:
+                raise ctl.ReleaseError(f"pub.dev {package}@{version} is occupied; choose another version")
+            additions = [component, *recovery.get("rebuildWithSuccessor", [])]
+            existing_followup = job.get("followup", {})
+            if "intent" in existing_followup or any(
+                    item["component"] in additions for item in existing_followup.get("changes", [])):
+                raise ctl.ReleaseError("follow-up train was already planned; inspect before changing it")
+            backup = self.root / "ui-runs/recovery-backups" / f"{train_id}-{component}.json"
+            if backup.exists() or backup.is_symlink():
+                raise ctl.ReleaseError(f"a recovery backup already exists; inspect {backup}")
+            atomic_json(backup, job)
+            followup = job.setdefault("followup", {"trainId": recovery["followupTrainId"],
+                                                "changes": [], "order": [], "requiredRepos": ["AxiomCore"]})
+            for target in additions:
+                change = copy.deepcopy(next(item for item in job["intent"]["changes"]
+                                            if item["component"] == target))
+                if target == component:
+                    change["summary"] = summary.strip()
+                    followup["versionOverrides"] = {**followup.get("versionOverrides", {}), target: version}
+                followup["changes"].append(change)
+                owner = next(item for item in catalog["components"] if item["id"] == target)
+                required = set(followup["requiredRepos"])
+                required.add(owner["owner"])
+                required.update(source["repo"] for source in owner["sources"])
+                followup["requiredRepos"] = sorted(required)
+                job.setdefault("deferredPublications", []).append({
+                    "component": target, "occupiedVersion": recovery["occupiedVersion"] if target == component else None,
+                    "nextVersion": version if target == component else change.get("version"),
+                    "trainId": followup["trainId"]})
+                job["completed"].append(f"publish:{target}")
+            followup["order"] = release_groups(catalog, {item["component"] for item in followup["changes"]})
+            job["error"] = (f"{component}@{recovery['occupiedVersion']} remains unpublished in {train_id}. "
+                            f"It will be rebuilt as {version} in {followup['trainId']}. "
+                            "Resume to continue the other selected publications.")
+            self._log(job, f"Operator deferred occupied pub.dev {package}@{recovery['occupiedVersion']} "
+                      f"to successor train {followup['trainId']} as {version}; "
+                      f"also rebuilding {', '.join(recovery.get('rebuildWithSuccessor', [])) or 'no other packages'}")
+            self._save_job(job)
+            return {"trainId": train_id, "component": component, "nextVersion": version,
+                    "followupTrainId": followup["trainId"], "status": "ready-to-resume"}
 
     def _step(self, job: dict, name: str, action) -> None:
         if name in job["completed"]:
@@ -784,9 +1165,13 @@ class ReleaseDashboard:
             raise ctl.ReleaseError("active release metadata changed before the automatic SDK phase")
         published = cycle.published_evidence(self.root, catalog, job["trainId"])
         summary = f"Complete verified SDK dependency pins from release {job['trainId']}"
+        updated_ledger = copy.deepcopy(job["ledger"])
+        for component, version in followup.get("versionOverrides", {}).items():
+            updated_ledger["components"][component]["candidateVersion"] = version
+        versions.validate_versions(updated_ledger, catalog)
         intent = cycle.compose_intent(job["intent"], followup["trainId"],
                                       followup["changes"], summary, published)
-        normalized = flow.validate_intent(copy.deepcopy(intent), catalog, job["ledger"])
+        normalized = flow.validate_intent(copy.deepcopy(intent), catalog, updated_ledger)
         report, edits, fragments = flow.make_preparation(normalized, catalog, self.workspace)
         if report["blocked"]:
             raise ctl.ReleaseError("automatic SDK preparation blocked: " + "; ".join(report["blocked"]))
@@ -798,7 +1183,7 @@ class ReleaseDashboard:
             for dependency in entry.get("depends_on", []):
                 predecessor = next(item for item in catalog["components"] if item["id"] == dependency)
                 required.update(source["repo"] for source in predecessor["sources"])
-        followup.update({"intent": intent, "ledger": copy.deepcopy(job["ledger"]),
+        followup.update({"intent": intent, "ledger": updated_ledger,
                          "oldIntent": old_intent_text, "oldLedger": old_ledger_text,
                          "requiredRepos": sorted(required),
                          "managedPaths": [str(ctl.CONTROL_DIR / "intent.json"),
@@ -903,6 +1288,12 @@ def handler_for(dashboard: ReleaseDashboard):
                 elif parsed.path == "/api/job":
                     query = parse_qs(parsed.query)
                     result = {"job": dashboard.job(query.get("train", [None])[0])}
+                elif parsed.path == "/api/npm-recovery":
+                    query = parse_qs(parsed.query)
+                    result = dashboard.npm_collision_recovery(query.get("train", [""])[0])
+                elif parsed.path == "/api/pub-recovery":
+                    query = parse_qs(parsed.query)
+                    result = dashboard.pub_collision_recovery(query.get("train", [""])[0])
                 elif parsed.path == "/api/diff":
                     query = parse_qs(parsed.query)
                     result = dashboard.diff(query.get("repo", [""])[0], query.get("path", [""])[0])
@@ -933,6 +1324,16 @@ def handler_for(dashboard: ReleaseDashboard):
                     result = dashboard.start(value.get("previewId", ""), value.get("confirmation", ""))
                 elif path == "/api/resume":
                     result = dashboard.resume(value.get("trainId", ""), value.get("confirmation", ""))
+                elif path == "/api/npm-recovery":
+                    result = dashboard.replan_npm_collision(value.get("trainId", ""),
+                                                            value.get("version", ""),
+                                                            value.get("summary", ""),
+                                                            value.get("confirmation", ""))
+                elif path == "/api/pub-recovery":
+                    result = dashboard.replan_pub_collision(value.get("trainId", ""),
+                                                            value.get("version", ""),
+                                                            value.get("summary", ""),
+                                                            value.get("confirmation", ""))
                 elif path == "/api/commit":
                     result = dashboard.commit_reviewed(value.get("repository", ""),
                                                        value.get("paths", []), value.get("message", ""))

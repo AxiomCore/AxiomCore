@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -17,11 +18,14 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 
 import ctl
+import ci_builders
 import npm_oidc
 import publisher
 
@@ -36,6 +40,36 @@ NPM = {"sdk-atmx-web": "atmx-web", "sdk-atmx-react": "atmx-react",
        "sdk-atmx-cli": "atmx-cli"}
 PUB = {"sdk-flutter-generator": "axiom_flutter_generator",
        "sdk-flutter": "axiom_flutter"}
+
+
+def _pub_metadata(package: str, version: str) -> dict | None:
+    url = f"https://pub.dev/api/packages/{package}/versions/{version}"
+    try:
+        with urllib.request.urlopen(url, timeout=30) as response:
+            return json.load(response)
+    except urllib.error.HTTPError as error:
+        if error.code == 404:
+            return None
+        raise
+
+
+def _pub_manifest(path: Path | bytes) -> dict[str, str]:
+    with tarfile.open(path if isinstance(path, Path) else None, "r:gz",
+                      fileobj=io.BytesIO(path) if isinstance(path, bytes) else None) as opened:
+        return {member.name.removeprefix("./"): ctl.sha256(opened.extractfile(member).read())
+                for member in opened if member.isfile() and opened.extractfile(member)}
+
+
+def _pub_remote_archive(data: dict) -> bytes:
+    parsed = urllib.parse.urlsplit(data.get("archive_url") or "")
+    if (parsed.scheme != "https" or not parsed.hostname or parsed.username or
+            parsed.password or parsed.fragment):
+        raise ctl.ReleaseError("pub.dev did not return a trusted HTTPS archive URL")
+    with urllib.request.urlopen(parsed.geturl(), timeout=60) as response:
+        remote_bytes = response.read()
+    if data.get("archive_sha256") and data["archive_sha256"] != ctl.sha256(remote_bytes):
+        raise ctl.ReleaseError("pub.dev archive checksum differs from its metadata")
+    return remote_bytes
 GCP = {
     "backend-api": ("service", "axiom-backend", "axiom-backend", "axiom-backend"),
     "backend-worker": ("job", "axiom-backend", "axiom-backend", "axiom-semantic-worker"),
@@ -214,7 +248,8 @@ def publish_github(candidate: dict, component: str) -> dict:
 
 
 def _npm_metadata(package: str, version: str, cwd: Path, env: dict[str, str]) -> dict | None:
-    completed = subprocess.run(["npm", "view", f"{package}@{version}", "--json", "--registry=https://registry.npmjs.org"],
+    completed = subprocess.run(["npm", "view", f"{package}@{version}", "--json", "--prefer-online",
+                                "--registry=https://registry.npmjs.org"],
                                cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
     if completed.returncode:
         if "E404" in completed.stderr.decode(errors="replace"):
@@ -225,6 +260,42 @@ def _npm_metadata(package: str, version: str, cwd: Path, env: dict[str, str]) ->
     if data.get("name") != package or data.get("version") != version:
         raise ctl.ReleaseError("npm registry returned another package or version")
     return data
+
+
+def _wait_for_npm_integrity(package: str, version: str, expected: str, cwd: Path,
+                            env: dict[str, str], metadata: dict | None) -> dict:
+    """Allow bounded registry propagation, never accepting different bytes."""
+    deadline = time.monotonic() + 90
+    while metadata is None or metadata.get("dist", {}).get("integrity") != expected:
+        if time.monotonic() >= deadline:
+            raise ctl.ReleaseError(f"npm {package}@{version} did not converge to the exact staged tarball "
+                                   "within 90 seconds; inspect registry bytes before resuming")
+        print(f"Waiting for npm {package}@{version} registry integrity to converge...", flush=True)
+        time.sleep(5)
+        metadata = _npm_metadata(package, version, cwd, env)
+    return metadata
+
+
+def _verify_npm_tarball(package: str, version: str, metadata: dict, archive: Path) -> None:
+    """Verify the actual registry download, not only npm's metadata claim."""
+    expected_url = f"https://registry.npmjs.org/{package}/-/{package}-{version}.tgz"
+    if metadata.get("dist", {}).get("tarball") != expected_url:
+        raise ctl.ReleaseError(f"npm {package}@{version} advertises an unexpected tarball URL")
+    request = urllib.request.Request(expected_url,
+                                     headers={"User-Agent": "AxiomCore-Release-Verifier/1.0"})
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            while chunk := response.read(65536):
+                size += len(chunk)
+                if size > archive.stat().st_size:
+                    raise ctl.ReleaseError(f"npm {package}@{version} tarball exceeds staged size")
+                digest.update(chunk)
+    except urllib.error.HTTPError as error:
+        raise ctl.ReleaseError(f"npm {package}@{version} tarball download returned HTTP {error.code}") from error
+    if size != archive.stat().st_size or digest.hexdigest() != ctl.sha256_file(archive):
+        raise ctl.ReleaseError(f"npm {package}@{version} tarball differs from the exact staged bytes")
 
 
 def _tar_member(archive: Path, name: str) -> bytes:
@@ -279,42 +350,80 @@ def _npm_archive(candidate: dict, component: str) -> tuple[Path, dict[str, dict]
     return archive, records
 
 
-def _r2_command(args: list[str], env: dict[str, str], cwd: Path) -> bytes:
-    keys = ("CLOUDFLARE_ACCOUNT_ID", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY")
-    present = [key for key in keys if env.get(key)]
-    if len(present) != len(keys):
-        if present:
-            raise ctl.ReleaseError("partial R2 credentials")
+def _r2_auth(env: dict[str, str], workspace: Path) -> tuple[str, list[str], dict[str, str]]:
+    """Resolve the ATMX bucket's keys without copying them to release evidence."""
+    explicit = (env.get("AWS_ACCESS_KEY_ID"), env.get("AWS_SECRET_ACCESS_KEY"))
+    if any(explicit) and not all(explicit):
+        raise ctl.ReleaseError("partial AWS R2 key pair; provide both values or unset both")
+    resolved = dict(env)
+    if all(explicit):
+        account = resolved.get("CLOUDFLARE_ACCOUNT_ID", "")
+        prefix: list[str] = []
+    else:
         if not shutil.which("infisical", path=env.get("PATH")):
-            raise ctl.ReleaseError("R2 upload requires Infisical prod or scoped S3 credentials")
-        return ctl.run("infisical", "run", "--env=prod", "--", *args, cwd=cwd, env=env)
-    return ctl.run(*args, cwd=cwd, env=env)
-
-
-def _r2_account(env: dict[str, str], cwd: Path) -> str:
-    value = env.get("CLOUDFLARE_ACCOUNT_ID")
-    if not value:
-        if not shutil.which("infisical", path=env.get("PATH")):
-            raise ctl.ReleaseError("R2 upload requires CLOUDFLARE_ACCOUNT_ID")
-        value = ctl.run("infisical", "run", "--env=prod", "--", "printenv",
-                        "CLOUDFLARE_ACCOUNT_ID", cwd=cwd, env=env).decode().strip()
-    if not re.fullmatch(r"[a-fA-F0-9]{32}", value):
+            raise ctl.ReleaseError("ATMX R2 needs AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY "
+                                   "from Infisical prod or an explicit complete environment")
+        configuration = workspace / "axiom-frontend/.infisical.json"
+        if not configuration.is_file() or configuration.is_symlink():
+            raise ctl.ReleaseError("ATMX R2 needs an Infisical project configuration")
+        project_id = json.loads(configuration.read_text()).get("workspaceId", "")
+        if not re.fullmatch(r"[a-fA-F0-9-]{36}", project_id):
+            raise ctl.ReleaseError("ATMX R2 Infisical project ID is invalid")
+        infisical = ["infisical", "run", f"--projectId={project_id}", "--env=prod", "--"]
+        account = ctl.run(*infisical, "printenv", "CLOUDFLARE_ACCOUNT_ID",
+                          cwd=workspace / "axiom-frontend", env=env).decode().strip()
+        if resolved.get("CLOUDFLARE_ACCOUNT_ID") and resolved["CLOUDFLARE_ACCOUNT_ID"] != account:
+            raise ctl.ReleaseError("Infisical R2 account differs from the configured Cloudflare account")
+        prefix = [*infisical, sys.executable, "-B", str(Path(__file__).with_name("r2_aws.py"))]
+    if not re.fullmatch(r"[a-fA-F0-9]{32}", account):
         raise ctl.ReleaseError("Cloudflare account ID is not a 32-character hex identifier")
-    return value
+    if not prefix:
+        # Direct/local credentials need no other production secrets in the AWS
+        # child, even if the dashboard itself was started under Infisical.
+        keep = ("PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "HTTPS_PROXY", "HTTP_PROXY",
+                "NO_PROXY", "SSL_CERT_FILE", "AWS_CA_BUNDLE")
+        resolved = {key: resolved[key] for key in keep if key in resolved} | {
+            "AWS_ACCESS_KEY_ID": resolved["AWS_ACCESS_KEY_ID"],
+            "AWS_SECRET_ACCESS_KEY": resolved["AWS_SECRET_ACCESS_KEY"],
+        }
+    resolved["AWS_DEFAULT_REGION"] = "auto"
+    resolved["AWS_REGION"] = "auto"
+    resolved["AWS_EC2_METADATA_DISABLED"] = "true"
+    return account, prefix, resolved
 
 
-def _r2_probe(args: list[str], env: dict[str, str], cwd: Path) -> subprocess.CompletedProcess:
-    keys = ("CLOUDFLARE_ACCOUNT_ID", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY")
-    present = [key for key in keys if env.get(key)]
-    if present and len(present) != len(keys):
-        raise ctl.ReleaseError("partial R2 credentials")
-    command = args if present else ["infisical", "run", "--env=prod", "--", *args]
-    return subprocess.run(command, cwd=cwd, env=env, check=False,
+def _r2_argv(args: list[str], auth: tuple[str, list[str], dict[str, str]]) -> list[str]:
+    if not args or args[0] != "aws":
+        raise ctl.ReleaseError("R2 command must invoke aws")
+    # r2_aws.py itself executes aws after Infisical injects credentials.
+    return [*auth[1], *args[1:]] if auth[1] else args
+
+
+def _r2_command(args: list[str], auth: tuple[str, list[str], dict[str, str]], cwd: Path) -> bytes:
+    return ctl.run(*_r2_argv(args, auth), cwd=cwd, env=auth[2])
+
+
+def _r2_probe(args: list[str], auth: tuple[str, list[str], dict[str, str]],
+              cwd: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(_r2_argv(args, auth), cwd=cwd, env=auth[2], check=False,
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
+def _verify_r2_public(url: str, expected_sha256: str) -> None:
+    # The public hostname rejects urllib's default Python-urllib user-agent
+    # even when the same object serves correctly to browsers and curl.
+    request = urllib.request.Request(url, headers={"User-Agent": "AxiomCore-Release-Verifier/1.0"})
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            if ctl.sha256(response.read()) != expected_sha256:
+                raise ctl.ReleaseError(f"public R2 domain serves different bytes: {url}")
+    except urllib.error.HTTPError as error:
+        raise ctl.ReleaseError(f"public R2 verification returned HTTP {error.code}: {url}") from error
+
+
 def _publish_r2(candidate: dict, version: str, records: dict[str, dict], env: dict[str, str]) -> dict:
-    account = _r2_account(env, candidate["directory"])
+    auth = _r2_auth(env, candidate["workspace"])
+    account = auth[0]
     endpoint = f"https://{account}.r2.cloudflarestorage.com"
     directory, _, _ = _publication(candidate, "sdk-atmx-web")
     directory.mkdir(parents=True, exist_ok=True)
@@ -326,7 +435,7 @@ def _publish_r2(candidate: dict, version: str, records: dict[str, dict], env: di
         fetch = ["aws", "s3", "cp", uri, str(local), "--endpoint-url", endpoint, "--no-progress"]
         # A missing versioned key may be created; an existing key is never replaced.
         exists = _r2_probe(["aws", "s3api", "head-object", "--bucket", "atmx", "--key", key,
-                            "--endpoint-url", endpoint], env, candidate["directory"])
+                            "--endpoint-url", endpoint], auth, candidate["directory"])
         if exists.returncode:
             message = exists.stderr.decode(errors="replace")
             if "404" not in message and "Not Found" not in message:
@@ -334,15 +443,13 @@ def _publish_r2(candidate: dict, version: str, records: dict[str, dict], env: di
             mime = "application/wasm" if name.endswith(".wasm") else "application/javascript"
             _r2_command(["aws", "s3", "cp", records[name]["path"], uri,
                          "--endpoint-url", endpoint, "--content-type", mime,
-                         "--cache-control", "public,max-age=31536000,immutable", "--no-progress"], env,
+                         "--cache-control", "public,max-age=31536000,immutable", "--no-progress"], auth,
                         candidate["directory"])
-        _r2_command(fetch, env, candidate["directory"])
+        _r2_command(fetch, auth, candidate["directory"])
         if ctl.sha256_file(local) != records[name]["sha256"]:
             raise ctl.ReleaseError(f"R2 object differs from exact staged asset: {key}")
         public_url = f"https://atmx.axiomcore.dev/{urllib.parse.quote(key)}"
-        with urllib.request.urlopen(public_url, timeout=30) as response:
-            if ctl.sha256(response.read()) != records[name]["sha256"]:
-                raise ctl.ReleaseError(f"public R2 domain serves different bytes: {key}")
+        _verify_r2_public(public_url, records[name]["sha256"])
         proof[key] = records[name]["sha256"]
     return proof
 
@@ -372,11 +479,21 @@ def publish_npm(candidate: dict, component: str) -> dict:
     npm_env["NPM_CONFIG_USERCONFIG"] = os.devnull
     metadata = _npm_metadata(package, version, candidate["directory"], npm_env)
     oidc = {}
-    if metadata is None:
+    # A prior attempt can complete the OIDC workflow, then stop before its
+    # publication receipt is saved. Reverify that handoff on resume so the
+    # final receipt retains its workflow provenance without dispatching twice.
+    handoff = candidate["directory"] / "publication/oidc-dispatch.json"
+    if (metadata is not None and not handoff.is_file() and
+            metadata.get("dist", {}).get("integrity") != expected_integrity):
+        raise ctl.ReleaseError(f"npm {package}@{version} is already occupied by different bytes; "
+                               "this immutable version cannot publish the staged candidate. "
+                               "Choose a new version in a successor release train")
+    if metadata is None or handoff.is_file():
         oidc = npm_oidc.publish(candidate, component, archive)
         metadata = _npm_metadata(package, version, candidate["directory"], npm_env)
-    if metadata is None or metadata.get("dist", {}).get("integrity") != expected_integrity:
-        raise ctl.ReleaseError(f"npm {package}@{version} integrity differs from exact staged tarball")
+    metadata = _wait_for_npm_integrity(package, version, expected_integrity,
+                                       candidate["directory"], npm_env, metadata)
+    _verify_npm_tarball(package, version, metadata, archive)
     details = {"version": version, "integrity": expected_integrity, "r2": r2}
     if oidc:
         details["oidc"] = oidc
@@ -434,14 +551,24 @@ def publish_pub(candidate: dict, component: str) -> dict:
     if not re.search(rf"^name:\s*{re.escape(package)}\s*$", (source / "pubspec.yaml").read_text(), re.M) or not re.search(
             rf"^version:\s*{re.escape(version)}\s*$", (source / "pubspec.yaml").read_text(), re.M):
         raise ctl.ReleaseError("pubspec identity differs from staged component")
-    url = f"https://pub.dev/api/packages/{package}/versions/{version}"
-    try:
-        with urllib.request.urlopen(url, timeout=30) as response:
-            data = json.load(response)
-    except urllib.error.HTTPError as error:
-        if error.code != 404:
-            raise
-        data = None
+    data = _pub_metadata(package, version)
+    staged_files = _pub_manifest(archive)
+    publishable = {path.relative_to(source).as_posix() for path in ci_builders._pub_files(source)}
+    excluded = set(staged_files) - publishable
+    if data is not None:
+        remote_path = directory / "pub-remote.tar.gz"
+        remote_bytes = _pub_remote_archive(data)
+        if not remote_path.exists():
+            with remote_path.open("xb") as output:
+                output.write(remote_bytes)
+        elif remote_path.read_bytes() != remote_bytes:
+            raise ctl.ReleaseError("pub.dev archive changed between verification attempts")
+        if staged_files != _pub_manifest(remote_path):
+            raise ctl.ReleaseError(f"pub.dev {package}@{version} is already occupied by different files; "
+                                   "choose a new version in a successor release train")
+    elif excluded:
+        raise ctl.ReleaseError("staged pub package includes files that dart pub would omit: " +
+                               ", ".join(sorted(excluded)[:8]) + "; rebuild in a successor train")
     if data is None:
         env = ctl.build_environment(candidate["root"], component)
         helper = str(Path(__file__).with_name("pub_publish.py"))
@@ -451,33 +578,21 @@ def publish_pub(candidate: dict, component: str) -> dict:
                 raise ctl.ReleaseError("pub.dev publisher needs PUB_TOKEN from Infisical prod or environment")
             command = ["infisical", "run", "--env=prod", "--", *command]
         ctl.run(*command, cwd=source, env=env, capture=False)
-        with urllib.request.urlopen(url, timeout=30) as response:
-            data = json.load(response)
-    remote_archive = data.get("archive_url") if isinstance(data, dict) else None
-    parsed_archive = urllib.parse.urlsplit(remote_archive or "")
-    if (parsed_archive.scheme != "https" or not parsed_archive.hostname or
-            parsed_archive.username or parsed_archive.password or parsed_archive.fragment):
-        raise ctl.ReleaseError("pub.dev did not return a trusted HTTPS archive URL")
-    with urllib.request.urlopen(remote_archive, timeout=60) as response:
-        remote_bytes = response.read()
-    remote_digest = data.get("archive_sha256")
-    if remote_digest and remote_digest != ctl.sha256(remote_bytes):
-        raise ctl.ReleaseError("pub.dev archive checksum differs from its metadata")
-    def manifest(path: Path) -> dict[str, str]:
-        with tarfile.open(path, "r:gz") as opened:
-            return {member.name.removeprefix("./"): ctl.sha256(opened.extractfile(member).read())
-                    for member in opened if member.isfile() and opened.extractfile(member)}
+        data = _pub_metadata(package, version)
+        if data is None:
+            raise ctl.ReleaseError("pub.dev did not expose the uploaded package version")
+        remote_bytes = _pub_remote_archive(data)
     remote_path = directory / "pub-remote.tar.gz"
     if not remote_path.exists():
         with remote_path.open("xb") as output:
             output.write(remote_bytes)
     elif remote_path.read_bytes() != remote_bytes:
         raise ctl.ReleaseError("pub.dev archive changed between verification attempts")
-    if manifest(archive) != manifest(remote_path):
+    if staged_files != _pub_manifest(remote_path):
         raise ctl.ReleaseError("pub.dev package files differ from the staged package archive")
     return _save(candidate, component, f"pub.dev: {package}",
                  f"https://pub.dev/packages/{package}/versions/{version}",
-                 {"version": version, "fileSha256": manifest(archive)})
+                 {"version": version, "fileSha256": staged_files})
 
 
 def publish_swift(candidate: dict) -> dict:
@@ -692,15 +807,17 @@ def _proxy_identity(worker: bytes) -> tuple[str, str]:
     return marker.group(1), url
 
 
-def _verify_proxy(url: str, marker: str, origin: str) -> None:
+def _verify_proxy(url: str, marker: str, origin: str, domain: str) -> None:
     parsed = urllib.parse.urlsplit(url)
     hostname = parsed.hostname or ""
     if (parsed.scheme != "https" or parsed.port is not None or parsed.path not in ("", "/")
-            or (hostname != "axiom-dashboard.pages.dev" and not hostname.endswith(
-                ".axiom-dashboard.pages.dev"))):
+            or parsed.query or parsed.fragment or
+            (hostname != domain and not hostname.endswith(f".{domain}"))):
         raise ctl.ReleaseError("dashboard proxy deployment URL is not under its Pages project")
     proof_url = url.rstrip("/") + "/.well-known/axiom-dashboard-release"
-    with urllib.request.urlopen(proof_url, timeout=30) as response:
+    proof_request = urllib.request.Request(
+        proof_url, headers={"User-Agent": "axiom-release-verifier/1"})
+    with urllib.request.urlopen(proof_request, timeout=30) as response:
         if urllib.parse.urlsplit(response.geturl()).hostname != hostname:
             raise ctl.ReleaseError("dashboard proxy release proof redirected elsewhere")
         observed = json.load(response)
@@ -708,12 +825,34 @@ def _verify_proxy(url: str, marker: str, origin: str) -> None:
         raise ctl.ReleaseError("deployed dashboard proxy marker or origin differs from staged worker")
     # The proxy also has to forward a normal request without an upstream 5xx.
     try:
-        with urllib.request.urlopen(url, timeout=30) as response:
+        root_request = urllib.request.Request(
+            url, headers={"User-Agent": "axiom-release-verifier/1"})
+        with urllib.request.urlopen(root_request, timeout=30) as response:
             if response.status >= 500:
                 raise ctl.ReleaseError("dashboard proxy origin is unhealthy")
     except urllib.error.HTTPError as error:
         if error.code >= 500:
             raise ctl.ReleaseError("dashboard proxy origin returned a server error") from error
+
+
+def _verify_proxy_ready(url: str, marker: str, origin: str, domain: str) -> None:
+    """Wait for a new Pages deployment/alias without weakening exact proof."""
+    last_error: Exception | None = None
+    for attempt in range(18):
+        try:
+            _verify_proxy(url, marker, origin, domain)
+            return
+        except ctl.ReleaseError as error:
+            if "not under its Pages project" in str(error):
+                raise
+            last_error = error
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError) as error:
+            last_error = error
+        if attempt < 17:
+            print(f"Waiting for dashboard Pages proof at {url} ({attempt + 1}/18): {last_error}", flush=True)
+            time.sleep(5)
+    raise ctl.ReleaseError(f"dashboard Pages URL {url} did not serve the exact staged marker "
+                           f"after 90 seconds; last error: {last_error}")
 
 
 def publish_dashboard_proxy(candidate: dict) -> dict:
@@ -722,51 +861,98 @@ def publish_dashboard_proxy(candidate: dict) -> dict:
     worker = _single(candidate, component, "_worker.js").read_bytes()
     marker, origin = _proxy_identity(worker)
     owner = ctl.repo_path(candidate["catalog"], "axiom-frontend", candidate["workspace"])
+    head = candidate["plan"]["repositories"]["axiom-frontend"]["head"]
+    if ctl.run("git", "rev-parse", "HEAD", cwd=owner).decode().strip() != head:
+        raise ctl.ReleaseError("dashboard proxy tooling checkout differs from its pinned source commit")
     directory, published, stage_sha = _publication(candidate, component)
     deployment = directory / "deployment.json"
-    if deployment.exists():
-        record = json.loads(deployment.read_text())
-        if record.get("stageSha256") != stage_sha or record.get("marker") != marker:
-            raise ctl.ReleaseError("dashboard proxy deployment evidence belongs to another stage")
-        url = record["url"]
-    else:
-        if directory.exists():
-            raise ctl.ReleaseError(f"incomplete dashboard proxy deployment: {directory}")
-        environment = ctl.build_environment(candidate["root"], component)
-        publisher._check_secret_names(("CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN"),
-                                      publisher._cloudflare_command, environment, owner)
+    environment = ctl.build_environment(candidate["root"], component)
+    publisher._check_secret_names(("CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN"),
+                                  publisher._cloudflare_command, environment, owner)
+    site = directory / "site"
+    source = directory / "tooling"
+    if not directory.exists():
         directory.mkdir(parents=True)
-        site = directory / "site"
         site.mkdir()
         (site / "_worker.js").write_bytes(worker)
-        source = directory / "tooling"
         source.mkdir()
         ctl.stage_tracked_landing_source(owner, source)
         ctl.run("pnpm", "install", "--frozen-lockfile", "--filter", "axiom-landing...",
                 cwd=source, env=environment, capture=False)
-        wrangler = ["pnpm", "--filter", "axiom-landing", "exec", "wrangler"]
-        projects = json.loads(ctl.run(*publisher._cloudflare_command(
-            [*wrangler, "pages", "project", "list", "--json"], environment),
-            cwd=source, env=environment).decode())
-        if isinstance(projects, dict):
-            projects = projects.get("result", [])
-        if not isinstance(projects, list) or not any(item.get("name") == "axiom-dashboard" for item in projects):
-            raise ctl.ReleaseError("Cloudflare Pages project axiom-dashboard is missing")
-        head = candidate["plan"]["repositories"]["axiom-frontend"]["head"]
+    if (directory.is_symlink() or not site.is_dir() or site.is_symlink() or
+            set(site.iterdir()) != {site / "_worker.js"} or
+            (site / "_worker.js").is_symlink() or (site / "_worker.js").read_bytes() != worker or
+            not source.is_dir() or source.is_symlink() or
+            set(directory.iterdir()) - {site, source, directory / "deploy-intent.json",
+                                        deployment, published}):
+        raise ctl.ReleaseError(f"dashboard proxy publication workspace differs from staged bytes: {directory}")
+    with tempfile.TemporaryDirectory(prefix="axiom-proxy-tooling-") as temporary:
+        expected_source = Path(temporary)
+        ctl.stage_tracked_landing_source(owner, expected_source)
+        for file in expected_source.rglob("*"):
+            if file.is_file():
+                actual = source / file.relative_to(expected_source)
+                if not actual.is_file() or actual.is_symlink() or actual.read_bytes() != file.read_bytes():
+                    raise ctl.ReleaseError("dashboard proxy tooling differs from its pinned source")
+    wrangler = ["pnpm", "--filter", "axiom-landing", "exec", "wrangler"]
+    domain = publisher._pages_project_domain(publisher._pages_project_list(
+        wrangler, source, environment), "axiom-dashboard")
+    if domain is None:
+        raise ctl.ReleaseError("Cloudflare Pages project axiom-dashboard is missing from the configured account")
+    intent_path = directory / "deploy-intent.json"
+    intent = {"stageSha256": stage_sha, "workerSha256": ctl.sha256(worker),
+              "marker": marker, "origin": origin, "head": head, "domain": domain}
+    if intent_path.exists() and json.loads(intent_path.read_text()) != intent:
+        raise ctl.ReleaseError("dashboard proxy upload intent belongs to another candidate")
+    if deployment.exists():
+        record = json.loads(deployment.read_text())
+        if any(record.get(key) != value for key, value in (
+                ("stageSha256", stage_sha), ("marker", marker), ("origin", origin))) or \
+                record.get("domain", domain) != domain:
+            raise ctl.ReleaseError("dashboard proxy deployment evidence belongs to another stage")
+        url = record["url"]
+    elif intent_path.exists():
+        listed = json.loads(ctl.run(*publisher._cloudflare_command(
+            [*wrangler, "pages", "deployment", "list", "--project-name", "axiom-dashboard", "--json"],
+            environment), cwd=source, env=environment).decode())
+        if not isinstance(listed, list):
+            raise ctl.ReleaseError("Cloudflare dashboard deployment list was not a JSON array")
+        url = None
+        for item in listed:
+            if not isinstance(item, dict):
+                continue
+            commit = item.get("Source")
+            proposed = item.get("Deployment")
+            if (item.get("Branch") != "main" or not isinstance(commit, str) or
+                    len(commit) < 7 or not head.startswith(commit) or not isinstance(proposed, str)):
+                continue
+            try:
+                _verify_proxy(proposed, marker, origin, domain)
+                _verify_proxy(f"https://{domain}", marker, origin, domain)
+            except (ctl.ReleaseError, OSError, ValueError):
+                continue
+            url = proposed
+            break
+        if url is None:
+            raise ctl.ReleaseError("dashboard proxy upload intent exists but no deployment serves its exact marker; "
+                                   "inspect Cloudflare before retrying; no second upload was attempted")
+        ctl.write_json(deployment, {**intent, "url": url})
+    else:
+        ctl.write_json(intent_path, intent)
         output = publisher._run_with_combined_output(publisher._cloudflare_command(
             [*wrangler, "pages", "deploy", str(site), "--project-name", "axiom-dashboard",
              "--branch", "main", "--commit-hash", head], environment), source, environment)
         urls = [url for url in re.findall(r"https://[a-zA-Z0-9.-]+\.pages\.dev", output)
-                if (urllib.parse.urlsplit(url).hostname or "").endswith(".axiom-dashboard.pages.dev")]
+                if (urllib.parse.urlsplit(url).hostname or "").endswith(f".{domain}")]
         if not urls:
             raise ctl.ReleaseError("Wrangler did not return a dashboard Pages deployment URL")
         url = urls[-1]
-        ctl.write_json(deployment, {"stageSha256": stage_sha, "url": url,
-                                    "marker": marker, "origin": origin})
-    _verify_proxy(url, marker, origin)
-    _verify_proxy("https://axiom-dashboard.pages.dev", marker, origin)
+        ctl.write_json(deployment, {**intent, "url": url})
+    _verify_proxy_ready(url, marker, origin, domain)
+    _verify_proxy_ready(f"https://{domain}", marker, origin, domain)
     return _save(candidate, component, "Cloudflare Pages: axiom-dashboard", url,
-                 {"workerSha256": ctl.sha256(worker), "marker": marker, "origin": origin})
+                 {"workerSha256": ctl.sha256(worker), "marker": marker,
+                  "origin": origin, "domain": domain})
 
 
 def publish(candidate: dict, component: str) -> dict:

@@ -232,7 +232,15 @@ authorized activation.
 The local dashboard proxy build needs `AXIOM_DASHBOARD_ORIGIN` set to the
 deployed HTTPS Cloud Run origin. It stages `_worker.js` with a source-bound
 release marker, then publishes to the existing `axiom-dashboard` Pages
-project. The proxy is a separate wave after its origin when the origin URL
+project. Wrangler's project listing supplies the actual `pages.dev` domain;
+it need not equal `<project-name>.pages.dev`. A saved proxy upload intent is
+checked against listed deployments and the served marker before retrying, so
+an interrupted publish does not silently upload a second deployment. The
+proxy verifier sends the same named User-Agent as the other Pages verifier;
+Cloudflare can reject Python's default `urllib` User-Agent with HTTP 403 even
+when the exact deployment is publicly available. A bounded retry handles
+brief propagation delays without treating a persistent 403 as success. The
+proxy is a separate wave after its origin when the origin URL
 changes. This selector does not provision missing Cloud Run services/jobs,
 run backend migrations, or reconfigure production secrets; use the owning
 initial-provisioning workflow before the first image-only update.
@@ -246,13 +254,47 @@ through their owning GitHub repositories' `npm-trusted-publish.yml` workflows
 using npm Trusted Publishing/OIDC. The release controller puts the exact
 receipt-verified `.tgz` in a GitHub prerelease handoff, verifies the
 downloaded bytes, dispatches the GitHub-hosted workflow, waits for success,
-then checks npm's `dist.integrity` against the staged archive. Neither a local
+then waits briefly for npm metadata to converge and verifies both
+`dist.integrity` and the downloaded registry tarball against the staged
+archive. A persistent mismatch blocks publication. Neither a local
 `npm login` nor `NPM_TOKEN`/`NODE_AUTH_TOKEN` is used. See
 [`NPM_TRUSTED_PUBLISHING.md`](./NPM_TRUSTED_PUBLISHING.md) for the one-time npm
 trust grants and default-branch requirement. pub.dev needs `PUB_TOKEN` from
 Infisical `prod`; Dart stores only the environment-variable reference in its
 component-scoped SSD cache, not the token value. The `atmx-web` publisher uses
-the existing R2 S3 credentials and does not mutate the `latest` alias.
+the `atmx`-bucket-scoped `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` from
+the existing Infisical `prod` project, or a complete explicit environment
+with `CLOUDFLARE_ACCOUNT_ID`. It never reads the local ignored `.env` file.
+The AWS child receives only its S3 pair, without printing it or saving it on
+the release SSD. Generic Cloudflare public or
+private bucket keys are not assumed to have access to `atmx`. Publication
+checks existing versioned objects and verifies both R2 and public-domain
+bytes; it never mutates the `latest` alias.
+The dashboard reads npm and pub.dev published stable versions when suggesting
+candidate versions, and the release preview refuses an already occupied
+version. If an older saved run is blocked because its npm version has different
+published bytes, the live-run panel offers an explicit successor-train replan.
+Review the new version and changelog note, type the displayed `REPLAN` phrase,
+click **Step 1 — Save successor version**, then type `RESUME <train>` and click
+**Step 2 — Resume saved run**. Resume is withheld until the replan has been
+saved; it cannot retry the known occupied npm version. The original staged
+archive and run backup remain on the release
+SSD; the occupied version is never relabeled as published. Remaining primary
+components publish before the new candidate is prepared and built in the
+internal follow-up train.
+
+The same explicit recovery applies when an existing pub.dev version has
+different package files. The dashboard checks the downloaded pub.dev archive,
+proposes an unused patch version, and keeps the old staged receipt untouched.
+The Flutter package builder now excludes hidden and `.gitignore`-ignored files
+before sealing a receipt, matching Dart's published file set. For the staged
+`2026.09.25.4` generator collision, recovery also moves the Flutter SDK's old
+over-inclusive archive to the successor train for a rebuild; its still-free
+version is preserved. Restart the dashboard process to load updated server
+code, but do not advance the tracked remote tips of the current train's pinned
+source repositories before its remaining publications complete. Review and
+commit local control-plane changes when the run reaches its successor phase;
+that phase will pause safely if they remain uncommitted.
 After verifying the CLI GitHub archive, the CLI publisher updates only
 `Formula/axiom.rb` in the clean `AxiomCore/homebrew-tap` checkout, pushes its
 single release commit, and reads the remote formula back. It refuses to

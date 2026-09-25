@@ -1,18 +1,230 @@
 import io
+import gzip
 import json
 from pathlib import Path
 import tarfile
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import ctl
 import publish_menu
 import publish_targets
+import r2_aws
 import release_cli
 
 
 class PublishTargetTests(unittest.TestCase):
+    def test_pub_publisher_rejects_unpublishable_staged_files_before_upload(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive = root / "axiom_flutter_generator-0.146.1.tar.gz"
+            with archive.open("wb") as output:
+                with gzip.GzipFile(fileobj=output, mode="wb") as zipped:
+                    with tarfile.open(fileobj=zipped, mode="w") as opened:
+                        for name, body in {"pubspec.yaml": b"name: axiom_flutter_generator\nversion: 0.146.1\n",
+                                           ".DS_Store": b"local"}.items():
+                            info = tarfile.TarInfo(name)
+                            info.size = len(body)
+                            opened.addfile(info, io.BytesIO(body))
+            candidate = {"directory": root / "candidate", "stage": {}}
+            with patch.object(publish_targets.publisher, "remote_source_heads"), \
+                    patch.object(publish_targets, "_single", return_value=archive), \
+                    patch.object(publish_targets, "_version", return_value="0.146.1"), \
+                    patch.object(publish_targets, "_pub_metadata", return_value=None), \
+                    patch.object(publish_targets.ctl, "build_environment") as environment:
+                with self.assertRaisesRegex(ctl.ReleaseError, "staged pub package includes files"):
+                    publish_targets.publish_pub(candidate, "sdk-flutter-generator")
+            environment.assert_not_called()
+
+    def test_dashboard_proxy_uses_listed_pages_domain_and_reuses_partial_workspace(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            owner = root / "owner"
+            owner.mkdir()
+            directory = root / "candidate"
+            publication = directory / "publication"
+            site = publication / "site"
+            site.mkdir(parents=True)
+            (site / "_worker.js").write_bytes(b"staged worker")
+            (publication / "tooling").mkdir()
+            archive = root / "_worker.js"
+            archive.write_bytes(b"staged worker")
+            head = "a" * 40
+            candidate = {"directory": directory, "stage": {}, "root": root,
+                         "catalog": {}, "workspace": root,
+                         "plan": {"repositories": {"axiom-frontend": {"head": head}}}}
+            projects = [{"Project Name": "axiom-dashboard",
+                         "Project Domains": "axiom-dashboard-4g7.pages.dev"}]
+            deployed = "https://12345678.axiom-dashboard-4g7.pages.dev"
+            with patch.object(publish_targets.publisher, "remote_source_heads"), \
+                    patch.object(publish_targets.ctl, "repo_path", return_value=owner), \
+                    patch.object(publish_targets.ctl, "run", return_value=head.encode()) as run, \
+                    patch.object(publish_targets, "_single", return_value=archive), \
+                    patch.object(publish_targets, "_proxy_identity", return_value=("m" * 64, "https://origin.test")), \
+                    patch.object(publish_targets.ctl, "build_environment", return_value={}), \
+                    patch.object(publish_targets.publisher, "_check_secret_names"), \
+                    patch.object(publish_targets.ctl, "stage_tracked_landing_source"), \
+                    patch.object(publish_targets.publisher, "_pages_project_list", return_value=projects), \
+                    patch.object(publish_targets.publisher, "_cloudflare_command", side_effect=lambda command, _env: command), \
+                    patch.object(publish_targets.publisher, "_run_with_combined_output", return_value=deployed), \
+                    patch.object(publish_targets, "_verify_proxy") as verify, \
+                    patch.object(publish_targets, "_save", return_value={"ok": True}):
+                self.assertEqual(publish_targets.publish_dashboard_proxy(candidate), {"ok": True})
+            run.assert_called_once_with("git", "rev-parse", "HEAD", cwd=owner)
+            self.assertEqual(json.loads((publication / "deployment.json").read_text())["domain"],
+                             "axiom-dashboard-4g7.pages.dev")
+            self.assertEqual(verify.call_count, 2)
+            self.assertEqual(verify.call_args_list[0].args[-1], "axiom-dashboard-4g7.pages.dev")
+            self.assertEqual(verify.call_args_list[1].args[0],
+                             "https://axiom-dashboard-4g7.pages.dev")
+
+    def test_dashboard_proxy_rejects_url_outside_listed_project_domain(self):
+        with self.assertRaisesRegex(ctl.ReleaseError, "not under its Pages project"):
+            publish_targets._verify_proxy(
+                "https://example.axiom-dashboard.pages.dev", "m" * 64,
+                "https://origin.test", "axiom-dashboard-4g7.pages.dev")
+
+    def test_dashboard_proxy_verifier_sends_named_user_agent_to_both_urls(self):
+        url = "https://12345678.axiom-dashboard-4g7.pages.dev"
+        proof = MagicMock()
+        proof.__enter__.return_value.geturl.return_value = url + "/.well-known/axiom-dashboard-release"
+        proof.__enter__.return_value.read.return_value = json.dumps({
+            "sha256": "m" * 64, "origin": "https://origin.test"}).encode()
+        root = MagicMock()
+        root.__enter__.return_value.status = 200
+        with patch.object(publish_targets.urllib.request, "urlopen", side_effect=[proof, root]) as opened:
+            publish_targets._verify_proxy(url, "m" * 64, "https://origin.test",
+                                          "axiom-dashboard-4g7.pages.dev")
+        self.assertEqual(opened.call_count, 2)
+        for call in opened.call_args_list:
+            self.assertEqual(call.args[0].get_header("User-agent"), "axiom-release-verifier/1")
+
+    def test_dashboard_proxy_retries_initial_403_then_verifies_exact_marker(self):
+        url = "https://12345678.axiom-dashboard-4g7.pages.dev"
+        temporary_403 = publish_targets.urllib.error.HTTPError(url, 403, "Forbidden", {}, None)
+        with patch.object(publish_targets, "_verify_proxy", side_effect=[temporary_403, None]) as verify, \
+                patch.object(publish_targets.time, "sleep") as sleep:
+            publish_targets._verify_proxy_ready(url, "m" * 64, "https://origin.test",
+                                                "axiom-dashboard-4g7.pages.dev")
+        self.assertEqual(verify.call_count, 2)
+        sleep.assert_called_once_with(5)
+
+    def test_dashboard_proxy_reports_persistent_403_without_bypassing_proof(self):
+        url = "https://12345678.axiom-dashboard-4g7.pages.dev"
+        denied = publish_targets.urllib.error.HTTPError(url, 403, "Forbidden", {}, None)
+        with patch.object(publish_targets, "_verify_proxy", side_effect=denied) as verify, \
+                patch.object(publish_targets.time, "sleep"):
+            with self.assertRaisesRegex(ctl.ReleaseError, "did not serve the exact staged marker"):
+                publish_targets._verify_proxy_ready(url, "m" * 64, "https://origin.test",
+                                                    "axiom-dashboard-4g7.pages.dev")
+        self.assertEqual(verify.call_count, 18)
+
+    def test_npm_registry_integrity_retries_then_accepts_exact_bytes(self):
+        wrong = {"dist": {"integrity": "sha512-not-yet-converged"}}
+        right = {"dist": {"integrity": "sha512-exact"}}
+        with patch.object(publish_targets, "_npm_metadata", return_value=right) as query, \
+                patch.object(publish_targets.time, "sleep") as sleep:
+            result = publish_targets._wait_for_npm_integrity(
+                "atmx-web", "0.147.0", "sha512-exact", Path("/tmp"), {}, wrong)
+        self.assertIs(result, right)
+        query.assert_called_once()
+        sleep.assert_called_once_with(5)
+        with patch.object(publish_targets.time, "monotonic", side_effect=[0, 91]):
+            with self.assertRaisesRegex(ctl.ReleaseError, "did not converge"):
+                publish_targets._wait_for_npm_integrity(
+                    "atmx-web", "0.147.0", "sha512-exact", Path("/tmp"), {}, wrong)
+
+    def test_npm_verifies_downloaded_registry_tarball(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / "atmx-web-1.2.3.tgz"
+            archive.write_bytes(b"exact tarball")
+            metadata = {"dist": {"tarball":
+                        "https://registry.npmjs.org/atmx-web/-/atmx-web-1.2.3.tgz"}}
+            with patch.object(publish_targets.urllib.request, "urlopen",
+                              return_value=io.BytesIO(archive.read_bytes())) as opened:
+                publish_targets._verify_npm_tarball("atmx-web", "1.2.3", metadata, archive)
+            request = opened.call_args.args[0]
+            self.assertEqual(request.get_header("User-agent"), "AxiomCore-Release-Verifier/1.0")
+            with patch.object(publish_targets.urllib.request, "urlopen",
+                              return_value=io.BytesIO(b"wrong bytes!")):
+                with self.assertRaisesRegex(ctl.ReleaseError, "differs from the exact staged bytes"):
+                    publish_targets._verify_npm_tarball("atmx-web", "1.2.3", metadata, archive)
+
+    def test_r2_public_verification_uses_named_verifier_and_exact_bytes(self):
+        payload = b"pinned browser asset"
+        expected = ctl.sha256(payload)
+        with patch.object(publish_targets.urllib.request, "urlopen") as opened:
+            opened.return_value.__enter__.return_value.read.return_value = payload
+            publish_targets._verify_r2_public("https://atmx.axiomcore.dev/v1/file.js", expected)
+            request = opened.call_args.args[0]
+            self.assertEqual(request.get_header("User-agent"), "AxiomCore-Release-Verifier/1.0")
+            with self.assertRaisesRegex(ctl.ReleaseError, "different bytes"):
+                publish_targets._verify_r2_public("https://atmx.axiomcore.dev/v1/file.js", "0" * 64)
+
+    def test_r2_does_not_read_local_env_file(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary)
+            package = workspace / "axiom-sdk/web/atmx"
+            package.mkdir(parents=True)
+            (package / ".env").write_text(
+                "CLOUDFLARE_ACCOUNT_ID=" + "a" * 32 + "\n"
+                "AWS_ACCESS_KEY_ID=scoped-id\nAWS_SECRET_ACCESS_KEY=scoped-secret\n")
+            with patch.object(publish_targets.shutil, "which", return_value=None):
+                with self.assertRaisesRegex(ctl.ReleaseError, "Infisical prod"):
+                    publish_targets._r2_auth({}, workspace)
+            account, prefix, environment = publish_targets._r2_auth({
+                "CLOUDFLARE_ACCOUNT_ID": "a" * 32,
+                "AWS_ACCESS_KEY_ID": "explicit-id",
+                "AWS_SECRET_ACCESS_KEY": "explicit-secret"}, workspace)
+            self.assertEqual(account, "a" * 32)
+            self.assertEqual(prefix, [])
+            self.assertEqual(environment["AWS_ACCESS_KEY_ID"], "explicit-id")
+            self.assertEqual(environment["AWS_SECRET_ACCESS_KEY"], "explicit-secret")
+            self.assertEqual(environment["AWS_DEFAULT_REGION"], "auto")
+            self.assertEqual(environment["AWS_REGION"], "auto")
+            with self.assertRaisesRegex(ctl.ReleaseError, "partial AWS R2 key pair"):
+                publish_targets._r2_auth({"AWS_ACCESS_KEY_ID": "unpaired"}, workspace)
+
+    def test_r2_infisical_uses_scoped_child_credentials(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary)
+            frontend = workspace / "axiom-frontend"
+            frontend.mkdir()
+            (frontend / ".infisical.json").write_text(
+                '{"workspaceId":"11111111-1111-1111-1111-111111111111"}')
+            with patch.object(publish_targets.shutil, "which", return_value="/bin/infisical"), \
+                    patch.object(publish_targets.ctl, "run", return_value=("a" * 32).encode()):
+                account, prefix, environment = publish_targets._r2_auth({}, workspace)
+            self.assertEqual(account, "a" * 32)
+            self.assertEqual(prefix[:4], ["infisical", "run",
+                                          "--projectId=11111111-1111-1111-1111-111111111111", "--env=prod"])
+            self.assertTrue(prefix[-1].endswith("r2_aws.py"))
+            self.assertNotIn("AWS_ACCESS_KEY_ID", environment)
+
+    def test_r2_aws_wrapper_receives_subcommand_once(self):
+        command = ["aws", "s3api", "head-bucket", "--bucket", "atmx"]
+        wrapped = ("a" * 32, ["infisical", "run", "--", "python", "r2_aws.py"], {})
+        direct = ("a" * 32, [], {})
+        self.assertEqual(publish_targets._r2_argv(command, wrapped),
+                         [*wrapped[1], "s3api", "head-bucket", "--bucket", "atmx"])
+        self.assertEqual(publish_targets._r2_argv(command, direct), command)
+
+    def test_r2_child_requires_atmx_scoped_infisical_pair(self):
+        with patch.dict("os.environ", {}, clear=True), patch.object(r2_aws.os, "execvpe") as execute:
+            with self.assertRaisesRegex(SystemExit, "AWS_ACCESS_KEY_ID"):
+                r2_aws.main()
+            execute.assert_not_called()
+        with patch.dict("os.environ", {"AWS_ACCESS_KEY_ID": "id",
+                                        "AWS_SECRET_ACCESS_KEY": "secret",
+                                        "UNRELATED_PRODUCTION_SECRET": "not-for-aws"}, clear=True), \
+                patch.object(r2_aws.os, "execvpe") as execute, \
+                patch.object(r2_aws.sys, "argv", ["r2_aws.py", "s3api", "head-bucket"]):
+            r2_aws.main()
+            self.assertEqual(execute.call_args.args[1], ["aws", "s3api", "head-bucket"])
+            self.assertEqual(execute.call_args.args[2]["AWS_ACCESS_KEY_ID"], "id")
+            self.assertNotIn("UNRELATED_PRODUCTION_SECRET", execute.call_args.args[2])
+
     def test_every_catalog_target_has_a_dispatch_path(self):
         catalog = ctl.read_catalog()
         covered = (set(publish_targets.GITHUB) | set(publish_targets.NPM) |
@@ -74,6 +286,7 @@ class PublishTargetTests(unittest.TestCase):
                     patch.object(publish_targets.ctl, "build_environment", return_value={}), \
                     patch.object(publish_targets, "_npm_metadata", return_value={
                         "name": "atmx-cli", "version": "1.2.3", "dist": {"integrity": integrity}}), \
+                    patch.object(publish_targets, "_verify_npm_tarball"), \
                     patch.object(publish_targets.ctl, "run") as run:
                 result = publish_targets.publish_npm(candidate, "sdk-atmx-cli")
             self.assertEqual(result["status"], "remote-verified")

@@ -1,35 +1,31 @@
 {
   "format": "axiom-platform-release-intent/v1",
-  "trainId": "2026.09.25.5",
+  "trainId": "2026.09.25.6",
   "wave": "release",
-  "summary": "Complete verified SDK dependency pins from release 2026.09.25.4",
+  "summary": "Release 3 Axiom components: Add sdk atmx cli improvements in 0.146.2.; Add sdk flutter generator improvements in 0.146.2.; Add sdk flutter improvements in 0.147.1.",
   "changes": [
     {
-      "component": "sdk-atmx-react",
-      "summary": "Add sdk atmx react improvements in 0.147.0.",
-      "type": "feature"
-    },
-    {
-      "component": "sdk-swift",
-      "summary": "Add sdk swift improvements in 0.147.0.",
-      "type": "feature"
+      "component": "runtime-apple",
+      "type": "feature",
+      "summary": "Add runtime apple improvements in 0.148.1."
     },
     {
       "component": "sdk-atmx-cli",
-      "summary": "Add sdk atmx cli improvements in 0.146.1.",
-      "type": "feature"
+      "type": "feature",
+      "summary": "Add sdk atmx cli improvements in 0.146.2."
     },
     {
       "component": "sdk-flutter-generator",
-      "summary": "Add sdk flutter generator improvements in 0.146.1.",
-      "type": "feature"
-    },
-    {
-      "component": "sdk-flutter",
-      "runtimeVersion": "0.148.0",
-      "summary": "Add sdk flutter improvements in 0.147.0.",
-      "type": "feature"
+      "type": "feature",
+      "summary": "Add sdk flutter generator improvements in 0.146.2."
     }
   ],
-  "queued": []
+  "queued": [
+    {
+      "component": "sdk-flutter",
+      "type": "feature",
+      "summary": "Add sdk flutter improvements in 0.147.1.",
+      "runtimeVersion": "0.148.1"
+    }
+  ]
 }

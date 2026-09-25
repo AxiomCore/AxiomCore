@@ -34,10 +34,10 @@
       "candidateVersion": null
     },
     "runtime-apple": {
-      "candidateVersion": "0.148.0"
+      "candidateVersion": "0.148.1"
     },
     "sdk-atmx-cli": {
-      "candidateVersion": "0.146.1"
+      "candidateVersion": "0.146.2"
     },
     "sdk-atmx-react": {
       "candidateVersion": "0.147.0"
@@ -46,10 +46,10 @@
       "candidateVersion": "0.147.0"
     },
     "sdk-flutter": {
-      "candidateVersion": "0.147.0"
+      "candidateVersion": "0.147.1"
     },
     "sdk-flutter-generator": {
-      "candidateVersion": "0.146.1"
+      "candidateVersion": "0.146.2"
     },
     "sdk-swift": {
       "candidateVersion": "0.147.0"

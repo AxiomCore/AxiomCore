@@ -248,16 +248,26 @@ def publish_github(candidate: dict, component: str) -> dict:
 
 
 def _npm_metadata(package: str, version: str, cwd: Path, env: dict[str, str]) -> dict | None:
-    completed = subprocess.run(["npm", "view", f"{package}@{version}", "--json", "--prefer-online",
-                                "--registry=https://registry.npmjs.org"],
-                               cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-    if completed.returncode:
-        if "E404" in completed.stderr.decode(errors="replace"):
+    # npm view may return a cached 404 or old package metadata after a
+    # successful OIDC publish. Query the authoritative public registry version
+    # endpoint directly, without npm's local cache or ambient credentials.
+    url = ("https://registry.npmjs.org/"
+           + urllib.parse.quote(package, safe="") + "/"
+           + urllib.parse.quote(version, safe=""))
+    request = urllib.request.Request(url, headers={
+        "Accept": "application/json", "Cache-Control": "no-cache",
+        "User-Agent": "AxiomCore-Release-Verifier/1.0"})
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            data = json.load(response)
+    except urllib.error.HTTPError as error:
+        if error.code == 404:
             return None
         raise ctl.ReleaseError(f"npm registry lookup failed for {package}@{version}: "
-                               + completed.stderr.decode(errors="replace").strip())
-    data = json.loads(completed.stdout)
-    if data.get("name") != package or data.get("version") != version:
+                               f"HTTP {error.code}") from error
+    except (urllib.error.URLError, TimeoutError) as error:
+        raise ctl.ReleaseError(f"npm registry lookup failed for {package}@{version}: {error}") from error
+    if not isinstance(data, dict) or data.get("name") != package or data.get("version") != version:
         raise ctl.ReleaseError("npm registry returned another package or version")
     return data
 
@@ -265,11 +275,11 @@ def _npm_metadata(package: str, version: str, cwd: Path, env: dict[str, str]) ->
 def _wait_for_npm_integrity(package: str, version: str, expected: str, cwd: Path,
                             env: dict[str, str], metadata: dict | None) -> dict:
     """Allow bounded registry propagation, never accepting different bytes."""
-    deadline = time.monotonic() + 90
+    deadline = time.monotonic() + 300
     while metadata is None or metadata.get("dist", {}).get("integrity") != expected:
         if time.monotonic() >= deadline:
             raise ctl.ReleaseError(f"npm {package}@{version} did not converge to the exact staged tarball "
-                                   "within 90 seconds; inspect registry bytes before resuming")
+                                   "within 5 minutes; inspect registry bytes before resuming")
         print(f"Waiting for npm {package}@{version} registry integrity to converge...", flush=True)
         time.sleep(5)
         metadata = _npm_metadata(package, version, cwd, env)

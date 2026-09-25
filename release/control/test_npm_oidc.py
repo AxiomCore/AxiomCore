@@ -34,9 +34,15 @@ class NpmOidcTests(unittest.TestCase):
                 self.assertNotIn("npm login", workflow)
                 self.assertNotIn("secrets.NPM", workflow)
                 self.assertNotIn("_authToken", workflow)
+                if component == "sdk-atmx-cli":
+                    self.assertNotIn("actions/checkout@", workflow)
+                    self.assertIn("commits/$SOURCE_SHA", workflow)
         legacy = (ctl.WORKSPACE / "AxiomCore/release/justfile").read_text()
         self.assertNotIn("npm publish --access", legacy)
         self.assertIn("Legacy release-atmx", legacy)
+        modules = (ctl.WORKSPACE / "AxiomCore/.gitmodules").read_text()
+        self.assertIn("path = release/homebrew-tap", modules)
+        self.assertIn("url = https://github.com/AxiomCore/homebrew-tap.git", modules)
 
     def test_exact_existing_registry_version_needs_no_dispatch_or_token(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -192,6 +198,42 @@ class NpmOidcTests(unittest.TestCase):
                                   ("gh", "workflow", "run")]), 1)
             self.assertEqual(json.loads((directory / "publication/oidc-dispatch.json").read_text())["sha256"],
                              ctl.sha256_file(archive))
+
+    def test_failed_oidc_run_retries_once_only_after_workflow_changes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            old_head, new_head = "a" * 40, "b" * 40
+            failed = {"id": 1, "head_sha": old_head, "conclusion": "failure"}
+
+            def github(path, **_):
+                if path.endswith(f"?ref={old_head}"):
+                    return {"sha": "c" * 40}
+                if path.endswith("?ref=main"):
+                    return {"sha": "d" * 40}
+                if path.endswith("/branches/main"):
+                    return {"commit": {"sha": new_head}}
+                raise AssertionError(path)
+
+            with patch.object(npm_oidc, "_gh_json", side_effect=github), \
+                    patch.object(npm_oidc, "_workflow_runs", side_effect=[[], []]), \
+                    patch.object(npm_oidc, "_dispatch") as dispatch, \
+                    patch.object(npm_oidc, "_wait_for_run", return_value={"id": 2}) as wait:
+                for _ in range(2):
+                    result = npm_oidc._retry_after_workflow_fix(
+                        "AxiomCore/AxiomCore", "main", failed, "npm-tag", "e" * 64,
+                        old_head, "atmx-cli", "0.146.1", directory)
+                    self.assertEqual(result, {"id": 2})
+                dispatch.assert_called_once()
+                self.assertEqual(wait.call_count, 2)
+                self.assertTrue((directory / "publication" / f"oidc-attempt-{'d' * 40}.json").is_file())
+
+            with patch.object(npm_oidc, "_gh_json", return_value={"sha": "c" * 40}), \
+                    patch.object(npm_oidc, "_dispatch") as dispatch:
+                with self.assertRaisesRegex(ctl.ReleaseError, "fix and push"):
+                    npm_oidc._retry_after_workflow_fix(
+                        "AxiomCore/AxiomCore", "main", failed, "npm-tag", "e" * 64,
+                        old_head, "atmx-cli", "0.146.1", directory)
+            dispatch.assert_not_called()
 
 
 if __name__ == "__main__":

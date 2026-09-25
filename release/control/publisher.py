@@ -82,7 +82,8 @@ def load_candidate(component: str, root: Path, workspace: Path = ctl.WORKSPACE,
     from dependency_baseline import receipt_for
     receipt_paths = [receipt_for(root, item, plan["repositories"])
                      for item in plan["components"]]
-    report = gate.inspect_candidate(intent, plan, catalog, workspace, stage, receipt_paths)
+    report = gate.inspect_candidate(intent, plan, catalog, workspace, stage, receipt_paths,
+                                    allow_descendant_heads=True)
     if report["blockers"]:
         raise ctl.ReleaseError("candidate no longer passes the source/artifact gate: "
                                + "; ".join(report["blockers"]))
@@ -95,8 +96,10 @@ def load_candidate(component: str, root: Path, workspace: Path = ctl.WORKSPACE,
 
 
 def remote_source_heads(candidate: dict) -> None:
-    """Require each pinned source commit to be the tracked remote branch tip."""
+    """Require pushed source heads and unchanged declared build inputs."""
     catalog = candidate["catalog"]
+    ctl.require_current_plan(candidate["plan"], catalog, candidate["workspace"],
+                             allow_descendant_heads=True)
     for name, snapshot in candidate["plan"]["repositories"].items():
         repository = ctl.repo_path(catalog, name, candidate["workspace"])
         upstream = ctl.run("git", "rev-parse", "--abbrev-ref", "--symbolic-full-name",
@@ -106,9 +109,15 @@ def remote_source_heads(candidate: dict) -> None:
         remote, branch = upstream.split("/", 1)
         remote_head = ctl.run("git", "ls-remote", remote, f"refs/heads/{branch}",
                               cwd=repository).decode().split()
-        if not remote_head or remote_head[0] != snapshot["head"]:
-            raise ctl.ReleaseError(f"{name} source {snapshot['head']} is not the current {upstream} tip; "
+        local_head = ctl.run("git", "rev-parse", "HEAD", cwd=repository).decode().strip()
+        if not remote_head or remote_head[0] != local_head:
+            raise ctl.ReleaseError(f"{name} current source {local_head} is not the current {upstream} tip; "
                                    "push the reviewed commit before publication")
+        if snapshot["head"] != local_head:
+            ancestor = subprocess.run(["git", "merge-base", "--is-ancestor",
+                                       snapshot["head"], local_head], cwd=repository, check=False)
+            if ancestor.returncode:
+                raise ctl.ReleaseError(f"{name} pinned source is not an ancestor of the current remote tip")
 
 
 def signing_command(command: list[str], env: dict[str, str]) -> list[str]:

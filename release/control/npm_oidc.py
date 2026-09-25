@@ -41,10 +41,13 @@ def _workflow_runs(repository: str, tag: str, cwd: Path) -> list[dict]:
             if run.get("display_title") == f"npm {tag}"]
 
 
-def _wait_for_run(repository: str, tag: str, cwd: Path) -> dict:
+def _wait_for_run(repository: str, tag: str, cwd: Path,
+                  head_sha: str | None = None) -> dict:
     deadline = time.monotonic() + 120
     while time.monotonic() < deadline:
         matching = _workflow_runs(repository, tag, cwd)
+        if head_sha:
+            matching = [run for run in matching if run.get("head_sha") == head_sha]
         if matching:
             return max(matching, key=lambda run: run["id"])
         time.sleep(5)
@@ -52,6 +55,52 @@ def _wait_for_run(repository: str, tag: str, cwd: Path) -> dict:
         f"GitHub did not report the OIDC publish run for {tag}; inspect {repository} Actions "
         "before attempting another dispatch"
     )
+
+
+def _dispatch(repository: str, branch: str, tag: str, sha256: str,
+              source_sha: str, package: str, version: str, cwd: Path) -> None:
+    ctl.run("gh", "workflow", "run", WORKFLOW, "--repo", repository,
+            "--ref", branch,
+            "-f", f"release_tag={tag}", "-f", f"archive_sha256={sha256}",
+            "-f", f"source_sha={source_sha}", "-f", f"package_name={package}",
+            "-f", f"package_version={version}", cwd=cwd)
+
+
+def _retry_after_workflow_fix(repository: str, branch: str, failed: dict,
+                              tag: str, sha256: str, source_sha: str,
+                              package: str, version: str, directory: Path) -> dict:
+    """Allow one retry per changed workflow revision, never per Resume click."""
+    failed_head = failed.get("head_sha")
+    if not isinstance(failed_head, str) or not re.fullmatch(r"[a-f0-9]{40}", failed_head):
+        raise ctl.ReleaseError("failed npm workflow has no authenticated source revision")
+    path = f"repos/{repository}/contents/.github/workflows/{WORKFLOW}"
+    previous = _gh_json(f"{path}?ref={failed_head}", cwd=directory)
+    current = _gh_json(f"{path}?ref={branch}", cwd=directory)
+    old_blob, new_blob = previous.get("sha"), current.get("sha")
+    if not isinstance(old_blob, str) or not re.fullmatch(r"[a-f0-9]{40}", old_blob):
+        raise ctl.ReleaseError("cannot authenticate the failed npm publishing workflow")
+    if not isinstance(new_blob, str) or not re.fullmatch(r"[a-f0-9]{40}", new_blob):
+        raise ctl.ReleaseError("cannot authenticate the current npm publishing workflow")
+    if old_blob == new_blob:
+        raise ctl.ReleaseError("npm OIDC workflow failed; fix and push its workflow file before resuming")
+    branch_info = _gh_json(f"repos/{repository}/branches/{branch}", cwd=directory)
+    current_head = branch_info.get("commit", {}).get("sha")
+    if not isinstance(current_head, str) or not re.fullmatch(r"[a-f0-9]{40}", current_head):
+        raise ctl.ReleaseError("cannot authenticate the npm workflow branch head")
+    matching = [run for run in _workflow_runs(repository, tag, directory)
+                if run.get("head_sha") == current_head]
+    if matching:
+        return max(matching, key=lambda run: run["id"])
+    marker = directory / "publication" / f"oidc-attempt-{new_blob}.json"
+    expected = {"workflowSha": new_blob, "branchHead": current_head,
+                "releaseTag": tag, "archiveSha256": sha256}
+    if marker.exists():
+        if json.loads(marker.read_text()) != expected:
+            raise ctl.ReleaseError("saved npm workflow retry belongs to another handoff")
+        return _wait_for_run(repository, tag, directory, current_head)
+    ctl.write_json(marker, expected)  # No duplicate dispatch after a crash.
+    _dispatch(repository, branch, tag, sha256, source_sha, package, version, directory)
+    return _wait_for_run(repository, tag, directory, current_head)
 
 
 def publish(candidate: dict, component: str, archive: Path) -> dict:
@@ -128,22 +177,27 @@ def publish(candidate: dict, component: str, archive: Path) -> dict:
         run = max(existing, key=lambda item: item["id"])
     else:
         ctl.write_json(marker, expected)  # A crash after dispatch must not create a duplicate run.
-        ctl.run("gh", "workflow", "run", WORKFLOW, "--repo", repository,
-                "--ref", default_branch,
-                "-f", f"release_tag={tag}", "-f", f"archive_sha256={sha256}",
-                "-f", f"source_sha={source_sha}", "-f", f"package_name={package}",
-                "-f", f"package_version={version}", cwd=candidate["directory"])
+        _dispatch(repository, default_branch, tag, sha256, source_sha,
+                  package, version, candidate["directory"])
         run = _wait_for_run(repository, tag, candidate["directory"])
-    run_id = run["id"]
-    if run.get("status") != "completed":
-        try:
-            ctl.run("gh", "run", "watch", str(run_id), "--repo", repository,
-                    "--interval", "10", "--exit-status", cwd=candidate["directory"], capture=False)
-        except ctl.ReleaseError as error:
-            raise ctl.ReleaseError(
-                f"npm OIDC workflow did not succeed: https://github.com/{repository}/actions/runs/{run_id}"
-            ) from error
-    final = _gh_json(f"repos/{repository}/actions/runs/{run_id}", cwd=candidate["directory"])
+    def finished(selected: dict) -> dict:
+        run_id = selected["id"]
+        if selected.get("status") != "completed":
+            try:
+                ctl.run("gh", "run", "watch", str(run_id), "--repo", repository,
+                        "--interval", "10", "--exit-status", cwd=candidate["directory"], capture=False)
+            except ctl.ReleaseError as error:
+                raise ctl.ReleaseError(
+                    f"npm OIDC workflow did not succeed: https://github.com/{repository}/actions/runs/{run_id}"
+                ) from error
+        return _gh_json(f"repos/{repository}/actions/runs/{run_id}", cwd=candidate["directory"])
+
+    final = finished(run)
+    if final.get("conclusion") != "success":
+        run = _retry_after_workflow_fix(repository, default_branch, final, tag,
+                                        sha256, source_sha, package, version,
+                                        candidate["directory"])
+        final = finished(run)
     if final.get("conclusion") != "success":
         raise ctl.ReleaseError(f"npm OIDC workflow failed: {final.get('html_url')}")
     return {"repository": repository, "workflowRun": final.get("html_url"),

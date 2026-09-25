@@ -271,6 +271,11 @@ class ReleaseControlTests(unittest.TestCase):
             git(repo, "commit", "-qm", "docs only")
             unchanged = ctl.make_plan(catalog, workspace, baseline)
             self.assertTrue(unchanged["components"][0]["reuseCandidate"])
+            with self.assertRaisesRegex(ctl.ReleaseError, "source commits changed"):
+                ctl.require_current_plan(first, catalog, workspace)
+            self.assertEqual(ctl.require_current_plan(
+                first, catalog, workspace, allow_descendant_heads=True)["components"][0]["fingerprint"],
+                first["components"][0]["fingerprint"])
             output = workspace / "release-output"
             output.mkdir()
             artifact = output / "sample.tar.gz"
@@ -289,6 +294,8 @@ class ReleaseControlTests(unittest.TestCase):
             (repo / "src" / "main.txt").write_text("two\n")
             git(repo, "add", ".")
             git(repo, "commit", "-qm", "change source")
+            with self.assertRaisesRegex(ctl.ReleaseError, "source inputs changed"):
+                ctl.require_current_plan(first, catalog, workspace, allow_descendant_heads=True)
             changed = ctl.make_plan(catalog, workspace, baseline)
             self.assertTrue(changed["components"][0]["selected"])
             self.assertNotEqual(changed["components"][0]["fingerprint"], baseline["sample"]["fingerprint"])

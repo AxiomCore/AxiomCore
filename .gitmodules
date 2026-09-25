@@ -1,0 +1,3 @@
+[submodule "release/homebrew-tap"]
+	path = release/homebrew-tap
+	url = https://github.com/AxiomCore/homebrew-tap.git

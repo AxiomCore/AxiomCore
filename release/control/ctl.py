@@ -721,7 +721,8 @@ def verify_receipt(path: Path, expected: str | None = None) -> dict:
     return receipt
 
 
-def require_current_plan(plan: dict, catalog: dict, workspace: Path) -> dict:
+def require_current_plan(plan: dict, catalog: dict, workspace: Path,
+                         allow_descendant_heads: bool = False) -> dict:
     if plan.get("format") != PLAN_FORMAT or plan.get("catalogSha256") != catalog["sha256"]:
         raise ReleaseError("plan is stale or uses a different release catalog")
     ids = {item["id"] for item in plan.get("components", [])}
@@ -738,7 +739,23 @@ def require_current_plan(plan: dict, catalog: dict, workspace: Path) -> dict:
         if current[item["id"]]["fingerprint"] != item["fingerprint"]:
             raise ReleaseError(f"source inputs changed since planning: {item['id']}")
     if fresh["repositories"] != plan.get("repositories"):
-        raise ReleaseError("source commits changed since planning")
+        if not allow_descendant_heads or set(fresh["repositories"]) != set(plan.get("repositories", {})):
+            raise ReleaseError("source commits changed since planning")
+        # Publication can outlive an unrelated control/workflow fix. The
+        # fingerprints above still require every declared build input to be
+        # identical; only forward commits on the same source branch are safe.
+        for name, current_head in fresh["repositories"].items():
+            pinned = plan["repositories"][name]
+            if pinned.get("dirty") or current_head.get("dirty"):
+                raise ReleaseError(f"source inputs changed since planning: {name}")
+            if pinned["head"] == current_head["head"]:
+                continue
+            repository = repo_path(catalog, name, workspace)
+            ancestor = subprocess.run(["git", "merge-base", "--is-ancestor",
+                                       pinned["head"], current_head["head"]],
+                                      cwd=repository, check=False)
+            if ancestor.returncode:
+                raise ReleaseError(f"source commit is not an ancestor of current {name} head")
     return fresh
 
 

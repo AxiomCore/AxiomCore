@@ -24,7 +24,8 @@ HOST_IDS = {"ui-host-web", "ui-host-android", "ui-host-ios"}
 
 
 def inspect_candidate(intent: dict, plan: dict, catalog: dict, workspace: Path,
-                      stage: dict | None = None, receipt_paths: list[Path] | None = None) -> dict:
+                      stage: dict | None = None, receipt_paths: list[Path] | None = None,
+                      allow_descendant_heads: bool = False) -> dict:
     blockers: list[str] = []
     if plan.get("format") != ctl.PLAN_FORMAT or plan.get("catalogSha256") != catalog["sha256"]:
         raise ctl.ReleaseError("candidate plan is missing, stale, or uses a different catalog")
@@ -42,7 +43,8 @@ def inspect_candidate(intent: dict, plan: dict, catalog: dict, workspace: Path,
     if selected & HOST_IDS and not HOST_IDS <= planned.keys():
         blockers.append("a UI Host publication requires web, Android, and iOS in the plan; unchanged targets may reuse verified bytes")
     try:
-        ctl.require_current_plan(plan, catalog, workspace)
+        ctl.require_current_plan(plan, catalog, workspace,
+                                 allow_descendant_heads=allow_descendant_heads)
     except ctl.ReleaseError as error:
         blockers.append(f"pinned source gate: {error}")
     try:

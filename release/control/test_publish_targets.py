@@ -130,10 +130,27 @@ class PublishTargetTests(unittest.TestCase):
         self.assertIs(result, right)
         query.assert_called_once()
         sleep.assert_called_once_with(5)
-        with patch.object(publish_targets.time, "monotonic", side_effect=[0, 91]):
+        with patch.object(publish_targets.time, "monotonic", side_effect=[0, 301]):
             with self.assertRaisesRegex(ctl.ReleaseError, "did not converge"):
                 publish_targets._wait_for_npm_integrity(
                     "atmx-web", "0.147.0", "sha512-exact", Path("/tmp"), {}, wrong)
+
+    def test_npm_metadata_reads_uncached_public_version_endpoint(self):
+        value = {"name": "atmx-react", "version": "0.147.0",
+                 "dist": {"integrity": "sha512-exact"}}
+        with patch.object(publish_targets.urllib.request, "urlopen",
+                          return_value=io.BytesIO(json.dumps(value).encode())) as opened:
+            self.assertEqual(publish_targets._npm_metadata("atmx-react", "0.147.0",
+                                                            Path("/tmp"), {}), value)
+        request = opened.call_args.args[0]
+        self.assertEqual(request.full_url,
+                         "https://registry.npmjs.org/atmx-react/0.147.0")
+        self.assertEqual(request.get_header("Cache-control"), "no-cache")
+        missing = publish_targets.urllib.error.HTTPError(
+            request.full_url, 404, "Not Found", {}, None)
+        with patch.object(publish_targets.urllib.request, "urlopen", side_effect=missing):
+            self.assertIsNone(publish_targets._npm_metadata("atmx-react", "0.147.1",
+                                                             Path("/tmp"), {}))
 
     def test_npm_verifies_downloaded_registry_tarball(self):
         with tempfile.TemporaryDirectory() as temporary:

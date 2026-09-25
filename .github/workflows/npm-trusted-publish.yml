@@ -33,14 +33,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.source_sha }}
-          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-          package-manager-cache: false
       - name: Verify exact release handoff
         env:
           GH_TOKEN: ${{ github.token }}
@@ -59,7 +54,7 @@ jobs:
           [[ "$ARCHIVE_SHA256" =~ ^[a-f0-9]{64}$ ]]
           [[ "$PACKAGE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][A-Za-z0-9.-]+)?$ ]]
           [[ "$RELEASE_TAG" =~ ^npm-candidate-sdk-atmx-cli-[A-Za-z0-9._-]+-v[0-9]+\.[0-9]+\.[0-9]+([+-][A-Za-z0-9.-]+)?$ ]]
-          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$SOURCE_SHA" --jq .sha)" = "$SOURCE_SHA"
           tag_head="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq .object.sha)"
           test "$tag_head" = "$SOURCE_SHA"
           gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > "$RUNNER_TEMP/npm-handoff.json"

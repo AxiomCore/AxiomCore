@@ -42,6 +42,14 @@ def _backup(root: Path, train_id: str, repository: str, path: Path, owner: Path)
         output.write(original)
 
 
+def pin_flutter_podspec(source: str, version: str) -> str:
+    updated, count = re.subn(r"(?m)^([ \t]*runtime_version[ \t]*=[ \t]*')[^']+('.*)$",
+                             lambda match: match.group(1) + version + match.group(2), source)
+    if count != 1:
+        raise ctl.ReleaseError("Flutter podspec has no unique Apple runtime pin")
+    return updated
+
+
 def pin_verified_consumers(root: Path, workspace: Path, catalog: dict,
                            train_id: str, ledger: dict, consumers: set[str]) -> dict[str, list[str]]:
     """Edit only declared pin files; caller commits/pushes them before a new plan.
@@ -71,6 +79,25 @@ def pin_verified_consumers(root: Path, workspace: Path, catalog: dict,
             _backup(root, train_id, "axiom-sdk", path, owner)
             path.write_text(updated)
             changed.setdefault("axiom-sdk", []).append("swift/Package.swift")
+    if "sdk-flutter" in consumers:
+        version = ledger["components"]["runtime-apple"]["candidateVersion"]
+        record = verified_upstream(root, catalog, train_id, "runtime-apple", version)
+        checksum = record.get("details", {}).get("files", {}).get("AxiomRuntime.xcframework.zip")
+        if not isinstance(checksum, str) or not re.fullmatch(r"[a-f0-9]{64}", checksum):
+            raise ctl.ReleaseError("published Apple runtime has no verified XCFramework checksum")
+        owner = ctl.repo_path(catalog, "axiom-sdk", workspace)
+        podspec_updates = []
+        for platform_name in ("ios", "macos"):
+            relative = f"flutter/axiom_flutter/{platform_name}/axiom_flutter.podspec"
+            path = owner / relative
+            before = _ordinary(path).decode()
+            updated = pin_flutter_podspec(before, version)
+            podspec_updates.append((relative, path, before, updated))
+        for relative, path, before, updated in podspec_updates:
+            if updated != before:
+                _backup(root, train_id, "axiom-sdk", path, owner)
+                path.write_text(updated)
+                changed.setdefault("axiom-sdk", []).append(relative)
     if "sdk-atmx-react" in consumers:
         version = ledger["components"]["sdk-atmx-web"]["candidateVersion"]
         record = verified_upstream(root, catalog, train_id, "sdk-atmx-web", version)

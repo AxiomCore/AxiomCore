@@ -44,7 +44,7 @@ MAX_REQUEST = 128 * 1024
 MAX_DIFF = 128 * 1024
 HOST_IDS = ("ui-host-web", "ui-host-android", "ui-host-ios")
 TRAIN_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{2,79}")
-DEFERRED_PIN_CONSUMERS = frozenset({"sdk-swift", "sdk-atmx-react"})
+DEFERRED_PIN_CONSUMERS = frozenset({"sdk-swift", "sdk-flutter", "sdk-atmx-react"})
 
 
 def now() -> str:
@@ -101,14 +101,17 @@ def split_deferred_changes(changes: list[dict], ledger: dict, workspace: Path
     """Keep consumers needing unpublished dependency bytes out of this train."""
     ready = []
     deferred = []
+    selected = {change["component"] for change in changes}
     for change in changes:
         component = change["component"]
         issues = (ci_builders.dependency_blockers({component}, ledger, workspace)
                   if component in DEFERRED_PIN_CONSUMERS else [])
-        if issues:
-            reason = ("The run will pin the exact published atmx-web version and npm lockfile integrity."
-                      if component == "sdk-atmx-react" else
-                      "The run will pin the exact remotely verified runtime XCFramework checksum.")
+        if issues or (component == "sdk-flutter" and "runtime-apple" in selected):
+            reason = {
+                "sdk-atmx-react": "The run will pin the exact published atmx-web version and npm lockfile integrity.",
+                "sdk-swift": "The run will pin the exact remotely verified runtime XCFramework checksum.",
+                "sdk-flutter": "The run will pin both Flutter podspecs to the remotely verified Apple runtime.",
+            }[component]
             deferred.append({"id": component, "reason": reason, "change": change})
         else:
             ready.append(change)
@@ -506,6 +509,9 @@ class ReleaseDashboard:
                             blockers.append(f"{component_id}: pub.dev already has {version if occupied else remote}; choose a newer free version")
                 updated["components"][component_id]["candidateVersion"] = version
             changes.append(change)
+        if "runtime-apple" in selected and "sdk-flutter" in selected:
+            runtime_version = updated["components"]["runtime-apple"]["candidateVersion"]
+            next(change for change in changes if change["component"] == "sdk-flutter")["runtimeVersion"] = runtime_version
         versions.validate_versions(updated, catalog)
         changes, deferred = split_deferred_changes(changes, updated, self.workspace)
         ids = [change["component"] for change in changes]
@@ -1163,10 +1169,17 @@ class ReleaseDashboard:
 
     def _pin_followup(self, job: dict, catalog: dict) -> None:
         consumers = {item["component"] for item in job["followup"]["changes"]}
-        allowed = {"axiom-sdk": {"swift/Package.swift"},
+        allowed = {"axiom-sdk": set(),
                    "atmx-react": {"package.json", "package-lock.json"}}
+        if "sdk-swift" in consumers:
+            allowed["axiom-sdk"].add("swift/Package.swift")
+        if "sdk-flutter" in consumers:
+            allowed["axiom-sdk"].update({
+                "flutter/axiom_flutter/ios/axiom_flutter.podspec",
+                "flutter/axiom_flutter/macos/axiom_flutter.podspec",
+            })
         for name in ("axiom-sdk", "atmx-react"):
-            if not ({"sdk-swift"} if name == "axiom-sdk" else {"sdk-atmx-react"}) & consumers:
+            if not ({"sdk-swift", "sdk-flutter"} if name == "axiom-sdk" else {"sdk-atmx-react"}) & consumers:
                 continue
             repository = self._repo(catalog, name)
             dirty = {item["path"] for item in changed_files(repository)}
@@ -1179,16 +1192,28 @@ class ReleaseDashboard:
                     committed = ctl.run("git", "show", f"HEAD:{relative}", cwd=repository)
                     if not saved.is_file() or saved.is_symlink() or saved.read_bytes() != committed:
                         raise ctl.ReleaseError(f"{name}/{relative} changed after the automatic pin backup; review it before resuming")
-                consumer = "sdk-swift" if name == "axiom-sdk" else "sdk-atmx-react"
-                if ci_builders.dependency_blockers({consumer}, job["ledger"], self.workspace):
-                    raise ctl.ReleaseError(f"{name} has a partial or manually changed dependency pin; inspect the saved backup")
+                for consumer in ({"sdk-swift", "sdk-flutter"} if name == "axiom-sdk" else {"sdk-atmx-react"}) & consumers:
+                    if consumer == "sdk-flutter":
+                        version = job["ledger"]["components"]["runtime-apple"]["candidateVersion"]
+                        for relative in dirty & {
+                            "flutter/axiom_flutter/ios/axiom_flutter.podspec",
+                            "flutter/axiom_flutter/macos/axiom_flutter.podspec",
+                        }:
+                            saved = backup / relative
+                            expected = auto_pins.pin_flutter_podspec(saved.read_text(), version)
+                            if (repository / relative).read_text() != expected:
+                                raise ctl.ReleaseError(f"{name}/{relative} changed outside the automatic Flutter pin")
+                    elif ((consumer == "sdk-swift" and "swift/Package.swift" in dirty)
+                          or consumer == "sdk-atmx-react") and ci_builders.dependency_blockers(
+                              {consumer}, job["ledger"], self.workspace):
+                        raise ctl.ReleaseError(f"{name} has a partial or manually changed dependency pin; inspect the saved backup")
         changed = auto_pins.pin_verified_consumers(self.root, self.workspace, catalog,
                                                    job["trainId"], job["ledger"], consumers)
         issues = ci_builders.dependency_blockers(consumers, job["ledger"], self.workspace)
         if issues:
             raise ctl.ReleaseError("automatic dependency pins are incomplete: " + "; ".join(issues))
         for name, paths in sorted(allowed.items()):
-            if not ({"sdk-swift"} if name == "axiom-sdk" else {"sdk-atmx-react"}) & consumers:
+            if not ({"sdk-swift", "sdk-flutter"} if name == "axiom-sdk" else {"sdk-atmx-react"}) & consumers:
                 continue
             repository = self._repo(catalog, name)
             dirty = {item["path"] for item in changed_files(repository)}

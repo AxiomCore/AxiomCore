@@ -258,6 +258,61 @@ class ReleaseWebTests(unittest.TestCase):
             self.assertIn('checksum: "' + "b" * 64 + '"', package.read_text())
             self.assertEqual((root / "trains/test-train/auto-pins/axiom-sdk/swift/Package.swift").read_text(), original)
 
+    def test_auto_pin_flutter_updates_both_podspecs_after_verified_runtime(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            owner = root / "axiom-sdk"
+            original = "s.version = '0.147.0'\n  runtime_version = '0.148.0' # verified runtime\n"
+            for platform_name in ("ios", "macos"):
+                path = owner / f"flutter/axiom_flutter/{platform_name}/axiom_flutter.podspec"
+                path.parent.mkdir(parents=True)
+                path.write_text(original)
+            proof = root / "trains/test-train/components/runtime-apple/publication/published.json"
+            proof.parent.mkdir(parents=True)
+            proof.write_text(json.dumps({"details": {"files": {
+                "AxiomRuntime.xcframework.zip": "b" * 64}}}))
+            ledger = {"components": {"runtime-apple": {"candidateVersion": "0.148.1"}}}
+            with patch.object(auto_pins.cycle, "published_evidence", return_value={
+                "runtime-apple": {"version": "0.148.1", "record": str(proof)}}), \
+                    patch.object(auto_pins.ctl, "repo_path", return_value=owner):
+                changed = auto_pins.pin_verified_consumers(root, root, {}, "test-train", ledger,
+                                                           {"sdk-flutter"})
+                self.assertEqual(auto_pins.pin_verified_consumers(
+                    root, root, {}, "test-train", ledger, {"sdk-flutter"}), {})
+            self.assertEqual(changed, {"axiom-sdk": [
+                "flutter/axiom_flutter/ios/axiom_flutter.podspec",
+                "flutter/axiom_flutter/macos/axiom_flutter.podspec"]})
+            for platform_name in ("ios", "macos"):
+                relative = f"flutter/axiom_flutter/{platform_name}/axiom_flutter.podspec"
+                self.assertIn("runtime_version = '0.148.1'", (owner / relative).read_text())
+                self.assertEqual((root / "trains/test-train/auto-pins/axiom-sdk" / relative).read_text(), original)
+            with self.assertRaisesRegex(web_server.ctl.ReleaseError, "unique Apple runtime pin"):
+                auto_pins.pin_flutter_podspec("s.version = '0.147.0'\n", "0.148.1")
+
+    def test_auto_pin_flutter_validates_both_podspecs_before_editing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            owner = root / "axiom-sdk"
+            ios = owner / "flutter/axiom_flutter/ios/axiom_flutter.podspec"
+            macos = owner / "flutter/axiom_flutter/macos/axiom_flutter.podspec"
+            for path in (ios, macos):
+                path.parent.mkdir(parents=True)
+            original = "runtime_version = '0.148.0'\n"
+            ios.write_text(original)
+            macos.write_text("s.version = '0.147.0'\n")
+            proof = root / "trains/test-train/components/runtime-apple/publication/published.json"
+            proof.parent.mkdir(parents=True)
+            proof.write_text(json.dumps({"details": {"files": {
+                "AxiomRuntime.xcframework.zip": "b" * 64}}}))
+            ledger = {"components": {"runtime-apple": {"candidateVersion": "0.148.1"}}}
+            with patch.object(auto_pins.cycle, "published_evidence", return_value={
+                "runtime-apple": {"version": "0.148.1", "record": str(proof)}}), \
+                    patch.object(auto_pins.ctl, "repo_path", return_value=owner):
+                with self.assertRaisesRegex(web_server.ctl.ReleaseError, "unique Apple runtime pin"):
+                    auto_pins.pin_verified_consumers(root, root, {}, "test-train", ledger,
+                                                     {"sdk-flutter"})
+            self.assertEqual(ios.read_text(), original)
+
     def test_followup_reuses_only_a_remotely_published_dependency_receipt(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -290,13 +345,21 @@ class ReleaseWebTests(unittest.TestCase):
     def test_unpublished_dependency_pin_consumers_are_deferred_not_dropped(self):
         changes = [{"component": "runtime-apple", "summary": "Runtime"},
                    {"component": "sdk-swift", "summary": "Swift"},
+                   {"component": "sdk-flutter", "summary": "Flutter"},
                    {"component": "sdk-atmx-react", "summary": "React"}]
         with patch.object(web_server.ci_builders, "dependency_blockers",
                           side_effect=lambda selected, *_: ["pin unavailable"] if selected != {"runtime-apple"} else []):
             ready, deferred = web_server.split_deferred_changes(changes, {}, Path("/unused"))
         self.assertEqual([item["component"] for item in ready], ["runtime-apple"])
-        self.assertEqual([item["id"] for item in deferred], ["sdk-swift", "sdk-atmx-react"])
-        self.assertEqual([item["change"]["summary"] for item in deferred], ["Swift", "React"])
+        self.assertEqual([item["id"] for item in deferred], ["sdk-swift", "sdk-flutter", "sdk-atmx-react"])
+        self.assertEqual([item["change"]["summary"] for item in deferred], ["Swift", "Flutter", "React"])
+
+    def test_flutter_waits_for_selected_runtime_even_when_source_pin_matches(self):
+        changes = [{"component": "runtime-apple"}, {"component": "sdk-flutter"}]
+        with patch.object(web_server.ci_builders, "dependency_blockers", return_value=[]):
+            ready, deferred = web_server.split_deferred_changes(changes, {}, Path("/unused"))
+        self.assertEqual([item["component"] for item in ready], ["runtime-apple"])
+        self.assertEqual([item["id"] for item in deferred], ["sdk-flutter"])
 
     def test_review_ignores_untracked_nested_git_checkouts(self):
         with tempfile.TemporaryDirectory() as temporary:

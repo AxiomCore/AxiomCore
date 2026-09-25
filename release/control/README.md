@@ -21,10 +21,11 @@ contract executor before the release worker, and the dashboard origin before
 its edge proxy, without forcing an unchanged component into the train.
 Each publisher still verifies remote bytes. A failed step stops the run;
 there is no automatic rollback of an already published component.
-When Swift or React needs newly published runtime or `atmx-web` bytes, one
+When Swift, Flutter, or React needs newly published runtime or `atmx-web` bytes, one
 dashboard confirmation runs two internal phases. It builds and remotely
 verifies the producers first; only then does it update the exact Swift
-XCFramework checksum and React npm lockfile, commit and push those pins, and
+XCFramework checksum, both Flutter podspec runtime versions, and React npm
+lockfile, commit and push those pins, and
 create a separate immutable SDK train automatically. The SDKs are then built
 from those committed bytes and remotely verified. A producer failure stops
 before changing consumer pins. The preview shows both phases and the extra

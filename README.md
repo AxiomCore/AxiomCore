@@ -115,7 +115,8 @@ arbitrary backend or mobile application. See
 | `cli/` | Public `axiom` command-line interface |
 | `docs/` | Next.js/Fumadocs documentation application and editorial evidence |
 | `examples/` | Contract and integration fixtures documented by `examples/README.md` |
-| `release/` | Legacy distribution scripts and the new [platform release control](./release/control/README.md) planner |
+| `packages/atmx-cli/` | Public `atmx-cli` npm package source |
+| `artifacts/legacy/` | Historical checked-in build artifacts; current downloadable assets are attached to this repository's GitHub Releases |
 
 The surrounding AxiomCore workspace contains independent repositories for the
 Acore language, artifact libraries, runtime, extractors, SDKs, UI compiler and
@@ -134,7 +135,7 @@ for public claims.
 - [Versioning and deprecation](./docs/content/docs/reference/versioning-and-deprecation.mdx)
 - [Support and feedback](./docs/content/docs/reference/support-and-feedback.mdx)
 - [Example catalog](./examples/README.md)
-- [Platform release control](./release/control/README.md), [operator commands](./release/control/OPERATIONS.md), and [publisher cutover](./release/control/PUBLISHER_MIGRATION.md)
+- Release orchestration and operator instructions live in the private sibling repository `AxiomCore/Axiom-release-plane`.
 
 Documentation claims follow
 [`docs/DOCUMENTATION_CONTRACT.md`](./docs/DOCUMENTATION_CONTRACT.md) and are

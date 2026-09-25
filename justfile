@@ -1,11 +1,10 @@
 set shell := ["bash", "-euo", "pipefail", "-c"]
 set positional-arguments := true
 
-python := env_var_or_default("AXIOM_RELEASE_PYTHON", "python3.12")
-
 default:
     @just release
 
-# One operator interface; run `just release help` for the current commands.
+# The release controller lives in the private sibling repository.
 release action="status" component="" version="":
-    {{ python }} -B release/control/release_cli.py "$1" "$2" "$3"
+    @test -d ../Axiom-release-plane/.git || { echo "Clone private AxiomCore/Axiom-release-plane beside this repository first." >&2; exit 1; }
+    @cd ../Axiom-release-plane && just release "$1" "$2" "$3"

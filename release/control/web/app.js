@@ -9,6 +9,7 @@ let preview = null;
 let currentJob = null;
 let polling = null;
 let recoveryLookup = null;
+const expandedRepos = new Set();
 
 async function api(path, value) {
   const options = {headers: {"X-Axiom-Release-Token": token}, cache: "no-store"};
@@ -199,6 +200,9 @@ function generatedCommitMessage(repository, paths) {
 function renderRepos() {
   const list = $("#repo-list");
   const dirty = snapshot.repositories.filter((repo) => repo.files.length || repo.error);
+  for (const name of expandedRepos) {
+    if (!dirty.some((repo) => repo.name === name)) expandedRepos.delete(name);
+  }
   const ahead = snapshot.repositories.filter((repo) => !repo.error && repo.ahead);
   const pushSummary = ahead.length ? `<div class="push-summary"><div class="push-heading"><strong>Committed source awaiting push</strong><button class="secondary-button push-committed-button" type="button">Push ${ahead.length} ${ahead.length === 1 ? "repository" : "repositories"}</button></div><p>Push the exact committed HEADs to their tracked branches; uncommitted files stay local. This does not start or resume a release.</p><div>${ahead.map((repo) => `<span>${escapeHtml(repo.name)} · ${repo.ahead} ahead · ${escapeHtml(repo.upstream)}</span>`).join("")}</div></div>` : "";
   function wirePushButton() {
@@ -219,13 +223,20 @@ function renderRepos() {
   if (!dirty.length) { list.innerHTML = `<div class="empty-run">No uncommitted release-source changes to review.</div>${pushSummary}`; wirePushButton(); return; }
   list.innerHTML = dirty.map((repo) => {
     const selectable = repo.files.filter((file) => !untrackedDirectory(file));
-    return `<article class="repo" data-repo="${escapeHtml(repo.name)}"><div class="repo-top"><div><div class="repo-name">${escapeHtml(repo.name)}</div><div class="repo-info">${repo.files.length} changed path(s) · ${repo.ahead || 0} commit(s) ahead${repo.error ? ` · ${escapeHtml(repo.error)}` : ""}</div></div><button class="subtle-button inspect-button" type="button">Inspect</button></div><div class="repo-details hidden">${selectable.length ? `<label class="repo-select-all"><input class="repo-select-all-check" type="checkbox" aria-label="Select all reviewable files in ${escapeHtml(repo.name)}"><span>Select all files</span><small class="selected-file-count">0 / ${selectable.length} selected</small></label>` : ""}<div class="files">${repo.files.map((file) => `<label class="file-row ${untrackedDirectory(file) ? "file-unavailable" : ""}"><input class="file-check" type="checkbox" value="${escapeHtml(file.path)}" ${untrackedDirectory(file) ? 'disabled title="Untracked directory; review in its owning repository"' : ""}><button type="button" class="diff-button" data-path="${escapeHtml(file.path)}">${escapeHtml(file.status)} ${escapeHtml(file.path)}</button>${untrackedDirectory(file) ? '<small>Directory — review separately</small>' : ""}</label>`).join("") || '<div class="repo-info">No uncommitted files. Push happens in the confirmed release run.</div>'}</div><pre class="diff hidden"></pre>${selectable.length ? `<div class="repo-actions"><div class="repo-message-row"><input class="text-input commit-message" aria-label="Commit message for ${escapeHtml(repo.name)}" placeholder="Commit message for selected files" maxlength="200"><button class="mini-button generate-commit-message" type="button">Generate message</button></div><button class="secondary-button commit-button" type="button">Commit selected</button></div>` : ""}</div></article>`;
+    const expanded = expandedRepos.has(repo.name);
+    return `<article class="repo" data-repo="${escapeHtml(repo.name)}"><div class="repo-top"><div><div class="repo-name">${escapeHtml(repo.name)}</div><div class="repo-info">${repo.files.length} changed path(s) · ${repo.ahead || 0} commit(s) ahead${repo.error ? ` · ${escapeHtml(repo.error)}` : ""}</div></div><button class="subtle-button inspect-button" type="button" aria-expanded="${expanded}">Inspect</button></div><div class="repo-details ${expanded ? "" : "hidden"}">${selectable.length ? `<label class="repo-select-all"><input class="repo-select-all-check" type="checkbox" aria-label="Select all reviewable files in ${escapeHtml(repo.name)}"><span>Select all files</span><small class="selected-file-count">0 / ${selectable.length} selected</small></label>` : ""}<div class="files">${repo.files.map((file) => `<label class="file-row ${untrackedDirectory(file) ? "file-unavailable" : ""}"><input class="file-check" type="checkbox" value="${escapeHtml(file.path)}" ${untrackedDirectory(file) ? 'disabled title="Untracked directory; review in its owning repository"' : ""}><button type="button" class="diff-button" data-path="${escapeHtml(file.path)}">${escapeHtml(file.status)} ${escapeHtml(file.path)}</button>${untrackedDirectory(file) ? '<small>Directory — review separately</small>' : ""}</label>`).join("") || '<div class="repo-info">No uncommitted files. Push happens in the confirmed release run.</div>'}</div><pre class="diff hidden"></pre>${selectable.length ? `<div class="repo-actions"><div class="repo-message-row"><input class="text-input commit-message" aria-label="Commit message for ${escapeHtml(repo.name)}" placeholder="Commit message for selected files" maxlength="200"><button class="mini-button generate-commit-message" type="button">Generate message</button></div><button class="secondary-button commit-button" type="button">Commit selected</button></div>` : ""}</div></article>`;
   }).join("") + pushSummary;
   wirePushButton();
   list.querySelectorAll(".repo").forEach((card) => {
     const repo = card.dataset.repo;
     const details = card.querySelector(".repo-details");
-    card.querySelector(".inspect-button").addEventListener("click", () => details.classList.toggle("hidden"));
+    const inspect = card.querySelector(".inspect-button");
+    inspect.addEventListener("click", () => {
+      const expanded = !details.classList.toggle("hidden");
+      if (expanded) expandedRepos.add(repo);
+      else expandedRepos.delete(repo);
+      inspect.setAttribute("aria-expanded", String(expanded));
+    });
     const fileChecks = [...card.querySelectorAll(".file-check:not(:disabled)")];
     const selectAll = card.querySelector(".repo-select-all-check");
     function syncFileSelection() {
@@ -309,6 +320,7 @@ function elapsed(started) {
 }
 
 function renderJob(job) {
+  const previousJob = currentJob;
   currentJob = job;
   $("#job-empty").classList.toggle("hidden", Boolean(job));
   $("#job-content").classList.toggle("hidden", !job);
@@ -338,7 +350,7 @@ function renderJob(job) {
   }
   if (deferred.size) $("#resume-button").textContent = "Step 2 — Resume saved run";
   else $("#resume-button").textContent = "Resume saved run";
-  if (job.status === "complete" && snapshot?.trainId !== job.trainId) loadState();
+  if (job.status === "complete" && previousJob?.trainId === job.trainId && previousJob.status !== "complete") loadState();
 }
 
 async function loadNpmRecovery(trainId) {

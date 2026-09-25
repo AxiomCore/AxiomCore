@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 import ctl
+import pub_publish
 import publish_menu
 import publish_targets
 import r2_aws
@@ -15,6 +16,41 @@ import release_cli
 
 
 class PublishTargetTests(unittest.TestCase):
+    def test_pub_helper_uses_short_lived_service_account_token(self):
+        token = MagicMock(returncode=0, stdout="temporary-identity-token\n")
+        success = MagicMock(returncode=0)
+        with patch.dict(pub_publish.os.environ, {"AXIOM_PUB_SERVICE_ACCOUNT":
+                                               "pub-dev@axiomcore.iam.gserviceaccount.com"}, clear=True), \
+                patch.object(pub_publish.subprocess, "run", side_effect=[token, success, success, success]) as run:
+            self.assertEqual(pub_publish.main(), 0)
+        self.assertEqual(run.call_args_list[0].args[0][:3],
+                         ("gcloud", "auth", "print-identity-token"))
+        self.assertIn("--audiences=https://pub.dev", run.call_args_list[0].args[0])
+        self.assertEqual(run.call_args_list[1].kwargs["env"]["PUB_TOKEN"],
+                         "temporary-identity-token")
+        self.assertEqual(run.call_args_list[3].args[0][-2:], ("publish", "--force"))
+
+    def test_pub_helper_stops_without_configured_identity(self):
+        with patch.dict(pub_publish.os.environ, {}, clear=True), \
+                patch.object(pub_publish.subprocess, "run") as run:
+            self.assertEqual(pub_publish.main(), 2)
+        run.assert_not_called()
+
+    def test_pub_publisher_selects_production_infisical_project(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary)
+            configuration = workspace / "AxiomCore/docs/.infisical.json"
+            configuration.parent.mkdir(parents=True)
+            configuration.write_text('{"workspaceId":"11111111-1111-1111-1111-111111111111"}')
+            with patch.object(publish_targets.ctl, "WORKSPACE", workspace), \
+                    patch.object(publish_targets.shutil, "which", return_value="/bin/infisical"):
+                command = publish_targets._pub_publish_command({"PATH": "/bin"}, "pub_publish.py")
+            self.assertEqual(command[:5], ["infisical", "run", "--env=prod",
+                                           "--projectId=11111111-1111-1111-1111-111111111111", "--"])
+            self.assertEqual(command[5:], [publish_targets.sys.executable, "pub_publish.py"])
+            self.assertEqual(publish_targets._pub_publish_command({"PUB_TOKEN": "example"}, "pub_publish.py"),
+                             [publish_targets.sys.executable, "pub_publish.py"])
+
     def test_pub_publisher_rejects_unpublishable_staged_files_before_upload(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

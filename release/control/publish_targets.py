@@ -518,6 +518,21 @@ def publish_npm(candidate: dict, component: str) -> dict:
                  details)
 
 
+def _pub_publish_command(env: dict[str, str], helper: str) -> list[str]:
+    command = [sys.executable, helper]
+    if env.get("PUB_TOKEN"):
+        return command
+    if not shutil.which("infisical", path=env.get("PATH")):
+        raise ctl.ReleaseError("pub.dev publisher needs PUB_TOKEN from Infisical prod or environment")
+    configuration = ctl.WORKSPACE / "AxiomCore/docs/.infisical.json"
+    if not configuration.is_file() or configuration.is_symlink():
+        raise ctl.ReleaseError("pub.dev publisher needs an Infisical project configuration")
+    project_id = json.loads(configuration.read_text()).get("workspaceId", "")
+    if not isinstance(project_id, str) or not re.fullmatch(r"[a-fA-F0-9-]{36}", project_id):
+        raise ctl.ReleaseError("pub.dev Infisical project ID is invalid")
+    return ["infisical", "run", "--env=prod", f"--projectId={project_id}", "--", *command]
+
+
 def publish_pub(candidate: dict, component: str) -> dict:
     if component not in PUB:
         raise ctl.ReleaseError(f"no pub.dev publisher for {component}")
@@ -582,11 +597,7 @@ def publish_pub(candidate: dict, component: str) -> dict:
     if data is None:
         env = ctl.build_environment(candidate["root"], component)
         helper = str(Path(__file__).with_name("pub_publish.py"))
-        command = [sys.executable, helper]
-        if not env.get("PUB_TOKEN"):
-            if not shutil.which("infisical", path=env.get("PATH")):
-                raise ctl.ReleaseError("pub.dev publisher needs PUB_TOKEN from Infisical prod or environment")
-            command = ["infisical", "run", "--env=prod", "--", *command]
+        command = _pub_publish_command(env, helper)
         ctl.run(*command, cwd=source, env=env, capture=False)
         data = _pub_metadata(package, version)
         if data is None:

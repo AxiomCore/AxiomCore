@@ -1,21 +1,41 @@
 #!/usr/bin/env python3
-"""Publish a staged Dart package with a scoped env-var token reference."""
+"""Publish a staged Dart package with a short-lived pub.dev identity token."""
 
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 
 
 def main() -> int:
-    if not os.environ.get("PUB_TOKEN"):
-        print("release: PUB_TOKEN is required for the scoped pub.dev publisher", file=sys.stderr)
+    environment = dict(os.environ)
+    service_account = environment.get("AXIOM_PUB_SERVICE_ACCOUNT", "")
+    if service_account:
+        if not re.fullmatch(r"[a-z][a-z0-9-]*@[a-z][a-z0-9-]*\.iam\.gserviceaccount\.com",
+                            service_account):
+            print("release: AXIOM_PUB_SERVICE_ACCOUNT is not a Google service account email",
+                  file=sys.stderr)
+            return 2
+        result = subprocess.run(
+            ("gcloud", "auth", "print-identity-token",
+             f"--impersonate-service-account={service_account}",
+             "--audiences=https://pub.dev", "--include-email"),
+            capture_output=True, text=True, check=False)
+        if result.returncode or not result.stdout.strip():
+            print("release: could not obtain pub.dev identity token; check service-account "
+                  "impersonation and gcloud authentication", file=sys.stderr)
+            return 2
+        environment["PUB_TOKEN"] = result.stdout.strip()
+    elif not environment.get("PUB_TOKEN"):
+        print("release: pub.dev publishing is not configured; set AXIOM_PUB_SERVICE_ACCOUNT "
+              "in Infisical prod and authorize it in pub.dev package administration", file=sys.stderr)
         return 2
     for command in (("fvm", "dart", "pub", "token", "add", "https://pub.dev", "--env-var", "PUB_TOKEN"),
                     ("fvm", "dart", "pub", "publish", "--dry-run"),
                     ("fvm", "dart", "pub", "publish", "--force")):
-        result = subprocess.run(command, check=False)
+        result = subprocess.run(command, env=environment, check=False)
         if result.returncode:
             return result.returncode
     return 0

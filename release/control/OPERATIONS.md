@@ -259,9 +259,16 @@ then waits briefly for npm metadata to converge and verifies both
 archive. A persistent mismatch blocks publication. Neither a local
 `npm login` nor `NPM_TOKEN`/`NODE_AUTH_TOKEN` is used. See
 [`NPM_TRUSTED_PUBLISHING.md`](./NPM_TRUSTED_PUBLISHING.md) for the one-time npm
-trust grants and default-branch requirement. pub.dev needs `PUB_TOKEN` from
-Infisical `prod`; Dart stores only the environment-variable reference in its
-component-scoped SSD cache, not the token value. The `atmx-web` publisher uses
+trust grants and default-branch requirement. For pub.dev, configure a dedicated
+Google service account as an automated publisher in the Admin tab of both
+`axiom_flutter_generator` and `axiom_flutter`, grant the release machine
+permission to impersonate it, and set `AXIOM_PUB_SERVICE_ACCOUNT` to its email
+in the AxiomCore Infisical `prod` project. The publisher obtains a short-lived
+identity token with audience `https://pub.dev`, and Dart stores only the
+`PUB_TOKEN` environment-variable reference in its component-scoped SSD cache,
+not the token value. A directly supplied `PUB_TOKEN` remains a fallback for an
+already-issued short-lived token; do not store an expiring token in Infisical.
+The `atmx-web` publisher uses
 the `atmx`-bucket-scoped `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` from
 the existing Infisical `prod` project, or a complete explicit environment
 with `CLOUDFLARE_ACCOUNT_ID`. It never reads the local ignored `.env` file.

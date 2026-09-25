@@ -321,7 +321,8 @@ class ReleaseDashboard:
                 upstream, ahead = release_cli.upstream_state(repository)
                 if files or ahead:
                     repositories.append({"name": name, "files": files, "ahead": ahead,
-                                         "upstream": upstream})
+                                         "upstream": upstream,
+                                         "head": git(repository, "rev-parse", "HEAD")})
             except (ctl.ReleaseError, OSError) as error:
                 repositories.append({"name": name, "error": str(error), "files": []})
         return {"trainId": intent["trainId"], "storageAvailable": self.root.is_dir(),
@@ -379,6 +380,53 @@ class ReleaseDashboard:
         git(repository, "commit", "-m", message.strip())
         return {"repository": name, "commit": git(repository, "rev-parse", "HEAD"),
                 "remaining": changed_files(repository)}
+
+    def push_committed(self, requested: list[dict]) -> dict:
+        """Push only the exact committed HEADs the operator saw in the review panel."""
+        with self.lock:
+            if self.worker and self.worker.is_alive():
+                raise ctl.ReleaseError("source push is locked while a release run is active")
+            if (not isinstance(requested, list) or not requested or
+                    any(not isinstance(item, dict) or not isinstance(item.get("name"), str)
+                        or not isinstance(item.get("head"), str)
+                        or not isinstance(item.get("upstream"), str) for item in requested)):
+                raise ctl.ReleaseError("select committed repositories to push")
+            names = [item["name"] for item in requested]
+            if len(set(names)) != len(names):
+                raise ctl.ReleaseError("duplicate repository in push request")
+            catalog, _, _ = self._load()
+            ready = []
+            # Check every repository before the first network mutation. Git's
+            # normal fast-forward push remains the final race protection.
+            for item in requested:
+                name = item["name"]
+                repository = self._repo(catalog, name)
+                head = git(repository, "rev-parse", "HEAD")
+                if head != item["head"]:
+                    raise ctl.ReleaseError(f"{name} changed since the push list was loaded; refresh it")
+                upstream, ahead = release_cli.upstream_state(repository)
+                if upstream != item["upstream"]:
+                    raise ctl.ReleaseError(f"{name}: tracked branch changed since the push list was loaded")
+                if not upstream or "/" not in upstream or ahead < 1:
+                    raise ctl.ReleaseError(f"{name} has no committed changes ahead of a tracked upstream")
+                remote, branch = upstream.split("/", 1)
+                remote_line = git(repository, "ls-remote", remote, f"refs/heads/{branch}")
+                remote_head = remote_line.split()[0] if remote_line else ""
+                if not remote_head:
+                    raise ctl.ReleaseError(f"{name}: tracked remote branch is missing")
+                ancestor = subprocess.run(["git", "merge-base", "--is-ancestor", remote_head, head],
+                                          cwd=repository, check=False)
+                if ancestor.returncode:
+                    raise ctl.ReleaseError(f"{name}: remote branch diverged; no push was attempted")
+                ready.append((name, repository, remote, branch, head))
+            pushed = []
+            for name, repository, remote, branch, head in ready:
+                git(repository, "push", remote, f"HEAD:refs/heads/{branch}")
+                verified = git(repository, "ls-remote", remote, f"refs/heads/{branch}").split()[0]
+                if verified != head:
+                    raise ctl.ReleaseError(f"{name}: remote tip changed after push; already pushed: {', '.join(pushed)}")
+                pushed.append(name)
+            return {"pushed": pushed}
 
     def preview(self, form: dict) -> dict:
         catalog, ledger, old_intent = self._load()
@@ -1337,6 +1385,8 @@ def handler_for(dashboard: ReleaseDashboard):
                 elif path == "/api/commit":
                     result = dashboard.commit_reviewed(value.get("repository", ""),
                                                        value.get("paths", []), value.get("message", ""))
+                elif path == "/api/push":
+                    result = dashboard.push_committed(value.get("repositories", []))
                 else:
                     self._json(HTTPStatus.NOT_FOUND, {"error": "not found"})
                     return

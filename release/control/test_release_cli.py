@@ -108,6 +108,25 @@ class CandidatePreflightTests(unittest.TestCase):
             with self.assertRaisesRegex(ctl.ReleaseError, "not an incomplete build"):
                 release_cli.open_candidate_directory(directory, scoped, plan)
 
+    def test_reused_dependency_receipt_is_included_in_candidate_stage(self):
+        with tempfile.TemporaryDirectory(prefix="axiom-reused-receipt-") as temporary:
+            root = Path(temporary)
+            artifact = root / "atmx-web.tgz"
+            artifact.write_bytes(b"published web bytes")
+            receipt_path = root / "web-receipt.json"
+            receipt_path.write_text(json.dumps({
+                "format": ctl.RECEIPT_FORMAT, "component": "sdk-atmx-web",
+                "fingerprint": "web-fingerprint", "sourceHeads": {},
+                "artifacts": [{"file": artifact.name, "path": str(artifact),
+                               "sha256": ctl.sha256(artifact.read_bytes())}]}) + "\n")
+            plan = {"repositories": {}, "components": [
+                {"id": "sdk-atmx-web", "fingerprint": "web-fingerprint",
+                 "selected": False, "reuseCandidate": True,
+                 "reusedReceiptPath": str(receipt_path)},
+                {"id": "sdk-atmx-react", "fingerprint": "react-fingerprint",
+                 "selected": True}]}
+            self.assertEqual(release_cli.reused_receipts(plan, root), [receipt_path])
+
 
 if __name__ == "__main__":
     unittest.main()

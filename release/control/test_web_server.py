@@ -25,6 +25,38 @@ def git(repository: Path, *args: str) -> str:
 
 
 class ReleaseWebTests(unittest.TestCase):
+    def test_push_committed_requires_exact_head_and_fast_forward(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            remote = root / "remote.git"
+            repository = root / "source"
+            subprocess.check_call(["git", "init", "-q", "--bare", str(remote)])
+            subprocess.check_call(["git", "init", "-q", "-b", "main", str(repository)])
+            git(repository, "config", "user.name", "Release Test")
+            git(repository, "config", "user.email", "release-test@example.invalid")
+            (repository / "change.txt").write_text("first\n")
+            git(repository, "add", "change.txt")
+            git(repository, "commit", "-qm", "first")
+            git(repository, "remote", "add", "origin", str(remote))
+            git(repository, "push", "-qu", "origin", "main")
+            (repository / "change.txt").write_text("second\n")
+            git(repository, "add", "change.txt")
+            git(repository, "commit", "-qm", "second")
+            head = git(repository, "rev-parse", "HEAD")
+            dashboard = web_server.ReleaseDashboard(workspace=root, root=root)
+            catalog = {"repositories": {"source": "source"}}
+            with patch.object(dashboard, "_load", return_value=(catalog, {}, {})), \
+                    patch.object(dashboard, "_repo", return_value=repository):
+                with self.assertRaisesRegex(web_server.ctl.ReleaseError, "changed since"):
+                    dashboard.push_committed([{"name": "source", "head": "0" * 40,
+                                               "upstream": "origin/main"}])
+                (repository / "uncommitted.txt").write_text("not in the pushed commit\n")
+                self.assertEqual(dashboard.push_committed([{"name": "source", "head": head,
+                                                           "upstream": "origin/main"}]),
+                                 {"pushed": ["source"]})
+                self.assertEqual(git(repository, "ls-remote", "origin", "refs/heads/main").split()[0], head)
+                self.assertTrue((repository / "uncommitted.txt").is_file())
+
     def test_suggested_version_advances_only_a_verified_published_version(self):
         self.assertEqual(web_server.suggested_version("0.147.0", "0.147.0", "0.147.0"), "0.147.1")
         self.assertEqual(web_server.suggested_version("0.148.0", "0.148.0", "0.147.0"), "0.148.0")

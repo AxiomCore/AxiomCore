@@ -313,6 +313,19 @@ def open_candidate_directory(directory: Path, scoped: dict, plan: dict) -> None:
     print(f"Resuming matching incomplete candidate: {directory}")
 
 
+def reused_receipts(plan: dict, root: Path) -> list[Path]:
+    from dependency_baseline import receipt_for
+    receipts = []
+    for entry in plan["components"]:
+        if not entry["selected"]:
+            receipt = receipt_for(root, entry, plan["repositories"])
+            verified = ctl.verify_receipt(receipt, entry["fingerprint"])
+            if verified.get("component") != entry["id"]:
+                raise ctl.ReleaseError(f"reused receipt belongs to a different component: {receipt}")
+            receipts.append(receipt)
+    return receipts
+
+
 def candidate(catalog: dict, intent: dict, component: str) -> None:
     root = ctl.mount_default_build_root()
     preparation = train.train_paths(root, intent["trainId"])["preparation"]
@@ -357,7 +370,8 @@ def candidate(catalog: dict, intent: dict, component: str) -> None:
         raise ctl.ReleaseError("candidate gate blocked: " + "; ".join(ready["blockers"]))
     directory = train.train_paths(root, intent["trainId"])["directory"] / "components" / component
     open_candidate_directory(directory, scoped, plan)
-    receipts = []
+    # Staging binds published dependency bytes as well as the new builds.
+    receipts = reused_receipts(plan, root)
     selected_entries = [entry for entry in plan["components"] if entry["selected"]]
     if any(entry["id"] == "ui-host-android" for entry in selected_entries):
         android = next(item for item in selected_entries if item["id"] == "ui-host-android")

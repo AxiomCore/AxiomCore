@@ -1,6 +1,0 @@
-{
-  "component": "cli",
-  "type": "fix",
-  "summary": "Describe the user-visible change and its affected surface.",
-  "migration": "Add only when consumers must change how they use this component."
-}

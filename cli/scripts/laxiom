@@ -17,7 +17,7 @@ script_dir="$(CDPATH= cd -- "$(dirname -- "$script_source")" && pwd)"
 cli_dir="$(CDPATH= cd -- "$script_dir/.." && pwd)"
 cli_bin="${AXIOM_LOCAL_CLI_BIN:-$cli_dir/target/release/axiom-cli}"
 local_api_url="${AXIOM_LOCAL_API_URL:-http://localhost:8000}"
-local_atmx="${AXIOM_LOCAL_ATMX_PATH:-$cli_dir/../release/atmx-cli/dist/index.js}"
+local_atmx="${AXIOM_LOCAL_ATMX_PATH:-$cli_dir/../packages/atmx-cli/dist/index.js}"
 
 if [[ ! -x "$cli_bin" ]]; then
   printf 'Local Axiom CLI is not built. Run: cargo build --release --manifest-path "%s/Cargo.toml"\n' "$cli_dir" >&2

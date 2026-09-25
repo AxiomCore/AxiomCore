@@ -43,7 +43,8 @@ use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, mpsc};
 
-const UI_HOST_GITHUB_REPOSITORY: &str = "AxiomCore/axiom-ui-host";
+const UI_HOST_GITHUB_REPOSITORY: &str = "AxiomCore/AxiomCore";
+const UI_HOST_RELEASE_TAG_PREFIX: &str = "ui-host-v";
 const LYNX_UI_VERSION: &str = "3.138.0";
 const LYNX_UI_SOURCE_COMMIT: &str = "b9b3fd7a34d7cde6ef4dddfb2fb95de4f5457d73";
 const LYNX_UI_NPM_INTEGRITY: &str =
@@ -357,6 +358,57 @@ struct GitHubRelease {
 struct GitHubReleaseAsset {
     name: String,
     browser_download_url: String,
+}
+
+fn ui_host_release_version(tag: &str) -> Option<[u64; 3]> {
+    let mut parts = tag.strip_prefix(UI_HOST_RELEASE_TAG_PREFIX)?.split('.');
+    let version = [
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+    ];
+    parts.next().is_none().then_some(version)
+}
+
+async fn latest_ui_host_release(client: &reqwest::Client) -> Result<GitHubRelease> {
+    let mut latest: Option<([u64; 3], GitHubRelease)> = None;
+    for page in 1..=20 {
+        let response = client
+            .get(format!(
+                "https://api.github.com/repos/{UI_HOST_GITHUB_REPOSITORY}/releases?per_page=100&page={page}"
+            ))
+            .send()
+            .await
+            .context("cannot reach the public AxiomCore release service")?;
+        let releases: Vec<GitHubRelease> = response
+            .error_for_status()
+            .context("cannot list public AxiomCore releases")?
+            .json()
+            .await
+            .context("AxiomCore release metadata is invalid")?;
+        let count = releases.len();
+        for release in releases {
+            if let Some(version) = ui_host_release_version(&release.tag_name) {
+                if latest
+                    .as_ref()
+                    .is_none_or(|(current, _)| version > *current)
+                {
+                    latest = Some((version, release));
+                }
+            }
+        }
+        if count < 100 {
+            break;
+        }
+        if page == 20 {
+            bail!("too many AxiomCore releases to locate the latest UI Host safely");
+        }
+    }
+    latest.map(|(_, release)| release).ok_or_else(|| {
+        anyhow::anyhow!(
+            "no public UI Host release was found in {UI_HOST_GITHUB_REPOSITORY}; publish a signed ui-host-v* release before installing"
+        )
+    })
 }
 
 fn ui_host_spinner(message: impl Into<String>) -> ProgressBar {
@@ -4497,26 +4549,9 @@ async fn install_latest_released_ui_host(
         "Checking the latest verified {} UI Host release...",
         target.as_str()
     ));
-    let release_response = client
-        .get(format!(
-            "https://api.github.com/repos/{UI_HOST_GITHUB_REPOSITORY}/releases/latest"
-        ))
-        .send()
-        .await
-        .context("cannot reach the Axiom UI Host release service")?;
-    if release_response.status() == reqwest::StatusCode::NOT_FOUND {
-        release_progress.finish_and_clear();
-        bail!(
-            "the Axiom UI Host release is not publicly downloadable. Publish `https://github.com/{UI_HOST_GITHUB_REPOSITORY}` and its release assets publicly, or configure a public Axiom distribution endpoint before asking end users to install the host"
-        );
-    }
-    let release: GitHubRelease = release_response
-        .error_for_status()
-        .context("cannot read the latest Axiom UI Host release")?
-        .json()
-        .await
-        .context("latest Axiom UI Host release metadata is invalid")?;
+    let release = latest_ui_host_release(&client).await;
     release_progress.finish_and_clear();
+    let release = release?;
     let manifest_asset = release
         .assets
         .iter()
@@ -4940,6 +4975,14 @@ all compiler output in memory.
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ui_host_release_tags_are_scoped_to_the_public_artifact_repository() {
+        assert_eq!(ui_host_release_version("ui-host-v0.6.7"), Some([0, 6, 7]));
+        assert_eq!(ui_host_release_version("ui-host-v0.10.1"), Some([0, 10, 1]));
+        assert_eq!(ui_host_release_version("v0.6.7"), None);
+        assert_eq!(ui_host_release_version("ui-host-v0.6.7-beta"), None);
+    }
 
     #[test]
     fn web_inspector_hooks_are_noops_without_a_live_configuration() {

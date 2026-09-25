@@ -25,6 +25,7 @@ import time
 from urllib.parse import parse_qs, urlsplit
 
 import ctl
+import auto_pins
 import ci_builders
 import cycle
 import flow
@@ -100,10 +101,28 @@ def split_deferred_changes(changes: list[dict], ledger: dict, workspace: Path
         issues = (ci_builders.dependency_blockers({component}, ledger, workspace)
                   if component in DEFERRED_PIN_CONSUMERS else [])
         if issues:
-            deferred.append({"id": component, "reason": issues[0], "change": change})
+            reason = ("The run will pin the exact published atmx-web version and npm lockfile integrity."
+                      if component == "sdk-atmx-react" else
+                      "The run will pin the exact remotely verified runtime XCFramework checksum.")
+            deferred.append({"id": component, "reason": reason, "change": change})
         else:
             ready.append(change)
     return ready, deferred
+
+
+def suggested_version(source: str | None, candidate: str | None,
+                      published: str | None) -> str | None:
+    """Never suggest a version older than source or already published bytes."""
+    options = [value for value in (source, candidate) if value and versions.STABLE_VERSION.fullmatch(value)]
+    if published and versions.STABLE_VERSION.fullmatch(published):
+        options.append(published)
+    if not options:
+        return None
+    highest = max(options, key=flow.stable_tuple)
+    if published and versions.STABLE_VERSION.fullmatch(published) and flow.stable_tuple(highest) <= flow.stable_tuple(published):
+        major, minor, patch = flow.stable_tuple(highest)
+        return f"{major}.{minor}.{patch + 1}"
+    return highest
 
 
 def release_groups(catalog: dict, selected: set[str]) -> list[str]:
@@ -165,6 +184,10 @@ class ReleaseDashboard:
         published = self._published(catalog)
         current = (cycle.published_evidence(self.root, catalog, intent["trainId"])
                    if self.root.is_dir() else {})
+        latest_job = self.job()
+        if (latest_job and latest_job.get("followup", {}).get("trainId") == intent["trainId"]
+                and self.root.is_dir()):
+            current.update(cycle.published_evidence(self.root, catalog, latest_job["trainId"]))
         active = {item["component"] for item in intent["changes"]}
         queued = {item["component"] for item in intent.get("queued", [])}
         components = []
@@ -177,10 +200,17 @@ class ReleaseDashboard:
             state = ("published" if component_id in current else "active" if component_id in active
                      else "queued" if component_id in queued else "unselected")
             candidate_error = None
+            staged_version = None
             if state == "active" and self.root.is_dir():
                 candidate_name = "ui-host" if component_id in HOST_IDS else component_id
                 candidate_dir = self.root / "trains" / intent["trainId"] / "components" / candidate_name
                 if (candidate_dir / "staged.json").is_file():
+                    try:
+                        staged = json.loads((candidate_dir / "staged.json").read_text())
+                        staged_version = next((item.get("releaseVersion") for item in staged.get("components", [])
+                                               if item.get("id") == component_id), None)
+                    except (OSError, ValueError):
+                        pass
                     try:
                         publisher.load_candidate(candidate_name, self.root, self.workspace, intent["trainId"])
                         state = "staged"
@@ -201,6 +231,11 @@ class ReleaseDashboard:
                 "candidateVersion": ledger["components"][component_id]["candidateVersion"],
                 "lastReleased": (published.get(component_id, {}).get("version")
                                  or published.get(component_id, {}).get("trainId")),
+                "suggestedVersion": (suggested_version(source_version,
+                                     ledger["components"][component_id]["candidateVersion"],
+                                     published.get(component_id, {}).get("version"))
+                                     if versions.versioned(entry) else None),
+                "stagedVersion": staged_version,
                 "state": state, "candidateError": candidate_error,
             })
         repositories = []
@@ -216,7 +251,8 @@ class ReleaseDashboard:
                 repositories.append({"name": name, "error": str(error), "files": []})
         return {"trainId": intent["trainId"], "storageAvailable": self.root.is_dir(),
                 "storageRoot": str(self.root), "components": components,
-                "repositories": repositories, "job": self.job()}
+                "repositories": repositories, "job": latest_job,
+                "publishedInCurrentRun": len(current)}
 
     def diff(self, name: str, path: str) -> dict:
         catalog, _, _ = self._load()
@@ -327,14 +363,19 @@ class ReleaseDashboard:
             raise ctl.ReleaseError("No component is release-ready; publish upstream dependencies and update their source pins first")
         blockers.extend(ci_builders.dependency_blockers(selected, updated, self.workspace))
         blockers.extend(ci_builders.prerequisite_issues(selected))
+        followup_ids = {item["id"] for item in deferred}
+        blockers.extend(ci_builders.prerequisite_issues(followup_ids))
+        for item in deferred:
+            upstream = by_id[item["id"]].get("depends_on", [])
+            for dependency in upstream:
+                if dependency not in selected:
+                    blockers.append(f"{item['id']}: select {dependency} so its published bytes can be pinned automatically")
         for component_id in selected:
             missing = set(by_id[component_id].get("depends_on", [])) - selected
             if missing:
                 blockers.append(f"{component_id}: select dependency {', '.join(sorted(missing))}")
         train_id = cycle.next_train_id(old_intent["trainId"], self.root)
-        effective_summary = (f"Release {len(changes)} Axiom components; "
-                             f"{', '.join(item['id'] for item in deferred)} remain queued for verified dependency pins."
-                             if deferred else summary.strip())
+        effective_summary = summary.strip()
         intent = cycle.compose_intent(old_intent, train_id, changes, effective_summary, published)
         if deferred:
             deferred_ids = {item["id"] for item in deferred}
@@ -346,7 +387,7 @@ class ReleaseDashboard:
         report, edits, fragments = flow.make_preparation(normalized, catalog, self.workspace)
         blockers.extend(report["blocked"])
         required_repos = {"AxiomCore"}
-        for component_id in selected:
+        for component_id in selected | followup_ids:
             entry = by_id[component_id]
             required_repos.add(entry["owner"])
             required_repos.update(source["repo"] for source in entry["sources"])
@@ -401,19 +442,25 @@ class ReleaseDashboard:
                                               "changed": item["changed"]} for item in repositories}}
         digest = ctl.sha256(ctl.canonical({"form": form, "trainId": train_id, "inputs": inputs,
                                            "catalog": catalog["sha256"]}))
+        followup_train = cycle.next_train_id(train_id, self.root,
+                                             today=train_id.rsplit(".", 1)[0]) if deferred else None
         public = {"previewId": digest, "trainId": train_id, "components": ids,
                   "requestedCount": len(requested),
                   "deferred": [{"id": item["id"], "reason": item["reason"]} for item in deferred],
+                  "followupTrainId": followup_train,
+                  "followupOrder": release_groups(catalog, followup_ids) if deferred else [],
                   "summary": effective_summary,
                   "order": release_groups(catalog, selected), "repositories": repositories,
                   "versionFiles": [str(path) for path in edits],
-                  "notes": [str(path) for path in fragments], "storage": storage,
+                  "notes": [str(path) for path in fragments],
+                  "notesPlanned": len(requested), "storage": storage,
                   "blockers": blockers, "ready": not blockers,
                   "willCommit": True, "willPush": True, "willPublish": True}
         with self.lock:
             self.previews[digest] = {"public": public, "form": copy.deepcopy(form),
                                      "intent": intent, "ledger": updated, "oldIntent": old_intent,
                                      "requiredRepos": sorted(required_repos), "inputs": inputs,
+                                     "followupChanges": [item["change"] for item in deferred],
                                      "managedPaths": [str(ctl.CONTROL_DIR / "intent.json"),
                                                       str(versions.VERSIONS),
                                                       *(str(path) for path in edits),
@@ -457,6 +504,11 @@ class ReleaseDashboard:
         document.pop("oldIntent", None)
         document.pop("oldLedger", None)
         document.pop("managedPaths", None)
+        if "followup" in document:
+            followup = document["followup"]
+            document["followup"] = {"trainId": followup["trainId"],
+                                    "order": followup["order"],
+                                    "components": [item["component"] for item in followup["changes"]]}
         return document
 
     def _save_job(self, job: dict) -> None:
@@ -466,6 +518,10 @@ class ReleaseDashboard:
     def _log(self, job: dict, message: str) -> None:
         with self._log_path(job["trainId"]).open("a", encoding="utf-8") as output:
             output.write(f"[{now()}] {message.rstrip()}\n")
+
+    @staticmethod
+    def _phase(job: dict) -> dict:
+        return job["followup"] if job.get("phase") == "followup" else job
 
     def start(self, preview_id: str, confirmation: str) -> dict:
         with self.lock:
@@ -499,6 +555,14 @@ class ReleaseDashboard:
                    "ledger": planned["ledger"],
                    "oldIntent": (ctl.CONTROL_DIR / "intent.json").read_text(),
                    "oldLedger": versions.VERSIONS.read_text()}
+            if planned["followupChanges"]:
+                job["followup"] = {"trainId": public["followupTrainId"],
+                                   "changes": planned["followupChanges"],
+                                   "order": public["followupOrder"],
+                                   "requiredRepos": sorted({"AxiomCore", *[
+                                       next(item["owner"] for item in ctl.read_catalog()["components"]
+                                            if item["id"] == change["component"])
+                                       for change in planned["followupChanges"]]})}
             ctl.write_json(self._job_path(train_id), job)
             self._log(job, "Release authorized. Source will be committed and pushed before any build; all builds finish before publication starts.")
             self.worker = threading.Thread(target=self._run, args=(job,), daemon=True)
@@ -526,7 +590,13 @@ class ReleaseDashboard:
                 else:
                     raise ctl.ReleaseError(f"release child process {child_pid} may still be running; inspect it before resuming")
             current = json.loads((ctl.CONTROL_DIR / "intent.json").read_text())
-            if "cycle" in job["completed"] and current != job["intent"]:
+            followup = job.get("followup", {})
+            followup_started = ("followup:cycle" in job["completed"] or
+                                (followup.get("intent") is not None and
+                                 (self.root / "trains" / followup["trainId"] / "cycle-backup").is_dir()
+                                 and current == followup["intent"]))
+            expected_intent = followup["intent"] if followup_started else job["intent"]
+            if "cycle" in job["completed"] and current != expected_intent:
                 raise ctl.ReleaseError("active release intent changed; inspect the saved run before resuming")
             job["status"] = "running"
             job["error"] = None
@@ -568,23 +638,25 @@ class ReleaseDashboard:
             raise ctl.ReleaseError(f"command exited {code}: {' '.join(args)}; see the saved log")
 
     def _create_cycle(self, job: dict, catalog: dict) -> None:
+        phase = self._phase(job)
+        train_id = phase["trainId"]
         intent_path = ctl.CONTROL_DIR / "intent.json"
-        old_intent = job["oldIntent"].encode()
-        old_ledger = job["oldLedger"].encode()
-        if self._job_path(job["trainId"]).exists() and (
-                self.root / "trains" / job["trainId"] / "cycle-backup").is_dir():
-            if json.loads(intent_path.read_text()) == job["intent"] and json.loads(versions.VERSIONS.read_text()) == job["ledger"]:
+        old_intent = phase["oldIntent"].encode()
+        old_ledger = phase["oldLedger"].encode()
+        if (self.root / "trains" / train_id / "cycle-backup").is_dir():
+            if json.loads(intent_path.read_text()) == phase["intent"] and json.loads(versions.VERSIONS.read_text()) == phase["ledger"]:
                 return
             raise ctl.ReleaseError("cycle backup exists but source files differ; inspect before retrying")
-        cycle.save_cycle(self.root, job["trainId"], intent_path, versions.VERSIONS,
-                         old_intent, old_ledger, job["intent"], job["ledger"])
+        cycle.save_cycle(self.root, train_id, intent_path, versions.VERSIONS,
+                         old_intent, old_ledger, phase["intent"], phase["ledger"])
 
     def _prepare(self, job: dict, catalog: dict) -> None:
-        normalized = flow.validate_intent(copy.deepcopy(job["intent"]), catalog, job["ledger"])
-        evidence = self.root / "trains" / job["trainId"] / "preparation.json"
+        phase = self._phase(job)
+        normalized = flow.validate_intent(copy.deepcopy(phase["intent"]), catalog, phase["ledger"])
+        evidence = self.root / "trains" / phase["trainId"] / "preparation.json"
         if evidence.is_file():
             previous = json.loads(evidence.read_text())
-            if release_cli.prepared_intent_matches(previous, normalized, catalog, job["ledger"]):
+            if release_cli.prepared_intent_matches(previous, normalized, catalog, phase["ledger"]):
                 return
             raise ctl.ReleaseError("preparation evidence differs from this run; inspect before retrying")
         report, edits, fragments = flow.make_preparation(normalized, catalog, self.workspace)
@@ -596,8 +668,9 @@ class ReleaseDashboard:
         ctl.write_json(evidence, report)
 
     def _commit_managed(self, job: dict, catalog: dict) -> None:
+        phase = self._phase(job)
         paths_by_repo: dict[str, set[str]] = {}
-        for absolute in job["managedPaths"]:
+        for absolute in phase["managedPaths"]:
             path = Path(absolute)
             owner = flow.containing_repo(catalog, self.workspace, path)
             name = next(name for name in catalog["repositories"] if self._repo(catalog, name) == owner)
@@ -615,11 +688,11 @@ class ReleaseDashboard:
             if staged and set(staged.splitlines()) - paths:
                 raise ctl.ReleaseError(f"{name} has unrelated staged files; inspect before committing")
             git(repository, "add", "-A", "--", *dirty)
-            git(repository, "commit", "-m", f"Prepare release train {job['trainId']}")
+            git(repository, "commit", "-m", f"Prepare release train {phase['trainId']}")
             self._log(job, f"Committed {name}: {git(repository, 'rev-parse', 'HEAD')}")
 
     def _push_sources(self, job: dict, catalog: dict) -> None:
-        for name in job["requiredRepos"]:
+        for name in self._phase(job)["requiredRepos"]:
             repository = self._repo(catalog, name)
             if changed_files(repository):
                 raise ctl.ReleaseError(f"{name} has uncommitted files; review them before pushing")
@@ -645,18 +718,95 @@ class ReleaseDashboard:
                 raise ctl.ReleaseError(f"{name}: remote tip changed after push")
 
     def _build(self, job: dict, group: str) -> None:
-        directory = self.root / "trains" / job["trainId"] / "components" / group
+        train_id = self._phase(job)["trainId"]
+        directory = self.root / "trains" / train_id / "components" / group
         if (directory / "staged.json").is_file():
-            publisher.load_candidate(group, self.root, self.workspace, job["trainId"])
+            publisher.load_candidate(group, self.root, self.workspace, train_id)
             self._log(job, f"Reusing verified staged candidate for {group}")
             return
         self._command(job, sys.executable, "-u", "-B", str(ctl.CONTROL_DIR / "release_cli.py"),
                       group, cwd=self.workspace / "AxiomCore")
-        publisher.load_candidate(group, self.root, self.workspace, job["trainId"])
+        publisher.load_candidate(group, self.root, self.workspace, train_id)
 
     def _publish(self, job: dict, group: str) -> None:
         self._command(job, sys.executable, "-u", "-B", str(ctl.CONTROL_DIR / "release_cli.py"),
-                      "publish", group, job["trainId"], cwd=self.workspace / "AxiomCore")
+                      "publish", group, self._phase(job)["trainId"], cwd=self.workspace / "AxiomCore")
+
+    def _pin_followup(self, job: dict, catalog: dict) -> None:
+        consumers = {item["component"] for item in job["followup"]["changes"]}
+        allowed = {"axiom-sdk": {"swift/Package.swift"},
+                   "atmx-react": {"package.json", "package-lock.json"}}
+        for name in ("axiom-sdk", "atmx-react"):
+            if not ({"sdk-swift"} if name == "axiom-sdk" else {"sdk-atmx-react"}) & consumers:
+                continue
+            repository = self._repo(catalog, name)
+            dirty = {item["path"] for item in changed_files(repository)}
+            if dirty:
+                backup = self.root / "trains" / job["trainId"] / "auto-pins" / name
+                if dirty - allowed[name] or not backup.is_dir():
+                    raise ctl.ReleaseError(f"{name} changed outside the saved automatic pin step; review source before resuming")
+                for relative in dirty:
+                    saved = backup / relative
+                    committed = ctl.run("git", "show", f"HEAD:{relative}", cwd=repository)
+                    if not saved.is_file() or saved.is_symlink() or saved.read_bytes() != committed:
+                        raise ctl.ReleaseError(f"{name}/{relative} changed after the automatic pin backup; review it before resuming")
+                consumer = "sdk-swift" if name == "axiom-sdk" else "sdk-atmx-react"
+                if ci_builders.dependency_blockers({consumer}, job["ledger"], self.workspace):
+                    raise ctl.ReleaseError(f"{name} has a partial or manually changed dependency pin; inspect the saved backup")
+        changed = auto_pins.pin_verified_consumers(self.root, self.workspace, catalog,
+                                                   job["trainId"], job["ledger"], consumers)
+        issues = ci_builders.dependency_blockers(consumers, job["ledger"], self.workspace)
+        if issues:
+            raise ctl.ReleaseError("automatic dependency pins are incomplete: " + "; ".join(issues))
+        for name, paths in sorted(allowed.items()):
+            if not ({"sdk-swift"} if name == "axiom-sdk" else {"sdk-atmx-react"}) & consumers:
+                continue
+            repository = self._repo(catalog, name)
+            dirty = {item["path"] for item in changed_files(repository)}
+            if dirty - paths:
+                raise ctl.ReleaseError(f"{name} gained unrelated source changes while pinning")
+            if dirty:
+                git(repository, "add", "-A", "--", *sorted(dirty))
+                git(repository, "commit", "--only", "-m",
+                    f"Pin verified dependencies for release {job['followup']['trainId']}",
+                    "--", *sorted(dirty))
+                self._log(job, f"Pinned and committed {name}: {', '.join(sorted(dirty))}")
+            elif name in changed:
+                raise ctl.ReleaseError(f"{name} pin changed but no reviewable source change remains")
+
+    def _plan_followup(self, job: dict, catalog: dict) -> None:
+        followup = job["followup"]
+        if "intent" in followup:
+            return
+        old_intent_text = (ctl.CONTROL_DIR / "intent.json").read_text()
+        old_ledger_text = versions.VERSIONS.read_text()
+        if json.loads(old_intent_text) != job["intent"] or json.loads(old_ledger_text) != job["ledger"]:
+            raise ctl.ReleaseError("active release metadata changed before the automatic SDK phase")
+        published = cycle.published_evidence(self.root, catalog, job["trainId"])
+        summary = f"Complete verified SDK dependency pins from release {job['trainId']}"
+        intent = cycle.compose_intent(job["intent"], followup["trainId"],
+                                      followup["changes"], summary, published)
+        normalized = flow.validate_intent(copy.deepcopy(intent), catalog, job["ledger"])
+        report, edits, fragments = flow.make_preparation(normalized, catalog, self.workspace)
+        if report["blocked"]:
+            raise ctl.ReleaseError("automatic SDK preparation blocked: " + "; ".join(report["blocked"]))
+        required = {"AxiomCore"}
+        for change in followup["changes"]:
+            entry = next(item for item in catalog["components"] if item["id"] == change["component"])
+            required.add(entry["owner"])
+            required.update(source["repo"] for source in entry["sources"])
+            for dependency in entry.get("depends_on", []):
+                predecessor = next(item for item in catalog["components"] if item["id"] == dependency)
+                required.update(source["repo"] for source in predecessor["sources"])
+        followup.update({"intent": intent, "ledger": copy.deepcopy(job["ledger"]),
+                         "oldIntent": old_intent_text, "oldLedger": old_ledger_text,
+                         "requiredRepos": sorted(required),
+                         "managedPaths": [str(ctl.CONTROL_DIR / "intent.json"),
+                                          str(versions.VERSIONS),
+                                          *(str(path) for path in edits),
+                                          *(str(path) for path in fragments)]})
+        self._save_job(job)
+        self._log(job, f"Automatic SDK phase prepared as internal train {followup['trainId']}; source pins were committed first")
 
     def _run(self, job: dict) -> None:
         try:
@@ -669,6 +819,19 @@ class ReleaseDashboard:
                 self._step(job, f"build:{group}", lambda target=group: self._build(job, target))
             for group in job["order"]:
                 self._step(job, f"publish:{group}", lambda target=group: self._publish(job, target))
+            if job.get("followup"):
+                job["phase"] = "followup"
+                self._save_job(job)
+                self._step(job, "followup:pins", lambda: self._pin_followup(job, catalog))
+                self._step(job, "followup:plan", lambda: self._plan_followup(job, catalog))
+                self._step(job, "followup:cycle", lambda: self._create_cycle(job, catalog))
+                self._step(job, "followup:prepare", lambda: self._prepare(job, catalog))
+                self._step(job, "followup:commit", lambda: self._commit_managed(job, catalog))
+                self._step(job, "followup:push", lambda: self._push_sources(job, catalog))
+                for group in job["followup"]["order"]:
+                    self._step(job, f"followup:build:{group}", lambda target=group: self._build(job, target))
+                for group in job["followup"]["order"]:
+                    self._step(job, f"followup:publish:{group}", lambda target=group: self._publish(job, target))
             job["status"] = "complete"
             job["currentStep"] = None
             self._log(job, "Release complete. Every selected component has remotely verified publication evidence.")

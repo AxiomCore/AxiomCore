@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from http.server import ThreadingHTTPServer
+import json
 from pathlib import Path
 import subprocess
 import tempfile
@@ -13,6 +14,9 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 import web_server
+import auto_pins
+import ci_builders
+import dependency_baseline
 
 
 def git(repository: Path, *args: str) -> str:
@@ -20,6 +24,75 @@ def git(repository: Path, *args: str) -> str:
 
 
 class ReleaseWebTests(unittest.TestCase):
+    def test_suggested_version_advances_only_a_verified_published_version(self):
+        self.assertEqual(web_server.suggested_version("0.147.0", "0.147.0", "0.147.0"), "0.147.1")
+        self.assertEqual(web_server.suggested_version("0.148.0", "0.148.0", "0.147.0"), "0.148.0")
+        self.assertEqual(web_server.suggested_version("0.147.0", "0.147.0", None), "0.147.0")
+
+    def test_swift_pin_parser_accepts_checksum_on_separate_line(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            package = Path(temporary) / "axiom-sdk/swift/Package.swift"
+            package.parent.mkdir(parents=True)
+            package.write_text('url: "https://github.com/AxiomCore/AxiomCore/releases/download/v0.148.0/'
+                               'AxiomRuntime.xcframework.zip",\n'
+                               '// checksum is required\n'
+                               f'checksum: "{"a" * 64}"\n')
+            ledger = {"components": {"runtime-apple": {"candidateVersion": "0.148.0"}}}
+            self.assertEqual(ci_builders.dependency_blockers({"sdk-swift"}, ledger, Path(temporary)), [])
+
+    def test_auto_pin_swift_uses_only_verified_checksum_and_saves_original(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            package = root / "axiom-sdk/swift/Package.swift"
+            package.parent.mkdir(parents=True)
+            original = ('url: "https://example.test/releases/download/v0.146.0/'
+                        'AxiomRuntime.xcframework.zip",\n'
+                        f'checksum: "{"a" * 64}"\n')
+            package.write_text(original)
+            proof = root / "trains/test-train/components/runtime-apple/publication/published.json"
+            proof.parent.mkdir(parents=True)
+            proof.write_text(json.dumps({"details": {"files": {
+                "AxiomRuntime.xcframework.zip": "b" * 64}}}))
+            ledger = {"components": {"runtime-apple": {"candidateVersion": "0.148.0"}}}
+            with patch.object(auto_pins.cycle, "published_evidence", return_value={
+                "runtime-apple": {"version": "0.148.0", "record": str(proof)}}), \
+                    patch.object(auto_pins.ctl, "repo_path", return_value=root / "axiom-sdk"):
+                changed = auto_pins.pin_verified_consumers(root, root, {}, "test-train", ledger,
+                                                           {"sdk-swift"})
+            self.assertEqual(changed, {"axiom-sdk": ["swift/Package.swift"]})
+            self.assertIn("v0.148.0/AxiomRuntime", package.read_text())
+            self.assertIn('checksum: "' + "b" * 64 + '"', package.read_text())
+            self.assertEqual((root / "trains/test-train/auto-pins/axiom-sdk/swift/Package.swift").read_text(), original)
+
+    def test_followup_reuses_only_a_remotely_published_dependency_receipt(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            directory = root / "trains/producer/components/sdk-atmx-web"
+            directory.mkdir(parents=True)
+            fingerprint = "f" * 64
+            artifact = {"file": "atmx-web.tgz", "sha256": "a" * 64, "path": str(root / "artifacts/atmx-web.tgz")}
+            plan = {"catalogSha256": "catalog", "repositories": {"atmx-web": {"head": "h"}},
+                    "components": [{"id": "sdk-atmx-web", "fingerprint": fingerprint}]}
+            stage = {"catalogSha256": "catalog", "components": [{"id": "sdk-atmx-web",
+                     "fingerprint": fingerprint, "version": "0.147.0",
+                     "artifacts": [{"file": artifact["file"], "sha256": artifact["sha256"]}]}]}
+            (directory / "plan.json").write_text(json.dumps(plan))
+            (directory / "staged.json").write_text(json.dumps(stage))
+            catalog = {"sha256": "catalog", "components": [
+                {"id": "sdk-atmx-react", "depends_on": ["sdk-atmx-web"]},
+                {"id": "sdk-atmx-web", "depends_on": []}]}
+            proof = {"sdk-atmx-web": {"trainId": "producer", "version": "0.147.0"}}
+            receipt = {"component": "sdk-atmx-web", "artifacts": [artifact]}
+            with patch.object(dependency_baseline.cycle, "published_evidence", return_value=proof), \
+                    patch.object(dependency_baseline.ctl, "verify_receipt", return_value=receipt):
+                baseline = dependency_baseline.published_dependency_baseline(
+                    root, catalog, root, {"sdk-atmx-react"}, {"sdk-atmx-react"})
+            self.assertEqual(baseline["sdk-atmx-web"]["fingerprint"], fingerprint)
+            self.assertEqual(baseline["sdk-atmx-web"]["artifacts"], [artifact])
+            self.assertEqual(dependency_baseline.receipt_for(root, {
+                "reuseCandidate": True, "reusedReceiptPath": baseline["sdk-atmx-web"]["receiptPath"]}, {}),
+                Path(baseline["sdk-atmx-web"]["receiptPath"]))
+
     def test_unpublished_dependency_pin_consumers_are_deferred_not_dropped(self):
         changes = [{"component": "runtime-apple", "summary": "Runtime"},
                    {"component": "sdk-swift", "summary": "Swift"},
@@ -137,6 +210,51 @@ class ReleaseWebTests(unittest.TestCase):
             publish.assert_not_called()
             self.assertEqual(job["status"], "blocked")
             self.assertIn("build failed", job["error"])
+
+    def test_automatic_pin_phase_runs_only_after_all_primary_publications(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            dashboard = web_server.ReleaseDashboard(root=Path(temporary))
+            job = {"trainId": "test-train", "status": "running", "completed": [],
+                   "order": ["runtime-apple", "sdk-atmx-web"], "error": None,
+                   "followup": {"trainId": "test-next", "changes": [
+                       {"component": "sdk-swift"}, {"component": "sdk-atmx-react"}],
+                       "order": ["sdk-swift", "sdk-atmx-react"]}}
+            order = []
+            with patch.object(web_server.ctl, "read_catalog", return_value={}), \
+                    patch.object(dashboard, "_create_cycle", side_effect=lambda *_: order.append("cycle")), \
+                    patch.object(dashboard, "_prepare", side_effect=lambda *_: order.append("prepare")), \
+                    patch.object(dashboard, "_commit_managed", side_effect=lambda *_: order.append("commit")), \
+                    patch.object(dashboard, "_push_sources", side_effect=lambda *_: order.append("push")), \
+                    patch.object(dashboard, "_build", side_effect=lambda _, target: order.append(f"build:{target}")), \
+                    patch.object(dashboard, "_publish", side_effect=lambda _, target: order.append(f"publish:{target}")), \
+                    patch.object(dashboard, "_pin_followup", side_effect=lambda *_: order.append("pins")), \
+                    patch.object(dashboard, "_plan_followup", side_effect=lambda *_: order.append("plan")):
+                dashboard._run(job)
+            self.assertEqual(order, ["cycle", "prepare", "commit", "push", "build:runtime-apple",
+                                     "build:sdk-atmx-web", "publish:runtime-apple", "publish:sdk-atmx-web",
+                                     "pins", "plan", "cycle", "prepare", "commit", "push",
+                                     "build:sdk-swift", "build:sdk-atmx-react",
+                                     "publish:sdk-swift", "publish:sdk-atmx-react"])
+            self.assertEqual(job["status"], "complete")
+
+    def test_failed_producer_publication_never_edits_consumer_pins(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            dashboard = web_server.ReleaseDashboard(root=Path(temporary))
+            job = {"trainId": "test-train", "status": "running", "completed": [],
+                   "order": ["runtime-apple"], "error": None,
+                   "followup": {"trainId": "test-next", "changes": [{"component": "sdk-swift"}],
+                                "order": ["sdk-swift"]}}
+            with patch.object(web_server.ctl, "read_catalog", return_value={}), \
+                    patch.object(dashboard, "_create_cycle"), \
+                    patch.object(dashboard, "_prepare"), \
+                    patch.object(dashboard, "_commit_managed"), \
+                    patch.object(dashboard, "_push_sources"), \
+                    patch.object(dashboard, "_build"), \
+                    patch.object(dashboard, "_publish", side_effect=web_server.ctl.ReleaseError("remote verification failed")), \
+                    patch.object(dashboard, "_pin_followup") as pin:
+                dashboard._run(job)
+            pin.assert_not_called()
+            self.assertEqual(job["status"], "blocked")
 
     def test_preparation_uses_ledger_normalized_intent(self):
         with tempfile.TemporaryDirectory() as temporary:

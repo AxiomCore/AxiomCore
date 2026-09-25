@@ -21,11 +21,24 @@ contract executor before the release worker, and the dashboard origin before
 its edge proxy, without forcing an unchanged component into the train.
 Each publisher still verifies remote bytes. A failed step stops the run;
 there is no automatic rollback of an already published component.
-When Swift or React is selected before its new runtime or `atmx-web` bytes
-exist, the preview explicitly queues that consumer for the next cycle and
-offers a run of the release-ready components. It never invents the Swift
-XCFramework checksum or a future npm lockfile resolution. The confirmation
-shows the reduced scope and the effective train summary before any writes.
+When Swift or React needs newly published runtime or `atmx-web` bytes, one
+dashboard confirmation runs two internal phases. It builds and remotely
+verifies the producers first; only then does it update the exact Swift
+XCFramework checksum and React npm lockfile, commit and push those pins, and
+create a separate immutable SDK train automatically. The SDKs are then built
+from those committed bytes and remotely verified. A producer failure stops
+before changing consumer pins. The preview shows both phases and the extra
+source commits before authorization. Nothing invents a future checksum or
+lockfile resolution, and an interrupted phase remains checkpointed for review
+or explicit resume.
+
+For versioned components, the form suggests the existing candidate unless a
+locally recorded, remotely verified release already owns it; in that case it
+suggests the next patch version. Editing the version updates its local safety
+message immediately. A stale staged candidate means its saved artifact no
+longer matches current source or version; it is preserved, not relabeled, and
+a new candidate build is required. Remote tag/package checks still happen at
+the publisher gate.
 
 The run and log are checkpointed under the external release root's `ui-runs/`
 directory. Reopen the dashboard to inspect or explicitly resume a stopped

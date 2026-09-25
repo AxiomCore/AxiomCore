@@ -485,7 +485,7 @@ def publish_swift(candidate: dict) -> dict:
     if package_file.read_bytes() != (sdk / "swift/Package.swift").read_bytes():
         raise ctl.ReleaseError("staged Swift package differs from the reviewed source")
     body = package_file.read_text()
-    match = re.search(r"AxiomRuntime\.xcframework\.zip\",\s*checksum:\s*\"([a-f0-9]{64})\"", body)
+    match = re.search(r'(?m)^\s*checksum:\s*"([a-f0-9]{64})"\s*$', body)
     runtime = re.search(r"releases/download/v([^/]+)/AxiomRuntime\.xcframework\.zip", body)
     if not match or not runtime:
         raise ctl.ReleaseError("Swift Package.swift lacks a pinned Apple runtime URL and checksum")

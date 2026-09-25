@@ -36,9 +36,56 @@ function invalidatePreview() { preview = null; $("#preview-empty").classList.rem
 function componentDraft(component) {
   if (!draft[component.id]) draft[component.id] = {
     selected: false, type: "feature", summary: "", migration: "",
-    version: component.candidateVersion || component.sourceVersion || ""
+    version: component.suggestedVersion || component.candidateVersion || component.sourceVersion || ""
   };
   return draft[component.id];
+}
+
+function versionTuple(value) {
+  return /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(value || "") ? value.split(".").map(Number) : null;
+}
+
+function compareVersion(left, right) {
+  const a = versionTuple(left), b = versionTuple(right);
+  if (!a || !b) return null;
+  for (let index = 0; index < 3; index++) if (a[index] !== b[index]) return Math.sign(a[index] - b[index]);
+  return 0;
+}
+
+function versionAssessment(component) {
+  const value = componentDraft(component).version.trim();
+  if (!versionTuple(value)) return {safe: false, message: "Enter a stable X.Y.Z version."};
+  if (component.sourceVersion && compareVersion(value, component.sourceVersion) < 0)
+    return {safe: false, message: `Below current source ${component.sourceVersion}.`};
+  if (versionTuple(component.lastReleased) && compareVersion(value, component.lastReleased) <= 0)
+    return {safe: false, message: `Already released as ${component.lastReleased}; choose a newer version.`};
+  if (component.id.startsWith("ui-host-")) {
+    const peers = snapshot.components.filter((item) => item.id.startsWith("ui-host-") && componentDraft(item).selected);
+    if (peers.some((item) => componentDraft(item).version.trim() !== value))
+      return {safe: false, message: "All selected UI Host targets must use the same version."};
+  }
+  if (component.destination.startsWith("GitHub Releases:")) {
+    const collision = snapshot.components.find((item) => item.id !== component.id && !item.id.startsWith("ui-host-") &&
+      componentDraft(item).selected && item.destination.split(";", 1)[0] === component.destination.split(";", 1)[0] &&
+      componentDraft(item).version.trim() === value);
+    if (collision) return {safe: false, message: `${collision.id} already uses this GitHub release tag.`};
+  }
+  if (component.stagedVersion && component.stagedVersion !== value)
+    return {safe: true, message: `Version is locally valid. The staged ${component.stagedVersion} artifact cannot be reused; a new build is required.`};
+  if (component.state === "stale")
+    return {safe: true, message: "Version is locally valid; the old staged artifact has different source inputs and must be rebuilt."};
+  return {safe: true, message: component.lastReleased === "unknown" || !component.lastReleased ? "Locally valid; no remotely verified version baseline is recorded. The publisher checks the remote target." : "Locally valid. The publisher checks the remote target before publication."};
+}
+
+function refreshVersionAdvice() {
+  document.querySelectorAll(".component[data-id]").forEach((card) => {
+    const component = snapshot.components.find((item) => item.id === card.dataset.id);
+    const advice = card.querySelector(".version-advice");
+    if (!component || !advice) return;
+    const result = versionAssessment(component);
+    advice.textContent = result.message;
+    advice.className = `version-advice ${result.safe ? "safe" : "unsafe"}`;
+  });
 }
 
 function generatedChange(component, form) {
@@ -99,13 +146,13 @@ function renderComponents() {
     const form = componentDraft(component);
     const checked = form.selected ? "checked" : "";
     const disabled = component.localBuild ? "" : "disabled";
-    const label = component.localBuild ? ({published:"Published",staged:"Staged",stale:"Stale candidate",incomplete:"Interrupted"}[component.state] || component.builder) : "Builder gap";
+    const label = component.localBuild ? ({published:"Published",staged:"Staged",stale:"Rebuild needed",incomplete:"Interrupted"}[component.state] || component.builder) : "Builder gap";
     return `<article class="component ${form.selected ? "selected" : ""}" data-id="${escapeHtml(component.id)}">
       <div class="component-head"><input class="component-check" type="checkbox" aria-label="Release ${escapeHtml(component.id)}" ${checked} ${disabled}>
-      <div class="component-title"><div class="component-name">${escapeHtml(component.id)}</div><div class="component-meta">${escapeHtml(component.destination)} · Source ${escapeHtml(component.sourceVersion || "digest")} · Last released ${escapeHtml(component.lastReleased || "unknown")}${component.dependsOn.length ? ` · Needs ${escapeHtml(component.dependsOn.join(", "))}` : ""}</div></div>
+      <div class="component-title"><div class="component-name">${escapeHtml(component.id)}</div><div class="component-meta">${escapeHtml(component.destination)} · Source ${escapeHtml(component.sourceVersion || "digest")} · Last released ${escapeHtml(component.lastReleased || "unknown")}${component.dependsOn.length ? ` · Needs ${escapeHtml(component.dependsOn.join(", "))}` : ""}</div>${component.state === "stale" ? `<details class="artifact-help"><summary>Why rebuild?</summary><span>${escapeHtml(component.candidateError || "The saved artifact no longer matches the current source snapshot.")}</span></details>` : ""}</div>
       <span class="component-state ${component.localBuild ? component.state === "stale" ? "stale" : "" : "unavailable"}" title="${escapeHtml(component.candidateError || "")}">${label}</span></div>
       <div class="component-fields"><div class="field-grid"><div><label>Change type</label><select class="select-input change-type" aria-label="Change type for ${escapeHtml(component.id)}">${["feature","fix","security","breaking","internal"].map((type) => `<option value="${type}" ${form.type === type ? "selected" : ""}>${type[0].toUpperCase() + type.slice(1)}</option>`).join("")}</select></div>
-      ${component.versioned ? `<div><label>Candidate version</label><input class="text-input candidate-version" aria-label="Candidate version for ${escapeHtml(component.id)}" value="${escapeHtml(form.version)}" placeholder="X.Y.Z" autocomplete="off"></div>` : `<div><label>Release identity</label><div class="component-meta">Immutable digest / deployment</div></div>`}
+      ${component.versioned ? `<div><label>Candidate version</label><input class="text-input candidate-version" aria-label="Candidate version for ${escapeHtml(component.id)}" value="${escapeHtml(form.version)}" placeholder="X.Y.Z" autocomplete="off"><div class="version-advice" aria-live="polite"></div></div>` : `<div><label>Release identity</label><div class="component-meta">Immutable digest / deployment</div></div>`}
       <div class="note-wrap"><label>What changed in ${escapeHtml(component.id)}?</label><div class="note-row"><input class="text-input change-summary" aria-label="Change summary for ${escapeHtml(component.id)}" maxlength="500" value="${escapeHtml(form.summary)}" placeholder="A precise, user-facing change" autocomplete="off"><button class="mini-button template-button" type="button" title="Replace this component's change note with a template">Generate change</button></div></div>
       <div class="note-wrap migration-wrap ${form.type === "breaking" ? "" : "hidden"}"><label>Migration guidance</label><input class="text-input migration" aria-label="Migration guidance for ${escapeHtml(component.id)}" value="${escapeHtml(form.migration)}" placeholder="What must users change?" autocomplete="off"></div>
       </div></div></article>`;
@@ -127,7 +174,7 @@ function renderComponents() {
     card.querySelector(".change-summary").addEventListener("input", (event) => { form.summary = event.target.value; invalidatePreview(); });
     card.querySelector(".migration").addEventListener("input", (event) => { form.migration = event.target.value; invalidatePreview(); });
     const version = card.querySelector(".candidate-version");
-    if (version) version.addEventListener("input", (event) => { form.version = event.target.value; invalidatePreview(); });
+    if (version) version.addEventListener("input", (event) => { form.version = event.target.value; invalidatePreview(); refreshVersionAdvice(); });
     card.querySelector(".template-button").addEventListener("click", () => {
       form.summary = generatedChange(snapshot.components.find((item) => item.id === id), form);
       card.querySelector(".change-summary").value = form.summary;
@@ -135,6 +182,7 @@ function renderComponents() {
     });
   });
   syncSelectionControls();
+  refreshVersionAdvice();
 }
 
 function untrackedDirectory(file) {
@@ -213,15 +261,15 @@ function renderPreview(value) {
   const box = $("#preview-content");
   box.classList.remove("hidden");
   box.innerHTML = `<div class="preview-key"><span>New train</span><strong>${escapeHtml(value.trainId)}</strong></div>
-    <div class="preview-key"><span>Release-ready</span><strong>${value.components.length} of ${value.requestedCount || value.components.length} selected</strong></div>
+    <div class="preview-key"><span>Planned release</span><strong>${value.requestedCount || value.components.length} selected · ${value.components.length} first phase</strong></div>
     <div class="preview-key"><span>Version mirrors</span><strong>${value.versionFiles.length}</strong></div>
-    <div class="preview-key"><span>Changelog notes</span><strong>${value.notes.length}</strong></div>
+    <div class="preview-key"><span>Changelog notes</span><strong>${value.notesPlanned || value.notes.length} planned</strong></div>
     <div class="preview-key"><span>Storage</span><strong>${escapeHtml(value.storage)}</strong></div>
-    ${value.deferred?.length ? `<div class="deferred-box"><strong>${value.deferred.length} component(s) queued for the next cycle</strong><p>The current run will not build or publish these consumers. Their dependency pins need bytes verified by this run first. The effective train summary is: ${escapeHtml(value.summary)}</p><ul>${value.deferred.map((item) => `<li><strong>${escapeHtml(item.id)}</strong>: ${escapeHtml(item.reason)}</li>`).join("")}</ul></div>` : ""}
+    ${value.deferred?.length ? `<div class="deferred-box"><strong>${value.deferred.length} SDK component(s) will be released automatically after their dependencies</strong><p>When the upstream packages are remotely verified, this run will pin their exact checksum/lockfile, commit and push the pins, then build and publish these SDKs in an internal follow-up phase (${escapeHtml(value.followupTrainId)}). If an upstream publication fails, the SDK phase will not start.</p><ul>${value.deferred.map((item) => `<li><strong>${escapeHtml(item.id)}</strong>: ${escapeHtml(item.reason)}</li>`).join("")}</ul></div>` : ""}
     <details class="source-details"><summary>Source branches to verify and push (${value.repositories.length})</summary><ul>${value.repositories.map((repo) => `<li><strong>${escapeHtml(repo.name)}</strong> · ${escapeHtml(repo.upstream || "no upstream")} · ${escapeHtml(repo.head.slice(0, 12))} · ${repo.ahead} ahead${repo.commitsToPush?.length ? `<ul>${repo.commitsToPush.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}</li>`).join("")}</ul></details>
-    <ol class="sequence">${["Create train & back up intent", "Prepare versions and notes", "Commit managed files", "Push exact source commits", ...value.order.map((id) => `Build ${id}`), ...value.order.map((id) => `Publish & verify ${id}`)].map((item, index) => `<li><b>${index + 1}</b>${escapeHtml(item)}</li>`).join("")}</ol>
+    <ol class="sequence">${["Create train & back up intent", "Prepare versions and notes", "Commit managed files", "Push exact source commits", ...value.order.map((id) => `Build ${id}`), ...value.order.map((id) => `Publish & verify ${id}`), ...(value.deferred?.length ? ["Pin verified SDK dependencies and commit them", "Prepare internal SDK phase", "Push pinned source commits", ...value.followupOrder.map((id) => `Build ${id}`), ...value.followupOrder.map((id) => `Publish & verify ${id}`)] : [])].map((item, index) => `<li><b>${index + 1}</b>${escapeHtml(item)}</li>`).join("")}</ol>
     ${value.blockers.length ? `<div class="blockers"><strong>Resolve before release</strong><ul>${value.blockers.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>` : '<div class="ready-box">Ready to run. If any step fails, work stops and evidence remains intact for inspection or resume.</div>'}
-    ${value.ready ? `<div class="confirm-box"><strong>Production confirmation</strong><p>This commits release metadata, pushes the required branches, and publishes ${value.components.length} release-ready component(s) to production.${value.deferred?.length ? ` ${value.deferred.length} dependency-pin consumer(s) remain queued for a successor cycle.` : ""} There is no automatic rollback after a partial publication. Type <span class="confirmation-code">PUBLISH ${escapeHtml(value.trainId)}</span>.</p><input id="start-confirm" class="text-input" autocomplete="off" aria-label="Production confirmation"><button id="start-button" class="primary-button" type="button">${value.deferred?.length ? "Run release-ready components" : "Run complete release"}</button></div>` : ""}`;
+    ${value.ready ? `<div class="confirm-box"><strong>Production confirmation</strong><p>This commits release metadata, pushes the required branches, and publishes ${value.requestedCount || value.components.length} selected component(s) to production.${value.deferred?.length ? ` After upstream publication, the run also updates, commits and pushes exact SDK dependency pins before publishing the SDKs.` : ""} There is no automatic rollback after a partial publication. Type <span class="confirmation-code">PUBLISH ${escapeHtml(value.trainId)}</span>.</p><input id="start-confirm" class="text-input" autocomplete="off" aria-label="Production confirmation"><button id="start-button" class="primary-button" type="button">Run complete release</button></div>` : ""}`;
   if (value.ready) $("#start-button").addEventListener("click", startRelease);
   box.scrollIntoView({behavior: "smooth", block: "start"});
 }
@@ -252,7 +300,7 @@ function renderJob(job) {
   pill.className = `pill ${job.status === "complete" ? "" : job.status === "running" ? "warning" : "error"}`;
   $("#job-train").textContent = job.trainId;
   $("#job-elapsed").textContent = elapsed(job.startedAt);
-  const names = ["cycle", "prepare", "commit", "push", ...job.order.map((item) => `build:${item}`), ...job.order.map((item) => `publish:${item}`)];
+  const names = ["cycle", "prepare", "commit", "push", ...job.order.map((item) => `build:${item}`), ...job.order.map((item) => `publish:${item}`), ...(job.followup ? ["followup:pins", "followup:plan", "followup:cycle", "followup:prepare", "followup:commit", "followup:push", ...job.followup.order.map((item) => `followup:build:${item}`), ...job.followup.order.map((item) => `followup:publish:${item}`)] : [])];
   $("#job-steps").innerHTML = names.map((name) => `<div class="step ${job.completed.includes(name) ? "done" : job.currentStep === name ? job.status === "running" ? "running" : "blocked" : ""}">${escapeHtml(name.replace(":", " · "))}</div>`).join("");
   const log = $("#job-log");
   const nearBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 35;
@@ -273,9 +321,11 @@ async function loadJob(train) {
 
 async function loadState() {
   try {
+    const previousTrain = snapshot?.trainId;
     snapshot = await api("/api/state");
+    if (previousTrain && previousTrain !== snapshot.trainId) { draft = {}; invalidatePreview(); }
     $("#current-train").textContent = snapshot.trainId;
-    const published = snapshot.components.filter((item) => item.state === "published").length;
+    const published = snapshot.publishedInCurrentRun ?? snapshot.components.filter((item) => item.state === "published").length;
     $("#train-published").textContent = `${published} component(s) published in this train`;
     const pill = $("#storage-pill"); pill.textContent = snapshot.storageAvailable ? "Release SSD available" : "Release SSD will mount at start";
     pill.className = `pill ${snapshot.storageAvailable ? "" : "warning"}`;

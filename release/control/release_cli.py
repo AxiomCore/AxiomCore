@@ -234,7 +234,9 @@ def candidate_preflight(catalog: dict, intent: dict) -> None:
     if not prepared_intent_matches(previous, intent, catalog):
         raise ctl.ReleaseError(f"release preflight evidence does not match the active intent: {evidence}")
     active = {change["component"] for change in intent["changes"]}
-    plan = ctl.make_plan(catalog, ctl.WORKSPACE, only=active)
+    from dependency_baseline import published_dependency_baseline
+    baseline = published_dependency_baseline(root, catalog, ctl.WORKSPACE, active, active)
+    plan = ctl.make_plan(catalog, ctl.WORKSPACE, baseline=baseline, only=active)
     if plan["blocked"] or plan["blockedVersions"]:
         raise ctl.ReleaseError("release preflight is blocked by uncommitted inputs or reused versions: "
                                + ", ".join([*plan["blocked"], *plan["blockedVersions"]]))
@@ -324,7 +326,12 @@ def candidate(catalog: dict, intent: dict, component: str) -> None:
     if not requested <= active:
         raise ctl.ReleaseError("candidate must be in the active wave; queued or unknown: "
                                + ", ".join(sorted(requested - active)))
-    plan = ctl.make_plan(catalog, ctl.WORKSPACE, only=requested)
+    # A consumer may be released in a later, automatically managed phase.
+    # Reuse only dependency artifacts with recorded remote publication proof.
+    from dependency_baseline import published_dependency_baseline, receipt_for
+    baseline = published_dependency_baseline(root, catalog, ctl.WORKSPACE,
+                                             requested, active)
+    plan = ctl.make_plan(catalog, ctl.WORKSPACE, baseline=baseline, only=requested)
     selected = {item["id"] for item in plan["components"] if item["selected"]}
     if not selected <= active:
         raise ctl.ReleaseError("selected dependencies are not active: " + ", ".join(sorted(selected - active)))
@@ -339,7 +346,7 @@ def candidate(catalog: dict, intent: dict, component: str) -> None:
     ci_only = sorted(item["id"] for item in plan["components"]
                      if item["selected"] and item["adapter"] == "ci-only"
                      and item["id"] not in ci_builders.SUPPORTED
-                     and not ctl.artifact_receipt_path(root, item, plan["repositories"]).is_file())
+                     and not receipt_for(root, item, plan["repositories"]).is_file())
     if ci_only:
         raise ctl.ReleaseError("no verified build receipt for CI-only " + ", ".join(ci_only)
                                + "; run its selective builder and import the exact artifact first")
@@ -360,10 +367,11 @@ def candidate(catalog: dict, intent: dict, component: str) -> None:
             ctl.verify_android_signing_access(signing_env, ctl.WORKSPACE / "axiom-ui-host")
             print("Android signing preflight passed; secret values were not displayed or saved.")
     for position, entry in enumerate(selected_entries, 1):
-        receipt = ctl.artifact_receipt_path(root, entry, plan["repositories"])
+        receipt = receipt_for(root, entry, plan["repositories"])
         if receipt.exists():
             verified = ctl.verify_receipt(receipt, entry["fingerprint"])
-            if verified.get("component") != entry["id"] or verified.get("sourceHeads") != plan["repositories"]:
+            if (verified.get("component") != entry["id"] or
+                    (entry["selected"] and verified.get("sourceHeads") != plan["repositories"])):
                 raise ctl.ReleaseError(f"existing receipt belongs to a different candidate: {receipt}")
             print(f"Reusing verified {entry['id']} artifact: {receipt}")
         else:
@@ -376,7 +384,7 @@ def candidate(catalog: dict, intent: dict, component: str) -> None:
                 ctl.build_component(directory / "plan.json", entry["id"], catalog, ctl.WORKSPACE,
                                     command_runner=progress.command_runner(directory, entry["id"],
                                                                            position, len(selected_entries)))
-            receipt = ctl.artifact_receipt_path(root, entry, plan["repositories"])
+            receipt = receipt_for(root, entry, plan["repositories"])
             ctl.verify_receipt(receipt, entry["fingerprint"])
         receipts.append(receipt)
     stage = ctl.stage_manifest(plan, catalog, ctl.WORKSPACE, intent["trainId"],

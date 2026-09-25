@@ -330,6 +330,8 @@ def make_plan(catalog: dict, workspace: Path = WORKSPACE, baseline: dict | None 
                         "versionBlocked": version_blocked,
                         "selected": not reusable,
                         "reuseCandidate": reusable,
+                        **({"reusedReceiptPath": old["receiptPath"]}
+                           if reusable and old.get("receiptPath") else {}),
                         "reason": reason, "artifacts": artifacts if reusable else []})
     blocked_repos = sorted({group["repo"] for item in results for group in item["sourceGroups"] if group["dirty"]})
     blocked_versions = sorted(item["id"] for item in results if item["versionBlocked"])

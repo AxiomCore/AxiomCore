@@ -83,7 +83,7 @@ def dependency_blockers(selected: set[str], ledger: dict, workspace: Path) -> li
     if "sdk-swift" in selected:
         package = (workspace / "axiom-sdk/swift/Package.swift").read_text()
         pinned = re.search(r"releases/download/v([^/]+)/AxiomRuntime\.xcframework\.zip", package)
-        checksum = re.search(r'AxiomRuntime\.xcframework\.zip",\s*checksum:\s*"([a-f0-9]{64})"', package)
+        checksum = re.search(r'(?m)^\s*checksum:\s*"([a-f0-9]{64})"\s*$', package)
         if not pinned or pinned.group(1) != expected or not checksum:
             blockers.append("sdk-swift: Package.swift must pin the selected Apple runtime version and its exact published XCFramework checksum; publish runtime first, then update Swift in a successor release")
     if "sdk-flutter" in selected:
@@ -274,7 +274,8 @@ def _local(entry: dict, catalog: dict, workspace: Path, root: Path,
                    else source / "axiom-sdk/web" / ("atmx" if component == "sdk-atmx-web" else "atmx-react"))
         if component == "sdk-atmx-react":
             web = next(item for item in plan["components"] if item["id"] == "sdk-atmx-web")
-            receipt = ctl.artifact_receipt_path(root, web, plan["repositories"])
+            from dependency_baseline import receipt_for
+            receipt = receipt_for(root, web, plan["repositories"])
             verified = ctl.verify_receipt(receipt, web["fingerprint"])
             tarballs = [Path(item["path"]) for item in verified["artifacts"] if item["file"].endswith(".tgz")]
             if len(tarballs) != 1:

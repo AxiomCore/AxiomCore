@@ -86,7 +86,7 @@ class CandidatePreflightTests(unittest.TestCase):
             with patch.dict(os.environ, {"AXIOM_RELEASE_BUILD_ROOT": str(root)}), \
                     patch.object(release_cli.ctl, "make_plan", return_value=plan), \
                     redirect_stdout(output):
-                release_cli.candidate_preflight({}, intent)
+                release_cli.candidate_preflight({"components": [{"id": "sdk", "depends_on": []}]}, intent)
             self.assertIn("Local candidate preflight passed", output.getvalue())
             self.assertIn("CI builder gap: sdk", output.getvalue())
             self.assertIn("No candidate was built or published", output.getvalue())

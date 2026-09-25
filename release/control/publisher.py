@@ -79,7 +79,8 @@ def load_candidate(component: str, root: Path, workspace: Path = ctl.WORKSPACE,
             or saved_gate.get("phase") != "candidate-ready-for-publisher"
             or saved_gate.get("blockers") or saved_gate.get("stageSha256") != ctl.sha256(ctl.canonical(stage))):
         raise ctl.ReleaseError("candidate stage or saved gate is incomplete, altered, or blocked")
-    receipt_paths = [ctl.artifact_receipt_path(root, item, plan["repositories"])
+    from dependency_baseline import receipt_for
+    receipt_paths = [receipt_for(root, item, plan["repositories"])
                      for item in plan["components"]]
     report = gate.inspect_candidate(intent, plan, catalog, workspace, stage, receipt_paths)
     if report["blockers"]:

@@ -36,7 +36,10 @@ def make_current_plan(catalog: dict, workspace: Path, root: Path,
                       intent_path: Path = ctl.CONTROL_DIR / "intent.json",
                       versions_path: Path = versions.VERSIONS) -> tuple[dict, Path]:
     intent, paths = current(catalog, workspace, root, intent_path, versions_path)
-    plan = ctl.make_plan(catalog, workspace, only={change["component"] for change in intent["changes"]})
+    active = {change["component"] for change in intent["changes"]}
+    from dependency_baseline import published_dependency_baseline
+    baseline = published_dependency_baseline(root, catalog, workspace, active, active)
+    plan = ctl.make_plan(catalog, workspace, baseline=baseline, only=active)
     if plan["blocked"] or plan["blockedVersions"]:
         raise ctl.ReleaseError("train plan has dirty or version-blocked inputs; commit reviewed changes first")
     intended = {change["component"] for change in intent["changes"]}

@@ -1,0 +1,95 @@
+name: Publish atmx-cli with npm OIDC
+run-name: npm ${{ inputs.release_tag }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        required: true
+        type: string
+      archive_sha256:
+        required: true
+        type: string
+      source_sha:
+        required: true
+        type: string
+      package_name:
+        required: true
+        type: string
+      package_version:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: npm-${{ inputs.package_name }}-${{ inputs.package_version }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Verify exact release handoff
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          ARCHIVE_SHA256: ${{ inputs.archive_sha256 }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          PACKAGE_NAME: ${{ inputs.package_name }}
+          PACKAGE_VERSION: ${{ inputs.package_version }}
+          EXPECTED_PACKAGE: atmx-cli
+          EXPECTED_REPOSITORY: AxiomCore/AxiomCore
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
+          test "$PACKAGE_NAME" = "$EXPECTED_PACKAGE"
+          [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$ARCHIVE_SHA256" =~ ^[a-f0-9]{64}$ ]]
+          [[ "$PACKAGE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][A-Za-z0-9.-]+)?$ ]]
+          [[ "$RELEASE_TAG" =~ ^npm-candidate-sdk-atmx-cli-[A-Za-z0-9._-]+-v[0-9]+\.[0-9]+\.[0-9]+([+-][A-Za-z0-9.-]+)?$ ]]
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          tag_head="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq .object.sha)"
+          test "$tag_head" = "$SOURCE_SHA"
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > "$RUNNER_TEMP/npm-handoff.json"
+          jq -e --arg sha "$SOURCE_SHA" --arg tag "$RELEASE_TAG" \
+            '.draft == false and .prerelease == true and .target_commitish == $sha and .tag_name == $tag and (.assets | length) == 1' \
+            "$RUNNER_TEMP/npm-handoff.json" >/dev/null
+          asset="$(jq -r '.assets[0].name' "$RUNNER_TEMP/npm-handoff.json")"
+          [[ "$asset" =~ ^[A-Za-z0-9._-]+\.tgz$ ]]
+          mkdir -p "$RUNNER_TEMP/npm-handoff"
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern "$asset" --dir "$RUNNER_TEMP/npm-handoff"
+          test "$(shasum -a 256 "$RUNNER_TEMP/npm-handoff/$asset" | cut -d ' ' -f 1)" = "$ARCHIVE_SHA256"
+          tar -xOzf "$RUNNER_TEMP/npm-handoff/$asset" package/package.json | node -e '
+            let body = "";
+            process.stdin.on("data", chunk => body += chunk);
+            process.stdin.on("end", () => {
+              const p = JSON.parse(body);
+              const repo = typeof p.repository === "string" ? p.repository : p.repository?.url;
+              if (p.name !== process.env.PACKAGE_NAME || p.version !== process.env.PACKAGE_VERSION ||
+                  repo !== `git+https://github.com/${process.env.EXPECTED_REPOSITORY}.git`) process.exit(1);
+            });'
+          echo "NPM_ARCHIVE=$RUNNER_TEMP/npm-handoff/$asset" >> "$GITHUB_ENV"
+      - name: Publish exact tarball without npm credentials
+        env:
+          NPM_CONFIG_USERCONFIG: /dev/null
+        run: |
+          set -euo pipefail
+          test -z "${NPM_TOKEN:-}${NODE_AUTH_TOKEN:-}"
+          npm install --global npm@11
+          node -e 'if (+process.versions.node.split(".")[0] < 24) process.exit(1)'
+          npm --version
+          npm publish "$NPM_ARCHIVE" --access public --ignore-scripts \
+            --registry=https://registry.npmjs.org

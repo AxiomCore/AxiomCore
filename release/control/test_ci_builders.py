@@ -52,6 +52,40 @@ class SelectiveBuilderTests(unittest.TestCase):
                               for call in archive.call_args_list}, {"axiom-runtime", "axiom-lib"})
             self.assertTrue(all(len(call.args) == 2 for call in archive.call_args_list))
 
+    def test_dashboard_stage_includes_pinned_cli_embed_files(self):
+        catalog = ctl.read_catalog()
+        for component_id in ("cli", "dashboard-origin"):
+            component = next(item for item in catalog["components"] if item["id"] == component_id)
+            selectors = {path for group in component["sources"] if group["repo"] == "acore-diff"
+                         for path in group["paths"]}
+            self.assertIn("packages/axiom-lynx-runtime/src/index.js", selectors)
+            self.assertIn("packages/axiom-lynx-runtime/src/lynx-adapter.js", selectors)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            repository = root / "workspace"
+            (repository / "acore-diff/src").mkdir(parents=True)
+            (repository / "packages/axiom-lynx-runtime/src").mkdir(parents=True)
+            (repository / "acore-diff/src/lib.rs").write_text("// pinned source\n")
+            for filename in ("index.js", "lynx-adapter.js"):
+                (repository / "packages/axiom-lynx-runtime/src" / filename).write_text(filename)
+            subprocess.run(["git", "init", "-q", str(repository)], check=True)
+            subprocess.run(["git", "-C", str(repository), "config", "user.email", "test@example.com"], check=True)
+            subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
+            subprocess.run(["git", "-C", str(repository), "add", "acore-diff", "packages"], check=True)
+            subprocess.run(["git", "-C", str(repository), "commit", "-qm", "pinned sources"], check=True)
+            work = root / "work"
+            work.mkdir()
+            entry = {"id": "root-source-stage", "owner": "acore-diff", "sourceGroups": [{
+                "repo": "acore-diff", "paths": ["acore-diff/src/",
+                                               "packages/axiom-lynx-runtime/src/index.js",
+                                               "packages/axiom-lynx-runtime/src/lynx-adapter.js"]}]}
+            with mock.patch.object(ci_builders.ctl, "repo_path", return_value=repository):
+                source = ci_builders._stage(entry, {"repositories": {"acore-diff": "."}},
+                                                  repository, work)
+            for filename in ("index.js", "lynx-adapter.js"):
+                self.assertEqual((source / "packages/axiom-lynx-runtime/src" / filename).read_text(), filename)
+
     def test_stage_does_not_archive_unrelated_tracked_symlinks(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

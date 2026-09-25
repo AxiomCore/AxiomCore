@@ -32,7 +32,7 @@ destination = "GitHub Releases: AxiomCore/AxiomCore"
 sources = [
   { repo = "AxiomCore", paths = ["cli/"] },
   { repo = "acore", paths = ["src/", "Cargo.toml", "Cargo.lock"] },
-  { repo = "acore-diff", paths = ["acore-diff/src/", "acore-diff/Cargo.toml", "acore-diff/Cargo.lock"] },
+  { repo = "acore-diff", paths = ["acore-diff/src/", "acore-diff/Cargo.toml", "acore-diff/Cargo.lock", "packages/axiom-lynx-runtime/src/index.js", "packages/axiom-lynx-runtime/src/lynx-adapter.js"] },
   { repo = "axiom-build", paths = ["src/", "Cargo.toml", "Cargo.lock"] },
   { repo = "axiom-cloud", paths = ["src/", "Cargo.toml", "Cargo.lock"] },
   { repo = "axiom-extractor", paths = ["src/", "Cargo.toml", "Cargo.lock"] },
@@ -256,7 +256,7 @@ sources = [
   { repo = "axiom-lib", paths = ["src/", "Cargo.toml", "Cargo.lock"] },
   { repo = "rod", paths = ["core/", "macros/", "Cargo.lock"] },
   { repo = "acore", paths = ["src/", "Cargo.toml", "Cargo.lock"] },
-  { repo = "acore-diff", paths = ["acore-diff/src/", "acore-diff/Cargo.toml", "acore-diff/Cargo.lock"] },
+  { repo = "acore-diff", paths = ["acore-diff/src/", "acore-diff/Cargo.toml", "acore-diff/Cargo.lock", "packages/axiom-lynx-runtime/src/index.js", "packages/axiom-lynx-runtime/src/lynx-adapter.js"] },
   { repo = "axiom-build", paths = ["src/", "Cargo.toml", "Cargo.lock"] },
   { repo = "axiom-cloud", paths = ["src/", "Cargo.toml", "Cargo.lock"] },
   { repo = "axiom-extractor", paths = ["src/", "Cargo.toml", "Cargo.lock"] },

@@ -173,7 +173,14 @@ def _stage(entry: dict, catalog: dict, workspace: Path, work: Path) -> Path:
     for name in sorted(names):
         repository = ctl.repo_path(catalog, name, workspace)
         if name == "acore-diff":
-            _archive_head(repository, source, ["acore-diff/"])
+            # This repository is the workspace root. The CLI embeds the Lynx
+            # facade from root-level packages/, so archive exactly the source
+            # selectors pinned by this component instead of only acore-diff/.
+            selectors = [path for group in entry["sourceGroups"] if group["repo"] == name
+                         for path in group["paths"]]
+            if not selectors:
+                raise ctl.ReleaseError(f"{entry['id']} has no pinned acore-diff source selectors")
+            _archive_head(repository, source, selectors)
         else:
             destination = source / catalog["repositories"][name]
             destination.mkdir(parents=True, exist_ok=True)

@@ -29,104 +29,14 @@ publish-sdk sdk version:
     ./scripts/publish_sdk.sh {{sdk}} {{version}}
 
 release-atmx version:
-    #!/usr/bin/env bash
-    set -e
-    CLEAN_VERSION=$(echo "{{version}}" | sed 's/^v//')
-    JUSTFILE_DIR="{{justfile_directory()}}"
-
-    echo "📦 Preparing atmx-web core v$CLEAN_VERSION..."
-    cd "$JUSTFILE_DIR/../../axiom-sdk/web/atmx"
-    npm version $CLEAN_VERSION --no-git-tag-version
-
-    echo "📝 Updating ATMX_VERSION constant in src/index.ts..."
-    sed -i '' "s/export const ATMX_VERSION = \".*\";/export const ATMX_VERSION = \"$CLEAN_VERSION\";/" src/index.ts
-
-    echo "🛠 Building atmx-web..."
-    npm install
-    npm run build
-
-    echo "🚀 Publishing atmx-web to NPM..."
-    npm publish --access public || echo "⚠️ NPM Publish failed (maybe already exists?)"
-
-    echo "☁️ Uploading atmx-web to Cloudflare R2..."
-    chmod +x scripts/upload.sh
-    ./scripts/upload.sh
-
-    # -----------------------------------------------------
-    # ⏳ NPM Index Propagation Wait Loop
-    # -----------------------------------------------------
-    echo "⏳ Waiting for atmx-web@$CLEAN_VERSION to propagate on NPM registry..."
-    MAX_RETRIES=12
-    RETRY_COUNT=0
-    until npm view "atmx-web@$CLEAN_VERSION" version &>/dev/null || [ $RETRY_COUNT -eq $MAX_RETRIES ]; do
-        echo "   Waiting for NPM index propagation... ($((RETRY_COUNT+1))/$MAX_RETRIES)"
-        sleep 5
-        RETRY_COUNT=$((RETRY_COUNT+1))
-    done
-
-    if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
-        echo "⚠️ Warning: NPM registry index timed out after 60s. Proceeding with install..."
-    else
-        echo "✅ atmx-web@$CLEAN_VERSION is live on NPM!"
-    fi
-
-    # -----------------------------------------------------
-
-    echo "📦 Building and Publishing atmx-react v$CLEAN_VERSION to NPM..."
-    cd "$JUSTFILE_DIR/../../axiom-sdk/web/atmx-react"
-    npm version $CLEAN_VERSION --no-git-tag-version
-
-    echo "📝 Updating atmx-web dependency version in package.json..."
-    sed -i '' "s/\"atmx-web\": \".*\"/\"atmx-web\": \"^$CLEAN_VERSION\"/" package.json
-
-    npm install
-    npm run build
-    npm publish --access public || echo "⚠️ NPM Publish failed (maybe already exists?)"
-
-    # -----------------------------------------------------
-
-    echo "📦 Building and Publishing atmx-cli v$CLEAN_VERSION to NPM..."
-    cd "$JUSTFILE_DIR/atmx-cli"
-    npm version $CLEAN_VERSION --no-git-tag-version
-    npm install
-    npm run build
-    npm publish --access public || echo "⚠️ NPM Publish failed (maybe already exists?)"
-
-    echo "✅ ATMX Ecosystem published successfully!"
+    @echo "Legacy release-atmx {{version}} is retired: it bypassed receipt verification and npm OIDC."
+    @echo "Use 'just release web' from AxiomCore/AxiomCore and select the ATMX npm packages."
+    @exit 2
 
 release-extractor name version:
     ./extractors/scripts/publish.sh {{name}} {{version}}
 
 release-all version:
-    @echo "🚀 Starting Full AxiomCore Release for v{{version}}..."
-
-    # 1. Update SDK Versions in source code (pubspecs & Rust utils.rs) before compiling!
-    ./scripts/publish_sdk.sh flutter {{version}} --skip-publish
-
-    # 2. Build Runtimes (Wasm + Apple Framework)
-    just build-runtime
-
-    # 3. Build & Release Axiom CLI (Now has updated SDK versions compiled in)
-    just release-axiom {{version}}
-
-    # 4. Publish Apple Framework + Flutter SDKs to pub.dev
-    @echo "📦 Publishing Apple SDK..."
-    @if just publish-apple {{version}}; then \
-        echo "✅ Apple SDK published successfully"; \
-    else \
-        echo "⚠️ Apple publish failed (likely rate limit). Skipping for now."; \
-        echo "publish-apple {{version}}" >> .release_todo; \
-    fi
-
-    # 5. Release Web SDK
-    just release-atmx {{version}}
-
-    # 6. Release Extractors
-    @echo "📦 Releasing Extractors..."
-    just release-extractor axiom-fastapi {{version}}
-    just release-extractor axiom-go-extractor {{version}}
-
-    @echo "================================================="
-    @echo "🎉 All AxiomCore components released successfully for v{{version}}!"
-    @echo "⚠️ NOTE: Don't forget to commit the version bumps in axiom-sdk!"
-    @echo "   cd ../../axiom-sdk && git add . && git commit -m 'chore: bump sdk to {{version}}' && git push"
+    @echo "Legacy release-all {{version}} is retired because it invokes the old ATMX npm publisher."
+    @echo "Use 'just release web' from AxiomCore/AxiomCore for a gated release cycle."
+    @exit 2

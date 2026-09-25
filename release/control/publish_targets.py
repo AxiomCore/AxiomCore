@@ -22,6 +22,7 @@ import urllib.parse
 import urllib.request
 
 import ctl
+import npm_oidc
 import publisher
 
 
@@ -364,25 +365,30 @@ def publish_npm(candidate: dict, component: str) -> dict:
     else:
         r2 = {}
     expected_integrity = "sha512-" + base64.b64encode(hashlib.sha512(archive.read_bytes()).digest()).decode()
-    metadata = _npm_metadata(package, version, candidate["directory"], env)
+    # Public registry reads never need the Infisical npm token. Prevent npm's
+    # token fallback even when an old operator shell still exports it.
+    npm_env = {key: value for key, value in env.items()
+               if key not in ("NPM_TOKEN", "NODE_AUTH_TOKEN", "NPM_CONFIG_USERCONFIG")}
+    npm_env["NPM_CONFIG_USERCONFIG"] = os.devnull
+    metadata = _npm_metadata(package, version, candidate["directory"], npm_env)
+    oidc = {}
     if metadata is None:
-        command = ["npm", "publish", str(archive), "--access", "public", "--ignore-scripts",
-                   "--registry=https://registry.npmjs.org"]
-        if env.get("NPM_TOKEN"):
-            ctl.run(sys.executable, str(Path(__file__).with_name("npm_publish.py")), *command,
-                    cwd=candidate["directory"], env=env, capture=False)
-        elif shutil.which("infisical", path=env.get("PATH")):
-            ctl.run("infisical", "run", "--env=prod", "--", sys.executable,
-                    str(Path(__file__).with_name("npm_publish.py")), *command,
-                    cwd=candidate["directory"], env=env, capture=False)
-        else:
-            raise ctl.ReleaseError("npm publication needs NPM_TOKEN from Infisical prod or environment")
-        metadata = _npm_metadata(package, version, candidate["directory"], env)
+        oidc = npm_oidc.publish(candidate, component, archive)
+        metadata = _npm_metadata(package, version, candidate["directory"], npm_env)
     if metadata is None or metadata.get("dist", {}).get("integrity") != expected_integrity:
         raise ctl.ReleaseError(f"npm {package}@{version} integrity differs from exact staged tarball")
+    details = {"version": version, "integrity": expected_integrity, "r2": r2}
+    if oidc:
+        details["oidc"] = oidc
+    else:
+        _, published, _ = _publication(candidate, component)
+        if published.exists():
+            previous_oidc = json.loads(published.read_text()).get("details", {}).get("oidc")
+            if previous_oidc:
+                details["oidc"] = previous_oidc
     return _save(candidate, component, f"npm: {package}",
                  f"https://www.npmjs.com/package/{package}/v/{version}",
-                 {"version": version, "integrity": expected_integrity, "r2": r2})
+                 details)
 
 
 def publish_pub(candidate: dict, component: str) -> dict:

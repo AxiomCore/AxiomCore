@@ -53,6 +53,11 @@ tags. The build writes the same source-bound receipt as the existing local
 adapters. Production deployment and stable tags remain exclusively in the
 publisher step. Required platform tools, cloud credentials and provisioned
 destinations still need to be available; a missing prerequisite stops the run.
+The three npm packages (`atmx-web`, `atmx-react`, `atmx-cli`) now hand off the
+exact staged tarball to an OIDC-authorized GitHub Actions publisher and check
+npm's remote integrity afterward. No npm login or publish token is used in a
+release run. See [the one-time trusted-publisher setup](./NPM_TRUSTED_PUBLISHING.md)
+before the first unattended npm release.
 
 The root `justfile` exposes one operator interface: `just release`. See the
 [operator guide](./OPERATIONS.md) for its short workflow and the

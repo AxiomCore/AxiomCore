@@ -2,6 +2,10 @@
   "name": "atmx-cli",
   "version": "0.146.0",
   "description": "",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AxiomCore/AxiomCore.git"
+  },
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc"

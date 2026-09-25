@@ -241,12 +241,18 @@ Each GCP selective builder must set Cloud Build substitution
 record the successful build ID. The publisher checks that Cloud Build's
 reported image digest and Artifact Registry both match the staged descriptor.
 Set `AXIOM_GCP_REGION` explicitly for image publishers (and optionally
-`AXIOM_GCP_PROJECT_ID`, default `axiomcore`). npm publishing needs `NPM_TOKEN`
-from Infisical `prod`; the token is placed only in a short-lived local config
-under the system temporary directory, not the release SSD. pub.dev needs
-`PUB_TOKEN` from Infisical `prod`; Dart stores only the environment-variable
-reference in its component-scoped SSD cache, not the token value. The `atmx-web` publisher uses the
-existing R2 S3 credentials and does not mutate the `latest` alias.
+`AXIOM_GCP_PROJECT_ID`, default `axiomcore`). The three npm packages publish
+through their owning GitHub repositories' `npm-trusted-publish.yml` workflows
+using npm Trusted Publishing/OIDC. The release controller puts the exact
+receipt-verified `.tgz` in a GitHub prerelease handoff, verifies the
+downloaded bytes, dispatches the GitHub-hosted workflow, waits for success,
+then checks npm's `dist.integrity` against the staged archive. Neither a local
+`npm login` nor `NPM_TOKEN`/`NODE_AUTH_TOKEN` is used. See
+[`NPM_TRUSTED_PUBLISHING.md`](./NPM_TRUSTED_PUBLISHING.md) for the one-time npm
+trust grants and default-branch requirement. pub.dev needs `PUB_TOKEN` from
+Infisical `prod`; Dart stores only the environment-variable reference in its
+component-scoped SSD cache, not the token value. The `atmx-web` publisher uses
+the existing R2 S3 credentials and does not mutate the `latest` alias.
 After verifying the CLI GitHub archive, the CLI publisher updates only
 `Formula/axiom.rb` in the clean `AxiomCore/homebrew-tap` checkout, pushes its
 single release commit, and reads the remote formula back. It refuses to

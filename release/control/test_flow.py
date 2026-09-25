@@ -19,6 +19,71 @@ def git(repo: Path, *args: str) -> None:
 
 
 class ReleaseFlowTests(unittest.TestCase):
+    def test_flutter_changelog_renderer_is_versioned_and_idempotent(self):
+        old = "## 0.0.3\n\n- Previous change.\n"
+        change = {"type": "feature", "summary": "Improve generated models."}
+        updated = flow.with_flutter_changelog_entry(old, "0.146.0", change)
+        self.assertTrue(updated.startswith("## 0.146.0\n\n- Feature: Improve generated models.\n"))
+        self.assertIn(old, updated)
+        self.assertEqual(flow.with_flutter_changelog_entry(updated, "0.146.0", change), updated)
+
+    def test_prepare_updates_both_flutter_package_changelogs(self):
+        with tempfile.TemporaryDirectory(prefix="axiom-flow-test-") as temporary:
+            workspace = Path(temporary).resolve()
+            sdk = workspace / "axiom-sdk"
+            builder = workspace / "axiom-build"
+            sdk.mkdir()
+            builder.mkdir()
+            git(sdk, "init", "-q")
+            git(builder, "init", "-q")
+            packages = ("axiom_flutter", "axiom_flutter_generator")
+            for package in packages:
+                folder = sdk / "flutter" / package
+                folder.mkdir(parents=True)
+                (folder / "pubspec.yaml").write_text(f"name: {package}\nversion: 0.1.0\n")
+                (folder / "CHANGELOG.md").write_text("## 0.1.0\n\n- Initial release.\n")
+            for target in ("ios", "macos"):
+                folder = sdk / "flutter/axiom_flutter" / target
+                folder.mkdir()
+                (folder / "axiom_flutter.podspec").write_text("  s.version = '0.1.0'\n")
+            util = builder / "src/core/utils.rs"
+            util.parent.mkdir(parents=True)
+            util.write_text('const AXIOM_FLUTTER_VERSION: &str = "^0.1.0";\n'
+                            'const AXIOM_FLUTTER_GENERATOR_VERSION: &str = "^0.1.0";\n')
+            git(sdk, "add", ".")
+            git(builder, "add", ".")
+            for repository in (sdk, builder):
+                git(repository, "config", "user.name", "Release Test")
+                git(repository, "config", "user.email", "release-test@example.invalid")
+                git(repository, "commit", "-qm", "initial")
+            catalog = {"repositories": {"axiom-sdk": "axiom-sdk", "axiom-build": "axiom-build"},
+                       "components": [
+                           {"id": "sdk-flutter", "owner": "axiom-sdk", "version": "flutter/axiom_flutter/pubspec.yaml"},
+                           {"id": "sdk-flutter-generator", "owner": "axiom-sdk",
+                            "version": "flutter/axiom_flutter_generator/pubspec.yaml"}]}
+            intent = {"trainId": "test.2", "changes": [
+                {"component": "sdk-flutter", "type": "fix", "summary": "Fix runtime integration.",
+                 "version": "0.2.0"},
+                {"component": "sdk-flutter-generator", "type": "feature",
+                 "summary": "Improve generated models.", "version": "0.2.0"}]}
+            report, edits, fragments = flow.make_preparation(intent, catalog, workspace)
+            self.assertEqual(report["blocked"], [])
+            for package in packages:
+                changelog = sdk / "flutter" / package / "CHANGELOG.md"
+                self.assertIn("## 0.2.0", edits[changelog])
+            self.assertIn("Fix runtime integration.", edits[sdk / "flutter/axiom_flutter/CHANGELOG.md"])
+            self.assertIn("Improve generated models.", edits[sdk / "flutter/axiom_flutter_generator/CHANGELOG.md"])
+            build_root = workspace / "release-root"
+            build_root.mkdir()
+            with patch.dict("os.environ", {"CI": "true", "GITHUB_ACTIONS": "true",
+                                         "AXIOM_RELEASE_BUILD_ROOT": str(build_root)}):
+                backup = flow.apply_preparation(report, edits, fragments, catalog, workspace)
+            for package in packages:
+                changelog = sdk / "flutter" / package / "CHANGELOG.md"
+                self.assertTrue(changelog.read_text().startswith("## 0.2.0"))
+                self.assertTrue((backup / "axiom-sdk" / changelog.relative_to(sdk)).read_text()
+                                .startswith("## 0.1.0"))
+
     def test_train_status_uses_fixed_evidence_folder_without_mounted_ssd(self):
         catalog = {"components": [{"id": "cli", "owner": "owner", "version": "Cargo.toml"}]}
         with tempfile.TemporaryDirectory(prefix="axiom-flow-test-") as temporary:

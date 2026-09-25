@@ -2,8 +2,8 @@
 """Prepare reviewed platform release changes without publishing anything.
 
 An intent is explicit about the selected components and their versions. The
-default is a preview. Applying it touches only clean, tracked version files
-and new release-note fragments, after saving byte-for-byte backups on the
+default is a preview. Applying it touches only clean, tracked version and
+Flutter changelog files plus new release-note fragments, after saving backups on the
 external release volume. It never commits, tags, deploys, or publishes.
 """
 
@@ -151,6 +151,28 @@ def set_package_version(source: str, expected: str, version: str, lock: bool = F
     return json.dumps(document, indent=2, ensure_ascii=False) + "\n"
 
 
+def flutter_changelog_has_version(source: str, version: str) -> bool:
+    return bool(re.search(rf"(?m)^##\s+\[?{re.escape(version)}\]?(?:\s|$)", source))
+
+
+def with_flutter_changelog_entry(source: str, version: str, change: dict) -> str:
+    """Render the reviewed one-line release note into a pub.dev changelog."""
+    stable_tuple(version)
+    if flutter_changelog_has_version(source, version):
+        return source
+    summary = change["summary"].strip()
+    if not summary or "\n" in summary or "\r" in summary:
+        raise ctl.ReleaseError("Flutter changelog needs a one-line release summary")
+    kind = change["type"].capitalize()
+    entry = f"## {version}\n\n- {kind}: {summary}\n"
+    if change["type"] == "breaking":
+        migration = change.get("migration", "").strip()
+        if not migration or "\n" in migration or "\r" in migration:
+            raise ctl.ReleaseError("breaking Flutter changelog needs one-line migration guidance")
+        entry += f"- Migration: {migration}\n"
+    return entry + "\n" + source.lstrip("\n")
+
+
 def verify_prepared_mirrors(component_id: str, owner: Path, workspace: Path,
                             version: str, change: dict) -> None:
     """Accept an already applied version only when its known mirrors agree."""
@@ -195,7 +217,7 @@ def make_preparation(intent: dict, catalog: dict, workspace: Path) -> tuple[dict
     def edit(path: Path, transform) -> None:
         if path not in originals:
             if not path.is_file() or path.is_symlink():
-                raise ctl.ReleaseError(f"version companion is absent or symlinked: {path}")
+                raise ctl.ReleaseError(f"release source file is absent or symlinked: {path}")
             originals[path] = path.read_bytes().decode("utf-8")
         edits[path] = transform(edits.get(path, originals[path]))
 
@@ -256,6 +278,15 @@ def make_preparation(intent: dict, catalog: dict, workspace: Path) -> tuple[dict
                              unique_substitution(source, r"^(\s*runtime_version\s*=\s*')[^']+('.*)$",
                                                  rf'\g<1>{new}\g<2>', str(podspec)))
 
+            if component_id in {"sdk-flutter", "sdk-flutter-generator"}:
+                package = "axiom_flutter" if component_id == "sdk-flutter" else "axiom_flutter_generator"
+                changelog = owner / "flutter" / package / "CHANGELOG.md"
+                if not changelog.is_file() or changelog.is_symlink():
+                    raise ctl.ReleaseError(f"Flutter changelog is absent or symlinked: {changelog}")
+                if not flutter_changelog_has_version(changelog.read_text(), version):
+                    edit(changelog, lambda source, selected=version, note=change:
+                         with_flutter_changelog_entry(source, selected, note))
+
         fragment_path = owner / "release-notes" / "unreleased" / f"{intent['trainId']}-{component_id}.json"
         if not fragment_path.parent.resolve().is_relative_to(owner):
             raise ctl.ReleaseError(f"release-note path escapes its owning repository: {fragment_path}")
@@ -269,13 +300,13 @@ def make_preparation(intent: dict, catalog: dict, workspace: Path) -> tuple[dict
 
     for path, changed in edits.items():
         if changed == originals[path]:
-            raise ctl.ReleaseError(f"version editor made no change: {path}")
+            raise ctl.ReleaseError(f"release source editor made no change: {path}")
         repo = containing_repo(catalog, workspace, path)
         relative = str(path.relative_to(repo))
         if ctl.run("git", "status", "--porcelain", "--", relative, cwd=repo).strip():
-            blockers.append(f"dirty version file: {path}")
+            blockers.append(f"dirty release source file: {path}")
         if not ctl.run("git", "ls-files", "--", relative, cwd=repo).strip():
-            blockers.append(f"untracked version file: {path}")
+            blockers.append(f"untracked release source file: {path}")
 
     report = {"format": PREPARATION_FORMAT, "trainId": intent["trainId"],
               "intentSha256": ctl.sha256(ctl.canonical(intent)),
@@ -317,7 +348,7 @@ def apply_preparation(report: dict, edits: dict[Path, str], fragments: dict[Path
     for path, changed in edits.items():
         expected = next(item["oldSha256"] for item in report["files"] if item["path"] == str(path))
         if ctl.sha256_file(path) != expected or path.is_symlink():
-            raise ctl.ReleaseError(f"version file changed after preview: {path}")
+            raise ctl.ReleaseError(f"release source file changed after preview: {path}")
     for path in fragments:
         if path.exists():
             raise ctl.ReleaseError(f"release-note path appeared after preview: {path}")

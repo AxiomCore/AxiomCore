@@ -145,6 +145,83 @@ class PublishTargetTests(unittest.TestCase):
                 self.assertEqual(cloud.call_count, 1)
                 run.assert_not_called()
 
+    def test_gcp_api_and_worker_publish_remain_fail_closed(self):
+        for component, image_name, command_prefix in (
+            ("backend-api", "axiom-backend", ("gcloud", "run", "deploy")),
+            ("backend-worker", "axiom-semantic-worker", ("gcloud", "run", "jobs", "update")),
+        ):
+            with self.subTest(component=component), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                digest = "sha256:" + "a" * 64
+                image = f"us-central1-docker.pkg.dev/axiomcore/axiom-backend/{image_name}@{digest}"
+                reference = root / "image-ref.json"
+                reference.write_text(json.dumps({
+                    "image": image, "sourceHeads": {},
+                    "buildId": "11111111-1111-1111-1111-111111111111"}))
+                candidate = {"plan": {"repositories": {}}, "catalog": {}, "workspace": root}
+                source_digest = ctl.sha256(ctl.canonical({}))
+
+                def cloud(*args, **_):
+                    if args[:2] == ("builds", "describe"):
+                        return {"status": "SUCCESS", "substitutions": {
+                            "_AXIOM_SOURCE_HEADS_SHA256": source_digest},
+                            "results": {"images": [{"digest": digest}]}}
+                    if args[:3] == ("artifacts", "docker", "images"):
+                        return {"digest": digest}
+                    if args[:2] in (("scheduler", "jobs"), ("tasks", "queues")):
+                        return {"state": "PAUSED"}
+                    if args[:3] == ("run", "jobs", "describe"):
+                        return {"spec": {"template": {"spec": {"template": {"spec": {
+                            "maxRetries": 0, "containers": [{"image": image, "env": [
+                                {"name": "AXIOM_RELEASE_WORKER_ENABLED", "value": "false"}]}]}}}}}}
+                    if args[:3] == ("run", "services", "describe"):
+                        return {"spec": {"template": {"spec": {"containers": [{"image": image,
+                            "env": [{"name": "AXIOM_RELEASE_WORKER_ENABLED", "value": "false"}]}]}}},
+                                "status": {"latestReadyRevisionName": "ready", "url": "https://api.test",
+                                           "traffic": [{"revisionName": "ready", "percent": 100}]}}
+                    self.fail(f"unexpected gcloud lookup: {args}")
+
+                with patch.dict("os.environ", {"AXIOM_GCP_REGION": "us-central1",
+                                            "AXIOM_GCP_PROJECT_ID": "axiomcore"}), \
+                        patch.object(publish_targets.publisher, "remote_source_heads"), \
+                        patch.object(publish_targets.ctl, "repo_path", return_value=root), \
+                        patch.object(publish_targets, "_single", return_value=reference), \
+                        patch.object(publish_targets, "_gcloud_json", side_effect=cloud), \
+                        patch.object(publish_targets, "_save", return_value={}), \
+                        patch.object(publish_targets.ctl, "run", return_value=b"") as run:
+                    publish_targets.publish_gcp(candidate, component)
+                deploys = [call.args for call in run.call_args_list
+                           if call.args[:len(command_prefix)] == command_prefix]
+                self.assertEqual(len(deploys), 1)
+                self.assertIn("--update-env-vars=AXIOM_RELEASE_WORKER_ENABLED=false", deploys[0])
+                if component == "backend-worker":
+                    self.assertIn("--max-retries=0", deploys[0])
+
+    def test_gcp_publisher_pauses_both_worker_triggers(self):
+        states = {"scheduler": "ENABLED", "queue": "RUNNING"}
+
+        def cloud(*args, **_):
+            return {"state": states["scheduler" if args[0] == "scheduler" else "queue"]}
+
+        def pause(*args, **_):
+            states["scheduler" if args[1] == "scheduler" else "queue"] = "PAUSED"
+            return b""
+
+        with patch.object(publish_targets, "_gcloud_json", side_effect=cloud), \
+                patch.object(publish_targets.ctl, "run", side_effect=pause) as run:
+            publish_targets._pause_release_worker_triggers("axiomcore", "us-central1", Path("/tmp"))
+        self.assertEqual(states, {"scheduler": "PAUSED", "queue": "PAUSED"})
+        self.assertEqual(len(run.call_args_list), 2)
+
+    def test_gcp_publisher_refuses_queue_that_remains_running(self):
+        def cloud(*args, **_):
+            return {"state": "PAUSED" if args[0] == "scheduler" else "RUNNING"}
+
+        with patch.object(publish_targets, "_gcloud_json", side_effect=cloud), \
+                patch.object(publish_targets.ctl, "run", return_value=b""):
+            with self.assertRaisesRegex(ctl.ReleaseError, "not paused"):
+                publish_targets._pause_release_worker_triggers("axiomcore", "us-central1", Path("/tmp"))
+
 
 if __name__ == "__main__":
     unittest.main()

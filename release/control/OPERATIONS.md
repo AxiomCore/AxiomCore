@@ -221,6 +221,14 @@ expected output is missing. Container candidates create only immutable
 advance a stable runner tag or a Cloud Run revision. The release dashboard
 keeps all local source and artifact work on the external APFS build volume.
 
+Publishing `backend-api` or `backend-worker` is fail-closed for the release
+worker: the publisher pauses and verifies the Scheduler job and Cloud Tasks
+queue before and after rollout, writes `AXIOM_RELEASE_WORKER_ENABLED=false`,
+and sets the worker Job's maximum retries to zero. It never executes the Job
+or resumes a trigger. A paused queue may retain tasks; inspect its backlog
+and resolve the worker's database quota failure before any separately
+authorized activation.
+
 The local dashboard proxy build needs `AXIOM_DASHBOARD_ORIGIN` set to the
 deployed HTTPS Cloud Run origin. It stages `_worker.js` with a source-bound
 release marker, then publishes to the existing `axiom-dashboard` Pages

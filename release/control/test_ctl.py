@@ -114,13 +114,41 @@ class ReleaseControlTests(unittest.TestCase):
     def test_build_environment_routes_caches_off_internal_disk(self):
         with tempfile.TemporaryDirectory(prefix="axiom-release-test-") as temporary:
             root = Path(temporary).resolve()
-            env = ctl.build_environment(root, "ui-host-android")
+            env = ctl.build_environment(root, "cli")
             for name in ("CARGO_HOME", "CARGO_TARGET_DIR", "GRADLE_USER_HOME",
                          "npm_config_cache", "npm_config_store_dir", "COREPACK_HOME", "PIP_CACHE_DIR",
                          "HABITAT_CACHE_ROOT", "XDG_CACHE_HOME", "TMPDIR",
                          "AXIOM_UI_HOST_BUILD_ROOT", "AXIOM_UI_HOST_DIST_ROOT"):
                 self.assertTrue(Path(env[name]).is_relative_to(root), name)
             self.assertFalse(Path(env["AXIOM_UI_HOST_SIGNING_TEMP_ROOT"]).is_relative_to(root))
+
+    def test_android_build_environment_discovers_local_sdk_and_modern_ndk(self):
+        with tempfile.TemporaryDirectory(prefix="axiom-release-test-") as temporary:
+            root = Path(temporary)
+            home = root / "home"
+            sdk = home / "Library/Android/sdk"
+            (sdk / "ndk/21.1.6352462").mkdir(parents=True)
+            modern = sdk / "ndk/26.3.11579264"
+            modern.mkdir()
+            with patch.dict("os.environ", {}, clear=True), \
+                    patch.object(ctl.platform, "system", return_value="Darwin"), \
+                    patch.object(ctl.Path, "home", return_value=home):
+                env = ctl.build_environment(root / "build", "ui-host-android")
+            self.assertEqual(env["ANDROID_HOME"], str(sdk))
+            self.assertEqual(env["ANDROID_SDK_ROOT"], str(sdk))
+            self.assertEqual(env["AXIOM_UI_HOST_CARGO_NDK_HOME"], str(modern))
+
+    def test_android_build_environment_respects_explicit_paths(self):
+        with tempfile.TemporaryDirectory(prefix="axiom-release-test-") as temporary:
+            root = Path(temporary)
+            sdk = root / "custom-sdk"
+            sdk.mkdir()
+            custom_ndk = root / "custom-ndk"
+            with patch.dict("os.environ", {"ANDROID_SDK_ROOT": str(sdk),
+                                        "AXIOM_UI_HOST_CARGO_NDK_HOME": str(custom_ndk)}, clear=True):
+                env = ctl.build_environment(root / "build", "ui-host-android")
+            self.assertEqual(env["ANDROID_HOME"], str(sdk))
+            self.assertEqual(env["AXIOM_UI_HOST_CARGO_NDK_HOME"], str(custom_ndk))
 
     def test_build_environment_refuses_symlink_outside_release_root(self):
         with tempfile.TemporaryDirectory(prefix="axiom-release-test-") as temporary:

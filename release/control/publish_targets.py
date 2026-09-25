@@ -508,12 +508,55 @@ def _gcloud_json(*command: str, cwd: Path) -> dict:
     return json.loads(ctl.run("gcloud", *command, "--format=json", "--quiet", cwd=cwd).decode())
 
 
+def _worker_trigger_state(kind: str, name: str, project: str, region: str,
+                          owner: Path) -> str:
+    command = (("scheduler", "jobs", "describe") if kind == "scheduler"
+               else ("tasks", "queues", "describe"))
+    try:
+        state = _gcloud_json(*command, name, f"--project={project}",
+                             f"--location={region}", cwd=owner).get("state")
+    except ctl.ReleaseError as exc:
+        if re.search(r"\bNOT_FOUND\b|not found|does not exist", str(exc), re.I):
+            return "MISSING"
+        raise
+    if not isinstance(state, str):
+        raise ctl.ReleaseError(f"{kind} {name} has no verifiable state")
+    return state
+
+
+def _pause_release_worker_triggers(project: str, region: str, owner: Path) -> None:
+    """Fail closed before and after publishing API/worker images."""
+    scheduler = os.environ.get("AXIOM_GCP_RELEASE_SCHEDULER_JOB", os.environ.get(
+        "AXIOM_GCP_SEMANTIC_SCHEDULER_JOB", "axiom-release-worker-drain"))
+    queue = os.environ.get("AXIOM_CLOUD_TASKS_QUEUE", "axiom-release-pipeline")
+    for kind, name, active in (("scheduler", scheduler, "ENABLED"),
+                               ("queue", queue, "RUNNING")):
+        state = _worker_trigger_state(kind, name, project, region, owner)
+        if state == active:
+            command = (("scheduler", "jobs", "pause") if kind == "scheduler"
+                       else ("tasks", "queues", "pause"))
+            ctl.run("gcloud", *command, name, f"--project={project}",
+                    f"--location={region}", "--quiet", cwd=owner, capture=False)
+            state = _worker_trigger_state(kind, name, project, region, owner)
+        if state not in ("PAUSED", "MISSING"):
+            raise ctl.ReleaseError(f"release worker {kind} {name} is {state}, not paused")
+
+
 def _container_images(value: object) -> list[str]:
     if isinstance(value, dict):
         found = [value["image"]] if isinstance(value.get("image"), str) else []
         return found + [image for nested in value.values() for image in _container_images(nested)]
     if isinstance(value, list):
         return [image for nested in value for image in _container_images(nested)]
+    return []
+
+
+def _environment_values(value: object, name: str) -> list[str]:
+    if isinstance(value, dict):
+        found = [value["value"]] if value.get("name") == name and isinstance(value.get("value"), str) else []
+        return found + [item for nested in value.values() for item in _environment_values(nested, name)]
+    if isinstance(value, list):
+        return [item for nested in value for item in _environment_values(nested, name)]
     return []
 
 
@@ -551,6 +594,8 @@ def publish_gcp(candidate: dict, component: str) -> dict:
     digest = image.rsplit("@", 1)[1]
     if digest not in json.dumps(image_info):
         raise ctl.ReleaseError("Artifact Registry did not confirm the exact image digest")
+    if component in ("backend-api", "backend-worker"):
+        _pause_release_worker_triggers(project, region, owner)
     name = os.environ.get({"backend-api": "AXIOM_GCP_SERVICE",
                            "backend-worker": "AXIOM_GCP_RELEASE_WORKER_JOB",
                            "mock-runner": "AXIOM_GCP_MOCK_RUNNER_IMAGE_NAME",
@@ -576,8 +621,11 @@ def publish_gcp(candidate: dict, component: str) -> dict:
     elif kind == "service":
         _gcloud_json("run", "services", "describe", name, f"--project={project}",
                      f"--region={region}", cwd=owner)
-        ctl.run("gcloud", "run", "deploy", name, f"--project={project}", f"--region={region}",
-                "--platform=managed", f"--image={image}", "--quiet", cwd=owner, capture=False)
+        deploy = ["gcloud", "run", "deploy", name, f"--project={project}", f"--region={region}",
+                  "--platform=managed", f"--image={image}"]
+        if component == "backend-api":
+            deploy.append("--update-env-vars=AXIOM_RELEASE_WORKER_ENABLED=false")
+        ctl.run(*deploy, "--quiet", cwd=owner, capture=False)
         remote = _gcloud_json("run", "services", "describe", name, f"--project={project}",
                               f"--region={region}", cwd=owner)
         template = remote.get("spec", {}).get("template", {})
@@ -587,6 +635,9 @@ def publish_gcp(candidate: dict, component: str) -> dict:
         if image not in actual or not ready or not any(
                 item.get("revisionName") == ready and item.get("percent") == 100 for item in traffic):
             raise ctl.ReleaseError("Cloud Run service did not become ready on the exact image digest")
+        if component == "backend-api" and _environment_values(
+                template, "AXIOM_RELEASE_WORKER_ENABLED") != ["false"]:
+            raise ctl.ReleaseError("backend API revision did not retain disabled release-worker dispatch")
         address = remote.get("status", {}).get("url")
         if not isinstance(address, str) or not address.startswith("https://"):
             raise ctl.ReleaseError("Cloud Run service has no HTTPS URL")
@@ -594,15 +645,27 @@ def publish_gcp(candidate: dict, component: str) -> dict:
     else:
         _gcloud_json("run", "jobs", "describe", name, f"--project={project}",
                      f"--region={region}", cwd=owner)
-        ctl.run("gcloud", "run", "jobs", "update", name, f"--project={project}",
-                f"--region={region}", f"--image={image}", "--quiet", cwd=owner, capture=False)
+        deploy = ["gcloud", "run", "jobs", "update", name, f"--project={project}",
+                  f"--region={region}", f"--image={image}"]
+        if component == "backend-worker":
+            deploy.extend(("--update-env-vars=AXIOM_RELEASE_WORKER_ENABLED=false",
+                           "--max-retries=0"))
+        ctl.run(*deploy, "--quiet", cwd=owner, capture=False)
         remote = _gcloud_json("run", "jobs", "describe", name, f"--project={project}",
                               f"--region={region}", cwd=owner)
         actual = _container_images(remote.get("spec", {}).get("template", {}))
         if image not in actual:
             raise ctl.ReleaseError("Cloud Run Job does not reference the exact image digest")
+        if component == "backend-worker":
+            worker_spec = remote.get("spec", {}).get("template", {}).get("spec", {}).get(
+                "template", {}).get("spec", {})
+            if (_environment_values(worker_spec, "AXIOM_RELEASE_WORKER_ENABLED") != ["false"]
+                    or worker_spec.get("maxRetries") != 0):
+                raise ctl.ReleaseError("backend worker Job did not retain disabled mode and zero retries")
         address = f"https://console.cloud.google.com/run/jobs/details/{region}/{name}?project={project}"
         details = {"image": image, "job": name}
+    if component in ("backend-api", "backend-worker"):
+        _pause_release_worker_triggers(project, region, owner)
     return _save(candidate, component, f"GCP {project}/{region}", address, details)
 
 

@@ -12,6 +12,70 @@ import ctl
 
 
 class SelectiveBuilderTests(unittest.TestCase):
+    def test_flutter_staged_changelog_comes_from_reviewed_intent(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            package = root / "axiom_flutter_generator"
+            package.mkdir()
+            (package / "pubspec.yaml").write_text("name: axiom_flutter_generator\nversion: 0.146.0\n")
+            changelog = package / "CHANGELOG.md"
+            changelog.write_text("## 0.0.3\n\n- Old entry.\n")
+            (root / "intent.json").write_text(json.dumps({"changes": [
+                {"component": "sdk-flutter-generator", "version": "0.146.0", "type": "feature",
+                 "summary": "Improve generated models."}]}))
+            plan = root / "plan.json"
+            ci_builders._prepare_flutter_changelog(package, "sdk-flutter-generator", plan)
+            first = changelog.read_text()
+            self.assertTrue(first.startswith("## 0.146.0"))
+            ci_builders._prepare_flutter_changelog(package, "sdk-flutter-generator", plan)
+            self.assertEqual(changelog.read_text(), first)
+            (package / "pubspec.yaml").write_text("name: axiom_flutter_generator\nversion: 0.147.0\n")
+            with self.assertRaisesRegex(ctl.ReleaseError, "differs from the prepared release intent"):
+                ci_builders._prepare_flutter_changelog(package, "sdk-flutter-generator", plan)
+
+    def test_stage_accepts_plan_source_groups(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            work = root / "work"
+            work.mkdir()
+            entry = {"id": "runtime-apple", "owner": "axiom-runtime",
+                     "sourceGroups": [{"repo": "axiom-runtime", "paths": ["src/", "Cargo.toml"]},
+                                      {"repo": "axiom-lib", "paths": ["src/"]}]}
+            catalog = {"repositories": {"axiom-runtime": "axiom-runtime",
+                                        "axiom-lib": "axiom-lib"}}
+            with mock.patch.object(ci_builders.ctl, "repo_path", side_effect=lambda _catalog, name, _workspace: workspace / name), \
+                    mock.patch.object(ci_builders, "_archive_head") as archive:
+                source = ci_builders._stage(entry, catalog, workspace, work)
+            self.assertEqual({call.args[1].relative_to(source).as_posix()
+                              for call in archive.call_args_list}, {"axiom-runtime", "axiom-lib"})
+            self.assertTrue(all(len(call.args) == 2 for call in archive.call_args_list))
+
+    def test_stage_does_not_archive_unrelated_tracked_symlinks(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workspace = root / "workspace"
+            repository = workspace / "AxiomCore"
+            repository.mkdir(parents=True)
+            subprocess.run(["git", "init", "-q", str(repository)], check=True)
+            subprocess.run(["git", "-C", str(repository), "config", "user.email", "test@example.com"], check=True)
+            subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
+            (repository / "release/scripts").mkdir(parents=True)
+            (repository / "release/scripts/build_apple.sh").write_text("#!/bin/sh\n")
+            (repository / "node_modules/.bin").mkdir(parents=True)
+            (repository / "node_modules/.bin/tsc").symlink_to("../../release/scripts/build_apple.sh")
+            subprocess.run(["git", "-C", str(repository), "add", "release", "node_modules"], check=True)
+            subprocess.run(["git", "-C", str(repository), "commit", "-qm", "source"], check=True)
+            entry = {"id": "runtime-apple", "owner": "AxiomCore", "sourceGroups": [
+                {"repo": "AxiomCore", "paths": ["release/scripts/build_apple.sh"]}]}
+            catalog = {"repositories": {"AxiomCore": "AxiomCore"}}
+            work = root / "work"
+            work.mkdir()
+            source = ci_builders._stage(entry, catalog, workspace, work)
+            self.assertTrue((source / "AxiomCore/release/scripts/build_apple.sh").is_file())
+            self.assertFalse((source / "AxiomCore/node_modules").exists())
+
     def test_git_archive_uses_head_not_dirty_worktree(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

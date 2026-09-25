@@ -459,6 +459,26 @@ def build_environment(root: Path, component_id: str) -> dict[str, str]:
         # Signing material must not follow the build cache onto a portable SSD.
         "AXIOM_UI_HOST_SIGNING_TEMP_ROOT": "/private/tmp" if platform.system() == "Darwin" else "/tmp",
     })
+    if component_id == "ui-host-android":
+        sdk = env.get("ANDROID_HOME") or env.get("ANDROID_SDK_ROOT")
+        if not sdk and platform.system() == "Darwin":
+            sdk = str(Path.home() / "Library/Android/sdk")
+        if not sdk or not Path(sdk).is_dir():
+            raise ReleaseError("Android SDK not found; set ANDROID_HOME or ANDROID_SDK_ROOT "
+                               "to the installed SDK before building ui-host-android")
+        env["ANDROID_HOME"] = sdk
+        env["ANDROID_SDK_ROOT"] = sdk
+        if not (env.get("AXIOM_UI_HOST_CARGO_NDK_HOME") or env.get("ANDROID_NDK_HOME")
+                or env.get("ANDROID_NDK_ROOT")):
+            ndk_root = Path(sdk) / "ndk"
+            modern = sorted((path for path in ndk_root.iterdir() if path.is_dir()
+                             and re.fullmatch(r"\d+\.\d+\.\d+", path.name)
+                             and int(path.name.split(".")[0]) >= 23),
+                            key=lambda path: tuple(map(int, path.name.split(".")))) if ndk_root.is_dir() else []
+            if not modern:
+                raise ReleaseError(f"Android SDK at {sdk} has no modern NDK for cargo-ndk; "
+                                   "install NDK r23 or later, or set AXIOM_UI_HOST_CARGO_NDK_HOME")
+            env["AXIOM_UI_HOST_CARGO_NDK_HOME"] = str(modern[-1])
     return env
 
 

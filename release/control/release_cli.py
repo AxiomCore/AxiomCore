@@ -150,9 +150,9 @@ def status(catalog: dict, ledger: dict, intent: dict) -> None:
         try:
             prepared, edits, fragments = flow.make_preparation(intent, catalog, ctl.WORKSPACE)
             if prepared["blocked"]:
-                print("Next: resolve dirty version files listed by `just release prepare`.")
+                print("Next: resolve dirty release source files listed by `just release prepare`.")
             elif edits or fragments:
-                print(f"Next: `just release prepare` will update {len(edits)} version file(s) and create {len(fragments)} note(s).")
+                print(f"Next: `just release prepare` will update {len(edits)} version/changelog file(s) and create {len(fragments)} note(s).")
             else:
                 print("Next: `just release review` to inspect and commit source changes, then run candidate preflight.")
         except (ctl.ReleaseError, OSError, ValueError) as error:
@@ -213,7 +213,7 @@ def prepare(catalog: dict, intent: dict) -> None:
     report["applied"] = True
     report["backup"] = str(backup)
     ctl.write_json(paths["preparation"], report)
-    print(f"Prepared {len(edits)} version file(s) and {len(fragments)} note(s). Backup: {backup}")
+    print(f"Prepared {len(edits)} version/changelog file(s) and {len(fragments)} note(s). Backup: {backup}")
     review_and_continue(catalog, intent)
 
 

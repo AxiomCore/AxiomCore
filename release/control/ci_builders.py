@@ -22,6 +22,7 @@ import tempfile
 import time
 
 import ctl
+import flow
 import versions
 
 
@@ -109,11 +110,12 @@ def _run(*args: str, cwd: Path, env: dict[str, str], capture: bool = False) -> b
     return ctl.run(*args, cwd=cwd, env=env, capture=capture)
 
 
-def _archive_head(repository: Path, destination: Path, selector: str | None = None) -> None:
+def _archive_head(repository: Path, destination: Path,
+                  selectors: list[str] | None = None) -> None:
     """Stream committed Git bytes; unrelated worktree edits cannot enter a build."""
     command = ["git", "archive", "--format=tar", "HEAD"]
-    if selector:
-        command.extend(["--", selector])
+    if selectors:
+        command.extend(["--", *selectors])
     process = subprocess.Popen(command, cwd=repository, stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE)
     try:
@@ -123,6 +125,10 @@ def _archive_head(repository: Path, destination: Path, selector: str | None = No
                 relative = Path(member.name)
                 if relative.is_absolute() or ".." in relative.parts or not relative.parts:
                     raise ctl.ReleaseError(f"unsafe tracked release source: {member.name}")
+                # A few old source trees track node_modules, including npm's
+                # symlinked .bin entries. Builders install dependencies afresh.
+                if "node_modules" in relative.parts:
+                    continue
                 target = destination / relative
                 if member.isdir():
                     target.mkdir(parents=True, exist_ok=True)
@@ -152,7 +158,10 @@ def _archive_head(repository: Path, destination: Path, selector: str | None = No
 def _stage(entry: dict, catalog: dict, workspace: Path, work: Path) -> Path:
     """Copy tracked bytes only. require_current_plan checked their Git heads."""
     source = Path(tempfile.mkdtemp(prefix="source-", dir=work))
-    names = {item["repo"] for item in entry["sources"]} | {entry["owner"]}
+    # Plan entries call the pinned repositories sourceGroups (catalog entries
+    # call them sources). Archive each full pinned HEAD: compile-time includes
+    # and package metadata can live outside a component's change selectors.
+    names = {item["repo"] for item in entry["sourceGroups"]} | {entry["owner"]}
     if entry["id"] in ("sdk-atmx-web", "sdk-flutter", "dashboard-origin"):
         names |= {"AxiomCore", "axiom-runtime", "axiom-lib", "rod", "axiom-sdk"}
     if entry["id"] == "dashboard-origin":
@@ -164,7 +173,7 @@ def _stage(entry: dict, catalog: dict, workspace: Path, work: Path) -> Path:
     for name in sorted(names):
         repository = ctl.repo_path(catalog, name, workspace)
         if name == "acore-diff":
-            _archive_head(repository, source, "acore-diff")
+            _archive_head(repository, source, ["acore-diff/"])
         else:
             destination = source / catalog["repositories"][name]
             destination.mkdir(parents=True, exist_ok=True)
@@ -203,6 +212,28 @@ def _archive_package(source: Path, destination: Path) -> Path:
     return destination
 
 
+def _prepare_flutter_changelog(package: Path, component: str, plan_path: Path) -> None:
+    """Fill a legacy missing changelog entry in the pinned SSD source stage."""
+    intent_path = plan_path.with_name("intent.json")
+    intent = json.loads(intent_path.read_text())
+    changes = [item for item in intent.get("changes", []) if item.get("component") == component]
+    if len(changes) != 1:
+        raise ctl.ReleaseError(f"staged {component} needs exactly one reviewed release change")
+    change = changes[0]
+    manifest = (package / "pubspec.yaml").read_text()
+    match = re.search(r"(?m)^version:\s*([0-9]+\.[0-9]+\.[0-9]+)\s*$", manifest)
+    if not match or change.get("version") != match.group(1):
+        raise ctl.ReleaseError(f"staged {component} version differs from the prepared release intent")
+    changelog = package / "CHANGELOG.md"
+    if not changelog.is_file() or changelog.is_symlink():
+        raise ctl.ReleaseError(f"staged {component} has no regular CHANGELOG.md")
+    original = changelog.read_text()
+    updated = flow.with_flutter_changelog_entry(original, match.group(1), change)
+    if updated != original:
+        changelog.write_text(updated)
+        print(f"Added {component} {match.group(1)} to staged CHANGELOG.md from release intent", flush=True)
+
+
 def _npm_pack(package: Path, artifact_dir: Path, env: dict[str, str]) -> Path:
     result = json.loads(_run("npm", "pack", "--json", "--ignore-scripts",
                              "--pack-destination", str(artifact_dir), cwd=package,
@@ -222,9 +253,12 @@ def _build_wasm(source: Path, env: dict[str, str]) -> None:
 
 
 def _local(entry: dict, catalog: dict, workspace: Path, root: Path,
-           artifact_dir: Path, env: dict[str, str], plan: dict) -> list[Path]:
+           artifact_dir: Path, env: dict[str, str], plan: dict, plan_path: Path) -> list[Path]:
     component = entry["id"]
     source = _stage(entry, catalog, workspace, root / "work" / component)
+    if component in ("sdk-flutter", "sdk-flutter-generator"):
+        name = "axiom_flutter" if component == "sdk-flutter" else "axiom_flutter_generator"
+        _prepare_flutter_changelog(source / "axiom-sdk/flutter" / name, component, plan_path)
     if component == "runtime-apple":
         if platform.system() != "Darwin":
             raise ctl.ReleaseError("runtime-apple needs a macOS builder with Xcode")
@@ -360,7 +394,11 @@ def _image(entry: dict, catalog: dict, workspace: Path, root: Path,
         if status == "SUCCESS":
             break
         if status in ("FAILURE", "CANCELLED", "TIMEOUT", "EXPIRED"):
-            raise ctl.ReleaseError(f"Cloud Build {build_id} ended {status}; inspect before retrying")
+            log_url = result.get("logUrl") or (
+                f"https://console.cloud.google.com/cloud-build/builds/{build_id}?project={project}")
+            raise ctl.ReleaseError(
+                f"Cloud Build {build_id} ended {status}; inspect {log_url}. "
+                "Keep this failed receipt; fix the pinned source and start a successor release cycle.")
         if time.monotonic() >= deadline:
             raise ctl.ReleaseError(f"Cloud Build {build_id} is still running; resume this candidate after inspecting it")
         print(f"Cloud Build {build_id}: {status or 'pending'}", flush=True)
@@ -419,6 +457,6 @@ def build_component(plan_path: Path, component_id: str, catalog: dict,
     if component_id in IMAGES:
         artifacts = _image(entry, catalog, workspace, root, artifact_dir, env, plan)
     else:
-        artifacts = _local(entry, catalog, workspace, root, artifact_dir, env, plan)
+        artifacts = _local(entry, catalog, workspace, root, artifact_dir, env, plan, plan_path)
     return ctl.record_artifact(plan, catalog, workspace, component_id, artifacts,
                                artifact_dir / "receipt.json")

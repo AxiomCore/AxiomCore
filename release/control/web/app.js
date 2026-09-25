@@ -9,6 +9,7 @@ let preview = null;
 let currentJob = null;
 let polling = null;
 let recoveryLookup = null;
+let recoveryRequired = false;
 const expandedRepos = new Set();
 
 async function api(path, value) {
@@ -339,31 +340,41 @@ function renderJob(job) {
   $("#job-error").textContent = job.error || "";
   $("#job-error").classList.toggle("hidden", !job.error);
   const canResume = ["blocked", "interrupted"].includes(job.status);
-  $("#resume-area").classList.toggle("hidden", !canResume);
   if (canResume) $("#resume-confirm").placeholder = `RESUME ${job.trainId}`;
   const canReplan = job.status === "blocked" && /^publish:(sdk-atmx-(web|react|cli)|sdk-flutter(-generator)?)$/.test(job.currentStep || "") && !deferred.has(job.currentStep);
-  if (!canReplan) { $("#npm-recovery-area").classList.add("hidden"); recoveryLookup = null; }
-  else {
-    $("#resume-area").classList.add("hidden");
-    const key = `${job.trainId}:${job.currentStep}`;
-    if (recoveryLookup !== key) { recoveryLookup = key; loadNpmRecovery(job.trainId); }
+  if (!canReplan) {
+    $("#npm-recovery-area").classList.add("hidden");
+    recoveryLookup = null;
+    recoveryRequired = false;
   }
+  else {
+    const key = `${job.trainId}:${job.currentStep}`;
+    if (recoveryLookup !== key) {
+      recoveryLookup = key;
+      recoveryRequired = false;
+      $("#npm-recovery-area").classList.add("hidden");
+      loadNpmRecovery(job.trainId, key);
+    }
+  }
+  $("#resume-area").classList.toggle("hidden", !canResume || recoveryRequired);
   if (deferred.size) $("#resume-button").textContent = "Step 2 — Resume saved run";
   else $("#resume-button").textContent = "Resume saved run";
   if (job.status === "complete" && previousJob?.trainId === job.trainId && previousJob.status !== "complete") loadState();
 }
 
-async function loadNpmRecovery(trainId) {
+async function loadNpmRecovery(trainId, key) {
   const box = $("#npm-recovery-area");
   const isPub = /^publish:sdk-flutter(-generator)?$/.test(currentJob?.currentStep || "");
   const endpoint = isPub ? "/api/pub-recovery" : "/api/npm-recovery";
   const registry = isPub ? "pub.dev" : "npm";
   try {
     const recovery = await api(`${endpoint}?train=${encodeURIComponent(trainId)}`);
-    if (!currentJob || currentJob.trainId !== trainId || currentJob.status !== "blocked") return;
+    if (!currentJob || `${currentJob.trainId}:${currentJob.currentStep}` !== key || currentJob.status !== "blocked") return;
     const extra = recovery.rebuildWithSuccessor?.length ? ` The existing ${recovery.rebuildWithSuccessor.map(escapeHtml).join(", ")} archive also contains files ${registry} would omit, so it will be rebuilt in the successor without changing its version.` : "";
     box.innerHTML = `<strong>Step 1 — move the occupied ${registry} version</strong><p>${escapeHtml(recovery.package)}@${escapeHtml(recovery.occupiedVersion)} has different published files. Its staged candidate will remain intact. Confirm a new version below; only then can you resume. The run will publish the remaining components, then rebuild ${escapeHtml(recovery.component)} in successor train ${escapeHtml(recovery.followupTrainId)}.${extra}</p><label class="field-label" for="npm-recovery-version">New candidate version</label><input id="npm-recovery-version" class="text-input" value="${escapeHtml(recovery.nextVersion)}" autocomplete="off"><label class="field-label" for="npm-recovery-summary">Successor changelog note</label><input id="npm-recovery-summary" class="text-input" maxlength="500" value="${escapeHtml(recovery.suggestedSummary)}"><label class="field-label" for="npm-recovery-confirm">Confirm replan</label><input id="npm-recovery-confirm" class="text-input" autocomplete="off"><small id="npm-recovery-phrase"></small><button id="npm-recovery-button" class="secondary-button" type="button" disabled>Step 1 — Save successor version</button>`;
     box.classList.remove("hidden");
+    recoveryRequired = true;
+    $("#resume-area").classList.add("hidden");
     let generatedNote = recovery.suggestedSummary;
     const syncConfirmation = () => { $("#npm-recovery-button").disabled = $("#npm-recovery-confirm").value !== `REPLAN ${trainId} ${recovery.component} ${$("#npm-recovery-version").value.trim()}`; };
     const updatePhrase = () => {
@@ -387,10 +398,12 @@ async function loadNpmRecovery(trainId) {
       } catch (error) { notice(error.message, "error"); button.disabled = false; }
     });
   } catch (error) {
-    const resumable = /(?:has not published this version|now serves the exact staged archive)/.test(error.message);
+    if (!currentJob || `${currentJob.trainId}:${currentJob.currentStep}` !== key || currentJob.status !== "blocked") return;
+    const resumable = /(?:has not published this version|archive is still propagating|now serves the exact staged archive)/.test(error.message);
     box.classList.toggle("hidden", resumable);
     if (!resumable) box.textContent = `Could not verify package recovery: ${error.message}`;
-    if (resumable && currentJob?.trainId === trainId) $("#resume-area").classList.remove("hidden");
+    recoveryRequired = false;
+    $("#resume-area").classList.remove("hidden");
   }
 }
 

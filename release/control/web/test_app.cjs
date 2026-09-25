@@ -24,7 +24,8 @@ function dashboard() {
   const element = (selector) => {
     if (!elements.has(selector)) elements.set(selector, {
       classList: classes(), textContent: "", innerHTML: "", scrollTop: 0,
-      clientHeight: 100, scrollHeight: 100, placeholder: "",
+      clientHeight: 100, scrollHeight: 100, placeholder: "", value: "",
+      addEventListener() {},
     });
     return elements.get(selector);
   };
@@ -72,4 +73,30 @@ test("Inspect stays expanded after source state rerenders", () => {
   vm.runInContext("renderRepos();", context);
   assert.match(list.innerHTML, /class="repo-details hidden"/);
   assert.match(list.innerHTML, /aria-expanded="false"/);
+});
+
+test("Resume remains visible across polls when published pub package matches", async () => {
+  const {context, element} = dashboard();
+  const job = {trainId: "2026.09.25.6", status: "blocked", currentStep: "publish:sdk-flutter-generator",
+    startedAt: new Date().toISOString(), order: ["sdk-flutter-generator"], completed: [], logTail: "", error: "HTTP 404"};
+  context.job = job;
+  vm.runInContext('api = async () => { throw new Error("pub.dev now serves the exact staged archive; resume the saved run normally"); }; renderJob(job);', context);
+  await new Promise(setImmediate);
+  assert.equal(element("#resume-area").classList.contains("hidden"), false);
+  vm.runInContext("renderJob(job); renderJob(job);", context);
+  assert.equal(element("#resume-area").classList.contains("hidden"), false);
+  assert.equal(element("#npm-recovery-area").classList.contains("hidden"), true);
+});
+
+test("Resume stays hidden across polls only for a verified package collision", async () => {
+  const {context, element} = dashboard();
+  const job = {trainId: "2026.09.25.6", status: "blocked", currentStep: "publish:sdk-flutter-generator",
+    startedAt: new Date().toISOString(), order: ["sdk-flutter-generator"], completed: [], logTail: "", error: "occupied"};
+  context.job = job;
+  vm.runInContext('api = async () => ({package: "axiom_flutter_generator", occupiedVersion: "0.146.2", component: "sdk-flutter-generator", followupTrainId: "2026.09.25.7", nextVersion: "0.146.3", suggestedSummary: "Fix release"}); renderJob(job);', context);
+  await new Promise(setImmediate);
+  assert.equal(element("#resume-area").classList.contains("hidden"), true);
+  vm.runInContext("renderJob(job);", context);
+  assert.equal(element("#resume-area").classList.contains("hidden"), true);
+  assert.equal(element("#npm-recovery-area").classList.contains("hidden"), false);
 });

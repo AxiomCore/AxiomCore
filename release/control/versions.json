@@ -1,53 +1,13 @@
 {
-  "format": "axiom-platform-component-versions/v1",
   "components": {
-    "cli": {
-      "candidateVersion": "0.147.0"
-    },
-    "runtime-apple": {
-      "candidateVersion": "0.148.0"
-    },
-    "ui-host-web": {
-      "candidateVersion": "0.6.7"
-    },
-    "ui-host-android": {
-      "candidateVersion": "0.6.7"
-    },
-    "ui-host-ios": {
-      "candidateVersion": "0.6.7"
-    },
-    "sdk-atmx-web": {
-      "candidateVersion": "0.147.0"
-    },
-    "sdk-atmx-react": {
-      "candidateVersion": "0.147.0"
-    },
-    "sdk-atmx-cli": {
-      "candidateVersion": "0.146.0"
-    },
-    "sdk-flutter-generator": {
-      "candidateVersion": "0.146.0"
-    },
-    "sdk-flutter": {
-      "candidateVersion": "0.147.0"
-    },
-    "sdk-swift": {
-      "candidateVersion": "0.147.0"
-    },
     "backend-api": {
       "candidateVersion": null
-    },
-    "extractor-fastapi": {
-      "candidateVersion": "0.1.0"
-    },
-    "extractor-go": {
-      "candidateVersion": "0.1.1"
     },
     "backend-worker": {
       "candidateVersion": null
     },
-    "mock-runner": {
-      "candidateVersion": null
+    "cli": {
+      "candidateVersion": "0.147.0"
     },
     "contract-test-runner": {
       "candidateVersion": null
@@ -58,11 +18,51 @@
     "dashboard-proxy": {
       "candidateVersion": null
     },
+    "docs": {
+      "candidateVersion": null
+    },
+    "extractor-fastapi": {
+      "candidateVersion": "0.1.0"
+    },
+    "extractor-go": {
+      "candidateVersion": "0.1.1"
+    },
     "landing": {
       "candidateVersion": null
     },
-    "docs": {
+    "mock-runner": {
       "candidateVersion": null
+    },
+    "runtime-apple": {
+      "candidateVersion": "0.148.0"
+    },
+    "sdk-atmx-cli": {
+      "candidateVersion": "0.146.1"
+    },
+    "sdk-atmx-react": {
+      "candidateVersion": "0.147.0"
+    },
+    "sdk-atmx-web": {
+      "candidateVersion": "0.147.0"
+    },
+    "sdk-flutter": {
+      "candidateVersion": "0.147.0"
+    },
+    "sdk-flutter-generator": {
+      "candidateVersion": "0.146.1"
+    },
+    "sdk-swift": {
+      "candidateVersion": "0.147.0"
+    },
+    "ui-host-android": {
+      "candidateVersion": "0.6.7"
+    },
+    "ui-host-ios": {
+      "candidateVersion": "0.6.7"
+    },
+    "ui-host-web": {
+      "candidateVersion": "0.6.7"
     }
-  }
+  },
+  "format": "axiom-platform-component-versions/v1"
 }

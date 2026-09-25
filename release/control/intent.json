@@ -1,116 +1,35 @@
 {
   "format": "axiom-platform-release-intent/v1",
-  "trainId": "2026.09.25.4",
+  "trainId": "2026.09.25.5",
   "wave": "release",
-  "summary": "Release 21 Axiom components: Add cli improvements in 0.147.0.; Add runtime apple improvements in 0.148.0.; Add ui host web improvements in 0.6.7.; Add ui host android improvements in 0.6.7.; Add ui host ios improvements in 0.6.7.; Add sdk atmx web improvements in 0.147.0.; and 15 more components.",
+  "summary": "Complete verified SDK dependency pins from release 2026.09.25.4",
   "changes": [
     {
-      "component": "cli",
-      "type": "feature",
-      "summary": "Add cli improvements in 0.147.0."
-    },
-    {
-      "component": "runtime-apple",
-      "type": "feature",
-      "summary": "Add runtime apple improvements in 0.148.0."
-    },
-    {
-      "component": "ui-host-web",
-      "type": "feature",
-      "summary": "Add ui host web improvements in 0.6.7."
-    },
-    {
-      "component": "ui-host-android",
-      "type": "feature",
-      "summary": "Add ui host android improvements in 0.6.7."
-    },
-    {
-      "component": "ui-host-ios",
-      "type": "feature",
-      "summary": "Add ui host ios improvements in 0.6.7."
-    },
-    {
-      "component": "sdk-atmx-web",
-      "type": "feature",
-      "summary": "Add sdk atmx web improvements in 0.147.0."
-    },
-    {
-      "component": "sdk-atmx-cli",
-      "type": "feature",
-      "summary": "Add sdk atmx cli improvements in 0.146.0."
-    },
-    {
-      "component": "sdk-flutter-generator",
-      "type": "feature",
-      "summary": "Add sdk flutter generator improvements in 0.146.0."
-    },
-    {
-      "component": "sdk-flutter",
-      "type": "feature",
-      "summary": "Add sdk flutter improvements in 0.147.0.",
-      "runtimeVersion": "0.148.0"
-    },
-    {
-      "component": "backend-api",
-      "type": "feature",
-      "summary": "Add backend api improvements."
-    },
-    {
-      "component": "extractor-fastapi",
-      "type": "feature",
-      "summary": "Add extractor fastapi improvements in 0.1.0."
-    },
-    {
-      "component": "extractor-go",
-      "type": "feature",
-      "summary": "Add extractor go improvements in 0.1.1."
-    },
-    {
-      "component": "backend-worker",
-      "type": "feature",
-      "summary": "Add backend worker improvements."
-    },
-    {
-      "component": "mock-runner",
-      "type": "feature",
-      "summary": "Add mock runner improvements."
-    },
-    {
-      "component": "contract-test-runner",
-      "type": "feature",
-      "summary": "Add contract test runner improvements."
-    },
-    {
-      "component": "dashboard-origin",
-      "type": "feature",
-      "summary": "Add dashboard origin improvements."
-    },
-    {
-      "component": "dashboard-proxy",
-      "type": "feature",
-      "summary": "Add dashboard proxy improvements."
-    },
-    {
-      "component": "landing",
-      "type": "feature",
-      "summary": "Add landing improvements."
-    },
-    {
-      "component": "docs",
-      "type": "feature",
-      "summary": "Add docs improvements."
-    }
-  ],
-  "queued": [
-    {
       "component": "sdk-atmx-react",
-      "type": "feature",
-      "summary": "Add sdk atmx react improvements in 0.147.0."
+      "summary": "Add sdk atmx react improvements in 0.147.0.",
+      "type": "feature"
     },
     {
       "component": "sdk-swift",
-      "type": "feature",
-      "summary": "Add sdk swift improvements in 0.147.0."
+      "summary": "Add sdk swift improvements in 0.147.0.",
+      "type": "feature"
+    },
+    {
+      "component": "sdk-atmx-cli",
+      "summary": "Add sdk atmx cli improvements in 0.146.1.",
+      "type": "feature"
+    },
+    {
+      "component": "sdk-flutter-generator",
+      "summary": "Add sdk flutter generator improvements in 0.146.1.",
+      "type": "feature"
+    },
+    {
+      "component": "sdk-flutter",
+      "runtimeVersion": "0.148.0",
+      "summary": "Add sdk flutter improvements in 0.147.0.",
+      "type": "feature"
     }
-  ]
+  ],
+  "queued": []
 }

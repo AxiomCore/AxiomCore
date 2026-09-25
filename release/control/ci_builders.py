@@ -332,8 +332,14 @@ def _local(entry: dict, catalog: dict, workspace: Path, root: Path,
         name = "axiom_flutter" if component == "sdk-flutter" else "axiom_flutter_generator"
         package = source / "axiom-sdk/flutter" / name
         tool = "flutter" if component == "sdk-flutter" else "dart"
-        _run("fvm", tool, "pub", "get", cwd=package, env=env)
-        _run("fvm", tool, "pub", "publish", "--dry-run", cwd=package, env=env)
+        # Pub stores --env-var references in a user-wide config, separate from
+        # PUB_CACHE. A previous publish can therefore make even public `pub get`
+        # fail when the fresh build child has no PUB_TOKEN. Keep the short-lived
+        # identity scoped to this child, as the publisher does.
+        from publish_targets import _pub_publish_command
+        helper = str(Path(__file__).with_name("pub_publish.py"))
+        command = _pub_publish_command(env, helper)
+        _run(*command, "build", tool, cwd=package, env=env)
         manifest = package / "pubspec.yaml"
         match = re.search(r"(?m)^version:\s*([0-9]+\.[0-9]+\.[0-9]+)\s*$", manifest.read_text())
         if not match:

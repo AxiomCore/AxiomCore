@@ -30,6 +30,21 @@ class PublishTargetTests(unittest.TestCase):
                          "temporary-identity-token")
         self.assertEqual(run.call_args_list[3].args[0][-2:], ("publish", "--force"))
 
+    def test_pub_build_helper_uses_temporary_identity_without_publishing(self):
+        token = MagicMock(returncode=0, stdout="temporary-identity-token\n")
+        success = MagicMock(returncode=0)
+        with patch.dict(pub_publish.os.environ, {"AXIOM_PUB_SERVICE_ACCOUNT":
+                                               "pub-dev@axiomcore.iam.gserviceaccount.com"}, clear=True), \
+                patch.object(pub_publish.subprocess, "run", side_effect=[token, success, success, success]) as run:
+            self.assertEqual(pub_publish.build_main("dart"), 0)
+        self.assertEqual(run.call_args_list[1].args[0][-3:],
+                         ("https://pub.dev", "--env-var", "PUB_TOKEN"))
+        self.assertEqual(run.call_args_list[2].args[0], ("fvm", "dart", "pub", "get"))
+        self.assertEqual(run.call_args_list[3].args[0],
+                         ("fvm", "dart", "pub", "publish", "--dry-run"))
+        self.assertEqual(run.call_args_list[2].kwargs["env"]["PUB_TOKEN"],
+                         "temporary-identity-token")
+
     def test_pub_helper_stops_without_configured_identity(self):
         with patch.dict(pub_publish.os.environ, {}, clear=True), \
                 patch.object(pub_publish.subprocess, "run") as run:
@@ -50,6 +65,9 @@ class PublishTargetTests(unittest.TestCase):
             self.assertEqual(command[5:], [publish_targets.sys.executable, "pub_publish.py"])
             self.assertEqual(publish_targets._pub_publish_command({"PUB_TOKEN": "example"}, "pub_publish.py"),
                              [publish_targets.sys.executable, "pub_publish.py"])
+            self.assertEqual(publish_targets._pub_publish_command({
+                "AXIOM_PUB_SERVICE_ACCOUNT": "pub-dev@axiomcore.iam.gserviceaccount.com"},
+                "pub_publish.py"), [publish_targets.sys.executable, "pub_publish.py"])
 
     def test_pub_publisher_rejects_unpublishable_staged_files_before_upload(self):
         with tempfile.TemporaryDirectory() as temporary:

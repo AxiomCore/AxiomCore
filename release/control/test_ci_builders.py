@@ -49,6 +49,28 @@ class SelectiveBuilderTests(unittest.TestCase):
             with self.assertRaisesRegex(ctl.ReleaseError, "differs from the prepared release intent"):
                 ci_builders._prepare_flutter_changelog(package, "sdk-flutter-generator", plan)
 
+    def test_flutter_build_uses_scoped_pub_identity_for_get_and_dry_run(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            package = source / "axiom-sdk/flutter/axiom_flutter_generator"
+            package.mkdir(parents=True)
+            (package / "pubspec.yaml").write_text(
+                "name: axiom_flutter_generator\nversion: 0.146.2\n")
+            artifact = root / "artifact"
+            artifact.mkdir()
+            with mock.patch.object(ci_builders, "_stage", return_value=source), \
+                    mock.patch.object(ci_builders, "_prepare_flutter_changelog"), \
+                    mock.patch.object(ci_builders, "_run") as run, \
+                    mock.patch.object(ci_builders, "_archive_package", return_value=artifact / "package.tar.gz"), \
+                    mock.patch("publish_targets._pub_publish_command",
+                               return_value=["python", "pub_publish.py"]) as command:
+                ci_builders._local({"id": "sdk-flutter-generator"}, {}, root, root,
+                                   artifact, {}, {}, root / "plan.json")
+            command.assert_called_once()
+            run.assert_called_once_with("python", "pub_publish.py", "build", "dart",
+                                        cwd=package, env={})
+
     def test_stage_accepts_plan_source_groups(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

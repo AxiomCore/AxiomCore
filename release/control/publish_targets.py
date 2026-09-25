@@ -520,7 +520,7 @@ def publish_npm(candidate: dict, component: str) -> dict:
 
 def _pub_publish_command(env: dict[str, str], helper: str) -> list[str]:
     command = [sys.executable, helper]
-    if env.get("PUB_TOKEN"):
+    if env.get("PUB_TOKEN") or env.get("AXIOM_PUB_SERVICE_ACCOUNT"):
         return command
     if not shutil.which("infisical", path=env.get("PATH")):
         raise ctl.ReleaseError("pub.dev publisher needs PUB_TOKEN from Infisical prod or environment")

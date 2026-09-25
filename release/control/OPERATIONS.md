@@ -265,9 +265,13 @@ Google service account as an automated publisher in the Admin tab of both
 permission to impersonate it, and set `AXIOM_PUB_SERVICE_ACCOUNT` to its email
 in the AxiomCore Infisical `prod` project. The publisher obtains a short-lived
 identity token with audience `https://pub.dev`, and Dart stores only the
-`PUB_TOKEN` environment-variable reference in its component-scoped SSD cache,
+`PUB_TOKEN` environment-variable reference in its user-wide Dart configuration,
 not the token value. A directly supplied `PUB_TOKEN` remains a fallback for an
 already-issued short-lived token; do not store an expiring token in Infisical.
+The Flutter candidate builders also obtain a short-lived identity for their
+`pub get` and publish dry-run child: Dart stores the `PUB_TOKEN` reference in
+user-wide configuration even when `PUB_CACHE` is component-scoped, so a build
+without that variable can otherwise fail before producing a candidate.
 The `atmx-web` publisher uses
 the `atmx`-bucket-scoped `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` from
 the existing Infisical `prod` project, or a complete explicit environment

@@ -1,6 +1,6 @@
 {
   "format": "axiom-platform-release-intent/v1",
-  "trainId": "2026.09.25.3",
+  "trainId": "2026.09.25.4",
   "wave": "release",
   "summary": "Release 21 Axiom components: Add cli improvements in 0.147.0.; Add runtime apple improvements in 0.148.0.; Add ui host web improvements in 0.6.7.; Add ui host android improvements in 0.6.7.; Add ui host ios improvements in 0.6.7.; Add sdk atmx web improvements in 0.147.0.; and 15 more components.",
   "changes": [

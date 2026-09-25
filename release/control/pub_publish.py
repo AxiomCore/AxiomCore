@@ -8,6 +8,8 @@ import re
 import subprocess
 import sys
 
+import ctl
+
 
 def authorized_environment() -> dict[str, str] | None:
     environment = dict(os.environ)
@@ -36,28 +38,35 @@ def authorized_environment() -> dict[str, str] | None:
 
 
 def run_commands(commands: tuple[tuple[str, ...], ...]) -> int:
+    try:
+        sdk = ctl.ensure_flutter_sdk(dict(os.environ))
+    except ctl.ReleaseError as error:
+        print(f"release: {error}", file=sys.stderr)
+        return 2
     environment = authorized_environment()
     if environment is None:
         return 2
-    for command in (("fvm", "dart", "pub", "token", "add", "https://pub.dev", "--env-var", "PUB_TOKEN"),
+    environment["FLUTTER_ROOT"] = str(sdk)
+    for command in (("dart", "pub", "token", "add", "https://pub.dev", "--env-var", "PUB_TOKEN"),
                     *commands):
-        result = subprocess.run(command, env=environment, check=False)
+        executable = str(sdk / "bin" / command[0])
+        result = subprocess.run((executable, *command[1:]), env=environment, check=False)
         if result.returncode:
             return result.returncode
     return 0
 
 
 def main() -> int:
-    return run_commands((("fvm", "dart", "pub", "publish", "--dry-run"),
-                         ("fvm", "dart", "pub", "publish", "--force")))
+    return run_commands((("dart", "pub", "publish", "--dry-run"),
+                         ("dart", "pub", "publish", "--force")))
 
 
 def build_main(tool: str) -> int:
     if tool not in {"dart", "flutter"}:
         print("release: unsupported Flutter build tool", file=sys.stderr)
         return 2
-    return run_commands((("fvm", tool, "pub", "get"),
-                         ("fvm", tool, "pub", "publish", "--dry-run")))
+    return run_commands(((tool, "pub", "get"),
+                         (tool, "pub", "publish", "--dry-run")))
 
 
 if __name__ == "__main__":

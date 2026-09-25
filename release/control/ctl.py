@@ -34,6 +34,7 @@ EXTERNAL_SSD = Path("/Volumes/ExternalSSD")
 DEFAULT_BUILD_IMAGE = EXTERNAL_SSD / "AxiomReleaseBuild.sparsebundle"
 DEFAULT_BUILD_MOUNT = Path("/Volumes/AxiomReleaseBuild")
 DEFAULT_BUILD_ROOT = DEFAULT_BUILD_MOUNT / "axiom-release"
+FLUTTER_SDK_VERSION = "3.32.0"
 ANDROID_SIGNING_VARIABLES = (
     "AXIOM_UI_HOST_ANDROID_KEYSTORE_BASE64",
     "AXIOM_UI_HOST_ANDROID_KEY_ALIAS",
@@ -432,7 +433,8 @@ def build_environment(root: Path, component_id: str) -> dict[str, str]:
     folders = (work, root / "artifacts" / component_id, root / "cache" / "cargo",
                root / "cache" / "gradle", root / "cache" / "npm",
                root / "cache" / "pnpm", root / "cache" / "corepack", root / "cache" / "pip",
-               root / "cache" / "habitat", root / "cache" / "xdg", root / "cache" / "go-mod",
+               root / "cache" / "habitat", root / "cache" / "xdg", root / "cache" / "fvm",
+               root / "cache" / "fvm-git", root / "cache" / "go-mod",
                root / "cache" / "go-build", root / "cache" / "poetry", work / "pyinstaller-cache",
                work / "pub-cache", root / "tmp")
     for folder in folders:
@@ -453,6 +455,9 @@ def build_environment(root: Path, component_id: str) -> dict[str, str]:
         "POETRY_CACHE_DIR": str(root / "cache" / "poetry"),
         "PYINSTALLER_CONFIG_DIR": str(work / "pyinstaller-cache"),
         "PUB_CACHE": str(work / "pub-cache"),
+        "FVM_CACHE_PATH": str(root / "cache" / "fvm"),
+        "FVM_GIT_CACHE_PATH": str(root / "cache" / "fvm-git"),
+        "AXIOM_RELEASE_BUILD_ROOT": str(root),
         "HABITAT_CACHE_ROOT": str(root / "cache" / "habitat"),
         "XDG_CACHE_HOME": str(root / "cache" / "xdg"),
         "TMPDIR": str(root / "tmp"),
@@ -482,6 +487,38 @@ def build_environment(root: Path, component_id: str) -> dict[str, str]:
                                    "install NDK r23 or later, or set AXIOM_UI_HOST_CARGO_NDK_HOME")
             env["AXIOM_UI_HOST_CARGO_NDK_HOME"] = str(modern[-1])
     return env
+
+
+def ensure_flutter_sdk(env: dict[str, str]) -> Path:
+    """Use the pinned Flutter toolchain on the external release volume only."""
+    raw_root = env.get("AXIOM_RELEASE_BUILD_ROOT", "")
+    if not raw_root or not Path(raw_root).is_absolute():
+        raise ReleaseError("Flutter release needs an external build root")
+    root = Path(raw_root).resolve()
+    cache = root / "cache" / "fvm"
+    if Path(env.get("FVM_CACHE_PATH", "")).resolve() != cache:
+        raise ReleaseError("Flutter FVM cache must be on the release volume")
+    sdk = cache / "versions" / FLUTTER_SDK_VERSION
+    if sdk.is_symlink() or (sdk.exists() and not sdk.is_dir()):
+        raise ReleaseError(f"Flutter SDK path is not an ordinary directory: {sdk}")
+    if not sdk.exists():
+        if not shutil.which("fvm", path=env.get("PATH")):
+            raise ReleaseError("install FVM before building the Flutter SDK")
+        result = subprocess.run(("fvm", "install", FLUTTER_SDK_VERSION,
+                                 "--setup", "--skip-pub-get"),
+                                cwd=root, env=env, check=False)
+        if result.returncode:
+            raise ReleaseError(f"could not install Flutter {FLUTTER_SDK_VERSION} on the release volume")
+    version_file = sdk / "version"
+    if (not version_file.is_file() or version_file.is_symlink()
+            or version_file.read_text().strip() != FLUTTER_SDK_VERSION):
+        raise ReleaseError(f"Flutter SDK on the release volume is incomplete or not {FLUTTER_SDK_VERSION}")
+    for name in ("dart", "flutter"):
+        executable = sdk / "bin" / name
+        if (not executable.is_file() or not os.access(executable, os.X_OK)
+                or not executable.resolve().is_relative_to(sdk)):
+            raise ReleaseError(f"Flutter SDK on the release volume lacks {name}")
+    return sdk
 
 
 def android_release_command(command: list[str], env: dict[str, str]) -> list[str]:

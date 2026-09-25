@@ -117,10 +117,27 @@ class ReleaseControlTests(unittest.TestCase):
             env = ctl.build_environment(root, "cli")
             for name in ("CARGO_HOME", "CARGO_TARGET_DIR", "GRADLE_USER_HOME",
                          "npm_config_cache", "npm_config_store_dir", "COREPACK_HOME", "PIP_CACHE_DIR",
-                         "HABITAT_CACHE_ROOT", "XDG_CACHE_HOME", "TMPDIR",
+                         "HABITAT_CACHE_ROOT", "XDG_CACHE_HOME", "FVM_CACHE_PATH",
+                         "FVM_GIT_CACHE_PATH", "AXIOM_RELEASE_BUILD_ROOT", "TMPDIR",
                          "AXIOM_UI_HOST_BUILD_ROOT", "AXIOM_UI_HOST_DIST_ROOT"):
                 self.assertTrue(Path(env[name]).is_relative_to(root), name)
             self.assertFalse(Path(env["AXIOM_UI_HOST_SIGNING_TEMP_ROOT"]).is_relative_to(root))
+
+    def test_flutter_sdk_must_be_pinned_inside_release_volume(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            env = ctl.build_environment(root, "sdk-flutter-generator")
+            sdk = root / "cache/fvm/versions" / ctl.FLUTTER_SDK_VERSION
+            (sdk / "bin").mkdir(parents=True)
+            (sdk / "version").write_text(ctl.FLUTTER_SDK_VERSION)
+            for name in ("dart", "flutter"):
+                executable = sdk / "bin" / name
+                executable.write_text("#!/bin/sh\n")
+                executable.chmod(0o755)
+            self.assertEqual(ctl.ensure_flutter_sdk(env), sdk.resolve())
+            env["FVM_CACHE_PATH"] = str(root / "elsewhere")
+            with self.assertRaisesRegex(ctl.ReleaseError, "must be on the release volume"):
+                ctl.ensure_flutter_sdk(env)
 
     def test_android_build_environment_discovers_local_sdk_and_modern_ndk(self):
         with tempfile.TemporaryDirectory(prefix="axiom-release-test-") as temporary:

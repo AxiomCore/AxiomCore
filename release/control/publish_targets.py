@@ -70,6 +70,27 @@ def _pub_remote_archive(data: dict) -> bytes:
     if data.get("archive_sha256") and data["archive_sha256"] != ctl.sha256(remote_bytes):
         raise ctl.ReleaseError("pub.dev archive checksum differs from its metadata")
     return remote_bytes
+
+
+def _wait_for_pub_archive(package: str, version: str, *, timeout: float = 720,
+                          interval: float = 10) -> tuple[dict, bytes]:
+    """Wait for both pub.dev metadata and its CDN archive after an upload."""
+    deadline = time.monotonic() + timeout
+    while True:
+        data = _pub_metadata(package, version)
+        if data is not None:
+            try:
+                return data, _pub_remote_archive(data)
+            except urllib.error.HTTPError as error:
+                if error.code != 404:
+                    raise
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ctl.ReleaseError(f"pub.dev {package}@{version} has not exposed its metadata "
+                                   "and archive after 12 minutes; resume to verify the same upload")
+        print(f"Waiting for pub.dev {package}@{version} metadata and archive to become available...",
+              flush=True)
+        time.sleep(min(interval, remaining))
 GCP = {
     "backend-api": ("service", "axiom-backend", "axiom-backend", "axiom-backend"),
     "backend-worker": ("job", "axiom-backend", "axiom-backend", "axiom-semantic-worker"),
@@ -582,7 +603,7 @@ def publish_pub(candidate: dict, component: str) -> dict:
     excluded = set(staged_files) - publishable
     if data is not None:
         remote_path = directory / "pub-remote.tar.gz"
-        remote_bytes = _pub_remote_archive(data)
+        data, remote_bytes = _wait_for_pub_archive(package, version)
         if not remote_path.exists():
             with remote_path.open("xb") as output:
                 output.write(remote_bytes)
@@ -599,10 +620,7 @@ def publish_pub(candidate: dict, component: str) -> dict:
         helper = str(Path(__file__).with_name("pub_publish.py"))
         command = _pub_publish_command(env, helper)
         ctl.run(*command, cwd=source, env=env, capture=False)
-        data = _pub_metadata(package, version)
-        if data is None:
-            raise ctl.ReleaseError("pub.dev did not expose the uploaded package version")
-        remote_bytes = _pub_remote_archive(data)
+        data, remote_bytes = _wait_for_pub_archive(package, version)
     remote_path = directory / "pub-remote.tar.gz"
     if not remote_path.exists():
         with remote_path.open("xb") as output:

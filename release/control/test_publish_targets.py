@@ -5,6 +5,7 @@ from pathlib import Path
 import tarfile
 import tempfile
 import unittest
+import urllib.error
 from unittest.mock import MagicMock, patch
 
 import ctl
@@ -21,6 +22,7 @@ class PublishTargetTests(unittest.TestCase):
         success = MagicMock(returncode=0)
         with patch.dict(pub_publish.os.environ, {"AXIOM_PUB_SERVICE_ACCOUNT":
                                                "pub-dev@axiomcore.iam.gserviceaccount.com"}, clear=True), \
+                patch.object(pub_publish.ctl, "ensure_flutter_sdk", return_value=Path("/release-sdk")), \
                 patch.object(pub_publish.subprocess, "run", side_effect=[token, success, success, success]) as run:
             self.assertEqual(pub_publish.main(), 0)
         self.assertEqual(run.call_args_list[0].args[0][:3],
@@ -35,21 +37,33 @@ class PublishTargetTests(unittest.TestCase):
         success = MagicMock(returncode=0)
         with patch.dict(pub_publish.os.environ, {"AXIOM_PUB_SERVICE_ACCOUNT":
                                                "pub-dev@axiomcore.iam.gserviceaccount.com"}, clear=True), \
+                patch.object(pub_publish.ctl, "ensure_flutter_sdk", return_value=Path("/release-sdk")), \
                 patch.object(pub_publish.subprocess, "run", side_effect=[token, success, success, success]) as run:
             self.assertEqual(pub_publish.build_main("dart"), 0)
         self.assertEqual(run.call_args_list[1].args[0][-3:],
                          ("https://pub.dev", "--env-var", "PUB_TOKEN"))
-        self.assertEqual(run.call_args_list[2].args[0], ("fvm", "dart", "pub", "get"))
+        self.assertEqual(run.call_args_list[2].args[0], ("/release-sdk/bin/dart", "pub", "get"))
         self.assertEqual(run.call_args_list[3].args[0],
-                         ("fvm", "dart", "pub", "publish", "--dry-run"))
+                         ("/release-sdk/bin/dart", "pub", "publish", "--dry-run"))
         self.assertEqual(run.call_args_list[2].kwargs["env"]["PUB_TOKEN"],
                          "temporary-identity-token")
 
     def test_pub_helper_stops_without_configured_identity(self):
         with patch.dict(pub_publish.os.environ, {}, clear=True), \
+                patch.object(pub_publish.ctl, "ensure_flutter_sdk", return_value=Path("/release-sdk")), \
                 patch.object(pub_publish.subprocess, "run") as run:
             self.assertEqual(pub_publish.main(), 2)
         run.assert_not_called()
+
+    def test_pub_archive_waits_for_metadata_and_archive_after_upload(self):
+        data = {"archive_url": "https://pub.dev/api/archives/example-1.0.0.tar.gz"}
+        missing = urllib.error.HTTPError(data["archive_url"], 404, "Not Found", {}, None)
+        with patch.object(publish_targets, "_pub_metadata", side_effect=[None, data, data]), \
+                patch.object(publish_targets, "_pub_remote_archive", side_effect=[missing, b"verified"]), \
+                patch.object(publish_targets.time, "sleep") as sleep:
+            self.assertEqual(publish_targets._wait_for_pub_archive("example", "1.0.0"),
+                             (data, b"verified"))
+        self.assertEqual(sleep.call_count, 2)
 
     def test_pub_publisher_selects_production_infisical_project(self):
         with tempfile.TemporaryDirectory() as temporary:

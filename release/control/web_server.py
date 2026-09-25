@@ -26,6 +26,7 @@ import tempfile
 import threading
 import time
 from urllib.parse import parse_qs, urlsplit
+import urllib.error
 import urllib.request
 
 import ctl
@@ -755,6 +756,7 @@ class ReleaseDashboard:
                     if not str(error).startswith(("npm has not published this version;",
                                                    "npm now serves the exact staged archive;",
                                                    "pub.dev has not published this version;",
+                                                   "pub.dev archive is still propagating;",
                                                    "pub.dev now serves the exact staged archive;")):
                         raise
                 else:
@@ -868,7 +870,13 @@ class ReleaseDashboard:
         data = publish_targets._pub_metadata(package, version)
         if data is None:
             raise ctl.ReleaseError("pub.dev has not published this version; resume the saved run normally")
-        remote = publish_targets._pub_remote_archive(data)
+        try:
+            remote = publish_targets._pub_remote_archive(data)
+        except urllib.error.HTTPError as error:
+            if error.code != 404:
+                raise
+            raise ctl.ReleaseError("pub.dev archive is still propagating; "
+                                   "resume the saved run normally") from error
         if publish_targets._pub_manifest(archive) == publish_targets._pub_manifest(remote):
             raise ctl.ReleaseError("pub.dev now serves the exact staged archive; resume the saved run normally")
         if (candidate["directory"] / "publication/published.json").exists():

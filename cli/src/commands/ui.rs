@@ -502,7 +502,7 @@ const IOS_HOST_PROTOCOL_MINIMUM: &str = "0.6.6";
 // boundary with iOS.
 const ANDROID_HOST_PROTOCOL_MINIMUM: &str = "0.6.6";
 // Web uses the separately versioned browser extension kernel; 0.6.5 already
-// implements the current package boundary and Phase 2 renderer surface.
+// implements the current package boundary and renderer surface.
 const WEB_HOST_PROTOCOL_MINIMUM: &str = "0.6.5";
 const LYNX_ENGINE_SOURCE: &str = "https://github.com/lynx-family/lynx.git";
 const LYNX_ENGINE_COMMIT: &str = "73bf89185547d0caf725bab4f3a46fa1e1f9616d";
@@ -1700,7 +1700,7 @@ pub async fn handle_capabilities(
     );
     if kind.is_some() || query.is_some() {
         if selected.is_empty() {
-            bail!("no Phase 2 capabilities match the requested filter");
+            bail!("no capabilities match the requested filter");
         }
         for capability in selected {
             let acore = capability
@@ -1983,7 +1983,7 @@ fn assemble_application_artifact(
         "target": target.as_str(),
         "capabilities": phase2_capability_registry().capabilities.iter().map(|capability| {
             let support = capability.acore_support(target)
-                .expect("validated Phase 2 registry contains each application target");
+                .expect("validated capability registry contains each application target");
             serde_json::json!({
                 "id": capability.id,
                 "kind": capability.kind,
@@ -4954,7 +4954,7 @@ page Home {
 }
 "#;
 
-const STARTER_TEST: &str = "// Phase 5 starter smoke scenario: `axiom ui test src/main.acore` validates this app's session behavior.\n";
+const STARTER_TEST: &str = "// Starter smoke scenario: `axiom ui test src/main.acore` validates this app's session behavior.\n";
 
 const STARTER_README: &str = r#"# Axiom UI starter
 

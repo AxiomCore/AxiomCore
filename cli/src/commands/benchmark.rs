@@ -104,7 +104,7 @@ pub async fn handle_benchmark(
     if json {
         println!("{serialized}");
     } else {
-        println!("AxiomCore Phase 1 benchmark");
+        println!("AxiomCore benchmark");
         println!(
             "  Build: median {:.2} ms, p95 {:.2} ms",
             report.build_ms.median, report.build_ms.p95

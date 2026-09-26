@@ -140,7 +140,7 @@ let publicFiles = [];
 try {
   const output = execFileSync(
     'git',
-    ['ls-files', '--cached', '--others', '--exclude-standard', '-z', '--', 'README.md', 'CONTRIBUTING.md', 'docs/content', 'examples'],
+    ['ls-files', '--cached', '--others', '--exclude-standard', '-z', '--', 'README.md', 'CONTRIBUTING.md', 'docs/content'],
     { cwd: repositoryRoot, encoding: 'utf8' },
   );
   publicFiles = output.split('\0').filter(Boolean).map((path) => join(repositoryRoot, path));
@@ -189,37 +189,20 @@ for (const manifest of publicFiles.filter((path) => path.endsWith('AxiomDeps.tom
   }
 }
 
-const evidencePath = join(docsRoot, 'CONTENT_EVIDENCE.md');
-const readinessPath = join(docsRoot, 'RELEASE_READINESS.md');
 const supportPath = join(contentRoot, 'introduction', 'support-matrix.mdx');
 const maximumReviewAgeDays = 120;
-const evidenceDate = readFileSync(evidencePath, 'utf8').match(/Last full review: \*\*(\d{4}-\d{2}-\d{2})\*\*/)?.[1];
-const readinessDate = readFileSync(readinessPath, 'utf8').match(/Last verified: \*\*(\d{4}-\d{2}-\d{2})\*\*/)?.[1];
-if (!evidenceDate) fail(evidencePath, 'missing ISO review date');
-if (!readinessDate) fail(readinessPath, 'missing ISO verification date');
-if (evidenceDate && readinessDate && evidenceDate !== readinessDate) {
-  fail(readinessPath, `verification date ${readinessDate} differs from evidence review ${evidenceDate}`);
-}
-
-if (evidenceDate) {
-  const reviewTime = Date.parse(`${evidenceDate}T00:00:00Z`);
+const reviewLabel = readFileSync(supportPath, 'utf8').match(/last reviewed[^\n]*\n\*\*([A-Za-z]+ \d{1,2}, \d{4})\*\*/i)?.[1];
+const reviewTime = reviewLabel ? Date.parse(`${reviewLabel} UTC`) : Number.NaN;
+if (!Number.isFinite(reviewTime)) fail(supportPath, 'missing or invalid public support-matrix review date');
+else {
   const today = new Date();
   const todayTime = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
   const reviewAgeDays = Math.floor((todayTime - reviewTime) / (24 * 60 * 60 * 1_000));
   // Permit the adjacent calendar day so contributors east of UTC do not fail
   // a UTC-based CI run during their local morning.
-  if (reviewAgeDays < -1) fail(evidencePath, `review date is more than one day in the future: ${evidenceDate}`);
+  if (reviewAgeDays < -1) fail(supportPath, `review date is more than one day in the future: ${reviewLabel}`);
   if (reviewAgeDays > maximumReviewAgeDays) {
-    fail(evidencePath, `full evidence review is ${reviewAgeDays} days old; maximum is ${maximumReviewAgeDays}`);
-  }
-}
-
-if (evidenceDate) {
-  const rendered = new Intl.DateTimeFormat('en-US', {
-    month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC',
-  }).format(new Date(`${evidenceDate}T00:00:00Z`));
-  if (!readFileSync(supportPath, 'utf8').includes(`**${rendered}**`)) {
-    fail(supportPath, `review date must match evidence ledger (${rendered})`);
+    fail(supportPath, `support matrix review is ${reviewAgeDays} days old; maximum is ${maximumReviewAgeDays}`);
   }
 }
 

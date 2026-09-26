@@ -3,7 +3,7 @@ title: Example catalog
 description: Select a checked-in AxiomCore fixture by capability, maturity, dependency boundary, and validation command.
 ---
 
-The repository `examples/` directory contains small, reviewable fixtures. They
+The [AxiomCore/examples](https://github.com/AxiomCore/examples) repository contains small, reviewable fixtures. They
 demonstrate one boundary at a time and are not production application
 templates.
 
@@ -23,9 +23,9 @@ runtime fixtures for maintainers. Start with the bounded examples above.
 ## Self-contained validation
 
 ```bash
+git clone https://github.com/AxiomCore/examples.git
 cd examples/domain-commerce
 axiom domain validate commerce-v1.acore
-axiom build commerce-v1.acore
 axiom diff commerce-v1.acore commerce-v2.acore --format semantic
 ```
 
@@ -36,6 +36,7 @@ breaking, so the reviewer must treat it as a consumer-breaking change.
 For the security fixture:
 
 ```bash
+git clone https://github.com/AxiomCore/examples.git
 cd examples/security-mode-v1
 axiom security check axiom.acore
 axiom security check axiom.unsafe.acore

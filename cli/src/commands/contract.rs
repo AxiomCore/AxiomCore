@@ -70,7 +70,7 @@ pub async fn handle_facade(lock: PathBuf, alias: String) -> Result<()> {
     Ok(())
 }
 
-/// Validate Phase 3 `use contract` declarations against a committed lock.
+/// Validate `use contract` declarations against a committed lock.
 /// No generated facade file is created; the next compiler phase consumes the
 /// same virtual metadata directly in memory.
 pub async fn handle_check_source(source: PathBuf, lock: PathBuf) -> Result<()> {

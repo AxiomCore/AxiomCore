@@ -1,7 +1,0 @@
-framework = "flutter"
-
-[contracts]
-
-[contracts.realtime-chat]
-source = "../../backend/go-chat/.axiom"
-base_url = "http://localhost:8080"

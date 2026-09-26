@@ -42,12 +42,11 @@ pnpm test:routes
 
 Before merging a content change, also confirm:
 
-1. every new public capability appears in `CONTENT_EVIDENCE.md`;
-2. its status follows `DOCUMENTATION_CONTRACT.md`;
+1. every new public capability has an accurate status in the support matrix;
+2. its implementation and target boundary have been reviewed;
 3. internal Markdown links resolve;
 4. runnable commands exist in the current CLI or owning repository;
-5. examples contain no private paths, credentials, or internal milestone
-   names; and
+5. linked examples in `AxiomCore/examples` contain no private paths, credentials, or internal milestone names; and
 6. the affected page renders in light and dark appearance at desktop and
    narrow widths.
 
@@ -80,15 +79,10 @@ Navigation order lives in each directory's `meta.json`. All public pages need
   avoid universal or “zero” claims.
 - Do not publish runnable instructions for a coming-soon product.
 
-The complete editorial contract is in `DOCUMENTATION_CONTRACT.md`.
-
-The preview, promotion, monitoring, incident, and rollback procedure is in
-`DEPLOYMENT.md`. The repository documentation workflow validates a release
-candidate but intentionally does not hold production deployment authority.
-URL compatibility is governed by `MIGRATION.md`, recurring ownership and review
-by `MAINTENANCE.md`, and cutover acceptance by `LAUNCH_CHECKLIST.md`.
-Static Cloudflare Pages build, preview, deployment, domain, and verification
-instructions are in `CLOUDFLARE_PAGES.md`.
+Maintainer-only editorial, deployment, migration, and launch procedures live in
+the private `AxiomCore/axiom-internal-docs` repository. The public documentation
+workflow validates a release candidate but does not hold production deployment
+authority.
 
 ## Machine-readable documentation
 
@@ -104,12 +98,12 @@ instructions are in `CLOUDFLARE_PAGES.md`.
   channel and security-policy location.
 
 These outputs contain public documentation only. Internal evidence and planning
-files remain outside the MDX collection.
+files are maintained outside this repository.
 
 ## Publication and maintenance
 
 The repository workflow in `.github/workflows/docs.yml` runs `pnpm check` for
-documentation, example, and documentation-policy changes. It does not publish
+documentation and documentation-policy changes. It does not publish
 the site; deployment remains a separately authorized environment operation.
 The workflow retains `artifacts/docs-release-manifest.json` as release evidence.
 
@@ -119,6 +113,6 @@ Public lifecycle guidance is maintained under:
 - `/reference/support-and-feedback`; and
 - `/reference/documentation-contributions`.
 
-Update `CONTENT_EVIDENCE.md` and `RELEASE_READINESS.md` only after the matching
-implementation and the full documentation gate have been reviewed together.
-The content gate requires a complete evidence review at least every 120 days.
+Update the support matrix only after reviewing the matching implementation.
+The public content gate requires its review date to be refreshed at least every
+120 days. Maintainers record detailed evidence and readiness privately.

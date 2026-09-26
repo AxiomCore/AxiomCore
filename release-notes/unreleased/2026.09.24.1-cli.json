@@ -1,5 +1,0 @@
-{
-  "component": "cli",
-  "type": "feature",
-  "summary": "Improve extension authoring, dependency resolution, and Inspector workflows in the Axiom CLI."
-}

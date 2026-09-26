@@ -3102,11 +3102,11 @@ fn materialize_runtime_facade_package(project: &Path) -> Result<()> {
     for (name, contents) in [
         (
             "index.js",
-            include_bytes!("../../../../packages/axiom-lynx-runtime/src/index.js").as_slice(),
+            include_bytes!("../../../../acore-diff/packages/axiom-lynx-runtime/src/index.js").as_slice(),
         ),
         (
             "lynx-adapter.js",
-            include_bytes!("../../../../packages/axiom-lynx-runtime/src/lynx-adapter.js")
+            include_bytes!("../../../../acore-diff/packages/axiom-lynx-runtime/src/lynx-adapter.js")
                 .as_slice(),
         ),
     ] {

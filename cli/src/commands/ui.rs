@@ -542,8 +542,14 @@ pub async fn handle_check(source: PathBuf, lock: PathBuf, target: String) -> Res
 /// Own a long-lived file-watch session. Authored Acore remains the only source
 /// in the workspace; the adapter uses a permission-private cache because the
 /// pinned ReactLynx compiler requires filesystem inputs.
-pub async fn handle_run(source: PathBuf, lock: PathBuf, target: String, once: bool) -> Result<()> {
-    handle_run_internal(source, lock, target, once, None).await
+pub async fn handle_run(
+    source: PathBuf,
+    lock: PathBuf,
+    target: String,
+    once: bool,
+    launch: bool,
+) -> Result<()> {
+    handle_run_internal(source, lock, target, once, launch, None).await
 }
 
 pub async fn handle_run_with_packages(
@@ -552,8 +558,9 @@ pub async fn handle_run_with_packages(
     package_lock: PathBuf,
     target: String,
     once: bool,
+    launch: bool,
 ) -> Result<()> {
-    handle_run_internal(source, lock, target, once, Some(package_lock)).await
+    handle_run_internal(source, lock, target, once, launch, Some(package_lock)).await
 }
 
 async fn handle_run_internal(
@@ -561,15 +568,16 @@ async fn handle_run_internal(
     lock: PathBuf,
     target: String,
     once: bool,
+    launch: bool,
     package_lock: Option<PathBuf>,
 ) -> Result<()> {
     let target = parse_target(&target)?;
     if target == UiTarget::Web && !once {
-        return handle_run_web(source, lock, package_lock).await;
+        return handle_run_web(source, lock, package_lock, launch).await;
     }
     // `--once` is the non-interactive compiler/CI form. A normal development
     // session owns the friendly UI Host installation prompt.
-    let host = if once {
+    let host = if once || !launch {
         None
     } else {
         Some(ensure_ui_host(target).await?)
@@ -599,6 +607,9 @@ async fn handle_run_internal(
     };
     let initial = apply_path(&mut session, &source)?;
     report_reload(&initial);
+    if session.last_good().is_none() {
+        bail!("initial UI source did not compile; see the diagnostics above");
+    }
     if let Some(host) = host.as_ref() {
         deliver_last_good(&session, host, &initial, &source, &lock, &asset_root)?;
     }
@@ -1066,6 +1077,7 @@ async fn handle_run_web(
     source: PathBuf,
     lock: PathBuf,
     package_lock: Option<PathBuf>,
+    launch: bool,
 ) -> Result<()> {
     let host = ensure_ui_host(UiTarget::Web).await?;
     let asset_root = source
@@ -1136,8 +1148,12 @@ async fn handle_run_web(
         }
     });
     let url = format!("http://{address}/");
-    open_default_browser(&url)?;
-    println!("Opened Axiom UI at {url}");
+    if launch {
+        open_default_browser(&url)?;
+        println!("Opened Axiom UI at {url}");
+    } else {
+        println!("Axiom UI is ready at {url} (pass --launch to open a browser)");
+    }
 
     let source = canonical_or_original(&source);
     let lock = canonical_or_original(&lock);

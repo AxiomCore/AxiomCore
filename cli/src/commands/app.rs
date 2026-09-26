@@ -792,7 +792,7 @@ async fn packaged_web_diagnostic(Json(value): Json<serde_json::Value>) -> impl I
     StatusCode::NO_CONTENT
 }
 
-async fn run_web(application: &TargetApplication) -> Result<()> {
+async fn run_web(application: &TargetApplication, launch: bool) -> Result<()> {
     let state = PackagedWebState {
         files: Arc::new(application.files.clone()),
     };
@@ -808,7 +808,9 @@ async fn run_web(application: &TargetApplication) -> Result<()> {
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
     let address = listener.local_addr()?;
     let url = format!("http://{address}/");
-    super::ui::open_application_browser(&url)?;
+    if launch {
+        super::ui::open_application_browser(&url)?;
+    }
     println!("Running packaged web application at {url}. Press Ctrl-C to stop.");
     tokio::select! {
         result = axum::serve(listener, router) => result.context("packaged web server stopped")?,
@@ -817,11 +819,22 @@ async fn run_web(application: &TargetApplication) -> Result<()> {
     Ok(())
 }
 
-pub async fn handle_run(path: PathBuf, requested_target: Option<String>) -> Result<()> {
+pub async fn handle_run(
+    path: PathBuf,
+    requested_target: Option<String>,
+    launch: bool,
+) -> Result<()> {
     let archive = load_archive(&path)?;
     let application = select_target(&archive, requested_target.as_deref())?;
     match parse_target(&application.manifest.target)? {
-        UiTarget::Web => run_web(application).await,
+        UiTarget::Web => run_web(application, launch).await,
+        target if !launch => {
+            println!(
+                "Verified packaged {} application; pass --launch to open the simulator or device",
+                target.as_str()
+            );
+            Ok(())
+        }
         target => super::ui::run_packaged_native_application(
             target,
             &archive.archive_sha256,

@@ -294,6 +294,9 @@ enum Commands {
         /// Compile once and exit; intended for CI and host-independent checks
         #[arg(long)]
         once: bool,
+        /// Open the browser or native simulator after starting the UI session
+        #[arg(long, conflicts_with = "once")]
+        launch: bool,
     },
     /// Validate or bootstrap the optional Domain Model v1 layer
     Domain {
@@ -428,6 +431,8 @@ enum PackagesAction {
         target: String,
         #[arg(long)]
         once: bool,
+        #[arg(long, conflicts_with = "once")]
+        launch: bool,
     },
 }
 
@@ -766,6 +771,8 @@ enum UiAction {
         target: String,
         #[arg(long)]
         once: bool,
+        #[arg(long, conflicts_with = "once")]
+        launch: bool,
     },
     /// Print a read-only compiler view tied to the current virtual graph revision
     Inspect {
@@ -1221,6 +1228,7 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                 ui_lock,
                 target,
                 once,
+                launch,
             } => {
                 commands::ui::handle_run_with_packages(
                     source.clone(),
@@ -1228,6 +1236,7 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                     package_lock.clone(),
                     target.clone(),
                     *once,
+                    *launch,
                 )
                 .await
             }
@@ -1504,8 +1513,16 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                 lock,
                 target,
                 once,
+                launch,
             } => {
-                commands::ui::handle_run(source.clone(), lock.clone(), target.clone(), *once).await
+                commands::ui::handle_run(
+                    source.clone(),
+                    lock.clone(),
+                    target.clone(),
+                    *once,
+                    *launch,
+                )
+                .await
             }
             UiAction::Inspect {
                 view,
@@ -1596,6 +1613,7 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             debug,
             frozen,
             once,
+            launch,
         } => {
             if commands::app::is_axiom_application(source) {
                 if mode.is_some() {
@@ -1604,7 +1622,7 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                 if *once {
                     anyhow::bail!("--once applies to authored .acore sessions, not packaged .axiomapp execution");
                 }
-                commands::app::handle_run(source.clone(), target.clone()).await
+                commands::app::handle_run(source.clone(), target.clone(), *launch).await
             } else {
                 match commands::run::classify_acore_source(source)? {
                     commands::run::AcoreSourceKind::Backend => {
@@ -1615,6 +1633,9 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                             anyhow::bail!(
                                 "--lock, --frozen, and --once apply to frontend .acore sources"
                             );
+                        }
+                        if *launch {
+                            anyhow::bail!("--launch applies to frontend .acore sources, not backend execution");
                         }
                         commands::run::handle_backend(
                             source.clone(),
@@ -1639,6 +1660,7 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                             prepared_lock,
                             target.clone().unwrap_or_else(|| "ios".to_string()),
                             *once,
+                            *launch,
                         )
                         .await
                     }
@@ -2222,4 +2244,27 @@ pub async fn handle_inspect(file_path: &Path) -> anyhow::Result<()> {
     }
 
     tui.exit().map_err(|e| anyhow::anyhow!(e))
+}
+
+#[cfg(test)]
+mod launch_tests {
+    use super::*;
+
+    #[test]
+    fn run_does_not_launch_unless_requested() {
+        let default =
+            Cli::try_parse_from(["axiom", "run", "main.acore", "--target", "web"]).unwrap();
+        assert!(matches!(
+            default.command,
+            Commands::Run { launch: false, .. }
+        ));
+        let explicit =
+            Cli::try_parse_from(["axiom", "run", "main.acore", "--target", "web", "--launch"])
+                .unwrap();
+        assert!(matches!(
+            explicit.command,
+            Commands::Run { launch: true, .. }
+        ));
+        assert!(Cli::try_parse_from(["axiom", "run", "main.acore", "--once", "--launch"]).is_err());
+    }
 }

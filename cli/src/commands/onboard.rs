@@ -125,7 +125,7 @@ async fn onboard_backend(
                 "  {}",
                 style("axiom init main.py:app --module axiom-fastapi").cyan()
             );
-            println!("  Supported Phase 1 backend extractors: FastAPI and Go.\n");
+            println!("  Supported backend extractors: FastAPI and Go.\n");
         }
     }
     Ok(())

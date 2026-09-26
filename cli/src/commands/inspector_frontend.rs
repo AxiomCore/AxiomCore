@@ -1417,9 +1417,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn frontend_enrichment_is_deterministic_for_phase_five_example() {
-        let root =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/axiom-phase5-extensions");
+    fn frontend_enrichment_is_deterministic_for_extension_example() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/extension-sandbox");
         if !root.exists() {
             return;
         }
@@ -1450,6 +1449,9 @@ mod tests {
             AxiomQuery, EvidenceIndex, QueryDirection, QueryOperation, AXIOM_QUERY_FORMAT,
         };
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/axiom-shopping-app");
+        if !root.exists() {
+            return; // The public examples repository is a separate checkout.
+        }
         let graph = enrich(
             &root,
             axiom_lib::application_inspector::inspect_workspace(&root, "test").unwrap(),

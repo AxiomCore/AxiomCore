@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use axiom_extractor::evaluate_acore_config;
 use std::path::PathBuf;
 
-/// Run the same deterministic Phase 4 analyzer used by `axiom build` without
+/// Run the same deterministic security analyzer used by `axiom build` without
 /// writing an artifact. This is intentionally useful in local review and CI.
 pub async fn handle_check(file: PathBuf, json: bool, fail_on_warning: bool) -> Result<()> {
     let config = evaluate_acore_config(&file.to_string_lossy(), None)?;

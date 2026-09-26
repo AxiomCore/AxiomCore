@@ -16,12 +16,9 @@ Cloud service.
 
 ## Documentation
 
-The public site lives in `docs/content/docs`. Its editorial and evidence rules
-are maintained in:
-
-- `docs/DOCUMENTATION_CONTRACT.md`
-- `docs/CONTENT_EVIDENCE.md`
-- `docs/RELEASE_READINESS.md`
+The public site lives in `docs/content/docs`. Keep capability status accurate in
+the public support matrix. Maintainers keep editorial evidence and deployment
+records in the private `AxiomCore/axiom-internal-docs` repository.
 
 Run the complete gate:
 
@@ -44,7 +41,7 @@ relative paths, and development-only placeholder values. Never commit access
 tokens, signing keys, DSNs, cookies, sandbox credentials, production URLs, or
 developer home-directory paths.
 
-Run the exact example commands listed in `examples/README.md`. A deliberately
+Run the exact example commands listed in the [examples repository](https://github.com/AxiomCore/examples). A deliberately
 unsafe or incompatible fixture must document its expected non-zero result.
 
 ## Public claims

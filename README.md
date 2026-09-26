@@ -113,10 +113,10 @@ arbitrary backend or mobile application. See
 | Path | Responsibility |
 | --- | --- |
 | `cli/` | Public `axiom` command-line interface |
-| `docs/` | Next.js/Fumadocs documentation application and editorial evidence |
-| `examples/` | Contract and integration fixtures documented by `examples/README.md` |
+| `docs/` | Next.js/Fumadocs public documentation application |
 | `packages/atmx-cli/` | Public `atmx-cli` npm package source |
-| `artifacts/legacy/` | Historical checked-in build artifacts; current downloadable assets are attached to this repository's GitHub Releases |
+
+Runnable examples live in the separate [AxiomCore/examples](https://github.com/AxiomCore/examples) repository. Downloadable CLI, Apple runtime, UI Host, and mirrored public package archives are attached to this repository's [GitHub Releases](https://github.com/AxiomCore/AxiomCore/releases); generated site evidence is produced by its own workflow. The obsolete checked-in `artifacts/legacy` tree is no longer part of the current source tree.
 
 The surrounding AxiomCore workspace contains independent repositories for the
 Acore language, artifact libraries, runtime, extractors, SDKs, UI compiler and
@@ -134,13 +134,10 @@ for public claims.
 - [Troubleshooting](./docs/content/docs/reference/troubleshooting.mdx)
 - [Versioning and deprecation](./docs/content/docs/reference/versioning-and-deprecation.mdx)
 - [Support and feedback](./docs/content/docs/reference/support-and-feedback.mdx)
-- [Example catalog](./examples/README.md)
+- [Example catalog](https://github.com/AxiomCore/examples#readme)
 - Release orchestration and operator instructions live in the private sibling repository `AxiomCore/Axiom-release-plane`.
 
-Documentation claims follow
-[`docs/DOCUMENTATION_CONTRACT.md`](./docs/DOCUMENTATION_CONTRACT.md) and are
-anchored to implementation evidence in
-[`docs/CONTENT_EVIDENCE.md`](./docs/CONTENT_EVIDENCE.md).
+Public capability status is maintained in the [support matrix](./docs/content/docs/introduction/support-matrix.mdx). Internal planning, release-note source, editorial evidence, and deployment runbooks live in the private `AxiomCore/axiom-internal-docs` repository.
 
 ## Contributing and security
 

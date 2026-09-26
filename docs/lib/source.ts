@@ -28,7 +28,6 @@ export const source = loader({
     if (key === 'client-integration') return createElement(TerminalIcon);
     if (key === 'cloud-security') return createElement(ShieldCheckIcon);
     if (key === 'reference') return createElement(BookIcon);
-    if (key === 'roadmap') return createElement(MapIcon);
   },
 });
 

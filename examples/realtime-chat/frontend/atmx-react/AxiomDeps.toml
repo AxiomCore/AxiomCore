@@ -1,6 +1,0 @@
-framework = "atmx-react"
-
-[contracts]
-
-[contracts.realtime-chat]
-source = "../../backend/go-chat/.axiom"

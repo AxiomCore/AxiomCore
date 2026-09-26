@@ -156,7 +156,7 @@ unchanged release is stable.
 ```bash
 axiom extensions source-release checkout \
   --deps AxiomDeps.toml \
-  --application example.phase5.checkout
+  --application example.extensions.checkout
 
 axiom run main.acore --target web
 axiom run main.acore --target android
@@ -176,7 +176,7 @@ The repository includes a repeatable, generated acceptance fixture for the
 current signed extension host. From the repository root:
 
 ```bash
-cd examples/axiom-phase5-extensions
+cd examples/extension-sandbox
 just release
 just check
 ```

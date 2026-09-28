@@ -1,0 +1,67 @@
+/** Original v17 typefaces, served locally without external font requests. */
+@font-face {
+  font-family: "PP Supply Sans Fallback";
+  src: local("Arial");
+  size-adjust: 112.6%;
+  ascent-override: 99%;
+  descent-override: 21%;
+  line-gap-override: 0%;
+}
+@font-face {
+  font-family: "Neue Haas Grotesk Text Pro Fallback";
+  src: local("Arial");
+  size-adjust: 129.6%;
+  ascent-override: 79.9%;
+  descent-override: 20.1%;
+  line-gap-override: 22.3%;
+}
+@font-face {
+  font-family: "PP Supply Sans";
+  ascent-override: 88%;
+  descent-override: 10%;
+  line-gap-override: 22%;
+  src: url("../assets/fonts/pp-supply-sans-300.woff2") format("woff2");
+  font-display: swap;
+  font-weight: 300;
+  font-style: normal;
+}
+@font-face {
+  font-family: "PP Supply Sans";
+  ascent-override: 87%;
+  descent-override: 10%;
+  line-gap-override: 23%;
+  src: url("../assets/fonts/pp-supply-sans-600.woff2") format("woff2");
+  font-display: swap;
+  font-weight: 600;
+  font-style: normal;
+}
+@font-face {
+  font-family: "Neue Haas Grotesk Text Pro";
+  src: url("../assets/fonts/neue-haas-grotesk-text-pro-400.woff2")
+    format("woff2");
+  font-display: swap;
+  font-weight: 400;
+  font-style: normal;
+}
+@font-face {
+  font-family: "Neue Haas Grotesk Text Pro";
+  src: url("../assets/fonts/neue-haas-grotesk-text-pro-500.woff2")
+    format("woff2");
+  font-display: swap;
+  font-weight: 500;
+  font-style: normal;
+}
+@font-face {
+  font-family: "Commit Mono";
+  src: url("../assets/fonts/commit-mono-400.woff2") format("woff2");
+  font-display: swap;
+  font-weight: 400;
+  font-style: normal;
+}
+@font-face {
+  font-family: "Commit Mono";
+  src: url("../assets/fonts/commit-mono-700.woff2") format("woff2");
+  font-display: swap;
+  font-weight: 700;
+  font-style: normal;
+}

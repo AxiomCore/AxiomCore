@@ -14,6 +14,7 @@ export default async function Page(props: { params: Promise<{ slug?: string[] }>
 
   return (
     <DocsPage toc={page.data.toc} full={page.data.full}>
+      <p className="docs-label docs-page-label">[ AxiomCore · Documentation ]</p>
       <DocsTitle>{page.data.title}</DocsTitle>
       <DocsDescription className="mb-0">{page.data.description}</DocsDescription>
       <DocsBody>

@@ -8,14 +8,7 @@ versioned contract boundary. It includes extraction, compilation, packaging,
 client generation, and runtime consumption; it is not one indivisible build
 step.
 
-```text
-backend source or schema                     existing frontend or Acore UI
-          │                                              ▲
-          ▼                                              │
-  extractor / bootstrap ──► Acore source ──► .axiom ──► pull / runtime
-                                  │             │
-                                  └── tests ────┴── inspect · diff · release
-```
+<ConceptDiagram kind="pipeline" />
 
 ## 1. Establish the source boundary
 

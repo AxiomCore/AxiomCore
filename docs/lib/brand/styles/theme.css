@@ -1,0 +1,83 @@
+/** AxiomCore visual foundation. Source of truth: approved index-v17 design.
+ * Plain CSS: usable from Astro, Tailwind, and the axUI web components.
+ * Dark-only surfaces; intentional device silhouettes are the only rounded UI.
+ */
+:root,
+:root.dark {
+  color-scheme: dark;
+  --ax-background: oklch(0 0 0);
+  --ax-surface: oklch(0.1822 0 0);
+  --ax-surface-raised: #191919;
+  --ax-surface-muted: #0b0b0b;
+  --ax-foreground: oklch(1 0 0);
+  --ax-text-muted: oklch(0.7826 0 0);
+  --ax-text-subtle: #888;
+  --ax-border: oklch(0.2931 0 0);
+  --ax-border-strong: #555;
+  --ax-accent: oklch(0.5905 0.2219 32.24);
+  --ax-accent-hover: oklch(0.66 0.2219 32.24);
+  --ax-font-display: "PP Supply Sans", sans-serif;
+  --ax-font-body: "Neue Haas Grotesk Text Pro", sans-serif;
+  --ax-font-mono: "Commit Mono", ui-monospace, monospace;
+  --ax-radius: 0px;
+  --ax-space-1: 4px;
+  --ax-space-2: 8px;
+  --ax-space-3: 12px;
+  --ax-space-4: 16px;
+  --ax-space-5: 20px;
+  --ax-space-6: 24px;
+  --ax-space-8: 32px;
+  --ax-space-12: 48px;
+  --ax-control-sm: 36px;
+  --ax-control: 44px;
+  --ax-control-lg: 48px;
+  --ax-control-padding: 18px;
+  --ax-label-size: 10px;
+  --ax-control-size: 11px;
+  --ax-page-width: min(calc(100% - 48px), 1280px);
+  --ax-preview-shadow:
+    0 0 0 1px #ffffff08, 0 0 28px #ffffff08, 0 18px 40px #0009;
+  --ax-duration: 180ms;
+  --ax-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+
+  /* Existing web-component and dashboard APIs resolve to the same palette. */
+  --background: var(--ax-background);
+  --foreground: var(--ax-foreground);
+  --card: var(--ax-surface);
+  --card-foreground: var(--ax-foreground);
+  --popover: var(--ax-surface);
+  --popover-foreground: var(--ax-foreground);
+  --primary: var(--ax-accent);
+  --primary-foreground: var(--ax-foreground);
+  --secondary: var(--ax-surface-raised);
+  --secondary-foreground: var(--ax-foreground);
+  --muted: var(--ax-surface-muted);
+  --muted-foreground: var(--ax-text-muted);
+  --accent: var(--ax-accent);
+  --accent-foreground: var(--ax-foreground);
+  --brand: var(--ax-accent);
+  --brand-secondary: var(--ax-accent-hover);
+  --border: var(--ax-border);
+  --border-strong: var(--ax-border-strong);
+  --ring: var(--ax-accent);
+  --success: #b8b8b8;
+  --danger: var(--ax-accent);
+  --surface-base: var(--ax-background);
+  --surface-alt: var(--ax-surface-muted);
+  --surface-elevated: var(--ax-surface);
+  --surface-terminal: var(--ax-background);
+  --border-subtle: var(--ax-border);
+  --text-primary: var(--ax-foreground);
+  --text-muted: var(--ax-text-muted);
+  --text-inactive: var(--ax-text-subtle);
+  --text-inverse: var(--ax-foreground);
+}
+@media (max-width: 720px) {
+  :root,
+  :root.dark {
+    --ax-page-width: min(calc(100% - 30px), 1280px);
+  }
+}

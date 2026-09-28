@@ -19,6 +19,24 @@ pnpm dev
 
 Open `http://localhost:3000`.
 
+## Visual foundation
+
+The docs use the approved index-v17 AxiomCore theme: black surfaces, orange
+accents, square controls, PP Supply Sans headings, Neue Haas body text, and
+Commit Mono code and labels. The appearance is dark-only, including search.
+
+`lib/brand` is a committed snapshot of `axiom-frontend/lib/src/styles/{theme,fonts}.css`
+and its font assets. Fumadocs tokens are mapped to those shared tokens in
+`app/global.css`; the docs logo uses the landing page's SVG geometry.
+Keep the snapshot in this repository so a standalone Cloudflare release needs
+neither the frontend checkout nor a third-party font service. Refresh it after
+changing the shared design system:
+
+```bash
+node scripts/sync-brand.mjs
+# Or supply the absolute path to another axiom-frontend/lib/src checkout.
+```
+
 ## Required validation
 
 ```bash
@@ -47,8 +65,8 @@ Before merging a content change, also confirm:
 3. internal Markdown links resolve;
 4. runnable commands exist in the current CLI or owning repository;
 5. linked examples in `AxiomCore/examples` contain no private paths, credentials, or internal milestone names; and
-6. the affected page renders in light and dark appearance at desktop and
-   narrow widths.
+6. the affected page renders in the shared dark theme at desktop and narrow
+   widths, including code blocks, keyboard navigation, and search.
 
 ## Content structure
 
@@ -116,3 +134,16 @@ Public lifecycle guidance is maintained under:
 Update the support matrix only after reviewing the matching implementation.
 The public content gate requires its review date to be refreshed at least every
 120 days. Maintainers record detailed evidence and readiness privately.
+
+## Concept illustrations
+
+`ConceptDiagram` is a reusable MDX component with four reviewed presets:
+`contract` (documentation home), `pipeline` (contract pipeline), `inspector`
+(Inspector overview), and `evidence` (the four truth layers). Select a node to
+read its explanation and follow the relevant guide. The illustration labels
+its conceptual scope and does not pretend to run a compiler or capture events.
+
+Motion advances only while the diagram is visible, pauses on manual selection
+or keyboard interaction, and is disabled for reduced-motion preferences.
+Keep code examples and reference tables as text; use illustrations to explain
+relationships and boundaries, not to replace exact commands or API definitions.

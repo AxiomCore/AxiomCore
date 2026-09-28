@@ -21,17 +21,7 @@ It can inspect a frontend-only workspace, a backend-only workspace, or a
 combined application with contracts, packages, sandboxed extensions, and target
 artifacts.
 
-```text
-Acore source, contracts, locks, packages and runtime audit events
-                              │
-                              ▼
-                canonical application evidence
-                    facts + relationships
-                     evidence + revisions
-                         /          \
-                        /            \
-               CLI and agents    local dashboard
-```
+<ConceptDiagram kind="inspector" />
 
 The CLI and dashboard query the same evidence engine. The dashboard does not
 reimplement the compiler in JavaScript, and an AI explanation does not become a

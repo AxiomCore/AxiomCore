@@ -66,3 +66,29 @@ target artifacts with `axiom package` only when a multi-target distributable is
 needed. Store signing and marketplace publication are separate future/product
 workflows.
 
+## Continue a Playground application locally
+
+The browser Playground's **Export** button builds a portable development
+`.axiomapp` for your selected targets. It includes authored sources, target
+models, a local mock backend, and Inspector evidence. Use a CLI containing
+`axiom-playground-application/v1` support; earlier versions report
+`AXIOM_APP_FORMAT: unsupported application format` and must be updated.
+
+From the download directory:
+
+```bash
+axiom inspect playground.axiomapp
+axiom install playground.axiomapp
+axiom run playground.axiomapp --target web --launch
+```
+
+`install` verifies and caches the archive; `run` can also read it directly.
+Run checks its contents, prepares the selected host locally, and starts an
+isolated loopback mock backend. Mock data resets on each launch. For a selected
+native target, install its host with `axiom ui host install --target android`
+or `ios`, start the corresponding emulator/simulator, and pass that target to
+`run` with `--launch`.
+
+Portable Playground exports are development inputs, not prebuilt signed
+native binaries. `axiom package` combines native build artifacts and does not
+repackage these portable exports.

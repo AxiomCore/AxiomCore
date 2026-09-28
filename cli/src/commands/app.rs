@@ -24,6 +24,9 @@ use std::io::{IsTerminal, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
+#[path = "app_playground.rs"]
+mod playground;
+
 const MAX_ARCHIVE_FILE_BYTES: u64 = 1024 * 1024 * 1024;
 const MAX_ARCHIVE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
@@ -76,6 +79,7 @@ struct ApplicationArchive {
     archive_sha256: String,
     bytes: Vec<u8>,
     targets: BTreeMap<String, TargetApplication>,
+    playground: Option<axiom_lib::playground_application::Application>,
 }
 
 fn sha256_bytes(bytes: &[u8]) -> String {
@@ -469,6 +473,42 @@ fn load_archive(path: &Path) -> Result<ApplicationArchive> {
         .as_str()
         .unwrap_or("")
         .to_string();
+    if format == axiom_lib::playground_application::FORMAT {
+        let portable = axiom_lib::playground_application::read(&bytes)?;
+        let targets = portable
+            .manifest
+            .targets
+            .iter()
+            .map(|target| {
+                (
+                    target.clone(),
+                    TargetApplication {
+                        manifest: SingleManifest {
+                            format: portable.manifest.format.clone(),
+                            application_id: portable.manifest.application_id.clone(),
+                            target: target.clone(),
+                            mode: "development".into(),
+                            graph_revision: portable.manifest.graph_revision.clone(),
+                            host: HostIdentity {
+                                version: "prepared locally".into(),
+                                variant: "portable development".into(),
+                                sha256: String::new(),
+                            },
+                        },
+                        bytes: Vec::new(),
+                        files: HashMap::new(),
+                    },
+                )
+            })
+            .collect();
+        return Ok(ApplicationArchive {
+            application_id: portable.manifest.application_id.clone(),
+            archive_sha256,
+            bytes,
+            targets,
+            playground: Some(portable),
+        });
+    }
     if format == "axiom-application/v1" {
         let target = parse_single(bytes.clone(), &path.display().to_string())?;
         let application_id = target.manifest.application_id.clone();
@@ -477,6 +517,7 @@ fn load_archive(path: &Path) -> Result<ApplicationArchive> {
             archive_sha256,
             bytes,
             targets: BTreeMap::from([(target.manifest.target.clone(), target)]),
+            playground: None,
         });
     }
     if format != "axiom-application-set/v1" {
@@ -525,6 +566,7 @@ fn load_archive(path: &Path) -> Result<ApplicationArchive> {
         archive_sha256,
         bytes,
         targets,
+        playground: None,
     })
 }
 
@@ -601,6 +643,9 @@ pub async fn handle_inspect(path: PathBuf) -> Result<()> {
             target.manifest.host.version,
             target.manifest.host.variant
         );
+    }
+    if archive.playground.is_some() {
+        println!("Portable development export: target IR, authored sources and a local mock backend. Platform hosts are prepared on run; this is not a signed release binary.");
     }
     println!("Integrity: verified");
     Ok(())
@@ -684,6 +729,9 @@ pub async fn handle_package(inputs: Vec<PathBuf>, output: PathBuf) -> Result<()>
     let mut targets = BTreeMap::<String, TargetApplication>::new();
     for input in inputs {
         let archive = load_archive(&input)?;
+        if archive.playground.is_some() {
+            bail!("Playground exports already contain their selected targets; export the desired target set from Playground instead of repackaging them as native binaries");
+        }
         match &application_id {
             Some(existing) if existing != &archive.application_id => bail!(
                 "AXIOM_APP_PACKAGE: application IDs differ (`{existing}` and `{}`)",
@@ -826,6 +874,9 @@ pub async fn handle_run(
 ) -> Result<()> {
     let archive = load_archive(&path)?;
     let application = select_target(&archive, requested_target.as_deref())?;
+    if let Some(portable) = &archive.playground {
+        return playground::run(portable, &application.manifest.target, launch).await;
+    }
     match parse_target(&application.manifest.target)? {
         UiTarget::Web => run_web(application, launch).await,
         target if !launch => {
@@ -928,6 +979,49 @@ mod tests {
         assert!(!is_safe_path("../escape"));
         assert!(!is_safe_path("/absolute"));
         assert!(is_safe_path("targets/web.axiomapp"));
+    }
+
+    #[tokio::test]
+    async fn reads_browser_exports_and_enforces_their_selected_targets() {
+        let root = tempfile::tempdir().unwrap();
+        let evidence = axiom_lib::application_evidence::ApplicationEvidence::new("test", "1")
+            .finalize()
+            .unwrap();
+        let snapshot = serde_json::json!({
+            "models": {"web": {"module": "example.app", "target": "web"}},
+            "styles": {"web": ""}, "config": {},
+            "lock": {"format": axiom_lib::ui_contract::UI_LOCK_FORMAT, "contracts": {}},
+            "evidence": evidence
+        });
+        let bytes = axiom_lib::playground_application::build(
+            "module example.app",
+            "project {}",
+            &snapshot,
+            &["web".into()],
+            "test",
+        )
+        .unwrap();
+        let path = root.path().join("playground.axiomapp");
+        std::fs::write(&path, &bytes).unwrap();
+        let archive = load_archive(&path).unwrap();
+        assert!(archive.playground.is_some());
+        assert_eq!(archive.bytes, bytes);
+        assert_eq!(archive.application_id, "example.app");
+        assert_eq!(
+            select_target(&archive, None).unwrap().manifest.target,
+            "web"
+        );
+        assert!(select_target(&archive, Some("android"))
+            .unwrap_err()
+            .to_string()
+            .contains("unavailable"));
+        assert!(
+            handle_package(vec![path], root.path().join("repackaged.axiomapp"))
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("selected targets")
+        );
     }
 
     #[tokio::test]

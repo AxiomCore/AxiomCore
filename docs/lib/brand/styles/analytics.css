@@ -1,0 +1,4 @@
+.ax-consent{position:fixed;z-index:10000;bottom:48px;left:16px;width:min(460px,calc(100vw - 32px));padding:20px;border:1px solid #555;background:#101010;color:#fff;font:14px/1.6 var(--ax-font-body,sans-serif);box-shadow:0 8px 40px #0009}
+.ax-consent[hidden]{display:none}.ax-consent p{margin:0 0 16px}.ax-consent a{color:#ff7046;text-decoration:underline}.ax-consent div{display:flex;gap:12px;flex-wrap:wrap}
+.ax-consent button,.ax-consent-settings{border:1px solid #555;border-radius:0;background:#101010;color:#fff;cursor:pointer;font:12px var(--ax-font-mono,monospace);padding:12px;min-height:44px}
+.ax-consent button:hover,.ax-consent-settings:hover{border-color:#ff7046}.ax-consent-settings{position:fixed;z-index:9999;bottom:0;left:0;padding:8px;min-height:32px;font-size:10px}.ax-consent :focus-visible,.ax-consent-settings:focus-visible{outline:2px solid #ff7046;outline-offset:3px}

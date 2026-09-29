@@ -5,7 +5,8 @@ import { source } from "@/lib/source";
 import "./global.css";
 import { Brand } from "@/components/brand";
 import { NavigationAccessibility } from "@/components/docs/navigation-accessibility";
-import { Analytics } from "@vercel/analytics/next";
+import { SiteAnalytics } from "@/components/site-analytics";
+import "@/lib/brand/styles/analytics.css";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
@@ -92,7 +93,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             {children}
           </DocsLayout>
         </RootProvider>
-        {process.env.VERCEL ? <Analytics /> : null}
+        <SiteAnalytics />
       </body>
     </html>
   );

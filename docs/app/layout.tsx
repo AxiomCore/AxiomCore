@@ -72,12 +72,13 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                   aria-label="AxiomCore products"
                   className="docs-product-links"
                 >
-                  <a href="https://playground.axiomcore.dev">
+                  <a href="https://playground.axiomcore.dev" data-analytics-cta="playground">
                     Playground <span aria-hidden="true">↗</span>
                   </a>
                   <a
                     href="https://app.axiomcore.dev"
                     className="docs-start-link"
+                    data-analytics-cta="get_started"
                   >
                     Get started <span aria-hidden="true">↗</span>
                   </a>

@@ -1,7 +1,11 @@
-/** Optional public-site measurement. Never send editor content, errors, or URL queries. */
-type AnalyticsWindow = Window & { dataLayer?: unknown[]; gtag?: (...args: unknown[]) => void; __axiomAnalytics?: boolean };
+/** Optional public-site measurement. Never send editor content, errors, or arbitrary URL queries. */
+type Clarity = ((...args: unknown[]) => void) & { q?: IArguments[] };
+type AnalyticsWindow = Window & { dataLayer?: unknown[]; gtag?: (...args: unknown[]) => void; clarity?: Clarity; __axiomAnalytics?: boolean };
+const clarityProjectId = "yptb4ni40z";
 const eventValues: Record<string, Record<string, readonly string[]>> = {
-  cta_click: { destination: ["playground", "docs", "app", "github", "blog"] },
+  cta_click: { destination: ["playground", "docs", "app", "github", "blog"], action: ["get_started", "start_building", "playground", "other"] },
+  get_started_click: {},
+  playground_open_click: {},
   install_command_copy: { method: ["shell", "homebrew"] },
   playground_run: {},
   playground_run_result: { result: ["success", "failure"] },
@@ -13,27 +17,40 @@ export function track(name: string, properties: Record<string, string> = {}) {
 }
 export function initAnalytics(measurementId: string | undefined, site: "landing" | "docs" | "playground") {
   const w = window as AnalyticsWindow;
-  if (!measurementId || !/^G-[A-Z0-9]+$/.test(measurementId) || w.__axiomAnalytics) return () => {};
+  const gaEnabled = !!measurementId && /^G-[A-Z0-9]+$/.test(measurementId);
+  const clarityEnabled = site !== "playground";
+  if ((!gaEnabled && !clarityEnabled) || w.__axiomAnalytics) return () => {};
   if (!["axiomcore.dev", "docs.axiomcore.dev", "playground.axiomcore.dev"].includes(location.hostname)) return () => {};
   w.__axiomAnalytics = true;
   const consentName = "axiom_analytics_consent";
   const read = () => document.cookie.split("; ").find(c => c.startsWith(`${consentName}=`))?.split("=")[1];
   let accepted = read() === "yes";
-  let loaded = false;
+  let gaLoaded = false;
+  let clarityLoaded = false;
   const save = (value: string) => { document.cookie = `${consentName}=${value}; Path=/; Domain=axiomcore.dev; Max-Age=15552000; SameSite=Lax; Secure`; };
-  const send = (name: string, parameters: Record<string, string> = {}) => {
-    if (accepted && loaded) w.gtag?.("event", name, { ...parameters, site, page_location: location.origin + location.pathname });
+  const pageLocation = () => {
+    const url = new URL(location.origin + location.pathname);
+    for (const key of ["utm_source", "utm_medium", "utm_campaign"]) {
+      const value = new URL(location.href).searchParams.get(key);
+      if (value && /^[a-zA-Z0-9._~-]{1,80}$/.test(value)) url.searchParams.set(key, value);
+    }
+    return url.href;
   };
-  function activate() {
-    if (loaded) return;
-    loaded = true;
+  const send = (name: string, parameters: Record<string, string> = {}) => {
+    if (!accepted) return;
+    if (gaLoaded) w.gtag?.("event", name, { ...parameters, site, page_location: pageLocation() });
+    if (clarityLoaded) w.clarity?.("event", name === "cta_click" ? `cta_${parameters.action || parameters.destination || "other"}` : name);
+  };
+  function activateGa() {
+    if (!gaEnabled || gaLoaded) return;
+    gaLoaded = true;
     w.dataLayer = w.dataLayer || [];
     w.gtag = function () { w.dataLayer!.push(arguments); };
     w.gtag("consent", "default", { analytics_storage: "granted", ad_storage: "denied", ad_user_data: "denied", ad_personalization: "denied" });
     w.gtag("js", new Date());
     w.gtag("config", measurementId, {
       send_page_view: false, allow_google_signals: false, allow_ad_personalization_signals: false,
-      cookie_domain: "axiomcore.dev", page_location: location.origin + location.pathname,
+      cookie_domain: "axiomcore.dev", page_location: pageLocation(),
       page_referrer: document.referrer ? new URL(document.referrer).origin : "",
     });
     const script = document.createElement("script");
@@ -42,10 +59,22 @@ export function initAnalytics(measurementId: string | undefined, site: "landing"
     document.head.append(script);
     send("page_view");
   }
+  function activateClarity() {
+    if (!clarityEnabled || clarityLoaded) return;
+    clarityLoaded = true;
+    w.clarity = w.clarity || function () { (w.clarity!.q = w.clarity!.q || []).push(arguments); };
+    w.clarity("consentv2", { ad_Storage: "denied", analytics_Storage: "granted" });
+    w.clarity("set", "site", site);
+    const script = document.createElement("script");
+    script.async = true;
+    script.src = `https://www.clarity.ms/tag/${clarityProjectId}`;
+    document.head.append(script);
+  }
+  function activate() { activateGa(); activateClarity(); }
   const banner = document.createElement("section");
   banner.className = "ax-consent";
   banner.setAttribute("aria-label", "Optional analytics");
-  banner.innerHTML = `<p>Help improve AxiomCore with optional usage analytics. We measure page visits and selected actions, never your source code. <a href="https://docs.axiomcore.dev/reference/documentation-site-privacy/">Privacy details</a></p><div><button type="button" data-choice="no">Decline</button><button type="button" data-choice="yes">Accept analytics</button></div>`;
+  banner.innerHTML = `<p>Help improve AxiomCore with optional analytics. We measure visits and selected actions; session replay is limited to the public site and docs, never the Playground editor. <a href="https://docs.axiomcore.dev/reference/documentation-site-privacy/">Privacy details</a></p><div><button type="button" data-choice="no">Decline</button><button type="button" data-choice="yes">Accept analytics</button></div>`;
   const settings = document.createElement("button");
   settings.className = "ax-consent-settings";
   settings.type = "button";
@@ -59,11 +88,12 @@ export function initAnalytics(measurementId: string | undefined, site: "landing"
       banner.hidden = true;
       settings.focus();
       if (accepted) activate();
-      else if (loaded) {
+      else if (gaLoaded || clarityLoaded) {
         w.gtag?.("consent", "update", { analytics_storage: "denied" });
+        w.clarity?.("consentv2", { ad_Storage: "denied", analytics_Storage: "denied" });
         for (const cookie of document.cookie.split(";")) {
           const name = cookie.split("=")[0].trim();
-          if (!/^_ga(?:_|$)/.test(name)) continue;
+          if (!/^(?:_ga(?:_|$)|_clck$|_clsk$|CLID$)/.test(name)) continue;
           for (const domain of ["", "; Domain=axiomcore.dev", `; Domain=${location.hostname}`]) document.cookie = `${name}=; Max-Age=0; Path=/${domain}; Secure; SameSite=Lax`;
         }
         location.reload();
@@ -86,7 +116,12 @@ export function initAnalytics(measurementId: string | undefined, site: "landing"
     if (!link) return;
     const destinations: Record<string, string> = { "playground.axiomcore.dev": "playground", "docs.axiomcore.dev": "docs", "app.axiomcore.dev": "app", "github.com": "github" };
     const destination = destinations[link.hostname] || (link.pathname === "/blog/" ? "blog" : "");
-    if (destination) send("cta_click", { destination });
+    if (destination) {
+      const action = link.dataset.analyticsCta || "other";
+      send("cta_click", { destination, action });
+      if (action === "get_started" && destination === "app") send("get_started_click");
+      if (action === "playground" && destination === "playground") send("playground_open_click");
+    }
   }
   window.addEventListener("axiom:analytics", onEvent);
   let lastPath = location.pathname;

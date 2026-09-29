@@ -13,24 +13,30 @@ Cloudflare Web Analytics is enabled through the hosting account and measures
 aggregate visits and performance. It is separate from the optional analytics
 choice below. See [Cloudflare’s Web Analytics privacy explanation](https://developers.cloudflare.com/web-analytics/about/).
 
-Optional Google Analytics 4 integration is disabled unless the deployment has a
-measurement ID. When configured, it loads only on the canonical public hosts
-and only after you select **Accept analytics**. Declining does not load the
-Google tag. **Privacy choices** lets you change the decision. The choice is
-stored in a first-party cookie shared across the three sites for six months.
-Accepting analytics allows Google Analytics cookies for usage measurement;
+Google Analytics 4 is configured for the public sites. It loads only on the
+canonical public hosts and only after you select **Accept analytics**. Microsoft Clarity loads after
+the same choice on the landing site and documentation, where it measures
+navigation and provides session recordings and heatmaps. Clarity does not load
+in the Playground, where visitors can edit source code and preview their own
+content. Declining does not load either provider. **Privacy choices** lets you
+change the decision. The choice is stored in a first-party cookie shared across
+the three sites for six months. Accepting analytics allows usage measurement;
 advertising storage, Google signals, and ad personalization are disabled by
 this integration.
 
-Page measurement sends the page origin and path without query strings or
-fragments. Custom events are limited to predefined action categories, such as
+GA4 page measurement sends the page origin and path, plus the allowlisted
+`utm_source`, `utm_medium`, and `utm_campaign` parameters when they contain only
+short, simple campaign labels. Other query parameters and fragments are not
+sent to GA4 by this integration. Clarity may process page URLs and referring
+URLs for the pages where it runs; do not put private data in public-site URLs.
+Custom events are limited to predefined action categories, such as
 opening documentation, copying an installation command, running the example,
 or selecting an Inspector view. Source code, request bodies, generated files,
 raw search queries, and compilation error messages are not custom event data.
 An export event records download initiation, not a confirmed local install.
 
-Session replay is not installed by this integration, including in the
-Playground. Local mock runtime events and application evidence are separate
+Session replay is limited to the public landing site and documentation. It is
+not installed in the Playground. Local mock runtime events and application evidence are separate
 from public-site analytics. The previous conditional Vercel analytics component
 has been removed in favor of this explicit configuration.
 

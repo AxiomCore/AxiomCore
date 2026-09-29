@@ -7,7 +7,7 @@ const origin = 'https://docs.axiomcore.dev';
 
 export default function sitemap(): MetadataRoute.Sitemap {
   return source.getPages().map((page) => ({
-    url: `${origin}${page.url}`,
+    url: `${origin}${page.url === "/" ? "/" : page.url.replace(/\/$/, "") + "/"}`,
     changeFrequency: page.url === '/' ? 'weekly' : 'monthly',
     priority: page.url === '/' ? 1 : 0.7,
   }));

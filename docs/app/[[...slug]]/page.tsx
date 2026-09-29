@@ -11,20 +11,27 @@ export default async function Page(props: { params: Promise<{ slug?: string[] }>
   if (!page) notFound();
 
   const MDX = page.data.body;
+  const canonical = `https://docs.axiomcore.dev${page.url === '/' ? '/' : page.url.replace(/\/$/, '') + '/'}`;
+  const items = [{ '@type': 'ListItem', position: 1, name: 'Documentation', item: 'https://docs.axiomcore.dev/' }];
+  if (page.url !== '/') items.push({ '@type': 'ListItem', position: 2, name: page.data.title, item: canonical });
+  const schema = { '@context': 'https://schema.org', '@type': page.url === '/' ? 'WebSite' : 'BreadcrumbList', ...(page.url === '/' ? { name: 'AxiomCore documentation', url: canonical } : { itemListElement: items }) };
 
   return (
-    <DocsPage toc={page.data.toc} full={page.data.full}>
-      <p className="docs-label docs-page-label">[ AxiomCore · Documentation ]</p>
-      <DocsTitle>{page.data.title}</DocsTitle>
-      <DocsDescription className="mb-0">{page.data.description}</DocsDescription>
-      <DocsBody>
-        <MDX
-          components={getMDXComponents({
-            a: createRelativeLink(source, page),
-          })}
-        />
-      </DocsBody>
-    </DocsPage>
+    <main className="contents">
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(schema).replace(/</g, "\\u003c") }} />
+      <DocsPage toc={page.data.toc} full={page.data.full}>
+        <p className="docs-label docs-page-label">[ AxiomCore · Documentation ]</p>
+        <DocsTitle>{page.data.title}</DocsTitle>
+        <DocsDescription className="mb-0">{page.data.description}</DocsDescription>
+        <DocsBody>
+          <MDX
+            components={getMDXComponents({
+              a: createRelativeLink(source, page),
+            })}
+          />
+        </DocsBody>
+      </DocsPage>
+    </main>
   );
 }
 
@@ -41,13 +48,13 @@ export async function generateMetadata(props: { params: Promise<{ slug?: string[
     title: page.data.title,
     description: page.data.description,
     alternates: {
-      canonical: page.url,
+      canonical: page.url === "/" ? "/" : page.url.replace(/\/$/, "") + "/",
     },
     openGraph: {
       type: 'article',
       title: page.data.title,
       description: page.data.description,
-      url: page.url,
+      url: page.url === "/" ? "/" : page.url.replace(/\/$/, "") + "/",
       images: [{
         url: getPageImage(page).url,
         width: 1200,

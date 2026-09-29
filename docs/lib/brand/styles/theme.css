@@ -14,6 +14,7 @@
   --ax-text-subtle: #888;
   --ax-border: oklch(0.2931 0 0);
   --ax-border-strong: #555;
+  --ax-accent-text: #ff7046;
   --ax-accent: oklch(0.5905 0.2219 32.24);
   --ax-accent-hover: oklch(0.66 0.2219 32.24);
   --ax-font-display: "PP Supply Sans", sans-serif;

@@ -1,11 +1,12 @@
 export function createContentSecurityPolicy({ isProduction }) {
+  const ga = /^G-[A-Z0-9]+$/.test(process.env.NEXT_PUBLIC_GA4_MEASUREMENT_ID ?? '');
   return [
     "default-src 'self'",
-    `script-src 'self' 'unsafe-inline'${isProduction ? '' : " 'unsafe-eval'"}`,
+    `script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com${ga ? " https://www.googletagmanager.com" : ""}${isProduction ? '' : " 'unsafe-eval'"}`,
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob:",
     "font-src 'self' data:",
-    "connect-src 'self'",
+    `connect-src 'self' https://cloudflareinsights.com${ga ? " https://*.google-analytics.com https://www.googletagmanager.com" : ""}`,
     "worker-src 'self' blob:",
     "object-src 'none'",
     "base-uri 'self'",

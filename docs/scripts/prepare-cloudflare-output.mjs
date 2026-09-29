@@ -48,7 +48,7 @@ function createReaderAsset(sourcePath) {
   const title = frontmatterValue(frontmatter, 'title') ?? routePath;
   const description = frontmatterValue(frontmatter, 'description');
   const destination = join(outputRoot, 'docs', routePath + '.mdx');
-  const sourceUrl = 'https://docs.axiomcore.dev/docs/' + routePath + '.mdx';
+  const sourceUrl = 'https://docs.axiomcore.dev/' + (routePath === 'index' ? '' : routePath + '/');
 
   mkdirSync(resolve(destination, '..'), { recursive: true });
   writeFileSync(

@@ -10,10 +10,13 @@ const source = resolve(
 const destination = join(docsRoot, "lib/brand");
 mkdirSync(join(destination, "styles"), { recursive: true });
 mkdirSync(join(destination, "assets"), { recursive: true });
-for (const file of ["theme.css", "fonts.css"]) {
+for (const file of ["theme.css", "fonts.css", "analytics.css"]) {
   cpSync(join(source, "styles", file), join(destination, "styles", file));
 }
 cpSync(join(source, "assets/fonts"), join(destination, "assets/fonts"), {
   recursive: true,
 });
 console.log("Synced the approved AxiomCore theme and local fonts.");
+
+mkdirSync(join(destination, "analytics"), { recursive: true });
+cpSync(join(source, "analytics/client.ts"), join(destination, "analytics/client.ts"));

@@ -6,17 +6,37 @@ description: Understand the narrow analytics, server logging, search, and suppor
 The documentation application is primarily public content. Reading a page does
 not require an AxiomCore account, contract, project, or CLI installation.
 
-## Site analytics
+## Public-site analytics
 
-The current application mounts `@vercel/analytics` only when the deployment
-sets the `VERCEL` environment marker. The analytics script and ingest endpoint
-are served through the deployment's `/_vercel/insights` path. Local development
-and non-Vercel builds do not mount that component through this code path.
+The landing site, documentation, and Playground are hosted on Cloudflare.
+Cloudflare Web Analytics is enabled through the hosting account and measures
+aggregate visits and performance. It is separate from the optional analytics
+choice below. See [Cloudflare’s Web Analytics privacy explanation](https://developers.cloudflare.com/web-analytics/about/).
 
-This documentation does not promise a fixed provider retention period or
-dataset because those are deployment-account controls rather than constants in
-the application source. Deployment owners must review provider configuration,
-access, and retention before enabling analytics.
+Optional Google Analytics 4 integration is disabled unless the deployment has a
+measurement ID. When configured, it loads only on the canonical public hosts
+and only after you select **Accept analytics**. Declining does not load the
+Google tag. **Privacy choices** lets you change the decision. The choice is
+stored in a first-party cookie shared across the three sites for six months.
+Accepting analytics allows Google Analytics cookies for usage measurement;
+advertising storage, Google signals, and ad personalization are disabled by
+this integration.
+
+Page measurement sends the page origin and path without query strings or
+fragments. Custom events are limited to predefined action categories, such as
+opening documentation, copying an installation command, running the example,
+or selecting an Inspector view. Source code, request bodies, generated files,
+raw search queries, and compilation error messages are not custom event data.
+An export event records download initiation, not a confirmed local install.
+
+Session replay is not installed by this integration, including in the
+Playground. Local mock runtime events and application evidence are separate
+from public-site analytics. The previous conditional Vercel analytics component
+has been removed in favor of this explicit configuration.
+
+Provider retention, regional processing, and access settings are managed in the
+hosting and analytics accounts. No fixed retention period is promised here.
+Questions or requests can be sent to [contact@yashmakan.com](mailto:contact@yashmakan.com).
 
 ## Search and machine-readable routes
 

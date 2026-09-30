@@ -136,14 +136,70 @@ fn local_authoring_does_not_consult_cloud_configuration() {
 }
 
 #[test]
+fn local_artifact_pull_validates_options_without_cloud_access_or_a_terminal() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("contract.axiom"), b"local artifact").unwrap();
+    for ci in [true, false] {
+        for source in [vec!["contract.axiom"], vec!["--contract", "contract.axiom"]] {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_axiom-cli"));
+            command
+                .current_dir(directory.path())
+                .arg("pull")
+                .args(source)
+                // Reject options before invoking an external generator or
+                // installing anything in the user's contract cache.
+                .args([
+                    "--framework",
+                    "unsupported",
+                    "--name",
+                    "local",
+                    "--out",
+                    "generated",
+                ])
+                .env("AXIOM_CLOUD_URL", "invalid-cloud-endpoint")
+                .env_remove("AXIOM_REFERRAL_CODE");
+            if ci {
+                command.env("CI", "true");
+            } else {
+                command.env_remove("CI");
+            }
+            let output = command.output().unwrap();
+            assert!(!output.status.success());
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains("Unknown framework 'unsupported'"),
+                "{output:?}"
+            );
+            assert!(!String::from_utf8_lossy(&output.stdout).contains("Private Alpha"));
+        }
+    }
+    assert!(!directory.path().join("AxiomDeps.toml").exists());
+}
+
+#[test]
 fn cloud_commands_retain_cloud_configuration_and_access_checks() {
     let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("AxiomDeps.toml"),
+        "framework = \"atmx-web\"\n[contracts.remote]\nsource = \"https://api.axiomcore.dev/org/project\"\n",
+    )
+    .unwrap();
+    std::fs::write(directory.path().join("contracts.json"), "{}").unwrap();
     for arguments in [
         vec!["build", "--release"],
         vec!["release"],
         vec!["deploy", "mock-server"],
         vec!["serve"],
         vec!["watch"],
+        vec!["pull", "org/project"],
+        vec![
+            "pull",
+            "--contract",
+            "https://api.axiomcore.dev/org/project",
+        ],
+        vec!["pull", "AxiomDeps.toml"],
+        vec!["pull", "--contract", "contracts.json"],
+        vec!["pull", "--contract-config", "AxiomDeps.toml"],
+        vec!["pull"],
         vec!["onboard", "--role", "frontend", "--contract", "org/project"],
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_axiom-cli"))

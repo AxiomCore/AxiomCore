@@ -380,6 +380,13 @@ fn resolve_single_contract_name(path: &Path, name_flag: Option<&str>) -> Result<
     }
 }
 
+/// A direct local artifact needs no cloud registration. A local TOML/JSON
+/// config can reference remote contracts, so it still uses the cloud gate.
+pub fn is_local_artifact_source(source: &str) -> bool {
+    let path = Path::new(source);
+    path.is_file() && !is_contract_config_path(path)
+}
+
 fn is_contract_config_path(path: &Path) -> bool {
     path.file_name().and_then(|value| value.to_str()) == Some("AxiomDeps.toml")
         || path

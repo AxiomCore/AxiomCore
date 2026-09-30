@@ -8,11 +8,8 @@ Attach one `StreamingDef` subtype to an endpoint.
 ## HTTP and server-sent streams
 
 ```acore
-streaming = HttpStreamDef {
-  responseType = Models.Event
-  framing = "event"
-  encoding = "json"
-}
+// Inside an endpoint declaration; Models.Event is an authored or extracted model.
+streaming(HttpStreamDef(responseType: Models.Event, framing: "event", encoding: "json"))
 ```
 
 `HttpStreamDef` supports framing values `chunk`, `event`, `message`, or `file`
@@ -22,12 +19,13 @@ response type with its fixed `sse` kind.
 ## WebSockets
 
 ```acore
-streaming = WebSocketDef {
-  direction = "bidirectional"
-  reconnect = "auto"
-  client = WsMessageDef { model = Models.ChatMessage }
-  server = WsMessageDef { model = Models.ChatResponse }
-}
+// Inside an endpoint declaration.
+streaming(WebSocketDef(
+  direction: "bidirectional",
+  reconnect: "auto",
+  client: WsMessageDef(model: Models.ChatMessage),
+  server: WsMessageDef(model: Models.ChatResponse)
+))
 ```
 
 Directions are `server_to_client` and `bidirectional`. Reconnect intent is
@@ -37,11 +35,10 @@ Directions are `server_to_client` and `bidirectional`. Reconnect intent is
 ## File streams
 
 ```acore
-streaming = FileStreamDef {
-  contentType = "application/pdf"
-  filename = "report.pdf"
-  disposition = "attachment"
-}
+// Inside an endpoint declaration.
+streaming(FileStreamDef(
+  contentType: "application/pdf", filename: "report.pdf", disposition: "attachment"
+))
 ```
 
 Disposition is `attachment` or `inline`.

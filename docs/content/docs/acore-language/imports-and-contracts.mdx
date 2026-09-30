@@ -12,7 +12,7 @@ composition, and value inheritance. They are deliberately not synonyms.
 | Consume a compiled contract | `use contract Tasks from "tasks" audience "mobile"` | A `.axiom` artifact selected by `AxiomDeps.toml` and a lock |
 | Consume a typed frontend package export | `use theme AppTheme from "theme" export "default"` | A verified theme or component-library export selected by a package lock |
 | Add declarations to Acore or extracted backend input | `amends "..."` | Build-time authoring input |
-| Inherit/promote a declared value | `extend Models.Task` | An in-memory value; no file is loaded |
+| Promote a backend model | `entity task(model: Models.Task)` | A resolved model reference; no file is loaded |
 
 ## Internal source modules: `import`
 
@@ -32,7 +32,7 @@ use contract Tasks from "tasks" audience "mobile"
 ```
 
 Here `Tasks` is the local facade name and `tasks` is a stable alias in
-`AxiomDeps.toml` and `axiom.ui.lock.json`. The alias must resolve to a compiled
+the frontend project's `AxiomDeps.toml` and `axiom.ui.lock.json`. The alias must resolve to a compiled
 file whose extension is `.axiom`. The compiler exposes only the
 selected operations, fields, audience, and policy metadata; it never loads the
 backend's `.acore` source or runs an extractor.
@@ -40,6 +40,36 @@ backend's `.acore` source or runs an extractor.
 This indirection lets an application update a package version or location in
 its manifest/lock without rewriting every source use. The current UI facade
 schema exposes the service operations and fields selected for its audience.
+
+Declare that alias in the frontend's own manifest:
+
+```toml title="frontend/AxiomDeps.toml"
+type = "frontend"
+
+[contracts.tasks]
+artifact = "../backend/backend.axiom"
+baseUrl = "http://127.0.0.1:8080"
+```
+
+Paths are relative to the manifest. The backend has a separate
+`AxiomDeps.toml` with `type = "backend"`; that file selects backend syntax and
+may declare `audiences = ["mobile"]` for typed `Audience.mobile` references.
+Frontend dependency settings do not alter that vocabulary.
+
+Operations are inferred from the contract and filtered by audience. Omit the
+dependency's `audience` when the contract has one audience, or no audience
+restrictions. Select it explicitly when the diagnostic lists multiple choices.
+The source's `audience "mobile"` must agree with the resolved lock. New
+manifests need neither `format` nor an `operations` list.
+
+```bash
+# Run in the frontend directory after building the backend contract.
+axiom contract resolve
+axiom ui check frontend.acore --target web
+```
+
+The [playground example](/acore-language/backend-profile#frontend-contract-imports)
+shows both editable manifests and how its local `tasks` import is resolved.
 
 ## Typed frontend packages: `use theme` and `use component`
 
@@ -73,18 +103,20 @@ Top-level `extends "..."` is rejected because it made source composition and
 value inheritance ambiguous. `amends` is the one spelling for source
 composition.
 
-## Value inheritance: `extend`
+## Promote a backend model
 
 ```acore
-Entities = Entities {
-  task = extend Models.Task
-}
+// In a backend project with Models.Task available.
+entity task(model: Models.Task)
 ```
 
-`extend` promotes or inherits an already declared value. It does not import a
-file, run an extractor, or cross a trust boundary. Class declarations may use
-the conventional `class Child extends Parent` form; that is type inheritance,
-not a top-level input directive.
+`entity` promotes an already declared or extracted model. For a local model
+whose entity shares its shape and conventional identity key, append `also entity`
+to the model declaration; `model Task { id: String } also entity` creates
+`Entities.task`. It does not import a
+file, run an extractor, or cross a trust boundary. General evaluator modules
+retain `extend` for value inheritance, and classes may use the conventional
+`class Child extends Parent` form. These differ from a top-level input directive.
 
 ## Contract build flow
 

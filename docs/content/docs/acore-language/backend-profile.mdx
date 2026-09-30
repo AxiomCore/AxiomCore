@@ -1,0 +1,343 @@
+---
+title: Backend authoring profile
+description: Declare backend models, operations, and policies with typed arguments and inspect the same contract JSON.
+---
+
+Set `type = "backend"` in the nearest `AxiomDeps.toml`. Acore files start directly with declarations. The language provides named
+declarations, typed arguments, and collection types while retaining the existing
+JSON contract, semantic diff, `.axiom` artifact, and generated clients.
+
+```toml title="AxiomDeps.toml"
+type = "backend"
+# Optional vocabulary for typed Audience references:
+audiences = ["mobile"]
+```
+
+`type` selects the contract language for this directory and its subdirectories;
+a nearer manifest starts a new scope. The legacy profile header and `format`
+manifest discriminator remain readable for existing projects. New source files
+need neither. Imported generated extractor modules keep their existing format.
+
+Contract dependencies can omit `audience` and `operations`. The compiler derives
+operations from the contract and exposes only those allowed for the selected
+audience. An omitted audience uses the contract's sole audience, or `default`
+for an unscoped contract. If there are multiple audiences, the diagnostic lists
+the choices and requires an explicit selection.
+
+In the playground, each source has its own editable **AxiomDeps.toml** tab.
+The frontend manifest sits next to Frontend.acore; the backend manifest sits
+next to Backend.acore. Compiler
+errors appear as underlines and gutter markers while you type. Hover a marker
+for the explanation and valid choices, or open Problems with Ctrl/⌘ + Shift + M.
+
+## A complete contract
+
+```acore
+project(id: "projects-api", version: "1.0.0")
+variant default(include: ["*"])
+
+model Project {
+  id: String
+  name: String(minLength: 1, maxLength: 72)
+  progress: Int64(min: 0, max: 100)
+}
+
+endpoint listProjects(method: GET, path: "/projects") {
+  response(type: List<Models.Project>)
+  cache(strategy: CacheStrategy.cacheFirst, ttl: 2m)
+  errors("projects_unavailable")
+}
+```
+
+`listProjects` is the operation's public name. Endpoint IDs are compiler-owned;
+ordinary declarations do not repeat a `name` or assign an `id`. Named arguments
+make expected inputs visible at each declaration. Unknown declarations,
+unknown arguments, repeated singleton declarations, and missing required
+arguments produce diagnostics.
+
+These calls declare contract data. They do not execute HTTP handlers or cache
+requests during evaluation. Continue implementing production service handlers
+in the extracted backend, or use the deterministic mock engine for local
+contract development.
+
+## Types and collections
+
+Models use a familiar `field: Type` form. `List<T>` describes a response or
+field containing items of one type. `Map<K, V>` describes key/value types:
+
+```acore
+model ProjectIndex {
+  names: List<String>
+  counts: Map<String, Int64>
+  groupedNames: Map<String, List<String>>
+}
+```
+
+`Optional<T>` makes a model field omittable. A required field that accepts a
+JSON `null` uses an explicit nullable validation rule:
+
+```acore
+model ProjectDetails {
+  subtitle: Optional<String>
+  description: Field(type: String, validate: {
+    type: "nullable", inner: {type: "string"}
+  })
+}
+```
+
+Here `subtitle` may be absent, while `description` must be present and may be
+`null` or a string. Nested optional element types such as
+`List<Optional<String>>` are rejected because the current contract type schema
+does not represent element-level omission.
+
+Use brackets for collection **values**, such as retry status codes or variant
+patterns. Use angle brackets for collection **types**. References use explicit
+namespaces: `Models.Project`, `Entities.project`, and
+`Projections.projectMemberCard`. For names containing punctuation, use quoted
+declarations and indexed references such as
+`Models["treasury.outbound_transfer"]`.
+
+## Entities, fields, and audiences
+
+Use `also entity` when a model and its entity share the same shape:
+
+```acore
+model Task {
+  id: String
+  title: String(minLength: 1, maxLength: 10)
+  completed: Bool
+} also entity
+
+projection taskUpdate(
+  entity: Entities.task,
+  fields: [.title, .completed],
+  audience: Audience.mobile
+)
+```
+
+`Task` creates `Entities.task`; `TaskItem` creates `Entities.taskItem`, and
+`HTTPTask` creates `Entities.httpTask`. This is equivalent to writing
+`entity task(model: Models.Task)`. Keep an explicit entity declaration when
+its name, identity key, or documentation differs. Declaring both forms with
+the same entity name is an error. Entity identity inference is unchanged:
+models need an `id`/`uuid` field, or an explicit entity with `key:`.
+
+The `entity:` argument gives `.title` its type context. Fields resolve after
+imports and model overrides, and misspellings, missing fields, and duplicates
+are errors. Relative fields are supported in projection `fields:` arrays.
+Other string lists, such as error codes, keep their existing meaning.
+Editors offer entity field completion, navigation, and rename support.
+
+The nearest `AxiomDeps.toml`, beside the source or in a parent directory,
+defines the audience vocabulary. Contract dependency `audience` values are
+included automatically. Backend-only projects can declare audiences directly:
+
+```toml
+type = "backend"
+audiences = ["mobile", "web"]
+```
+
+`Audience.mobile` compiles to the existing `"mobile"` value. Unknown audiences
+or missing/invalid manifests are errors. Names with punctuation use indexed
+references, such as `Audience["workspace-member"]`. The nearest manifest owns
+the vocabulary; parent manifests are not merged. Strings remain supported for
+existing code, but typed references make manifest changes visible to the compiler.
+
+## Frontend contract imports
+
+The frontend is a separate project with its own manifest. The backend manifest
+above selects backend syntax and defines `Audience.mobile`; it does not declare
+which operations the frontend imports. In the frontend directory:
+
+```toml title="frontend/AxiomDeps.toml"
+type = "frontend"
+
+[contracts.tasks]
+artifact = "backend.axiom"
+baseUrl = "http://127.0.0.1:8080"
+```
+
+```acore title="frontend/frontend.acore"
+module playground.tasks.ui
+use contract Tasks from "tasks" audience "mobile"
+```
+
+`tasks` matches the manifest alias; `Tasks` is the local typed facade. In the
+playground, the browser compiles Backend.acore into the local `backend.axiom`
+contract. For a native project, point `artifact` at the compiled contract,
+relative to the frontend manifest, and resolve its lock with `axiom contract
+resolve` before checking the UI.
+
+There is no `format` or `operations` field to maintain. Operations come from
+the compiled contract and its audience restrictions. The dependency's
+`audience` field is optional when the contract has one audience; add it when
+choosing between multiple audiences. The explicit audience in `use contract`
+must match the resolved lock. It does not add to the backend's vocabulary.
+
+The playground compiles edits to both manifests, highlights errors in the
+owning tab, and includes their exact text in exported applications. Exports
+keep separate `source/frontend/` and `source/backend/` directories, each with
+its source and `AxiomDeps.toml`. The browser supports local `backend.axiom`
+imports; external packages and extensions require the CLI.
+
+## Request parameters
+
+Endpoint arguments describe the transport. A `request` block describes the
+values received over that transport:
+
+```acore
+endpoint getProject(method: GET, path: "/projects/{id}") {
+  request {
+    path("id", type: String)
+    query("includeArchived", type: Bool, optional: true)
+  }
+  response(type: Json)
+}
+```
+
+Request parameters retain their existing names, locations, and type references
+in the JSON contract. Projection declarations retain the existing request and
+response boundary semantics.
+
+## Inspect and validate
+
+```sh
+axiom explain --schema
+axiom eval axiom.acore --format json
+axiom explain axiom.acore
+axiom explain axiom.acore --provenance
+axiom check axiom.acore
+axiom build axiom.acore
+```
+
+The declaration catalog describes supported names and arguments. `eval` exposes
+the evaluated JSON; `explain` shows the contract for review. `check` validates a
+complete build in temporary storage without replacing artifacts or baselines.
+`build` writes the normal artifact.
+
+`explain --provenance` includes the same contract alongside source spans,
+declaration-to-JSON pointers, reusable-policy expansion, effective policy
+precedence, constructor defaults, and endpoint identity origins.
+
+The language server uses the compiler for structural and security diagnostics.
+Local imports use unsaved editor buffers. External extraction runs only through
+the explicit `acore.refreshBackend` editor command; diagnostics use that result
+until the next refresh. Backend rename follows resolved references across files.
+Endpoint rename includes an atomic identity-sidecar edit so IDs and public names
+remain stable. The editor must support workspace resource edits to create a new
+sidecar.
+
+Use `override model Models.User { ... }` and `override endpoint Routes.getUser { ... }`
+when extending extracted declarations. Supplied field types replace
+their previous type constraints. `Field(validate: {...})` keeps the inherited
+type and optionality but replaces the entire validation rule. Literal objects
+are complete values; omitted properties from a previous literal do not carry
+over. Conflicting declarations from independently amended sources are errors.
+
+The [runnable backend-profile example](https://github.com/AxiomCore/examples/tree/main/backend-profile)
+includes reusable policies, domain projections, deterministic mock responses,
+and an executable test suite. From its directory:
+
+```sh
+axiom check axiom.acore
+axiom build axiom.acore
+axiom serve axiom.acore --port 8080
+```
+
+In another terminal in the same directory, run `axiom test axiom.acore`.
+The `mobile` variant is also available through `axiom check axiom.acore --variant mobile`.
+These local commands require neither a backend extractor nor a cloud account.
+
+Use [semantic diff](/workflows/auditing-and-diffing) to review changes before
+releasing. Source formatting and declaration syntax should not introduce an
+unrelated contract change.
+
+## Existing contracts
+
+Legacy Acore modules remain supported by the general evaluator. Migrate an
+existing backend as a deliberate source change and compare its evaluated JSON
+before and after:
+
+```sh
+axiom migrate axiom.acore --output backend.acore
+axiom eval backend.acore --format json
+axiom check backend.acore
+```
+
+The output must be a new sibling file so relative imports keep the same base.
+Migration validates every declared variant and refuses to write output when
+the evaluated JSON changes. It writes the source and a companion
+`backend.acore.identities.json`. Preserve that generated metadata with the source: it
+retains existing endpoint identities and historical public names, including
+names that differ from their declaration keys.
+Comments are retained with their enclosing declaration during migration.
+The original file is left in place. To roll back, select it again as the build
+entrypoint and restore the matching released artifact and identity metadata.
+Legacy source remains supported; migration is opt-in.
+
+When rebuilding a released FlatBuffers contract, provide its original artifact
+so historical table field positions remain unchanged:
+
+```sh
+axiom build backend.acore --compatibility-baseline released.axiom
+```
+
+The baseline must belong to the same project, variant, and codec. Keep it with
+release evidence; sorting field names alone cannot preserve historical wire
+layout. A release retry that changes the version reuses the current artifact as
+its compatibility baseline.
+
+Backend classes such as `MockConfig`, `TestSuite`, and `SecurityPolicy` accept
+named arguments. Their JSON shapes, ordered mock mutations, test assertions,
+and runtime enforcement boundaries remain the same. See
+[mocking APIs](/workflows/mocking-apis),
+[testing contracts](/workflows/testing-contracts), and
+[security declarations](/acore-language/security-model-v1) for examples.
+
+## Compatibility and corrected examples
+
+The syntax migration preserves the contract schema and the existing build,
+semantic diff, mock, test, and client-generation paths. Repository checks compare
+normalized JSON and endpoint identities; the generated Stripe contract retains
+all 589 endpoints and 1,440 models unchanged.
+
+The migration also exposed pre-existing fixture and extraction defects. These
+are deliberate contract corrections, separate from source-format conversion:
+
+- The management API's compact legacy model entries silently lost their field
+  definitions. Explicit model declarations restore fields on 38 models while
+  preserving all endpoint identities.
+- Extracted Python collection responses now retain their referenced models.
+  Extracted enums and root authentication, offline, service-name, and test
+  settings are forwarded into the compiled contract. Backend language and the
+  complete extraction entry point are preserved. Extracted model and enum
+  documentation comes from the application's own class documentation, avoiding
+  inherited Python/Pydantic documentation that changes between tool versions.
+  Pydantic required fields that permit `null` remain required; nullable payload
+  validation and omission/default behavior are represented separately.
+- Go route groups and path parameters retain their full transport definition;
+  inferred response types describe the handler's response.
+- Inherited policy defaults are retained. Streaming examples use the supported
+  `server` and `client` WebSocket message definitions and explicitly declare the
+  message model used by untyped streaming handlers. The deliberately unsafe
+  security example declares its path parameter and still fails its intended
+  strict-security check.
+- Literal mock bodies, initial state, validation metadata, and expectation
+  values retain authored `null`, empty lists, and empty objects through JSON
+  rendering, including values inside nested containers.
+- The browser playground is a fresh profile example with compiler-derived
+  identities and the same public operation names. Migrated native contracts use
+  their sidecars to retain historical identities.
+
+New declarations must pass structural validation: unknown model references,
+missing path parameters, unsupported validation rules, and missing response
+types produce diagnostics. Correct invalid legacy source before migrating it;
+the migration command does not approve unrelated contract changes.
+
+Nested extracted validation retains its JSON form. Shared validation resolves
+named model schemas and optional/nullable wrappers before checking mock payloads
+or generating client constraints. Recursive schemas use a finite graph with
+named references, preserving nested constraints and required fields. Validation
+fails when a payload exceeds 64 reference traversals. Existing acyclic validator
+output is unchanged. Contracts using recursive validators require the updated
+bundled Rod runtime shipped with this compiler.

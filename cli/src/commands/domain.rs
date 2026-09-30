@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use axiom_extractor::evaluate_acore_config;
 use clap::ValueEnum;
 use regex::Regex;
@@ -114,7 +114,9 @@ fn bootstrap_openapi(raw: &str) -> Result<String> {
         });
     }
     if entities.is_empty() {
-        return Err(anyhow!("no object schema with an `id` property was found; choose durable entity identities manually"));
+        return Err(anyhow!(
+            "no object schema with an `id` property was found; choose durable entity identities manually"
+        ));
     }
     entities.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(render_suggestions("OpenAPI", entities, vec![]))
@@ -198,49 +200,41 @@ fn render_suggestions(
 ) -> String {
     let q = |value: &str| serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string());
     let mut output = format!(
-        "// Generated from {source}. This is a reviewable bootstrap, not an authority.\n// It expects matching extracted Models.* symbols in axiom.acore. IDs, relationship\n// cardinality, and ownership are compiler-managed or extractor-inferred.\n\nEntities = Entities {{\n"
+        "// Generated from {source}; review identities, ownership and exposure.\n// Add these declarations to the backend contract that supplies the matching Models.\n// Select type = \"backend\" in AxiomDeps.toml.\n\n"
     );
     for entity in &entities {
-        let alias = entity_alias(&entity.name);
-        let key_override = if entity.key.eq_ignore_ascii_case("id") {
-            String::new()
-        } else {
-            format!(" {{ key = Listing {{ {} }} }}", q(&entity.key))
-        };
         output.push_str(&format!(
-            "  [{alias:?}] = extend Models.{}{key_override}\n",
-            entity.model
+            "entity {} from Models[{}](key: [{}])\n",
+            q(&entity_alias(&entity.name)),
+            q(&entity.model),
+            q(&entity.key)
         ));
     }
-    output.push_str("}\n\ndomain {\n  entities = Entities\n  relationships = Relationships {\n");
+    output.push('\n');
     for relationship in &relationships {
         output.push_str(&format!(
-            "    {} {{ from = Entities.{} to = Entities.{} via = {} required = true }}\n",
-            entity_alias(&relationship.id),
-            entity_alias(&relationship.from),
-            entity_alias(&relationship.to),
+            "relationship {}(from: Entities[{}], to: Entities[{}], via: {}, required: true)\n",
+            q(&entity_alias(&relationship.id)),
+            q(&entity_alias(&relationship.from)),
+            q(&entity_alias(&relationship.to)),
             q(&relationship.via)
         ));
     }
-    output.push_str("  }\n  projections = Projections {\n");
     for entity in &entities {
         let mut fields = entity.fields.clone();
         fields.sort();
-        // This projection remains review-only until an author deliberately
-        // chooses its external audience and exposure list.
-        let rendered_fields = fields
+        let fields = fields
             .iter()
             .map(|field| q(field))
             .collect::<Vec<_>>()
-            .join(" ");
+            .join(", ");
         output.push_str(&format!(
-            "    [{}] = DomainProjection {{ entity = Entities.{} fields = Listing {{ {} }} }}\n",
+            "projection {}(entity: Entities[{}], fields: [{}])\n",
             q(&format!("internal{}", entity.name)),
-            entity_alias(&entity.name),
-            rendered_fields
+            q(&entity_alias(&entity.name)),
+            fields
         ));
     }
-    output.push_str("  }\n}\n");
     output
 }
 
@@ -263,4 +257,38 @@ fn sanitize_name(value: &str) -> String {
             format!("{}{}", first, characters.as_str())
         })
         .collect::<String>()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bootstrap_sources_emit_compilable_backend_declarations() {
+        let inputs = [
+            bootstrap_openapi(r#"{"components":{"schemas":{"User":{"properties":{"id":{"type":"string"},"name":{"type":"string"}}}}}}"#).unwrap(),
+            bootstrap_sql("CREATE TABLE User (id TEXT PRIMARY KEY, name TEXT); CREATE TABLE Post (id TEXT PRIMARY KEY, user_id TEXT REFERENCES User(id));").unwrap(),
+        ];
+        for suggested in inputs {
+            let source = format!(
+                "{suggested}\nproject(id: \"bootstrap\", version: \"1\")\nmodel User {{ id: String name: String }}\nmodel Post {{ id: String user_id: String }}"
+            );
+            let compiled = acore::backend::inspection::compile(
+                "file:///bootstrap.acore",
+                &source,
+                &std::collections::HashMap::from([(
+                    "file:///AxiomDeps.toml".into(),
+                    "type = \"backend\"".into(),
+                )]),
+                false,
+                None,
+            )
+            .unwrap();
+            assert_eq!(
+                compiled.contract["domain"]["entities"]["user"]["model"],
+                "User"
+            );
+            assert!(compiled.contract["domain"]["projections"]["internalUser"].is_object());
+        }
+    }
 }

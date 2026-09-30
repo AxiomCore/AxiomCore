@@ -77,7 +77,7 @@ export const acoreLanguage: LanguageRegistration = {
     declarations: {
       patterns: [
         {
-          match: '\\b(module|class|typealias|function|app|page|state|action|query|mutation)\\s+([A-Za-z_][A-Za-z0-9_.]*)',
+          match: '\\b(module|class|typealias|function|app|page|state|action|query|mutation|model|endpoint|entity|projection|variant|policy|relationship|invariant)\\s+([A-Za-z_][A-Za-z0-9_.]*)',
           captures: {
             1: { name: 'keyword.declaration.acore' },
             2: { name: 'entity.name.type.acore' },
@@ -93,7 +93,7 @@ export const acoreLanguage: LanguageRegistration = {
         },
         {
           name: 'keyword.other.acore',
-          match: '\\b(?:import|use|contract|theme|component|from|export|audience|appearance|read|amends|extend|extends|external|abstract|open|local|hidden|const|fixed|this|outer|super|view|route|on_press)\\b',
+          match: '\\b(?:import|use|contract|theme|component|from|export|audience|appearance|read|amends|extend|extends|external|abstract|open|local|hidden|const|fixed|this|outer|super|view|route|on_press|profile|backend|override|also|entity)\\b',
         },
       ],
     },
@@ -101,7 +101,7 @@ export const acoreLanguage: LanguageRegistration = {
       patterns: [
         {
           name: 'storage.type.acore',
-          match: '\\b(?:Any|Null|Boolean|Int|Float|Number|String|Duration|DataSize|List|Listing|Set|Map|Mapping|Object|Dynamic|Module|Class|Function)\\b',
+          match: '\\b(?:Any|Null|Boolean|Bool|Int|Int32|Int64|Float|Float32|Float64|Number|String|Bytes|DateTime|Json|Void|Optional|Duration|DataSize|List|Listing|Set|Map|Mapping|Object|Dynamic|Module|Class|Function)\\b',
         },
         {
           name: 'entity.name.type.acore',

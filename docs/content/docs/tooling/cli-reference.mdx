@@ -33,6 +33,10 @@ axiom doctor --json --strict
 | Command | Purpose |
 | --- | --- |
 | `axiom eval FILE [--format FORMAT] [--variant NAME]` | Evaluate Acore and render the selected output. |
+| `axiom check [FILE] [--variant NAME] [--json]` | Validate a complete backend build in temporary storage without replacing artifacts or baselines. |
+| `axiom explain FILE [--provenance]` | Inspect expanded contract JSON, optionally with source spans, defaults, policy origins, and identity metadata. |
+| `axiom explain --schema` | Print the shared backend declaration catalog, signatures, argument types, and enum choices. |
+| `axiom migrate FILE --output SIBLING.acore` | Convert legacy backend source only when every variant preserves evaluated JSON; retain the generated identity sidecar. |
 | `axiom test [FILE] [--tag TAG]` | Run declared Acore test suites, optionally filtered by tag. |
 | `axiom build [FILE] [--variant NAME]` | Build a local `.axiom` artifact. |
 | `axiom build --release [--project ID_OR_SLUG] [--version VERSION]` | Build and send the result through the connected Cloud release path. |

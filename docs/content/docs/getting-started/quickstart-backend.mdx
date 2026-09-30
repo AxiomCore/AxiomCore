@@ -6,6 +6,11 @@ description: Extract an existing service and compile a first reviewable contract
 This quickstart keeps FastAPI or Go as the executable backend and adds an
 Axiom contract boundary around it.
 
+New backend source uses the [backend authoring profile](/acore-language/backend-profile):
+`type = "backend"` in `AxiomDeps.toml`, typed model fields, named endpoint arguments, and
+`List<T>` / `Map<K, V>` collection types. The compiler supplies endpoint names
+and IDs from their declarations and generated identity metadata.
+
 ## Diagnose and plan
 
 ```bash

@@ -70,8 +70,13 @@ workflows.
 
 The browser Playground's **Export** button builds a portable development
 `.axiomapp` for your selected targets. It includes authored sources, target
-models, a local mock backend, and Inspector evidence. Use a CLI containing
-`axiom-playground-application/v1` support; earlier versions report
+models, a local mock backend, and Inspector evidence. Frontend.acore and
+Backend.acore each have an adjacent **AxiomDeps.toml** tab: frontend imports
+live in the frontend manifest, while the backend manifest selects its language
+and audience vocabulary. Export preserves all four authored files in separate
+`source/frontend/` and `source/backend/` directories, including comments and
+uncompiled edits after successful export validation. Use the updated CLI with support for separate playground project manifests.
+Versions without `axiom-playground-application/v1` support report
 `AXIOM_APP_FORMAT: unsupported application format` and must be updated.
 
 From the download directory:

@@ -10,12 +10,16 @@ pub fn render_watch_hud(f: &mut Frame, area: Rect, state: &State) {
     .split(area);
 
     // 1. Status Line
-    let status_color = if state.is_rebuilding {
+    let status_color = if state.watch_error.is_some() {
+        Color::Red
+    } else if state.is_rebuilding {
         Color::Yellow
     } else {
         Color::Green
     };
-    let status_text = if state.is_rebuilding {
+    let status_text = if state.watch_error.is_some() {
+        " BUILD FAILED · WAITING FOR CHANGES "
+    } else if state.is_rebuilding {
         " ⟳ REBUILDING CONTRACT... "
     } else {
         " 👁 WATCHING FOR CHANGES "
@@ -62,10 +66,12 @@ pub fn render_watch_hud(f: &mut Frame, area: Rect, state: &State) {
 
     // 3. Build Status (Only if --build is passed)
     if state.watch_build_enabled {
-        let build_msg = format!(
-            "Local Artifact: {} (Hash: {})",
-            ".axiom", state.last_schema_hash
-        );
+        let build_msg = state.watch_error.clone().unwrap_or_else(|| {
+            format!(
+                "Local Artifact: axiom.axiom (Hash: {})",
+                state.last_schema_hash
+            )
+        });
         let build_pane = Paragraph::new(build_msg)
             .block(
                 Block::default()
@@ -73,7 +79,12 @@ pub fn render_watch_hud(f: &mut Frame, area: Rect, state: &State) {
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(Color::DarkGray)),
             )
-            .style(Style::default().fg(Color::Gray));
+            .style(Style::default().fg(if state.watch_error.is_some() {
+                Color::Red
+            } else {
+                Color::Gray
+            }))
+            .wrap(Wrap { trim: true });
         f.render_widget(build_pane, chunks[2]);
     }
 }

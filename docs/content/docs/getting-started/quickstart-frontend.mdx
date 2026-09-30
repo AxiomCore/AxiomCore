@@ -31,6 +31,13 @@ axiom ui check src/main.acore --target web
 axiom run src/main.acore --target web
 ```
 
+The frontend owns an `AxiomDeps.toml` with `type = "frontend"`. Declare backend
+imports under `[contracts.<alias>]` in that file; keep the backend's
+`type = "backend"` manifest in its own directory. The
+[contract import guide](/acore-language/imports-and-contracts#compiled-contracts-use-contract)
+shows the `tasks` alias, artifact path, optional audience, and lock resolution.
+The playground presents both manifests as separate tabs.
+
 The run command discovers local contract and extension manifests, builds stale
 local `.acore` contracts, maintains its development lock under `.axiom`, and
 compiles and verifies registered sandbox modules. No preparation command or

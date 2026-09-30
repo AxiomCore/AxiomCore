@@ -3,6 +3,13 @@ title: Acore base schema reference
 description: Implemented contract, behavior, domain, security, mock, and test classes exposed by acore.base.
 ---
 
+This page describes the existing contract data model and its standard-library
+classes. For new source, use the
+[backend authoring profile](/acore-language/backend-profile): named endpoint
+declarations, typed model fields, `List<T>`, and `Map<K, V>` lower to these same
+JSON fields. Generated identity metadata preserves historical endpoint IDs
+and names; developers do not repeat them in endpoint declarations.
+
 This page maps the public configuration surface declared in
 `acore/src/stdlib/base.acore`. It complements the [language manual](/acore-language):
 the manual explains syntax and evaluation, while this reference describes the

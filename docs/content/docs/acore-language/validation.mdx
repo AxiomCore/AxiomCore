@@ -19,22 +19,8 @@ AxiomCore has several validation layers. They are related but not interchangeabl
 produce it from supported source-framework metadata:
 
 ```acore
-models {
-  ["User"] = ModelDef {
-    name = "User"
-    fields = Mapping {
-      ["email"] = ModelField {
-        name = "email"
-        typeRef = TypeRefPrimitive { kind = "string" }
-        validate = {
-          type = "string"
-          min = 3
-          max = 254
-          format = "email"
-        }
-      }
-    }
-  }
+model User {
+  email: String(minLength: 3, maxLength: 254, format: "email")
 }
 ```
 
@@ -52,13 +38,12 @@ These constraints validate Acore configuration values during evaluation.
 ## Domain invariants
 
 ```acore
-invariants = Invariants {
-  ["nonNegativeTotal"] = DomainInvariant {
-    scope = Entities.order
-    expression = "total_cents >= 0"
-    fields = Listing { "total_cents" }
-  }
-}
+// Add to a backend profile that declares Entities.order.
+invariant nonNegativeTotal(
+  scope: Entities.order,
+  expression: "total_cents >= 0",
+  fields: ["total_cents"]
+)
 ```
 
 Invariant expressions and bounded rule objects are signed evidence for review,

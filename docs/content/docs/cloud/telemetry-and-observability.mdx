@@ -22,14 +22,12 @@ The connected project can create an OTLP source and produce an Acore
 through the project controls.
 
 ```acore
-observability {
-  enabled = true
-  telemetryUrl = "https://collector.example.com/v1/traces"
-  sampleRate = 0.1
-  headers = Mapping {
-    ["x-axiom-telemetry-dsn"] = "<scoped-write-credential>"
-  }
-}
+observability(
+  enabled: true,
+  telemetryUrl: "https://collector.example.com/v1/traces",
+  sampleRate: 0.1,
+  headers: { "x-axiom-telemetry-dsn": "<scoped-write-credential>" }
+)
 ```
 
 Use the exact endpoint and scoped credential issued by the project connection

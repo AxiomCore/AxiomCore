@@ -11,7 +11,7 @@ export async function GET() {
   lines.push('Capability status and boundaries are part of the contract: Available, Alpha, Experimental, or Coming soon.');
   lines.push('');
   for (const page of source.getPages()) {
-    lines.push(`- [${page.data.title}](${origin}${page.url}): ${page.data.description}`);
+    lines.push(`- [${page.data.title}](${origin}${page.url === "/" ? "/" : page.url.replace(/\/$/, "") + "/"}): ${page.data.description}`);
   }
   return new Response(lines.join('\n'), {
     headers: { 'Content-Type': 'text/plain; charset=utf-8' },

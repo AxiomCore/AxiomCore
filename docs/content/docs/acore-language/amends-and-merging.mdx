@@ -18,13 +18,9 @@ amends "axiom-go:./cmd/api"
 Once amended, Axiom injects two global variables: `Routes` and `Models`. You can reference them to override behavior:
 
 ```acore
-endpoints {
-  [Routes.get_user_by_id] {
-    cache = CachePolicy {
-      strategy = "cache_first"
-      ttlSeconds = 300
-    }
-  }
+// Override an existing extracted operation; do not redeclare its transport.
+override endpoint Routes.get_user_by_id {
+  cache(strategy: CacheStrategy.cacheFirst, ttl: 5m)
 }
 ```
 
@@ -36,7 +32,7 @@ Acore uniquely supports **Multi-Amends Deep Merging**. If you have an API Gatewa
 amends "axiom-go:./billing-service/main.go"
 amends "axiom-fastapi:./auth-service/main.py:app"
 
-// Routes from BOTH services are now available in the `endpoints` map!
+// Both services contribute routes to the resulting contract.
 ```
 
 Conflicts are build-time errors; ordering must not silently change a released

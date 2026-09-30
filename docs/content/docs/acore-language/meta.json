@@ -2,6 +2,7 @@
   "title": "Acore Language",
   "pages": [
     "index",
+    "backend-profile",
     "syntax-overview",
     "values-types-and-operators",
     "objects-classes-and-functions",

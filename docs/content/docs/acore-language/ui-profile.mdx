@@ -16,6 +16,13 @@ and application source has no JavaScript escape hatch.
 
 ## Smallest application
 
+The frontend project has its own `AxiomDeps.toml`, even when it has no backend
+imports:
+
+```toml title="AxiomDeps.toml"
+type = "frontend"
+```
+
 ```acore
 module example.app.ui
 
@@ -64,6 +71,11 @@ value computed from state. Effects declare a trigger for compiler/runtime
 handling; they are not an arbitrary imperative callback.
 
 ## Locked service operations
+
+Declare the `tasks` alias in the frontend manifest, then resolve its contract
+lock. See [imports and contracts](/acore-language/imports-and-contracts#compiled-contracts-use-contract)
+for the manifest and CLI commands. The playground exposes this manifest in the
+**AxiomDeps.toml · Frontend** tab beside Frontend.acore.
 
 ```acore
 use contract Tasks from "tasks" audience "mobile"

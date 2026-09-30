@@ -1184,6 +1184,15 @@ fn is_local_command(command: &Commands) -> bool {
         | Commands::Build { release: false, .. }
         | Commands::Serve { file: Some(_), .. }
         | Commands::Watch { build: true, .. } => true,
+        Commands::Pull {
+            source,
+            contract,
+            contract_config: None,
+            ..
+        } => source
+            .as_deref()
+            .or(contract.as_deref())
+            .is_some_and(commands::pull::is_local_artifact_source),
         Commands::Install { package, module } => {
             !module && commands::app::is_axiom_application(Path::new(package))
         }

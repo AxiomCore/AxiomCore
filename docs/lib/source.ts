@@ -45,7 +45,7 @@ export async function getLLMText(page: InferPageType<typeof source>) {
 
   return `# ${page.data.title}
 
-Source: ${docsOrigin}${page.url}
+Source: ${docsOrigin}${page.url === "/" ? "/" : page.url.replace(/\/$/, "") + "/"}
 Description: ${page.data.description}
 
 ${processed}`;

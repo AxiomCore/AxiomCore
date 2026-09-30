@@ -60,7 +60,7 @@ pub async fn handle_init(entrypoint_arg: Option<String>, module_arg: Option<Stri
                         .modifiers
                         .contains(crossterm::event::KeyModifiers::CONTROL) =>
                 {
-                    break
+                    break;
                 }
                 _ => {}
             }
@@ -225,28 +225,62 @@ fn get_default_project_name() -> String {
 
 fn write_acore_file(module: &str, entrypoint: &str, project_name: &str) -> Result<()> {
     if Path::new("axiom.acore").exists() {
-        anyhow::bail!("axiom.acore already exists. Review it or remove it explicitly before running `axiom init` again.");
+        anyhow::bail!(
+            "axiom.acore already exists. Review it or remove it explicitly before running `axiom init` again."
+        );
     }
-    let content = format!(
-        r#"amends "{}:{}"
-
-project {{
-  id = "{}"
-  version = "v0.0.1"
-}}
-
-// OTLP/HTTP trace export is a release-level decision. Create a scoped source
-// in AxiomCore or use any OTLP-compatible collector, then add its ingest-only
-// header and set enabled = true before building a new cloud-signed release.
-// The endpoint and headers are immutable once the artifact is signed.
-observability {{
-  enabled = false
-  telemetryUrl = "https://api.axiomcore.dev/v1/traces"
-  sampleRate = 1.0
-}}
-"#,
-        module, entrypoint, project_name
-    );
+    let old_manifest = if Path::new("AxiomDeps.toml").exists() {
+        fs::read_to_string("AxiomDeps.toml")?
+    } else {
+        String::new()
+    };
+    let manifest = super::backend::backend_manifest(&old_manifest)?;
+    let content = backend_source(module, entrypoint, project_name);
     fs::write("axiom.acore", content)?;
+    if let Err(error) =
+        super::release::write_atomic(Path::new("AxiomDeps.toml"), manifest.as_bytes())
+    {
+        let _ = fs::remove_file("axiom.acore");
+        return Err(error);
+    }
     Ok(())
+}
+
+fn backend_source(module: &str, entrypoint: &str, project_name: &str) -> String {
+    let source = serde_json::to_string(&format!("{module}:{entrypoint}")).unwrap();
+    let project = serde_json::to_string(project_name).unwrap();
+    format!(
+        r#"amends {source}
+
+project(id: {project}, version: "v0.0.1")
+
+// Configure an OTLP-compatible collector and its ingest-only headers before
+// enabling trace export. These settings become immutable in a signed release.
+observability(
+  enabled: false,
+  telemetryUrl: "https://api.axiomcore.dev/v1/traces",
+  sampleRate: 1.0
+)
+"#
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backend_starters_use_the_typed_profile_and_escape_user_strings() {
+        for (module, entrypoint) in [
+            ("axiom-fastapi", "./main.py:app"),
+            ("axiom-go", "./main.go"),
+        ] {
+            let source = backend_source(module, entrypoint, "my-project");
+            assert!(!source.contains("profile backend"));
+            acore::backend::parse(&source).unwrap();
+        }
+        let source = backend_source("axiom-fastapi", "./a\"b.py:app", "Project \"quoted\"\nnext");
+        acore::backend::parse(&source).unwrap();
+        assert!(source.contains("\\\"quoted\\\""));
+    }
 }

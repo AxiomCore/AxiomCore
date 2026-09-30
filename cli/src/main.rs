@@ -23,6 +23,7 @@ use crossterm::event::KeyCode;
 use dialoguer::{theme::ColorfulTheme, Input};
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph};
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -117,12 +118,43 @@ enum Commands {
         #[arg(short, long)]
         variant: Option<String>,
     },
+    /// Validate a backend contract using the complete compiler without writing artifacts
+    Check {
+        #[arg(default_value = "axiom.acore")]
+        file: PathBuf,
+        #[arg(long)]
+        variant: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print expanded backend JSON or the machine-readable declaration catalog
+    Explain {
+        #[arg(required_unless_present = "schema", conflicts_with = "schema")]
+        file: Option<PathBuf>,
+        #[arg(long)]
+        variant: Option<String>,
+        #[arg(long)]
+        schema: bool,
+        /// Include source spans, compiler defaults, identities and effective policy origins
+        #[arg(long, conflicts_with = "schema")]
+        provenance: bool,
+    },
+    /// Migrate a legacy backend contract into a verified new sibling source
+    Migrate {
+        file: PathBuf,
+        /// New sibling .acore file; the original source is preserved
+        #[arg(short, long)]
+        output: PathBuf,
+    },
     Test {
         /// Optional path to an .acore file. If omitted, uses axiom.acore
         file: Option<PathBuf>,
         /// Only run test suites that match this tag
         #[arg(long)]
         tag: Option<String>,
+        /// Contract variant used to resolve endpoint references
+        #[arg(long)]
+        variant: Option<String>,
     },
     /// Start a local API Mock Server from your contract
     Serve {
@@ -134,6 +166,9 @@ enum Commands {
         /// Enable verbose debug logging for incoming requests and responses
         #[arg(short, long)]
         debug: bool,
+        /// Contract variant used by the local mock server
+        #[arg(long, requires = "file")]
+        variant: Option<String>,
     },
     /// Start the Acore REPL
     Repl,
@@ -147,6 +182,10 @@ enum Commands {
 
         #[arg(long)]
         variant: Option<String>,
+
+        /// Existing artifact whose FlatBuffers field slots must remain compatible
+        #[arg(long)]
+        compatibility_baseline: Option<PathBuf>,
 
         /// Release the compiled contract to Axiom Cloud
         #[arg(long)]
@@ -216,6 +255,9 @@ enum Commands {
         /// Build a local .axiom file on every change
         #[arg(long)]
         build: bool,
+        /// Contract variant used for evaluation and rebuilds
+        #[arg(long, requires = "build")]
+        variant: Option<String>,
     },
     Project {
         #[command(subcommand)]
@@ -957,14 +999,13 @@ async fn main() -> anyhow::Result<()> {
         return commands::join::handle_join(email.clone()).await;
     }
 
-    let local_cloud = uses_local_cloud()?;
-    let local_application_command = match &cli.command {
-        Commands::Package { .. } => true,
-        Commands::Inspect { .. } => true,
-        Commands::Install { package, module } => {
-            !module && commands::app::is_axiom_application(Path::new(package))
-        }
-        _ => false,
+    let local_application_command = is_local_command(&cli.command);
+    // Local compilation must work even when an unrelated cloud endpoint is
+    // misconfigured. Resolve cloud settings only for commands that use them.
+    let local_cloud = if local_application_command {
+        false
+    } else {
+        uses_local_cloud()?
     };
     let active_config = if local_cloud
         || local_application_command
@@ -1098,6 +1139,9 @@ async fn main() -> anyhow::Result<()> {
             format: _,
             variant: _,
         } => "eval",
+        Commands::Check { .. } => "check",
+        Commands::Explain { .. } => "explain",
+        Commands::Migrate { .. } => "migrate",
         Commands::Repl => "repl",
         Commands::Lsp => "lsp",
     };
@@ -1118,8 +1162,49 @@ async fn main() -> anyhow::Result<()> {
 }
 
 // Helper to route commands (Refactored from original main)
+/// Local compilation does not require private-alpha cloud registration. Commands
+/// that publish or retrieve cloud data retain their existing access checks.
+fn is_local_command(command: &Commands) -> bool {
+    match command {
+        Commands::Package { .. }
+        | Commands::Inspect { .. }
+        | Commands::Eval { .. }
+        | Commands::Check { .. }
+        | Commands::Explain { .. }
+        | Commands::Migrate { .. }
+        | Commands::Contract { .. }
+        | Commands::Init { .. }
+        | Commands::Domain { .. }
+        | Commands::Security { .. }
+        | Commands::Lsp
+        | Commands::Repl
+        | Commands::Onboard { contract: None, .. }
+        | Commands::Diff { .. }
+        | Commands::Test { .. }
+        | Commands::Build { release: false, .. }
+        | Commands::Serve { file: Some(_), .. }
+        | Commands::Watch { build: true, .. } => true,
+        Commands::Install { package, module } => {
+            !module && commands::app::is_axiom_application(Path::new(package))
+        }
+        _ => false,
+    }
+}
+
 async fn execute_command(command: &Commands) -> anyhow::Result<()> {
     match command {
+        Commands::Check {
+            file,
+            variant,
+            json,
+        } => commands::backend::check(file, variant.as_deref(), *json),
+        Commands::Explain {
+            file,
+            variant,
+            schema,
+            provenance,
+        } => commands::backend::explain(file.as_deref(), variant.as_deref(), *schema, *provenance),
+        Commands::Migrate { file, output } => commands::backend::migrate(file, output),
         Commands::Doctor { json, strict } => commands::doctor::handle_doctor(*json, *strict).await,
         Commands::Onboard {
             role,
@@ -1674,11 +1759,17 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                 fail_on_warning,
             } => commands::security::handle_check(file.clone(), *json, *fail_on_warning).await,
         },
-        Commands::Test { file, tag } => {
-            commands::test::handle_test(file.clone(), tag.clone()).await
+        Commands::Test { file, tag, variant } => {
+            commands::test::handle_test(file.clone(), tag.clone(), variant.clone()).await
         }
-        Commands::Serve { file, port, debug } => {
-            commands::serve::handle_serve(file.clone(), *port, *debug).await
+        Commands::Serve {
+            file,
+            port,
+            debug,
+            variant,
+        } => {
+            commands::serve::handle_serve_variant(file.clone(), *port, *debug, variant.clone())
+                .await
         }
         Commands::Deploy { target } => match target {
             DeployTarget::MockServer { file } => {
@@ -1709,7 +1800,12 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                 acore::evaluator::Evaluator::new(acore::security::SecurityManager::allow_all());
             evaluator.active_variant = variant.clone();
 
-            let uri = format!("file://{}", file.canonicalize().unwrap().display());
+            let uri = format!(
+                "file://{}",
+                file.canonicalize()
+                    .map_err(|error| anyhow::anyhow!("Cannot read {}: {error}", file.display()))?
+                    .display()
+            );
             let val = evaluator.evaluate_module(&uri)?;
 
             let out_fmt = match format.as_deref().unwrap_or("pcf").to_lowercase().as_str() {
@@ -1744,6 +1840,7 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
         Commands::Build {
             file,
             variant,
+            compatibility_baseline,
             release,
             project,
             version,
@@ -1752,16 +1849,17 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
         } => {
             let variant_str = variant.clone().unwrap_or("default".to_string());
 
-            if std::env::var("CI").is_ok() {
-                match axiom_build::core::build::handle_build(&file, &variant_str, "", "", None)
-                    .await
+            if std::env::var("CI").is_ok() || !std::io::stdout().is_terminal() {
+                match commands::backend::build(
+                    Path::new(file),
+                    &variant_str,
+                    None,
+                    compatibility_baseline.as_deref(),
+                )
+                .await
                 {
                     Ok(out_file) => {
                         println!("✅ Build Succeeded! Generated {}", out_file);
-                        let lockfile_path = format!("{}.lockfile", &file);
-                        if let Ok(content) = std::fs::read_to_string(&file) {
-                            let _ = std::fs::write(&lockfile_path, content);
-                        }
                         if *release {
                             commands::release::handle_release(
                                 &out_file,
@@ -1786,6 +1884,7 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                     *release,
                     project.as_deref(),
                     version.as_deref(),
+                    compatibility_baseline.as_deref(),
                 )
                 .await
             }
@@ -1892,9 +1991,9 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             )
             .await
         }
-        Commands::Watch { build } => {
+        Commands::Watch { build, variant } => {
             if *build {
-                commands::watch::handle_watch_dynamic(true).await
+                commands::watch::handle_watch_dynamic(true, variant.clone()).await
             } else {
                 commands::watch::handle_watch_consumer().await
             }
@@ -2034,6 +2133,7 @@ async fn handle_build_command(
     release: bool,
     project_override: Option<&str>,
     version_override: Option<&str>,
+    compatibility_baseline: Option<&Path>,
 ) -> anyhow::Result<()> {
     let mut state = crate::state::State::new();
     let (action_tx, mut action_rx) = tokio::sync::mpsc::unbounded_channel::<Action>();
@@ -2045,14 +2145,14 @@ async fn handle_build_command(
     let task_result: anyhow::Result<String> = async {
         let v_clone = variant.clone();
         let f_clone = file_path.clone();
+        let baseline_clone = compatibility_baseline.map(Path::to_path_buf);
 
         tokio::spawn(async move {
-            match axiom_build::core::build::handle_build(
-                &f_clone,
+            match commands::backend::build(
+                Path::new(&f_clone),
                 &v_clone,
-                "",
-                "",
                 Some(action_tx.clone()),
+                baseline_clone.as_deref(),
             )
             .await
             {
@@ -2098,23 +2198,6 @@ async fn handle_build_command(
     match task_result {
         Ok(output_filename) => {
             println!("✅ Build Succeeded! Generated: {}", output_filename);
-
-            let lockfile_path = format!("{}.lockfile", file_path);
-            let mut eval =
-                acore::evaluator::Evaluator::new(acore::security::SecurityManager::allow_all());
-            if let Ok(val) = eval.evaluate_module(&format!(
-                "file://{}",
-                std::fs::canonicalize(&file_path).unwrap().display()
-            )) {
-                // Render it to JSON
-                if let Ok(json_output) =
-                    acore::render::render_value(&mut eval, &val, acore::render::OutputFormat::Json)
-                {
-                    if let Err(e) = std::fs::write(&lockfile_path, json_output) {
-                        eprintln!("⚠️ Failed to write lockfile: {}", e);
-                    }
-                }
-            }
 
             // Trigger release if flag was passed
             if release {
@@ -2249,6 +2332,75 @@ pub async fn handle_inspect(file_path: &Path) -> anyhow::Result<()> {
 #[cfg(test)]
 mod launch_tests {
     use super::*;
+
+    #[test]
+    fn backend_local_commands_do_not_require_cloud_registration() {
+        for args in [
+            vec!["axiom", "eval", "contract.acore"],
+            vec!["axiom", "check"],
+            vec!["axiom", "domain", "validate"],
+            vec!["axiom", "security", "check"],
+            vec!["axiom", "lsp"],
+            vec!["axiom", "contract", "resolve"],
+            vec!["axiom", "contract", "verify"],
+            vec!["axiom", "explain", "contract.acore"],
+            vec!["axiom", "explain", "--schema"],
+            vec!["axiom", "migrate", "old.acore", "--output", "new.acore"],
+            vec!["axiom", "init", "main.py:app", "--module", "axiom-fastapi"],
+            vec!["axiom", "onboard", "--role", "backend", "--apply"],
+            vec!["axiom", "build"],
+            vec!["axiom", "diff", "contract.acore"],
+            vec!["axiom", "test"],
+            vec!["axiom", "serve", "contract.acore"],
+            vec!["axiom", "watch", "--build"],
+        ] {
+            let cli = Cli::try_parse_from(&args).unwrap();
+            assert!(is_local_command(&cli.command), "{args:?}");
+        }
+        for args in [
+            vec!["axiom", "build", "--release"],
+            vec!["axiom", "release"],
+            vec!["axiom", "deploy", "mock-server"],
+            vec!["axiom", "serve"],
+            vec!["axiom", "watch"],
+            vec!["axiom", "pull"],
+            vec![
+                "axiom",
+                "onboard",
+                "--role",
+                "frontend",
+                "--contract",
+                "org/project",
+            ],
+        ] {
+            let cli = Cli::try_parse_from(&args).unwrap();
+            assert!(!is_local_command(&cli.command), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn backend_variant_and_baseline_flags_are_available() {
+        for command in ["check", "explain", "build", "test", "serve", "diff"] {
+            assert!(Cli::try_parse_from([
+                "axiom",
+                command,
+                "contract.acore",
+                "--variant",
+                "mobile"
+            ])
+            .is_ok());
+        }
+        assert!(Cli::try_parse_from([
+            "axiom",
+            "build",
+            "--compatibility-baseline",
+            "released.axiom"
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from(["axiom", "serve", "--variant", "mobile"]).is_err());
+        assert!(Cli::try_parse_from(["axiom", "explain"]).is_err());
+        assert!(Cli::try_parse_from(["axiom", "explain", "contract.acore", "--schema"]).is_err());
+    }
 
     #[test]
     fn run_does_not_launch_unless_requested() {

@@ -38,13 +38,16 @@ when attaching a machine-readable support report.
 
 ---
 
-### 2. Join the Private Alpha
-AxiomCore requires an authorized machine ID to interact with the build and release pipelines.
+### 2. Join the Private Alpha for cloud access
+Local backend authoring commands (`init`, `eval`, `check`, `explain`, `migrate`,
+`build`, `diff`, and `test`) work without joining the private alpha. Cloud
+operations and release publishing require an authorized machine.
 
 ```bash
 axiom join you@yourcompany.com
 ```
-*We will email you a referral code. Once received, any subsequent command will prompt you to enter it, authenticating your machine permanently.*
+We will email you a referral code. A subsequent cloud command prompts for it
+to authorize the machine.
 
 ---
 

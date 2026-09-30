@@ -55,7 +55,7 @@ pub async fn handle_release(
         ))?;
         let rebuilt_version;
         (artifact_path, file_bytes, rebuilt_version) =
-            rebuild_with_version(source, &version, variant).await?;
+            rebuild_with_version(source, &version, variant, &artifact_path).await?;
         if rebuilt_version != version {
             anyhow::bail!(
                 "Axiom rebuilt `{}` but it still declares version `{rebuilt_version}` instead of `{version}`. No release was sent.",
@@ -106,7 +106,7 @@ pub async fn handle_release(
                 ))?;
                 let rebuilt_version;
                 (artifact_path, file_bytes, rebuilt_version) =
-                    rebuild_with_version(source, &version, variant).await?;
+                    rebuild_with_version(source, &version, variant, &artifact_path).await?;
                 artifact_hash = hex_sha256(&file_bytes);
                 if rebuilt_version != version {
                     anyhow::bail!(
@@ -165,6 +165,7 @@ async fn rebuild_with_version(
     source_path: &Path,
     version: &str,
     variant: &str,
+    previous_artifact: &Path,
 ) -> anyhow::Result<(PathBuf, Vec<u8>, String)> {
     update_source_version(source_path, version)?;
     println!(
@@ -172,15 +173,12 @@ async fn rebuild_with_version(
         source_path.display()
     );
 
-    let source = source_path.to_str().ok_or_else(|| {
-        anyhow::anyhow!(
-            "Contract path is not valid UTF-8: {}",
-            source_path.display()
-        )
-    })?;
-    let artifact = axiom_build::core::build::handle_build(source, variant, "", "", None)
-        .await
-        .map_err(|error| anyhow::anyhow!("Could not rebuild {}: {error}", source_path.display()))?;
+    let artifact =
+        crate::commands::backend::build(source_path, variant, None, Some(previous_artifact))
+            .await
+            .map_err(|error| {
+                anyhow::anyhow!("Could not rebuild {}: {error}", source_path.display())
+            })?;
     let artifact_path = PathBuf::from(artifact);
     let artifact_bytes = std::fs::read(&artifact_path)?;
     let contract = axiom_lib::unpackager::unpack_axiom_bytes(&artifact_bytes)?;
@@ -198,6 +196,25 @@ fn update_source_version(source_path: &Path, version: &str) -> anyhow::Result<()
 
     let source = std::fs::read_to_string(source_path)
         .map_err(|error| anyhow::anyhow!("Could not read {}: {error}", source_path.display()))?;
+    let source_uri = format!("file://{}", source_path.canonicalize()?.display());
+    if acore::backend::is_backend_module(&source_uri, &source, &Default::default()) {
+        let declarations = acore::backend::syntax::parse(&source)?;
+        let argument=declarations.iter().find(|declaration|declaration.kind=="project")
+            .and_then(|declaration|declaration.args.iter().find(|argument|argument.name.as_deref()==Some("version")))
+            .ok_or_else(||anyhow::anyhow!("Declare project(id: ..., version: ...) in {} before changing its release version",source_path.display()))?;
+        if !matches!(
+            argument.value.value,
+            acore::backend::syntax::Value::String(_)
+        ) {
+            anyhow::bail!("project version must be a string literal");
+        }
+        let mut updated = source.clone();
+        updated.replace_range(
+            argument.value.span.clone(),
+            &serde_json::to_string(version)?,
+        );
+        return write_atomic(source_path, updated.as_bytes());
+    }
     let project_version = Regex::new(r#"(?s)(\bproject\s*\{.*?\bversion\s*=\s*)\"[^\"\r\n]*\""#)
         .expect("the project version expression is valid");
     if !project_version.is_match(&source) {
@@ -214,7 +231,7 @@ fn update_source_version(source_path: &Path, version: &str) -> anyhow::Result<()
     write_atomic(source_path, updated.as_bytes())
 }
 
-fn write_atomic(path: &Path, contents: &[u8]) -> anyhow::Result<()> {
+pub(crate) fn write_atomic(path: &Path, contents: &[u8]) -> anyhow::Result<()> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let filename = path
         .file_name()
@@ -385,5 +402,18 @@ mod tests {
         assert!(updated.contains("version = \"v0.0.2\""));
         assert!(updated.contains("id = \"demo-app\""));
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn backend_profile_release_version_edit_preserves_comments_and_other_literals() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("axiom.acore");
+        let source = "profile backend 1\n// project(version: \"leave\")\nproject(id: \"version-demo\", // keep\n version: \"v0.0.1\")\nmodel Item { version: String }\n";
+        fs::write(&path, source).unwrap();
+        update_source_version(&path, "v0.0.2").unwrap();
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            source.replace("\"v0.0.1\"", "\"v0.0.2\"")
+        );
     }
 }

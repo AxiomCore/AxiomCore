@@ -19,6 +19,15 @@ fn get_cache_paths(project_id: &str) -> Result<(PathBuf, PathBuf)> {
 }
 
 pub async fn handle_serve(file: Option<PathBuf>, port: u16, debug: bool) -> Result<()> {
+    handle_serve_variant(file, port, debug, None).await
+}
+
+pub async fn handle_serve_variant(
+    file: Option<PathBuf>,
+    port: u16,
+    debug: bool,
+    variant: Option<String>,
+) -> Result<()> {
     println!(
         "{}",
         style("🚀 Starting Axiom Mock Server...").cyan().bold()
@@ -29,6 +38,7 @@ pub async fn handle_serve(file: Option<PathBuf>, port: u16, debug: bool) -> Resu
 
         let mut evaluator = Evaluator::new(SecurityManager::allow_all());
         evaluator.is_axiom_project = true;
+        evaluator.active_variant = variant;
 
         let abs_path = path
             .canonicalize()

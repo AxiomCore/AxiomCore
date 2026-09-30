@@ -27,6 +27,7 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tower-lsp",
+ "url",
  "zip",
 ]
 
@@ -264,6 +265,7 @@ dependencies = [
  "dialoguer",
  "directories",
  "dirs",
+ "dotenvy",
  "ed25519-dalek",
  "futures",
  "fuzzy-matcher",
@@ -400,7 +402,9 @@ dependencies = [
  "heck 0.4.1",
  "hex",
  "indicatif",
+ "regex",
  "reqwest 0.11.27",
+ "rod-rs",
  "serde",
  "serde_bytes",
  "serde_jcs",
@@ -421,6 +425,7 @@ name = "axiom-mock"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axiom-lib",
  "axum",
  "base64 0.22.1",
  "bytes",

@@ -10,50 +10,77 @@ contract and validate the target before relying on it.
 ## Global policy
 
 ```acore
-policies {
-  cache = CachePolicy {
-    strategy = "stale_while_revalidate"
-    ttlSeconds = 3600
-  }
-  retry = RetryPolicy {
-    maxAttempts = 3
-    retryOnCodes = Listing { 502 503 504 }
-    retryOnTimeout = true
-    backoff = ExponentialBackoff {
-      initialDelay = "500ms"
-      maxDelay = "10s"
-      multiplier = 2.0
-      useJitter = true
-    }
-  }
-}
+policies(
+  cache: CachePolicy(strategy: CacheStrategy.staleWhileRevalidate, ttlSeconds: 3600),
+  retry: RetryPolicy(
+    maxAttempts: 3,
+    retryOnCodes: [502, 503, 504],
+    retryOnTimeout: true,
+    backoff: ExponentialBackoff(
+      initialDelay: "500ms", maxDelay: "10s", multiplier: 2.0, useJitter: true
+    )
+  )
+)
 ```
 
 ## Endpoint override
 
 ```acore
-endpoints {
-  ["get_profile"] = EndpointDef {
-    name = "get_profile"
-    path = "/profile"
-    method = "GET"
-    cache = CachePolicy { strategy = "cache_first" ttlSeconds = 300 }
-    retry = RetryPolicy { maxAttempts = 2 }
-  }
+endpoint get_profile(method: GET, path: "/profile") {
+  response(type: Json)
+  cache(strategy: CacheStrategy.cacheFirst, ttl: 5m)
+  retry(attempts: 2)
 }
 ```
 
 An endpoint-level value is the narrow override for that endpoint. Do not infer
 an override from the HTTP method.
 
+## Reusable policies and defaults
+
+Use `defaults` for concise project-wide settings and `policy` for a named,
+reusable declaration:
+
+```acore
+defaults {
+  cache(strategy: CacheStrategy.networkFirst, ttl: 30s)
+}
+
+policy reads {
+  cache(strategy: CacheStrategy.cacheFirst, ttl: 2m)
+  retry(
+    attempts: 3,
+    onStatus: [502, 503, 504],
+    onTimeout: true,
+    backoff: Exponential(initial: 250ms, max: 2s, multiplier: 2.0, jitter: true)
+  )
+}
+
+endpoint listProjects(method: GET, path: "/projects") {
+  response(type: Json)
+  use(reads)
+}
+```
+
+`use(policy: reads)` is the equivalent fully named form. `Fixed(...)` and
+`Linear(...)` provide the other typed backoff constructors. Durations such as
+`250ms`, `2s`, and `2m` are compiler-checked values.
+
+An explicit endpoint policy takes precedence over a variant cache policy,
+which takes precedence over project defaults. A reused policy expands into the
+endpoint declaration; it is not an ordered runtime call. Defining the same
+singleton twice, including through `use`, is an error. Policy cycles and
+unknown names are errors. Inspect effective settings and their origins with
+`axiom explain axiom.acore --provenance`.
+
 ## Cache strategies
 
-| Strategy | Contract intent |
-| --- | --- |
-| `network_only` | Do not satisfy the request from the contract cache. |
-| `cache_first` | Use a valid cached value before network. |
-| `network_first` | Prefer network and use the target's implemented fallback behavior. |
-| `stale_while_revalidate` | Permit an existing value while a refresh is attempted. |
+| Authoring value | JSON value | Contract intent |
+| --- | --- | --- |
+| `CacheStrategy.networkOnly` | `network_only` | Do not satisfy the request from the contract cache. |
+| `CacheStrategy.cacheFirst` | `cache_first` | Use a valid cached value before network. |
+| `CacheStrategy.networkFirst` | `network_first` | Prefer network and use the target's implemented fallback behavior. |
+| `CacheStrategy.staleWhileRevalidate` | `stale_while_revalidate` | Permit an existing value while a refresh is attempted. |
 
 `ttlSeconds` is required by `CachePolicy`. Storage, eviction, privacy, and
 background-refresh behavior remain target/runtime concerns.

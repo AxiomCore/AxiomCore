@@ -184,7 +184,7 @@ try {
       throw new Error(`Corpus page ${path} is unexpectedly noindex`);
     }
 
-    const imagePath = path === '/' ? '/og/docs/image.png' : `/og/docs${path}/image.png`;
+    const imagePath = path === '/' ? '/og/docs/image.png' : `/og/docs${path.replace(/\/$/, "")}/image.png`;
     const image = await fetch(`${origin}${imagePath}`, { signal: AbortSignal.timeout(10_000) });
     if (image.status !== 200 || !image.headers.get('content-type')?.includes('image/png')) {
       throw new Error(`Open Graph image ${imagePath} is unavailable`);
@@ -194,7 +194,7 @@ try {
     }
 
     if (path !== '/') {
-      const readerPath = `/docs${path}.mdx`;
+      const readerPath = `/docs${path.replace(/\/$/, "")}.mdx`;
       const reader = await fetch(`${origin}${readerPath}`, { signal: AbortSignal.timeout(10_000) });
       if (reader.status !== 200 || !reader.headers.get('content-type')?.includes('text/markdown')) {
         throw new Error(`Machine-reader route ${readerPath} is unavailable`);

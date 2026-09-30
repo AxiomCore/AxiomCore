@@ -21,51 +21,39 @@ contains a token, cookie value, API key, or request payload.
 - Structural errors, such as an unknown policy reference, always stop
   compilation because the declaration would be ambiguous.
 
-```text
-security {
-  mode = "audit"
-  principals {
-    ["workspaceMember"] = SecurityPrincipal { roles = Listing { "member" "owner" } }
-  }
-  auth {
-    ["browserSession"] = AuthenticationPolicy {
-      transport = "cookie"
-      secure = true
-      httpOnly = true
-      sameSite = "lax"
-      sessionRotation = true
-    }
-  }
-  permissions {
-    ["editDocument"] = Permission {
-      requiresRateLimit = true
-      requiresIdempotency = true
-      requiresCsrf = true
-    }
-  }
-  resources { ["document"] = ProtectedResource { entity = Entities.document } }
-  policies {
-    ["documentEditor"] = SecurityPolicy {
-      principals = Listing { "workspaceMember" }
-      auth = "browserSession"
-      resource = "document"
-      permissions = Listing { "editDocument" }
-      relationship = "workspaceDocument"
-      resourceBinding = "principal.workspaceId == resource.workspaceId"
-    }
-  }
-  endpoints {
-    ["UpdateDocument"] = EndpointGuard {
-      policy = "documentEditor"
-      resource = "document"
-      permission = "editDocument"
-      writableFields = Listing { "title" "body" }
-      idempotent = true
-    }
-  }
-  rateLimits { ["memberWrite"] = RateLimit { maxRequests = 60 windowSeconds = 60 key = "principal" } }
-  csrf = CsrfPolicy { strategy = "double_submit" sameSite = "lax" secure = true httpOnly = true }
-}
+```acore
+// Add to a contract declaring Entities.document and UpdateDocument.
+security(
+  mode: "audit",
+  principals: { workspaceMember: SecurityPrincipal(roles: ["member", "owner"]) },
+  auth: {
+    browserSession: AuthenticationPolicy(
+      transport: "cookie", secure: true, httpOnly: true,
+      sameSite: "lax", sessionRotation: true
+    )
+  },
+  permissions: {
+    editDocument: Permission(
+      requiresRateLimit: true, requiresIdempotency: true, requiresCsrf: true
+    )
+  },
+  resources: { document: ProtectedResource(entity: Entities.document) },
+  policies: {
+    documentEditor: SecurityPolicy(
+      principals: ["workspaceMember"], auth: "browserSession", resource: "document",
+      permissions: ["editDocument"], relationship: "workspaceDocument",
+      resourceBinding: "principal.workspaceId == resource.workspaceId"
+    )
+  },
+  endpoints: {
+    UpdateDocument: EndpointGuard(
+      policy: "documentEditor", resource: "document", permission: "editDocument",
+      writableFields: ["title", "body"], idempotent: true
+    )
+  },
+  rateLimits: { memberWrite: RateLimit(maxRequests: 60, windowSeconds: 60, key: "principal") },
+  csrf: CsrfPolicy(strategy: "double_submit", sameSite: "lax", secure: true, httpOnly: true)
+)
 ```
 
 Principal, permission, policy, authentication-profile, resource, and
@@ -80,7 +68,7 @@ the signed manifest. A route with a resource parameter should bind a policy
 and state `resourceBinding`; AXSEC-014 makes missing IDOR evidence visible.
 
 `defaultPolicy` is a reviewable project-wide fallback. Every public endpoint
-must set `public = true`; neither a missing security block nor an undeclared
+must set `public: true`; neither a missing security block nor an undeclared
 endpoint is silently considered protected.
 
 Authentication profiles are transport-oriented rather than provider-specific:
@@ -100,15 +88,14 @@ Use `classifications` to label extracted model fields without repeating
 schemas. `audiences` is optional, but required when a projection intentionally
 exposes classified data.
 
-```text
-classifications {
-  ["accountEmail"] = SensitiveData {
-    target = "Account.email"
-    classification = "PII"
-    audiences = Listing { "workspaceMember" }
-    redact = true
-  }
-}
+```acore
+// Include classifications in the contract's security(...) declaration.
+security(classifications: {
+  accountEmail: SensitiveData(
+    target: "Account.email", classification: "PII",
+    audiences: ["workspaceMember"], redact: true
+  )
+})
 ```
 
 For an endpoint returning a model with classified data, bind a domain
@@ -120,19 +107,19 @@ boundary, not runtime response inspection.
 
 Effects make sensitive sinks reviewable without embedding imperative code:
 
-```text
-services { ["billing"] = NetworkService { origin = "https://api.example.com" } }
-effects { ["createCharge"] = SecurityEffect { kind = "network" service = "billing" } }
-uploads {
-  ["avatar"] = UploadPolicy {
-    maxBytes = 5242880
-    mediaTypes = Listing { "image/jpeg" "image/png" }
-    inspectContent = true
-    generatedFilename = true
-    privateStorage = true
-    executable = false
+```acore
+// Include these arguments in the contract's security(...) declaration.
+security(
+  services: { billing: NetworkService(origin: "https://api.example.com") },
+  effects: { createCharge: SecurityEffect(kind: "network", service: "billing") },
+  uploads: {
+    avatar: UploadPolicy(
+      maxBytes: 5242880, mediaTypes: ["image/jpeg", "image/png"],
+      inspectContent: true, generatedFilename: true,
+      privateStorage: true, executable: false
+    )
   }
-}
+)
 ```
 
 Supported effect kinds are `network`, `html_output`, `upload`,

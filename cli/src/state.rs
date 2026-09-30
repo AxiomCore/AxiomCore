@@ -23,6 +23,7 @@ pub struct State {
     pub watch_diff: IRDiff,
     pub last_sync_time: String,
     pub watch_build_enabled: bool,
+    pub watch_error: Option<String>,
     pub last_schema_hash: String,
     pub previous_ir: Option<IR>,
 
@@ -162,6 +163,7 @@ impl State {
             watch_diff: IRDiff::default(),
             last_sync_time: "Never".into(),
             watch_build_enabled: false,
+            watch_error: None,
             last_schema_hash: "N/A".into(),
             previous_ir: None,
         }

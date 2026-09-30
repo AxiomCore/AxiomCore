@@ -15,7 +15,15 @@ axiom init main.py:app --module axiom-fastapi
 
 For Go, pass the supported Go entrypoint and extractor module selected by
 `axiom onboard`. Initialization creates authoring source; it does not upload a
-release.
+release. The adjacent manifest selects the backend language:
+
+```toml title="AxiomDeps.toml"
+type = "backend"
+```
+
+The `.acore` file needs no profile header. Add an optional `audiences` list
+when using typed `Audience` references. Frontend contract imports belong in
+the frontend project's separate manifest.
 
 ## 2. Review the authoring boundary
 
@@ -25,14 +33,8 @@ security declarations in Acore without moving application handlers into the
 configuration language.
 
 ```acore
-backend = BackendConfig {
-  language = "python"
-  entrypoint = "main.py:app"
-}
-
-policies = PolicyConfig {
-  retry = RetryPolicy { maxAttempts = 3 }
-}
+backend(language: "python", entrypoint: "main.py:app")
+policies(retry: RetryPolicy(maxAttempts: 3))
 ```
 
 ## 3. Build and inspect

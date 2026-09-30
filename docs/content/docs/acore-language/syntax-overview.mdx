@@ -3,9 +3,11 @@ title: Syntax overview
 description: The implemented lexical and structural rules of an Acore module.
 ---
 
-An Acore module is a sequence of declarations, properties, imports, and object
-members. Newlines and spaces separate tokens but are not statement terminators.
-Semicolons are not part of the current source grammar.
+Backend contracts use `type = "backend"` in `AxiomDeps.toml` and the named declarations described
+in the [backend profile](/acore-language/backend-profile). General-purpose
+Acore modules retain properties, classes, and expressions. The UI compiler has
+its own application declarations. Newlines separate declarations visually;
+semicolons are not part of the source grammar.
 
 ## Module declaration
 
@@ -24,16 +26,15 @@ Line comments begin with `//` and continue to the end of the line.
 
 ```acore
 // Contract policy shared by all endpoints.
-policies {
-  cache = CachePolicy { strategy = "network_first" ttlSeconds = 60 }
-}
+policies(cache: CachePolicy(strategy: CacheStrategy.networkFirst, ttlSeconds: 60))
 ```
 
 Block comments are not part of the current lexer.
 
 ## Properties
 
-A property can have a value, a type, or both:
+In general-purpose evaluator modules, a property can have a value, a type, or
+both:
 
 ```acore
 name = "orders"
@@ -41,25 +42,21 @@ port: Int = 8080
 optionalLabel: String? = null
 ```
 
-The block shorthand creates a dynamic object assigned to the property:
+Backend root declarations take named arguments:
 
 ```acore
-project {
-  id = "orders-api"
-  version = "1.0.0"
-}
+project(id: "orders-api", version: "1.0.0")
 ```
 
-Use a typed object expression when a value must instantiate a declared class:
+Backend constructors also take named arguments:
 
 ```acore
-cache = CachePolicy {
-  strategy = "cache_first"
-  ttlSeconds = 300
-}
+// The cache argument of policies(...) or variant name(...).
+CachePolicy(strategy: CacheStrategy.cacheFirst, ttlSeconds: 300)
 ```
 
-There is no `new` keyword. `new CachePolicy {}` is invalid Acore.
+There is no `new` keyword. Endpoint policy shorthand uses
+`cache(strategy: CacheStrategy.cacheFirst, ttl: 5m)`.
 
 ## Objects and dynamic keys
 
@@ -72,31 +69,30 @@ headers = {
 }
 ```
 
-Contract maps commonly use typed mapping objects:
+Backend variants use declarations and ordinary list values:
 
 ```acore
-variants = Mapping {
-  ["mobile"] = VariantConfig {
-    include = Listing { "public_*" }
-  }
-}
+variant mobile(include: ["public_*"])
 ```
 
 ## Collections
 
-Square brackets create a list expression. Commas are optional:
+Square brackets create a list expression. Backend profile values require commas
+between elements; general evaluator modules also accept whitespace separation:
 
 ```acore
 codes = [502, 503, 504]
-names = ["tasks" "users"]
+names = ["tasks", "users"]
 ```
 
-Contract schemas also use typed collection objects such as `Listing {}` and
-`Mapping {}` because their class constraints are part of `acore.base`:
+Backend types use `List<T>` and `Map<K, V>`. Collection values remain ordinary
+bracketed arrays and colon-separated objects:
 
 ```acore
-retryOnCodes = Listing { 502 503 504 }
-writableFields = Listing { "title" "status" }
+model Index {
+  names: List<String>
+  counts: Map<String, Int64>
+}
 ```
 
 ## Strings and numbers

@@ -10,19 +10,15 @@ contract tests.
 ## Declare an endpoint response
 
 ```acore
-endpoints {
-  ["ListTasks"] = EndpointDef {
-    name = "list_tasks"
-    method = "GET"
-    path = "/tasks"
-    mock = MockConfig {
-      fallback = MockResponse {
-        status = 200
-        headers = { ["content-type"] = "application/json" }
-        data = StaticData { body = { tasks = [] } }
-      }
-    }
-  }
+endpoint listTasks(method: GET, path: "/tasks") {
+  response(type: Json)
+  mock(MockConfig(
+    fallback: MockResponse(
+      status: 200,
+      headers: { "content-type": "application/json" },
+      data: StaticData(body: { tasks: [] })
+    )
+  ))
 }
 ```
 
@@ -39,26 +35,24 @@ and `weighted`. Conditions can inspect headers, query/path values, body paths,
 or mock state and can be combined with all/any/not conditions.
 
 ```acore
-responses = [
-  MockResponse {
-    label = "missing"
-    conditions = [
-      PathCondition { key = "id" op = "eq" value = "404" }
-    ]
-    status = 404
-  }
-]
+// The responses argument of MockConfig(...).
+MockConfig(responses: [
+  MockResponse(
+    label: "missing",
+    conditions: [PathCondition(key: "id", op: "eq", value: "404")],
+    status: 404
+  )
+])
 ```
 
 ## Stateful behavior
 
 ```acore
-state = MockStateConfig {
-  initial = { tasks = [] }
-  onReceive = [
-    StoreMutation { type = "append" key = "tasks" value = { id = "1" } }
-  ]
-}
+// The state argument of MockConfig(...).
+MockConfig(state: MockStateConfig(
+  initial: { tasks: [] },
+  onReceive: [StoreMutation(type: "append", key: "tasks", value: { id: "1" })]
+))
 ```
 
 State changes run in declaration order. The more detailed `changes` form can
@@ -68,15 +62,12 @@ explicit reset behavior should be part of the test setup when isolation matters.
 ## Fault injection
 
 ```acore
-fault = FaultConfig {
-  errorRate = 0.1
-  errorResponse = MockResponse { status = 503 }
-  networkFault = NetworkFault {
-    type = "slow_response"
-    probability = 0.1
-    delayMs = 500
-  }
-}
+// The fault argument of MockConfig(...).
+MockConfig(fault: FaultConfig(
+  errorRate: 0.1,
+  errorResponse: MockResponse(status: 503),
+  networkFault: NetworkFault(type: "slow_response", probability: 0.1, delayMs: 500)
+))
 ```
 
 Probabilities must be between 0 and 1. Fault injection demonstrates consumer

@@ -17,71 +17,44 @@ release artifact.
 ## The authoring model
 
 `Models` is populated from the backend source. `Entities` is a separate,
-autocomplete-friendly vocabulary. Promote a model with `extend Models.Name`,
+autocomplete-friendly vocabulary. Append `also entity` to a local model for an inferred lower camel case entity name, or promote a model with `entity name(model: Models.Name)`,
 then use the resulting `Entities.name` value in every semantic boundary.
 
 ```acore
-// The import is supplied by the FastAPI or Go extractor.
+// Models and routes come from the existing service.
 amends "axiom-fastapi:./main.py:app"
 
-Entities = Entities {
-  customer = extend Models.Customer {
-    doc = "A purchaser with a durable account."
-  }
-  order = extend Models.Order
-}
+entity customer(model: Models.Customer, doc: "A purchaser with a durable account.")
+entity order(model: Models.Order)
 
-domain {
-  entities = Entities
+// Customer.orders and Order.customer are discovered from the source model.
+invariant orderTotal(
+  scope: Entities.order,
+  expression: "total_cents >= 0",
+  fields: ["total_cents"]
+)
+projection publicCustomer(entity: Entities.customer, fields: [.id, .email])
 
-  // Customer.orders <-> Order.customer is discovered from the source model.
-  // No domain ID, model name, cardinality, or ownership is repeated here.
-  invariants = Invariants {
-    ["orderTotal"] = DomainInvariant {
-      scope = Entities.order
-      expression = "total_cents >= 0"
-      fields = Listing { "total_cents" }
-    }
-  }
-
-  projections = Projections {
-    ["publicCustomer"] = DomainProjection {
-      entity = Entities.customer
-      fields = Listing { "id" "email" }
-      // `audience` is intentionally optional.
-    }
-  }
-}
-
-endpoints {
-  ["get_customer"] = EndpointDef {
-    // Either extracted Models.* or promoted Entities.* may be used in an
-    // endpoint type. Relationships, invariants, and projections accept only
-    // Entities.*.
-    returnType = Entities.customer
-    responseProjection = "publicCustomer"
-  }
+override endpoint Routes.get_customer {
+  response(type: Entities.customer, projection: Projections.publicCustomer)
 }
 ```
 
-There is no `new` keyword in ACore. `Foo { ... }` creates a typed value and
-`{ ... }` creates a plain dynamic object.
+Constructor calls use named arguments, such as `DomainInvariant(scope: ...,
+fields: [...])`. Literal objects use colon-separated fields and commas.
 
 ### Identity and model changes
 
-The extension target supplies the model; never write `model = "Customer"` or
-a domain `id`. A key is inferred from `id`, `uuid`, or a case-insensitive
+The `model` argument supplies a resolved model reference; never repeat a model
+name as a string or assign a domain `id`. A key is inferred from `id`, `uuid`, or a case-insensitive
 equivalent. Only an unconventional durable key needs an override:
 
 ```acore
-Entities = Entities {
-  invoice = extend Models.Invoice {
-    key = Listing { "invoice_number" }
-  }
-}
+// An unconventional entity key is explicit; IDs remain compiler-owned.
+entity invoice(model: Models.Invoice, key: ["invoice_number"])
 ```
 
-`extend` can also add documentation or future entity-level metadata, without
+Entity arguments can also add documentation or entity-level metadata without
 making a second model declaration.
 
 ### Relationships and enums
@@ -95,15 +68,13 @@ If an association cannot be inferred, use `Entities.*` and the built-in enum
 helpers rather than remembering raw wire values:
 
 ```acore
-relationships = Relationships {
-  ["orderCustomer"] = DomainRelationship {
-    from = Entities.order
-    to = Entities.customer
-    via = "customer_id"
-    cardinality = Cardinality.manyToOne
-    ownership = Ownership.reference
-  }
-}
+relationship orderCustomer(
+  from: Entities.order,
+  to: Entities.customer,
+  via: "customer_id",
+  cardinality: Cardinality.manyToOne,
+  ownership: Ownership.reference
+)
 ```
 
 The compiler validates `via` on the source entity and `inverse` on the target.
@@ -118,19 +89,15 @@ arbitrary executable code. It can be a bounded readable expression, a
 structured Rod validation rule, or both.
 
 ```acore
-invariants = Invariants {
-  ["validShippingAddress"] = DomainInvariant {
-    scope = Entities.order
-    fields = Listing { "shipping_address" }
-    rules = {
-      type = "object"
-      properties = {
-        postal_code = { type = "string" min = 3 max = 16 }
-      }
-      required = Listing { "postal_code" }
-    }
+invariant validShippingAddress(
+  scope: Entities.order,
+  fields: ["shipping_address"],
+  rules: {
+    type: "object",
+    properties: { postal_code: { type: "string", min: 3, max: 16 } },
+    required: ["postal_code"]
   }
-}
+)
 ```
 
 Field validation extracted from Pydantic/Rod-compatible schemas is normalized
@@ -182,7 +149,7 @@ axiom domain bootstrap schema.sql --source sql --output axiom.domain.acore
 ```
 
 The command never overwrites a file or inspects a live database. Its output
-uses `extend Models.*`, `Entities.*`, and inferred defaults; it assumes matching
+uses model references, `Entities.*`, and inferred defaults; it assumes matching
 extracted model symbols exist in the contract. Review projections and any
 unconventional key override before release.
 

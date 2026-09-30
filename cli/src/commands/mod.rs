@@ -1,4 +1,5 @@
 pub mod app;
+pub mod backend;
 pub mod benchmark;
 pub mod cache;
 pub mod contract;

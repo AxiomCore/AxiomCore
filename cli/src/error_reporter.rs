@@ -42,7 +42,8 @@ impl ErrorDiagnostic {
         };
 
         let direction = if err_str.contains("pkl") || err_str.contains(".acore") {
-            "Check your axiom.acore configuration and Pkl syntax.".to_string()
+            "Check your Acore configuration and the declaration signature in the diagnostic."
+                .to_string()
         } else if err_str.contains("cargo") || err_str.contains("rust") {
             "Native runtime compilation failed. Ensure your backend types are compatible."
                 .to_string()

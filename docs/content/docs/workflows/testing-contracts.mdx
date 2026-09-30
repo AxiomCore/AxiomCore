@@ -10,31 +10,24 @@ assertion.
 ## Minimal suite
 
 ```acore
-testConfig = TestConfig {
-  defaults = TestDefaults { timeoutMs = 5000 }
-  suites = [
-    TestSuite {
-      name = "Task API"
-      baseUrl = "http://localhost:8080"
-      tags = ["smoke"]
-      checks = [
-        CheckDef {
-          label = "List tasks"
-          route = Routes.list_tasks
-          expect = [
-            StatusExpectation { value = 200 }
-            DurationExpectation { op = "lt" valueMs = 500 }
-            HeaderExpectation {
-              key = "content-type"
-              op = "contains"
-              value = "application/json"
-            }
-          ]
-        }
+// list_tasks is an authored or extracted endpoint in the same contract.
+testConfig(
+  defaults: TestDefaults(timeoutMs: 5000),
+  suites: [TestSuite(
+    name: "Task API",
+    baseUrl: "http://localhost:8080",
+    tags: ["smoke"],
+    checks: [CheckDef(
+      label: "List tasks",
+      route: Routes.list_tasks,
+      expect: [
+        StatusExpectation(value: 200),
+        DurationExpectation(op: "lt", valueMs: 500),
+        HeaderExpectation(key: "content-type", op: "contains", value: "application/json")
       ]
-    }
-  ]
-}
+    )]
+  )]
+)
 ```
 
 ```bash
@@ -59,9 +52,11 @@ Implemented expectation families cover:
 ## Capture values
 
 ```acore
-capture = [
-  ResponseCapture { path = "token" bindAs = "sessionToken" type = "string" }
-]
+// A capture argument inside CheckDef(...).
+CheckDef(
+  url: "/login",
+  capture: [ResponseCapture(path: "token", bindAs: "sessionToken", type: "string")]
+)
 ```
 
 Captured values are scoped test data for later checks/hooks. Do not print or

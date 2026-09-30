@@ -12,7 +12,7 @@ description: Acore literals, type expressions, null handling, operators, and exp
 | Integer | `42`, `-7` | Signed 64-bit integer in the current lexer. |
 | Float | `3.14`, `-0.5` | Double-precision evaluator value. |
 | String | `"hello"` | Double-quoted source string. |
-| List | `[1, 2]`, `Listing { 1 2 }` | Ordered values; contract schemas usually declare element types. |
+| List | `[1, 2]`, `Listing { 1 2 }` | General evaluator collection values; backend fields use `List<T>`. |
 | Set | Typed standard-library values | Unique collection value supported by evaluator intrinsics. |
 | Map/object | `{ key = value }`, `Mapping { [key] = value }` | Named properties or evaluated key/value entries. |
 | Function | `(x) -> x + 1` | Lambda closure with lexical capture. |

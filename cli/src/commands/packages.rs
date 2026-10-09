@@ -17,7 +17,7 @@ pub async fn handle_resolve(deps: PathBuf, lock: PathBuf) -> Result<()> {
     let resolved = resolve_package_manifest(&deps)?;
     write_package_lock(&lock, &resolved)?;
     println!(
-        "Resolved {} frontend package alias(es) into {}.",
+        "Resolved {} package alias(es) into {}.",
         resolved.packages.len(),
         lock.display()
     );
@@ -40,7 +40,7 @@ pub async fn handle_verify(deps: PathBuf, lock: PathBuf) -> Result<()> {
             .with_context(|| format!("locked package `{alias}` failed verification"))?;
     }
     println!(
-        "Verified {} locked frontend package alias(es).",
+        "Verified {} locked package alias(es).",
         locked.packages.len()
     );
     Ok(())

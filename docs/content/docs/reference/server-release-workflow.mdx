@@ -1,0 +1,283 @@
+---
+title: Server release workflow
+description: Follow one API from real serving and full mocks to reviewed native, Linux container and local Worker releases, with explicit configuration, promotion and rollback.
+---
+
+Use the source checkout's matching CLI, shared library and runtime. One public
+API can retain its endpoint IDs, types, guards, projections and client codecs
+while its private deployment selects a compatible host and reviewed providers.
+A successful contract build does not certify a deployment.
+
+## Choose the supported workflow
+
+| Profile | Workflow available today | Required platform evidence |
+| --- | --- | --- |
+| `native-server` | Real and full-mock local serving; immutable v2 bundles | macOS arm64, Linux arm64/x86_64 within the recorded host profile |
+| `container-arm64` | Source-built Linux managed/sandbox HTTP image | Native arm64 Linux runtime gate |
+| `container-amd64` | Source-built Linux managed/sandbox HTTP image | amd64 Linux runtime gate; current evidence uses emulation on arm64 |
+| `cloudflare-workers-local` | Managed JSON API, HS256 JWT and bounded HTTPS providers; local workerd/Wrangler | Pinned local runtime gate |
+| `cloudflare-workers` | Unavailable | Actual hosted requests, lifecycle, version and resource evidence still pending |
+| `serverless` / AWS Lambda | Unavailable; implementation deferred | AWS runtime and hosted acceptance have not been performed |
+| `edge`, unqualified `container` | Unavailable | A generic name does not identify a certified platform/architecture |
+
+Read [target contracts and release verification](/reference/server-targets-and-releases)
+for the precise capability and artifact limits, [Linux containers](/reference/server-containers)
+for the managed/sandbox and narrower adapter profiles, and [local Workers](/reference/server-workers)
+for the portable subset. Native callbacks, Unix storage and jobs cannot silently
+become Worker features. Provider substitution is an explicit private review.
+
+The maintained example is `examples/server-workflow/workers/service.acore`.
+Its corpus covers native real serving, full mocks, both container architectures
+and local workerd. It includes successful and denied requests, constrained
+input, nested action guards, ownership/tenant checks, projections, exact Int64
+JSON and response metadata. Hosted Lambda and Workers are excluded from this
+local acceptance record; their targets remain unavailable.
+
+The corpus checks security, media and CORS headers on success and rejection,
+including failures before action dispatch. HTTP responses default to
+`Cache-Control: no-store`; an explicit supported response metadata declaration
+can choose a reviewed cache policy. This transport default is separate from
+private provider caching and client query-cache policies.
+
+## Build and review from a clean directory
+
+From the assembled source workspace, copy `service.acore`, `AxiomDeps.toml` and
+`configure.py` from `examples/server-workflow/workers` to a new directory. Keep
+the matching source workspace available for container and Worker packaging.
+
+```sh
+axiom build service.acore
+python3 configure.py
+axiom server targets
+axiom server inspect backend.axiom backend.server.json --deployment deployment.json --target native-server
+```
+
+The public `backend.axiom` and private `backend.server.json` are separate outputs.
+`configure.py` writes a private deployment with exact plan/interface hashes,
+operation grants and environment **reference names**. It contains no secret
+values. Rebuild the deployment references after changing the private plan;
+never edit hashes to suppress a stale-artifact failure.
+
+For this example, privately provide:
+
+| Reference | Meaning |
+| --- | --- |
+| `JWT_KEY` | Reviewed HS256 signing key, at least 32 bytes |
+| `REMOTE_ORIGIN` | HTTPS origin implementing `/task`, `/owner`, `/write` and `/keyed` with the declared input/output types |
+| `REMOTE_TOKEN` | Entire upstream Authorization header value, such as `Bearer TOKEN` |
+| `ALLOW_LOOPBACK` | `false` for the portable production provider |
+| `IDEMPOTENCY_SUPPORTED` | `true` only after reviewing the keyed provider's idempotency behavior |
+
+Load these through your trusted local environment or deployment secret manager.
+Packaging captures references; validation and activation require actual values.
+The local acceptance gate supplies its own disposable key and intercepted
+provider, so running that gate needs no cloud account or business credentials.
+Those test substitutions do not enter production artifacts.
+
+```sh
+axiom server validate backend.axiom backend.server.json --deployment deployment.json --target native-server
+axiom serve backend.axiom --plan backend.server.json --deployment deployment.json --port 8080
+```
+
+From another terminal, exercise the actual boundary:
+
+```sh
+curl --fail http://127.0.0.1:8080/status
+curl -i -X POST http://127.0.0.1:8080/tasks/1
+curl --fail -X POST -H "Authorization: Bearer $READER_JWT" http://127.0.0.1:8080/tasks/1
+curl -i -X POST -H "Authorization: Bearer $READER_JWT" http://127.0.0.1:8080/tasks/0
+```
+
+The results are `"ready"`, `401`, the typed task, and `400`. Issue the reader JWT
+through your trusted issuer with `iss=https://issuer.test`, `aud=worker-api`, a
+nonempty subject, tenant, valid expiry and permission `task.read`. A valid token
+without that permission receives `403`. CLI inspection is declaration evidence;
+these requests test actual enforcement. Stop with Ctrl-C before changing mode.
+
+## Exercise full mocks without provider access
+
+Copy `examples/server-workflow/acceptance/configure_mock.py` into the example
+directory, then run:
+
+```sh
+python3 configure_mock.py --cli "$(command -v axiom)"
+axiom serve backend.axiom --plan backend.server.json --mock --fixtures mock.json --identities mock-identities.json --port 8080
+```
+
+The helper binds the exact contract/plan and writes finite typed provider replies
+plus a separate reviewed identity file. Managed programs and guards still run.
+Each identity partition receives sixteen replies per operation; exhaustion
+fails explicitly. The owner fixture deliberately represents task 1 owned by
+Alice in tenant red, rather than implementing a real database or HTTP service.
+`axiom mock service.acore` also selects full server simulation for this plan;
+see [simulation setup and credentials](/reference/server-simulation).
+
+Startup reports a private `credentialsFile`. Use its `reader.headers` for a
+successful request and `denied.headers` for `403`; omit credentials for `401`.
+These are freshly issued development credentials. They do not authenticate
+against a production signing key. A local script can read the file and pass
+headers directly without printing tokens:
+
+```python
+import json
+import urllib.request
+from pathlib import Path
+
+credentials = json.loads(Path("PATH_FROM_credentialsFile").read_text())
+request = urllib.request.Request(
+    "http://127.0.0.1:8080/tasks/1",
+    headers=credentials["reader"]["headers"], method="POST")
+with urllib.request.urlopen(request) as response:
+    assert response.status == 200
+    assert json.load(response)["title"] == "task-1"
+```
+
+Stop the service to remove its owned credential/session files. Full mocks never
+load real resource factories or retry exhausted fixtures against real providers.
+Contract-only mocks, cloud mocks and full private simulation have separate
+execution profiles; see [CLI migration](/reference/server-cli-migration).
+
+## Package and activate the chosen target
+
+For a local native release, choose a new immutable directory:
+
+```sh
+axiom server package backend.axiom backend.server.json --deployment deployment.json --target native-server --output release-v1
+axiom server verify-bundle release-v1
+release-v1/bin/axiom server run-bundle release-v1 --listen 127.0.0.1:8080
+```
+
+For Linux arm64, create a source context and build the selected architecture:
+
+```sh
+axiom server package backend.axiom backend.server.json --deployment deployment.json --target container-arm64 --runtime-source /path/to/AxiomCore-workspace --output container-v1
+cat container-v1/container.json
+docker buildx build --platform linux/arm64 --load --tag my-api:candidate container-v1
+```
+
+Use `container-amd64` and `linux/amd64` together for x86_64. Configure the image
+with the exact environment references at runtime; apply the tested read-only,
+nonroot, finite cgroup CPU/memory/process and temporary-storage settings from
+[the container guide](/reference/server-containers#configuration-credentials-and-readiness).
+Its readiness route is `/_axiom/ready`. TLS/routing and any publication are
+operator-owned deployment steps. No credentials belong in build arguments.
+
+For local Workers, install Rust `1.93.0` and its `wasm32-unknown-unknown` target:
+
+```sh
+axiom server package backend.axiom backend.server.json --deployment deployment.json --target cloudflare-workers-local --runtime-source /path/to/AxiomCore-workspace --output worker-v1
+axiom server verify-bundle worker-v1
+cd worker-v1
+pnpm install
+pnpm verify
+pnpm dry-run
+```
+
+Set the recorded references in a private `.dev.vars` file and run `pnpm dev`.
+The verifier recognizes `.dev.vars` as an external local binding file; it is not
+part of the immutable inventory. Do not commit it or copy it into a public
+source archive. Hosted uploads require the separate account-backed gate and
+cannot be certified by dry-run. See [Worker configuration and limits](/reference/server-workers).
+
+To diagnose portability, inspect with the selected target and deployment.
+Replacing `health` with a native implementation produces a declaration
+failure at `actions.health.implementation` for Workers. The snapshot/API-key
+example in `examples/server-workflow` is a supported native/container design;
+its file authentication and Unix provider are rejected by Workers. Adding jobs
+requires a separately certified delivery host, and stock HTTP containers reject
+them. Validation, inspection and packaging share these checks.
+
+## Rotate credentials, promote and roll back
+
+Keep credential changes separate from immutable code/artifact promotion. Record
+which secret-manager versions and provider endpoints belong to each release.
+For native or containers, update external secret values/private credential files
+with correct ownership and permissions, validate the intended configuration,
+then restart the selected immutable release and repeat the allowed/denied/input
+checks. Providers/authentication preflight again at startup; in-process file
+replacement is not a promised live reload mechanism.
+
+The current HS256 profile accepts one signing key. Coordinate key rotation with
+your issuer and service restart; tokens signed with the previous key cease to
+work after activation. This profile does not promise overlapping-key or zero
+interruption rotation. Upstream token rotation has its own provider review.
+Local Worker binding changes need a local restart and request checks. Hosted
+secret/version changes remain part of the unperformed hosted acceptance gate.
+
+Promote an immutable directory or OCI manifest/index digest through your trusted
+release channel after verifying the full inventory, runtime/platform, source
+provenance and acceptance record. A local Docker configuration image ID is not
+a registry manifest digest. Hashes prove integrity against the reviewed
+inventory; they do not authenticate its publisher or prove recorded tests ran.
+Do not infer provider authority or safe private behavior from an unchanged
+public API/SDK contract.
+
+For native v2 bundles, build `release-v2` separately and check a rollback before
+switching processes:
+
+```sh
+axiom server verify-bundle release-v2
+axiom server rollback-check release-v2 release-v1
+```
+
+Both bundles must have a compatible certified runtime/target and public
+semantics. Review the reported private diff, preflight the previous external
+configuration, drain the current process, and explicitly run the previous
+bundle's executable. For containers, retain the previous reviewed image digest
+and configuration versions, inspect/verify its `/app` bundle with its bundled
+executable, then switch the deployment to that digest and recheck readiness and
+requests. For local Workers, verify both immutable inventories and review the
+public contract plus private plan/deployment diff before restarting Wrangler
+from the previous directory. Native `rollback-check` is a v2 host-bundle command;
+it does not activate a Worker or certify hosted version rollback.
+
+Rollback never restores provider data. A revoked credential must not be restored
+just because old code is selected. Review data/schema compatibility separately.
+
+## Reproduce acceptance and retain evidence
+
+On an assembled Linux/container-capable workspace runner, install locked docs
+or playground dependencies for Wrangler `4.132.0`, the pinned Rust toolchain,
+Node and Docker/Buildx. Run the maintained entry point:
+
+```sh
+node examples/server-workflow/acceptance/verify.mjs --cli /absolute/path/to/axiom-cli --workspace /path/to/AxiomCore-workspace --output /new/path/to/acceptance-evidence
+```
+
+It uses one hashed corpus across the available profiles, builds both container
+architectures from the reviewed source context, compares response metadata,
+checks exact public contract preservation, observes bounded local health load
+and startup/readiness, and records runtime/toolchain/image versions. Worker
+lifecycle tests additionally cover concurrent tenants, cancellation, unsafe
+provider outcomes, overload and local version replacement/restoration. Owned
+mock credentials, listeners, containers and temporary fixture directories are
+cleaned afterward. Docker build caches and pinned base images may remain.
+
+The runner is suitable for CI in an assembled matching workspace and fails on a
+missing Docker architecture/runtime gate. Its report explicitly excludes cloud
+publication and hosted certification. Local health timings are observations,
+not production cold-start, native amd64 performance or throughput guarantees.
+The backend host/adapters, generated interfaces, source compiler, public docs
+build/routes and playground gates are separate regressions; retain their exact
+commands/results with the release record.
+
+Pass `--regressions true` to run those additional gates from the same entry
+point. The repository includes a manual CI workflow for an operator-maintained
+assembled runner. Installing that workflow does not establish that a remote
+run occurred. Preserve failed-run records as well as the final passing record.
+
+## Explore and continue
+
+The playground offers **Managed · local server** and **Portable · deployment
+profiles**. Edit source, inspect transitive requirements and incompatible
+declarations, then download the source ZIP with setup helpers. Private actions
+stay unexecuted in the browser; provider bindings, credentials and deployment
+availability still need CLI/runtime review.
+
+The complete public path is [backend quickstart](/getting-started/quickstart-backend),
+[real serving and reload](/reference/server-workflow), [full simulation](/reference/server-simulation),
+[execution plans](/reference/server-execution-plan), [target/release integrity](/reference/server-targets-and-releases),
+[containers](/reference/server-containers), and [local Workers](/reference/server-workers).
+Provider, sandbox, adapter, admission and delivery details remain in
+[integrations](/reference/server-integrations), [policies](/reference/server-policies),
+[adapters](/reference/server-adapters), and [delivery](/reference/server-delivery).

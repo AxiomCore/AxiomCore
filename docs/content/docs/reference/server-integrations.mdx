@@ -1,0 +1,344 @@
+---
+title: Server integrations and transports
+description: Typed server caching, outbound HTTP, multipart uploads, SSE, WebSockets, and bounded telemetry.
+---
+
+These declarations belong to the private server execution plan. `axiom build`
+emits them into `.server.json`; they do not change public endpoint IDs or grant
+authority to imported clients. Client `CachePolicy`, `RetryPolicy`, and
+`observability(...)` declarations continue to describe client behavior.
+
+The executable Rust `ActionHost` and its Axum transport implement this profile.
+Managed actions run through `axiom server run`; native symbols need a trusted
+`HostRegistry` registration. FastAPI/Chi's older stdio boundary rejects these
+capabilities. A deployment must match the exact plan hash, resource interface,
+provider configuration schema, and operation grants. `axiom server deployment`
+scaffolds private environment references with empty grants for review.
+
+## Caching
+
+```acore
+project(id: "cached-server", version: "1")
+model Key { id: Int32 }
+model Item { title: String }
+guard signed(kind: GuardKind.authenticated)
+resource cache(lifetime: ProviderLifetime.application) {
+  operation lookup(input: Models.Key, output: Models.Item, effect: EffectKind.read)
+  operation invalidate(input: Void, output: Void, effect: EffectKind.delete)
+}
+action read(kind: ActionKind.query, input: Models.Key, output: Models.Item) {
+  native(symbol: "items.read")
+  require(guard: Guards.signed)
+}
+action change(kind: ActionKind.command, input: Models.Key, output: Void) {
+  native(symbol: "items.change")
+  require(guard: Guards.signed)
+}
+serverCache items(action: Actions.read, resource: Resources.cache,
+  ttl: 30s, isolation: CacheIsolation.principal,
+  maxEntries: 256, maxBytes: 1048576, invalidateOn: [Actions.change])
+```
+
+Bind `cache` to `memoryCache` with no configuration values, and grant both
+`cache.lookup` and `cache.invalidate`. Canonical keys bind the action and cache
+resource, exact plan/contract/schema/codec identity, deployment grants, and
+validated normalized input. Principal isolation includes the complete verified
+principal. Tenant isolation explicitly shares results among members of the same
+tenant with identical roles, permissions and claims; different permission
+partitions remain separate. Credentials are never key material. Public isolation
+requires an unguarded query whose result is public. Identity and guards run before
+every read, including cache hits.
+
+The cache is process-local. TTL, byte and entry limits are enforced; concurrent
+misses for a key share one fill. Its deadline is fixed at creation to the action
+timeout capped at 30 seconds; new waiters cannot extend it. A separately owned
+scope and cancellation token execute the fill. Canceling or timing out one
+waiter preserves other eligible waiters; the last departing waiter cancels the
+fill. Started trusted callbacks and cleanup drain before releasing fill capacity.
+Native providers must cooperate with cancellation and deadlines. Each cache
+admits at most 4,096 waiters and at most its `maxEntries` concurrent fills.
+Only typed successful outcomes enter the cache after lifecycle cleanup and
+admission completion. HTTP metadata is produced again for each response.
+`invalidateOn` clears the named cache across its isolation namespaces after the
+command succeeds. A generation fence prevents an older in-flight fill from
+repopulating an invalidated cache. Failed commands do not trigger invalidation.
+This observes action success; it does not observe a database commit. External
+changes require an explicit invalidation action or expiry.
+
+## Typed request batching
+
+Use `batchOperation` to derive a checked correlation envelope from a scalar read,
+and `batchPolicy` to bound aggregation through an explicitly qualified provider.
+Every logical item retains its admitted authority and cancellation. See
+[typed request batching](/reference/typed-request-batching) for a complete example,
+reply validation and the initial native profile. Private provider batching does
+not implicitly add a public endpoint.
+
+## Transactional batch writes
+
+For bounded durable ingestion, declare a typed `writeBatch` operation and call it
+inside an ordinary managed transaction. The complete
+`examples/advanced-language-dx/stream-archive` project also connects a durable
+event publisher and worker consumer to that action. Its source validator rejects
+empty batches and batches larger than 32 before provider execution.
+
+The PostgreSQL runtime specification adds `insertBatch` to the checked query
+vocabulary:
+
+```json
+{
+  "kind": "insertBatch",
+  "table": "app.archive",
+  "inputField": "changes",
+  "maxItems": 32,
+  "values": {
+    "id": {"kind": "item", "field": "id"},
+    "title": {"kind": "item", "field": "title"}
+  },
+  "fields": {"id": "id", "title": "title"}
+}
+```
+
+This is a fragment of the private `axiom-database-runtime/v1` specification.
+`inputField` must name a required typed list of records. The declaration permits
+1–64 items, 1–128 checked assignments, and at most 256 KiB of serialized input
+items. Each `item` binding names a required record field with the exact storage
+codec; scalar bindings retain their existing input, literal and trusted-context
+rules. The provider supplies the tenant for every row from the verified
+principal. Caller items cannot assign the tenant or generated columns.
+
+Each step executes one parameterized SQL insert for the whole batch. Business
+rows, outbox rows and the established receipt commit together. Batch steps require
+a receipt and cannot use partial-item savepoint recovery. A constraint, invalid
+codec or output-bound failure rolls back the whole transaction. Returned rows
+are sorted by their canonical JSON bytes before receipt storage; applications
+must not infer input order from SQL `RETURNING`.
+
+Offline preparation validates models, columns, list/result projections,
+transaction captures, bounds and receipt compatibility before writing a prepared
+plan. Unknown JSON fields are rejected. The editor validates the same structural
+wire schema and links captured inputs; provider activation still verifies the
+signed schema, deployment interface and grants. The initial profile is native
+PostgreSQL 17.11; other adapters do not inherit this guarantee.
+
+## Outbound HTTP
+
+```acore
+project(id: "outbound-server", version: "1")
+model Request { id: Int32 }
+model Reply { value: Int32 }
+resource service(lifetime: ProviderLifetime.application) {
+  operation lookup(input: Models.Request, output: Models.Reply, effect: EffectKind.read)
+}
+outbound lookup(resource: Resources.service, operation: .lookup,
+  method: OutboundMethod.get, path: "/value", safety: OutboundSafety.safe,
+  attempts: 3, backoff: 50ms, timeout: 2s, maxResponseBytes: 65536,
+  circuitThreshold: 5, resetAfter: 1s)
+action fetch(kind: ActionKind.query, input: Models.Request, output: Models.Reply) {
+  managed {
+    perform reply(resource: Resources.service, operation: .lookup, input: {id: Input.id})
+    result(value: Steps.reply)
+  }
+}
+endpoint fetch(method: GET, path: "/fetch/{id}") {
+  request { path("id", type: Int32) }
+  handle(action: Actions.fetch, input: {id: Input.path.id})
+  response(type: Models.Reply)
+}
+```
+
+Bind `service` to `httpClient`. Its four configuration keys are `origin`,
+`credential`, `allowLoopback`, and `idempotencySupported`; values in the deployment
+are environment variable names. The trusted configuration resolver loads them
+at startup. `credential` supplies an Authorization header or an empty string;
+rotation through the default environment resolver requires restarting the host.
+Use an HTTPS origin without a path, query, fragment, or user information.
+HTTP is accepted only for explicit loopback development with `allowLoopback=true`.
+Redirects and environment proxy discovery are disabled. Caller data never chooses
+a destination. GET/HEAD input fields become percent-encoded query values;
+other methods send a typed JSON body. Responses require unambiguous JSON and the
+operation's exact output type; HEAD requires Void output.
+
+`safe` permits GET/HEAD, `idempotent` permits PUT/DELETE, and `idempotencyKey`
+requires a mandatory String `idempotencyField: .key`, a stable key of 8–128 ASCII
+characters, and a deployment that explicitly confirms downstream support.
+`unsafe` permits one attempt. Retries apply to transport failures and transient
+429/5xx responses; validation failures are terminal. Eligibility follows the
+[HTTP method and idempotency semantics](https://www.rfc-editor.org/rfc/rfc9110.html#section-9.2.2).
+An ambiguous unsafe dispatch returns `outbound_indeterminate`, which the delivery
+worker does not automatically replay. Declaring a key does not establish a
+remote service's idempotency guarantee.
+
+The total operation deadline includes retries and backoff. Cancellation closes
+in-progress I/O. Each root invocation shares a 16-attempt outbound budget across
+nested actions; each operation allows at most four attempts. Each HTTP resource
+permits 16 concurrent logical calls. Circuits track logical destination failures,
+open for `resetAfter`, and permit one recovery probe. Credentials, URLs, request
+and response bodies are omitted from framework logs.
+
+## Multipart uploads
+
+```acore
+project(id: "upload-server", version: "1")
+model Upload { id: String size: Int64 sha256: String mediaType: String }
+model Input { file: Models.Upload label: String }
+guard signed(kind: GuardKind.authenticated)
+resource files(lifetime: ProviderLifetime.application) {
+  operation store(input: Models.Upload, output: Models.Upload, effect: EffectKind.fileWrite)
+}
+action save(kind: ActionKind.command, input: Models.Input, output: Models.Upload) {
+  native(symbol: "files.save")
+  effect(resource: Resources.files, operation: .store)
+  require(guard: Guards.signed)
+}
+endpoint upload(method: POST, path: "/upload") {
+  request { body("file", type: Models.Upload) body("label", type: String) }
+  handle(action: Actions.save, input: {file: Input.body.file, label: Input.body.label})
+  response(type: Models.Upload)
+}
+multipart upload(endpoint: Routes.upload, resource: Resources.files,
+  operation: .store, fileField: "file", maxBytes: 1048576,
+  mediaTypes: ["text/plain", "image/png"])
+```
+
+The native callback dispatches `context.dispatch_effect("files", "store", file)`
+and returns its descriptor; a managed `perform` can do the same. Explicit native
+`effect(...)` declarations retain source provenance and permit only that typed
+dispatch. Native internals still have unknown enforcement evidence.
+
+Bind `files` to `localUpload` with a `root` environment reference and grant
+`files.store`. The Unix storage root must be absolute, canonical, owned by the
+server, mode 0700, and free of symlink traversal. One host owns its advisory lock.
+Restart removes orphaned generated `.part` files; other names are retained.
+The local provider rejects directories exceeding 65,536 entries. Operators own
+retention and disk quotas for confirmed `.data` files.
+
+The transport accepts one file part and declared body fields, checks field
+uniqueness and types, and streams file bytes into a generated mode-0600 name.
+Limits are checked while reading: at most 16 MiB per file, 8 KiB per text field,
+16 body fields, and eight active uploads per storage resource. Text must be
+nonempty UTF-8 without binary NUL or executable prefixes; PNG, JPEG and PDF use
+bounded signature checks. These checks do not constitute malware scanning.
+Caller filenames never become paths. Handles belong to an unforgeable invocation
+token; a JSON descriptor or another request cannot acquire a staged upload.
+
+Identity and simple guards run before reading file data; complete typed input and
+ownership guards run before storage dispatch. Files are confirmed after typed
+success and lifecycle cleanup, before cache invalidation or response release.
+Failures, oversized/invalid content, interrupted bodies, disconnects, deadlines
+and drain cancel staging and clean generated files. Upload actions cannot use
+server idempotency replay. Legacy strict `security.uploads` declarations remain
+unsupported and fail closed; this profile uses the explicit `multipart` binding.
+
+## SSE, HTTP streams, and WebSockets
+
+The host reuses public `SseStreamDef`, JSON/message `HttpStreamDef`, and
+bidirectional `WebSocketDef` contracts. Each endpoint requires a private
+`streamPolicy`. Unsupported file, binary, and alternate framing/direction
+profiles fail closed at startup.
+
+```acore
+project(id: "stream-server", version: "1")
+model Frame { id: String value: Int32 }
+model Cursor { last: Optional<String> }
+model Message { value: Int32 }
+model SocketInput { message: Models.Message }
+guard signed(kind: GuardKind.authenticated)
+serverPolicy lifetime(timeout: 1m)
+action events(kind: ActionKind.stream, input: Models.Cursor, output: Models.Frame) {
+  native(symbol: "events.produce")
+  require(guard: Guards.signed)
+  server(policy: ServerPolicies.lifetime)
+}
+action reply(kind: ActionKind.stream, input: Models.SocketInput, output: Models.Message) {
+  native(symbol: "socket.reply")
+  require(guard: Guards.signed)
+  server(policy: ServerPolicies.lifetime)
+}
+endpoint events(method: GET, path: "/events") {
+  request { header("last-event-id", type: String, optional: true) }
+  handle(action: Actions.events, input: {last: Input.header["last-event-id"]})
+  response(type: Models.Frame)
+  streaming(SseStreamDef(responseType: Models.Frame))
+}
+endpoint socket(method: WS, path: "/socket") {
+  request { body("message", type: Models.Message) }
+  handle(action: Actions.reply, input: {message: Input.body.message})
+  response(type: Models.Message)
+  streaming(WebSocketDef(direction: "bidirectional",
+    client: WsMessageDef(model: Models.Message),
+    server: WsMessageDef(model: Models.Message), reconnect: "auto"))
+}
+streamPolicy events(endpoint: Routes.events, buffer: 2, maxFrameBytes: 16384,
+  maxFrames: 1000, heartbeat: 10s, stallTimeout: 5s, maxConnections: 16, idField: .id)
+streamPolicy socket(endpoint: Routes.socket, maxFrameBytes: 16384,
+  maxFrames: 1000, heartbeat: 10s, stallTimeout: 5s, maxConnections: 16,
+  origins: ["https://app.example.com"])
+```
+
+Register a native producer with `HostRegistry::stream`; its sealed `FrameSink`
+validates frames and bounds queue waits. Managed/sandbox and ordinary native
+stream actions emit one typed successful frame. SSE uses `text/event-stream`,
+comment heartbeats, optional bounded event IDs, and `Last-Event-ID` input for
+application-defined resume behavior. The host does not invent durable event
+history. See the [SSE wire contract](https://html.spec.whatwg.org/multipage/server-sent-events.html).
+JSON/message HTTP streams use `application/x-ndjson`, one JSON frame per line,
+and blank-line heartbeats. Clients skip blank lines.
+
+WebSockets authorize before upgrade and before each message/action and output.
+Handshake guards cannot depend on client message data. Ambiguous unsafe effects
+close with code 1011 and reason `outbound_indeterminate`; clients must not replay
+that message automatically. SSE/HTTP streams require read-only declared effects. Exact Origin checks,
+JSON message types, byte/count limits, serial processing and bounded write buffers
+are enforced. Ping/pong heartbeats refresh credentials. Slow readers, revoked
+credentials, disconnects, lifetime expiry and drain close the connection and
+cancel cooperative callbacks. The entire host allows at most 64 configured
+stream/WebSocket connections; queues hold at most eight frames, each at most
+64 KiB. Native callbacks must honor cancellation; their arbitrary allocations or
+I/O cannot be certified by a declaration.
+
+Header credentials work with native WebSocket clients. Browser sessions may send
+CSRF proof using subprotocols `axiom.json` and `axiom.csrf.<base64url-without-padding>`.
+The proof is checked against the session registry; only `axiom.json` is selected
+in the response. Browser APIs cannot send arbitrary authentication headers.
+Reconnection intent in the public contract does not bypass fresh authorization.
+Generated Python/Go interfaces expose typed `ServerFrame_*`, `ClientMessage_*`
+and frame iterator/sink aliases alongside existing action interfaces.
+
+## Observability and verification
+
+```acore
+serverTelemetry(maxSeries: 256, maxEvents: 64)
+```
+
+The trusted host exposes `observations()`, `cache_usage()`, `upload_usage()` and
+`stream_usage()` snapshots. There is no public metrics endpoint. Labels use
+validated plan names; excess metric series aggregate into `overflow`. Counters
+saturate, and retained trace events use a bounded ring. Endpoint, policy, action,
+resource, outbound and job/consumer activity share W3C trace IDs with child spans.
+Framework logs omit credentials, principal claims, payloads, URLs and filenames.
+Custom native logging remains the host author's responsibility.
+
+The executable source fixture is `axiom-runtime/server/tests/fixtures/integrations.acore`,
+with native registrations in `examples/integration_host.rs`. Its integration gate
+builds the source twice, validates generated Python/Go types, starts real HTTP
+providers, exercises multipart/SSE/WebSockets and runs bounded-state/load checks:
+
+```bash
+cargo build --manifest-path AxiomCore/cli/Cargo.toml --bin axiom-cli
+cargo build --manifest-path axiom-runtime/server/Cargo.toml --example integration_host
+python3 axiom-runtime/server/tests/integration_conformance.py \
+  AxiomCore/cli/target/debug/axiom-cli \
+  axiom-runtime/server/target/debug/examples/integration_host
+```
+
+Use Python 3.11+, Rust and Go. If `CARGO_TARGET_DIR` is set, adjust the executable
+paths to that directory. The complete `tests/verify.py` gate also runs the earlier
+adapter/security/managed-action and durable Redis delivery suites. Deployment
+certification, database transactions/outbox support, distributed cache coherence,
+and additional transport/storage providers remain separate work.
+
+
+## Owned operations
+
+A read classification does not attest external replay semantics. A resource policy requires matching trusted factory evidence; an inner automatic retry owner cannot silently multiply a retrying operation policy. See [logical resource policies](/acore-language/owned-operations#logical-resource-policies).

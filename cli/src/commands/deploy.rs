@@ -57,7 +57,7 @@ pub async fn handle_deploy_mock_server(file: PathBuf) -> Result<()> {
             .green()
             .bold()
     );
-    println!("   Frontend developers can now run 'axiom serve' to consume this API.");
+    println!("   Saved Cloud mock configuration. Consume it with 'axiom mock --cloud'; use 'axiom mock <source.acore> --profile contract' for local contract simulation.");
 
     Ok(())
 }

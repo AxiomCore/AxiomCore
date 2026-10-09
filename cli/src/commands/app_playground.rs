@@ -1,5 +1,5 @@
 //! Consume browser-built development applications through the maintained local hosts.
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use axiom_lib::{playground_application::Application, ui_contract::*};
 use std::path::Path;
 
@@ -24,21 +24,11 @@ fn prepare(
     }) {
         bail!("Playground exports require the local unsigned backend.axiom contract");
     }
-    // Match browser restrictions before involving any filesystem-backed compiler path.
-    let compiled =
-        axiom_ui::compile_ui_source_with_lock(source, super::parse_target(target)?, &original_lock);
-    if !compiled.is_valid() {
-        bail!(
-            "Playground source does not compile with this CLI: {:?}",
-            compiled.diagnostics
-        );
-    }
-    let ir = compiled.ir.context("Missing UI model")?;
-    if !ir.assets.is_empty() || !ir.extension_imports.is_empty() {
-        bail!("External assets and extensions are unavailable in portable playground exports");
-    }
     let config: axiom_lib::config::AxiomConfig =
         serde_json::from_slice(&application.files["backend/config.json"])?;
+    if config.server.is_some() {
+        bail!("Playground applications use the contract-mock profile and cannot ignore private server actions; download source and use `axiom serve --mock` with reviewed fixtures instead");
+    }
     let artifact = root.join("backend.axiom");
     axiom_build::core::build::build_evaluated_config(config, "default", None, &artifact)?;
     let manifest = UiApplicationManifest {
@@ -64,6 +54,20 @@ fn prepare(
     let manifest_path = root.join("AxiomContracts.toml");
     std::fs::write(&manifest_path, toml::to_string_pretty(&manifest)?)?;
     let lock = resolve_manifest(&manifest_path)?;
+    // Re-resolve browser/legacy descriptors against the locally built contract
+    // before compiling. A portable lock never supplies unchecked type evidence.
+    let compiled =
+        axiom_ui::compile_ui_source_with_lock(source, super::parse_target(target)?, &lock);
+    if !compiled.is_valid() {
+        bail!(
+            "Playground source does not compile with this CLI: {:?}",
+            compiled.diagnostics
+        );
+    }
+    let ir = compiled.ir.context("Missing UI model")?;
+    if !ir.assets.is_empty() || !ir.extension_imports.is_empty() {
+        bail!("External assets and extensions are unavailable in portable playground exports");
+    }
     let lock_path = root.join("axiom.ui.lock.json");
     write_lock(&lock_path, &lock)?;
     let source_path = root.join("main.acore");
@@ -85,7 +89,10 @@ pub(super) async fn run(application: &Application, target: &str, launch: bool) -
     }
     let config: axiom_mock::models::AxiomConfig =
         serde_json::from_slice(&application.files["backend/config.json"])?;
-    println!("Running portable development application with a local mock backend at {base_url}.");
+    println!(
+        "{}",
+        serde_json::json!({"mode":"contract-mock","profile":"playground-application","address":base_url,"privateGuards":"unavailable","productionInternals":"unknown"})
+    );
     // Both futures are owned by this session; errors or Ctrl-C close the mock listener too.
     tokio::select! {
         result = axiom_mock::server::serve_config_on_listener(config, listener, false, None) => result.map_err(|error| anyhow::anyhow!("Mock backend stopped: {error}")),
@@ -158,6 +165,22 @@ page Home {
             assert_eq!(lock.contracts["work"].audience, "web");
             assert_eq!(lock.contracts["work"].base_url, "http://127.0.0.1:9876");
             assert_eq!(lock.contracts["work"].operations[0].name, "list");
+            assert!(lock.contracts["work"].operations[0].schema.is_some());
         }
+        let mut private = application.clone();
+        let mut config: serde_json::Value =
+            serde_json::from_slice(&private.files["backend/config.json"]).unwrap();
+        config["server"] = json!({});
+        private.files.insert(
+            "backend/config.json".into(),
+            serde_json::to_vec(&config).unwrap(),
+        );
+        let root = tempfile::tempdir().unwrap();
+        assert!(
+            prepare(&private, root.path(), "http://127.0.0.1:9876", "web")
+                .unwrap_err()
+                .to_string()
+                .contains("contract-mock profile")
+        );
     }
 }

@@ -20,3 +20,106 @@ message assertions.
 These checks can perform real network writes. Verify each suite's `baseUrl` and
 credentials before running it. See [Testing contracts](/workflows/testing-contracts)
 for Acore examples and lifecycle guidance.
+
+## Typed development scenarios
+
+The matching source build also provides `axiom scenario` for bounded,
+development-only logical replay. Its initial `native-managed.v1` fixture runs
+compiled managed query actions with synthetic declared read providers. Resource
+grants, typed boundaries, operation policies and host cleanup still apply.
+
+```sh
+axiom scenario catalog axiom.axiom --plan axiom.server.json
+axiom scenario check axiom.axiom --plan axiom.server.json --scenario retry.scenario.json
+axiom scenario run axiom.axiom --plan axiom.server.json --deployment deployment.json --scenario retry.scenario.json --epoch-ms 0 --seed 7 --report retry.report.json
+```
+
+The catalog supplies exact contract, plan and schema identities, operation
+input/output types, declared failures and supported controls. Paste its
+`artifacts` object into the scenario. `check` validates every scripted value and
+assertion without running application code. `run` requires an explicit reviewed
+deployment; scenario data cannot grant permissions or create a principal.
+
+Use `provide` for exact operation/input/reply sequences, `start` for an owned
+action handle, `barrier` to wait until policy backoff is reached, `advance` to
+move logical time, and `cancel`/`join` to settle work. Every started handle must
+be joined. `expectOutcome`, `expectCalls`, `expectTrace` and `expectClean` check
+actual host results and ownership. The initial fixture rejects UI interactions,
+state selectors, write providers and native/sandbox bodies. Unsupported controls
+fail before activation.
+
+The complete matching workspace example is
+`examples/advanced-language-dx/deterministic-scenarios`. Its `prepare.py` writes
+fresh compiled artifacts, a synthetic deployment, retry/cancellation scenarios
+and an `AxiomEditor.json` association. The retry advances 250 milliseconds and
+asserts two calls; cancellation after 50 milliseconds asserts one. Neither uses
+a wall sleep to decide application ordering. A separate real watchdog contains
+blocked harness work. `--seed` controls test policy jitter only.
+
+Native read batching uses the same logical scheduler. A catalog-backed
+`batch.queued.N` barrier waits for N uncanceled items and an actual timer owner;
+`advance` then crosses the declared dispatch window. This allows assertions
+immediately before and at dispatch, and cancellation before dispatch. Batch
+scripts name scalar logical inputs; random item correlation IDs are generated
+and checked by the actual host. Production dispatch and I/O containment retain
+their native clocks.
+
+### Synthetic expiry environments
+
+Use an explicit reviewed environment for controlled credential or provider
+expiry. It selects `native-managed.environment.v1`, generates a private temporary
+hashed API-key registry, and uses normal authentication and guards. It accepts
+synthetic principal labels; it cannot replace a deployment authenticator or
+accept live credential headers. No production deployment field selects this clock.
+
+```json
+{
+  "format": "axiom-scenario-environment/v1",
+  "developmentOnly": true,
+  "clockEpochMs": 1000000,
+  "randomSeed": 7,
+  "credential": {
+    "principal": {"subject": "fixtureUser", "roles": [], "permissions": [], "claims": {}},
+    "lifetimeMs": 1000
+  },
+  "providerExpiryMs": {"tasks": 1000}
+}
+```
+
+Credential lifetimes use whole seconds; provider lifetimes use milliseconds,
+bounded to seven days. Advancing 999 milliseconds keeps these fixtures valid;
+the next millisecond expires them. Only fixture registry authentication is
+virtualized. JWT verification, secure randomness and production credential
+providers retain their normal implementations.
+
+```sh
+axiom scenario catalog axiom.axiom --plan axiom.server.json --environment expiry.environment.json
+axiom scenario check axiom.axiom --plan axiom.server.json --environment expiry.environment.json --scenario expiry.scenario.json
+axiom scenario run axiom.axiom --plan axiom.server.json --deployment deployment.json --environment expiry.environment.json --scenario expiry.scenario.json --report expiry.report.json
+```
+
+The catalog adds an exact environment digest to `artifacts`; a different clock,
+seed, principal or expiry policy rejects replay. `--environment` owns the epoch
+and seed, so it cannot be combined with `--epoch-ms` or `--seed`. Associate the
+environment in `AxiomEditor.json` with role `scenario-environment`, captured
+`contract` and `plan`, and add it as the scenario association's `environment`
+input. Shared LSP, VS Code and Zed then check unsaved fixture changes and stale
+scenario identities without generating credentials or executing work.
+
+Reports use `axiom-development-scenario-report/v1` and label the executed level
+`compiler-host`. Inspect `executedAssertions`, `failedStep`, `failure`,
+`cleanupFailure` and `passed`. Unexpected calls, unused replies, stale artifacts,
+zero assertions and leaked owners fail; cleanup also runs after failed assertions.
+Ctrl-C cancels owned work and retains a failing report when `--report` is set.
+Reports contain identities and closed failure codes, without scripted payloads.
+Scenarios themselves contain private fixture data; prefer synthetic values and
+keep any authorized replay input in private storage.
+
+VS Code and Zed expose `scenario/catalog`, `scenario/check` and `scenario/run`
+through their explicit catalog-backed workflow runners. Inputs must be saved;
+paths and compiler identity are checked before dispatch. Passive editing only
+validates captured associations. A successful scenario task must report nonzero
+assertions and clean ownership. Compiler smoke, actual guest/transport tests,
+durable provider qualification and mounted target checks remain distinct levels.
+See [Full server simulation](/reference/server-simulation) and
+[Frontend testing](/acore-language/frontend-testing) for the other execution paths.

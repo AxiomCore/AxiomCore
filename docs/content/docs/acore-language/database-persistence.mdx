@@ -1,0 +1,80 @@
+---
+title: Database persistence
+description: Schema-derived private PostgreSQL operations, typed public projections, tenant transactions and full-stack impact.
+---
+
+The selected `postgres-17.11-typed-primary/v1` profile connects existing typed backend resources to an explicitly signed database schema. It uses the native host on Darwin 25.2 arm64 with verified loopback TLS, private file providers and the qualified PostgreSQL 17.11 build. SQLite application persistence, remote pools and replica routing need separate qualification. Database management and application execution remain separate authorities.
+
+## Derive a public model and prepare a private plan
+
+From a database schema and a built backend contract, select API fields explicitly:
+
+```sh
+axiom database runtime derive --schema database/schema.acore \
+  --table app.tasks --model Task --entity \
+  --field id=id --field title=title --field completed=completed \
+  --out backend/Task.acore
+axiom check backend/backend.acore
+# Run build in the backend project directory.
+(cd backend && axiom build backend.acore)
+axiom database runtime prepare --schema database/schema.acore \
+  --contract backend/backend.axiom --plan backend/backend.server.json \
+  --resource tasks --spec backend/runtime-spec.json --out backend/runtime.server.json
+```
+
+Derivation and preparation are offline. The private companion contains the exact schema, logical field mappings and bounded programs. The public API contains only the selected models and response projections; storage names, tenant/private fields, SQL, grants and credentials are not exported. `--entity` adds the existing domain entity annotation so an explicit response projection can be consumed by a frontend. Initial source derivation handles nonnull fields; nullable projections require an explicitly reviewed model rule.
+
+A storage bigint uses a canonical signed-64 string in the API, preserving values beyond JavaScript number precision. Decimal uses an exact string; timestamp values use RFC3339 normalized to UTC; bytea uses base64. Qualified codecs also include checked Int16/Int32, bool/text/varchar, enum labels, UUID/date and JSON/JSONB. Floats, arrays, local timestamps/time and custom/native types fail closed rather than degrading to an unspecified codec.
+
+## Bind the application provider
+
+The application-lifetime resource declares named typed inputs/results and read/write/delete effects. Its private specification covers exactly those operations and contains explicit projected fields and value sources; request values never supply SQL or identifiers. Selections are equality-based, ordered by primary key and capped at 100 rows. Update/delete bind the complete key. One operation/program is one database transaction, up to 32 steps; separate actions/resources do not acquire an implicit shared transaction.
+
+A deployment binds provider `postgres` with the exact resource interface digest and one configuration key, `binding`, naming a private environment reference. That reference resolves to an owner-only `axiom-database-runtime-binding/v1` file containing provider root, exact enrolled target, signed bundle, separate application role/connection and pool size. Endpoint/TLS settings must match the operator readiness target; only application credentials and runtime intent differ. No ambient database URL is used.
+
+Pool size is 1–8, with a bounded 64-entry waiting channel and at most pool-size active operations. Startup and every transaction verify the clean signed schema/head, physical target/incarnation, ownership/no drift/no pending release, TLS, durable primary settings and least-privilege application role. Consumed tables remain protected against concurrent DDL. The application role has no ownership/admin/BYPASSRLS/CREATE authority. A separate operator identity is used only through native Status; the application API exposes no migration operation.
+
+## Transactions, tenants and recovery
+
+The default tenant source is verified `Principal.tenant`; a named custom claim can be configured explicitly. The provider injects tenant predicates/inserts and transaction-local `app.tenant`, then resets the session before reuse. Callers cannot override tenant context in bodies. RLS defense requires the separately authored D6 policies.
+
+Read committed, repeatable read and serializable isolation are explicit. Read-only programs cannot write. Optional steps may use savepoints to discard an immediate constraint violation; discarded results cannot be referenced. Only serialization/deadlock failures are retried after acknowledged rollback, with at most three attempts. Named constraint mappings propagate declared, validated backend failure payloads. Public errors mask database details.
+
+Checkout/reconnect, SQL and commit obey deadlines. Cancellation before commit attempts native cancellation and acknowledged rollback; unusable sessions are discarded. Lost commit acknowledgement returns `database_indeterminate`. Resolve with the same operation/input/principal/idempotency key; repeating an unprotected write or changing keys cannot establish the earlier result.
+
+Idempotency reserves an exact unique tenant/key, fingerprints the plan/operation/input/principal and commits the projected result with business writes. Reserved receipt tables cannot be manipulated through application query steps. Business row, outbox event and receipt can commit atomically. External delivery is at least once: publish, deduplicate by tenant/stable event ID, then acknowledge. A consumer interruption leaves events pending for replay. A generic broker/transactional queue or external exactly-once delivery is not claimed.
+
+Primary-only routing provides read-your-writes after acknowledged commit. Physical replicas and unproved remote endpoints fail readiness. Results are capped at 64 KiB per projected row and one MiB overall, and parameter text at 256 KiB. These are logical budgets, not arbitrary workload latency or total process-memory certification.
+
+## Follow real frontend consumers
+
+```sh
+axiom database runtime impact --plan backend/runtime.server.json --resource tasks \
+  --before database/schema.acore --after database/after.acore --application frontend
+```
+
+The command connects private consumed column IDs to resource operations, transitive backend actions/endpoints and the actual UI compiler graph. The frontend graph must match the exact public backend contract. Reports retain source references; an unused private column creates no invented UI impact. Without an application graph, frontend impact is unknown. Opaque native effects remain unknown. Ordinary database diff describes storage changes and does not infer runtime consumers.
+
+The repository's `examples/database-persistence` contains executable storage/backend/UI sources, exact bigint/codec examples, idempotent writes and durable outbox operations. The comprehensive database guide and D10 acceptance workflow under `axiom-internal-docs/planning/database-language/` include source-build commands, owned native checks, fault recovery and manual HTTP validation. The native fixture never contacts user deployments.
+
+Production migration/recovery obligations still use [D9 admission](/acore-language/database-fleets#named-postgresql-production-admission). A rebuilt executable has a different digest and needs its own matching rehearsal/admission. See [database contracts](/acore-language/database-contracts), [fleets](/acore-language/database-fleets) and [support matrix](/introduction/support-matrix) for independently scoped management profiles.
+
+JSON numeric values use the existing backend JSON representation; exact business bigint/decimal values use their explicit string codecs. Nonnull JSON columns preserve JSON null. Nullable JSON null maps to SQL NULL; this initial projection does not distinguish both null representations. Date/time years are bounded to 1–9999 and sub-microsecond timestamps are rejected rather than rounded. Application database credentials stay server-private; end users receive verified API identities, not the shared database role or control of its tenant setting.
+
+## Authored finite transaction blocks
+
+The matching advanced compiler accepts explicit `await transaction` blocks for
+this PostgreSQL profile. See the complete [managed transaction example](/acore-language/managed-language#owned-calls-and-explicit-database-transactions).
+The same `database runtime prepare` command prepares the component SQL programs
+and derives one atomic operation for the block. Use the resulting private plan
+when scaffolding the deployment; its interface digest and derived operation grant
+must match exactly. An unprepared block cannot start a server or execute in
+simulation. No database is accessed while editing or preparing the plan.
+
+The receipt input must flow unchanged into the established component receipt
+contract. All components must use the selected isolation and compatible receipt
+and constraint mappings. The derived program validates its projected output
+before commit. Failure in a later outbox step rolls back the earlier business
+write and receipt. A lost commit acknowledgement remains indeterminate until the
+same exact operation/input/principal/key resolves its receipt; cleanup does not
+turn that outcome into an acknowledged rollback.

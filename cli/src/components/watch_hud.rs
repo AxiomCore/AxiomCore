@@ -68,7 +68,7 @@ pub fn render_watch_hud(f: &mut Frame, area: Rect, state: &State) {
     if state.watch_build_enabled {
         let build_msg = state.watch_error.clone().unwrap_or_else(|| {
             format!(
-                "Local Artifact: axiom.axiom (Hash: {})",
+                "Local Artifact: backend.axiom (Hash: {})",
                 state.last_schema_hash
             )
         });

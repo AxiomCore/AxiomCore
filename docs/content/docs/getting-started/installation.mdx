@@ -36,6 +36,30 @@ axiom doctor
 contracts, or expose credentials. Use `axiom doctor --json --strict` in CI or
 when attaching a machine-readable support report.
 
+The [M1 language foundations](/acore-language/managed-language) require a matching
+working compiler, CLI, host and editor server. A released installer or an older
+bundled editor server retains its existing capabilities. Check the selected
+compiler identity and artifact readers before using advanced metadata; installing
+an editor grammar alone does not update runtime support.
+
+The advanced cache, batching, stream, form, selected-extension and scenario
+features use the experimental M3 source cohort. Keep its CLI, native server,
+public SDKs and frontend host together. Verify both editor entry points:
+
+```bash
+axiom lsp --version-json
+acore-lsp --version-json
+```
+
+Their `compilerVersion` and `protocolVersion` must match; CLI and standalone
+`serverVersion` labels can differ. Select that same CLI for explicit editor
+tasks. Offline editing and tests use prepared local contracts and locks;
+production serving separately requires reviewed identities, deployment grants,
+signed database readiness and compatible providers. Follow the
+[frontend quickstart](/getting-started/quickstart-frontend) and
+[backend quickstart](/getting-started/quickstart-backend) for the complete task
+example, and the [support matrix](/introduction/support-matrix) for target scope.
+
 ---
 
 ### 2. Join the Private Alpha for cloud access

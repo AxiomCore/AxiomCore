@@ -7,6 +7,7 @@ use axiom_lib::{extension_workflow::load_verified_extension_target, package::Pac
 #[cfg(test)]
 use axiom_ui::compile_ui_source;
 use axiom_ui::{
+    frontend_toolchain::{self, FrontendMetadata, HostCompatibility},
     capability_registry::{
         phase2_capability_registry, AcoreSupportStatus, CapabilityKind,
         PHASE2_CAPABILITY_REGISTRY_SHA256, PHASE2_CAPABILITY_REGISTRY_VERSION,
@@ -45,28 +46,8 @@ use tokio::sync::{broadcast, mpsc};
 
 const UI_HOST_GITHUB_REPOSITORY: &str = "AxiomCore/AxiomCore";
 const UI_HOST_RELEASE_TAG_PREFIX: &str = "ui-host-v";
-const LYNX_UI_VERSION: &str = "3.138.0";
-const LYNX_UI_SOURCE_COMMIT: &str = "b9b3fd7a34d7cde6ef4dddfb2fb95de4f5457d73";
-const LYNX_UI_NPM_INTEGRITY: &str =
-    "sha512-7j1au6sOIHY+lHnM1iR5UcevSPxOzwGM7mbB1H8s3cZeTgWcrnbPgCoPToetjc2vJ6jymk/+hlduXcOlrDHL/A==";
-// These are the exact companion versions used by the pinned lynx-ui source
-// revision. The older engine-demo ReactLynx (0.107.0) satisfies lynx-ui's broad
-// peer range syntactically, but lacks setEomShouldFlushElementTree and cannot
-// link the component package.
-const LYNX_REACT_VERSION: &str = "0.123.1";
-const LYNX_REACT_NPM_INTEGRITY: &str =
-    "sha512-wgkSly8Nv3O6tdWJ5tc+dgUHp+XpPzJdOy36dPA1np9LXUEWfwkiWs6BBkluPv620c6tyev2Vj3cEjnGHs0orw==";
-const LYNX_REACT_RSBUILD_PLUGIN_VERSION: &str = "0.18.1";
-const LYNX_REACT_RSBUILD_PLUGIN_NPM_INTEGRITY: &str =
-    "sha512-c+ekAagAocry6NjQMIyn67CN++fU8pStM+9khWfM2ioL/j4zL0jePiuV49gBvLBCErayOrMRB2+/IrokhnIBkw==";
-const LYNX_RSPEEDY_VERSION: &str = "0.16.1";
-const LYNX_RSPEEDY_NPM_INTEGRITY: &str =
-    "sha512-E8FVmglBIfpyZ7AuBlB4Nl+H99uO5F+Hx35HHYW7ySuB/gFxh2+JNx9z5ll1CvfK76ePQmVdsB99ZnVobBPV1w==";
-const LYNX_TYPES_VERSION: &str = "4.1.0";
-const LYNX_TYPES_NPM_INTEGRITY: &str =
-    "sha512-WLWnMpGZMrjffSR62PYesSfjD0RWumPyT21iMTi7GySGkOSOGdv4q4wWkarg8zNI7SxcCFM6kpXFhyIERADBPQ==";
-const TYPESCRIPT_VERSION: &str = "5.8.3";
-const TYPES_REACT_VERSION: &str = "18.3.28";
+// Exact pin data and complete npm inputs are generated from the host authority.
+include!("ui_toolchain.generated.rs");
 // This is a public Ed25519 verification key, not a signing secret. Releases
 // from the fixed Axiom-owned repository must verify with this key before an
 // archive reaches the local host cache. An environment override supports a
@@ -156,6 +137,7 @@ const WEB_INSPECTOR_DEVELOPMENT_SOURCE: &str = r#"
     return api('/api/v1/live/causal', { format:'axiom-inspector-causal-event/v1', sessionId, target:'web', graphRevision:config.graphRevision, sequence:++sequence, traceId, kind, semanticId:semanticId || 'ui:unknown', parentSemanticId:parentSemanticId || null, outcome, redacted:true }).catch(() => {});
   };
   globalThis.__axiomInspector = {
+    observation(trace) { const kind = trace.kind.startsWith('operation.') ? (trace.operationKind==='mutation'?'mutation':'query') : trace.kind.startsWith('state.') ? 'state-patch' : trace.kind.startsWith('action.') ? 'action' : 'rerender'; return causal(lastTrace || `owner:${trace.ownerGeneration}`,kind,trace.semanticId,null,trace.operationKind ? `${trace.operationKind}:${trace.kind}` : trace.kind); },
     actionStarted(id) { lastTrace = `${id || 'action'}:${Date.now()}:${sequence + 1}`; causal(lastTrace, 'user-event', id, null, 'observed'); causal(lastTrace, 'action', id, id, 'started'); return lastTrace; },
     effect(traceId, kind, semanticId, parentSemanticId) { causal(traceId, kind === 'stream' ? 'query' : kind, semanticId, parentSemanticId, 'started'); },
     actionCompleted(traceId, id) { causal(traceId, 'rerender', id, id, 'completed'); },
@@ -191,6 +173,7 @@ function axiomInspectorRequest(path: string, body?: unknown): Promise<any> {
     return response.json();
   });
 }
+(globalThis as any).__axiomInspector = { observation(trace: any) { const config=runtimeConfig.inspector as AxiomInspectorConfig | undefined;if(!config?.enabled)return;const kind=trace.kind.startsWith('operation.')?(trace.operationKind==='mutation'?'mutation':'query'):trace.kind.startsWith('state.')?'state-patch':trace.kind.startsWith('action.')?'action':'rerender';void axiomInspectorRequest('/api/v1/live/causal',{format:'axiom-inspector-causal-event/v1',sessionId:axiomInspectorSession,target:config.target,graphRevision:config.graphRevision,sequence:++axiomInspectorSequence,traceId:`owner:${trace.ownerGeneration}`,kind,semanticId:trace.semanticId || 'ui:unknown',parentSemanticId:null,outcome:trace.operationKind ? `${trace.operationKind}:${trace.kind}` : trace.kind,redacted:true}).catch(()=>{}); } };
 export function AxiomInspectorRoot({ children }: { children: unknown }) {
   const config = runtimeConfig.inspector as AxiomInspectorConfig;
   const [selected, setSelected] = useState<string>('');
@@ -276,6 +259,10 @@ struct UiHostInstallation {
     #[serde(default)]
     artifact: Option<UiHostArtifact>,
     delivery_adapter_ready: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    toolchain: Option<FrontendMetadata>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    compatibility: Option<HostCompatibility>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -289,12 +276,14 @@ struct UiHostArtifact {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IosDeliveryMode {
+    StatePreservingPatch,
     StateResetTemplate,
 }
 
 impl IosDeliveryMode {
     fn as_protocol_value(self) -> &'static str {
         match self {
+            Self::StatePreservingPatch => "state_preserving_patch",
             Self::StateResetTemplate => "state_reset_template",
         }
     }
@@ -337,6 +326,15 @@ struct UiHostReleaseManifest {
     format: String,
     version: String,
     assets: Vec<UiHostReleaseAsset>,
+    #[serde(default)]
+    engine: Option<UiHostEngine>,
+    #[serde(default)]
+    toolchain: Option<FrontendMetadata>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UiHostEngine {
+    commit: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -346,6 +344,8 @@ struct UiHostReleaseAsset {
     variant: String,
     file: String,
     sha256: String,
+    #[serde(default)]
+    compatibility: Option<HostCompatibility>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -487,6 +487,9 @@ const ANDROID_HOST_ACTIVITY_COMPONENT: &str =
     "dev.axiomcore.uihost/com.axiom.uihost.AxiomHostActivity";
 const HOST_ARTIFACT_MARKER: &str = "axiom.host.artifact.sha256";
 const NATIVE_RUNTIME_CONFIG_MARKER: &str = "axiom.runtime.config.sha256";
+// Failed/rejected acknowledgements name the attempted graph, not the last
+// successfully applied one. Keep that successful base for compatible retries.
+const NATIVE_APPLIED_GRAPH_MARKER: &str = "axiom.applied.graph.revision";
 // Host protocol v3 retains the v2 delivery acknowledgement and adds a bounded,
 // graph-bound Lynx diagnostic channel. Older hosts can render bundles but
 // cannot provide the error visibility required by `axiom run`.
@@ -504,8 +507,6 @@ const ANDROID_HOST_PROTOCOL_MINIMUM: &str = "0.6.6";
 // Web uses the separately versioned browser extension kernel; 0.6.5 already
 // implements the current package boundary and renderer surface.
 const WEB_HOST_PROTOCOL_MINIMUM: &str = "0.6.5";
-const LYNX_ENGINE_SOURCE: &str = "https://github.com/lynx-family/lynx.git";
-const LYNX_ENGINE_COMMIT: &str = "73bf89185547d0caf725bab4f3a46fa1e1f9616d";
 
 fn ui_debug_enabled() -> bool {
     ["AXIOM_UI_DEBUG", "DEBUG"].into_iter().any(|name| {
@@ -935,6 +936,13 @@ fn extract_web_host(host: &UiHostInstallation) -> Result<HashMap<String, Vec<u8>
             "index.html"
                 | "host.css"
                 | "host.js"
+                | "acore-schema.js"
+                | "acore-pure.js"
+                | "acore-dom.js"
+                | "acore-observation.js"
+                | "acore-reactive.js"
+                | "acore-application.js"
+                | "acore-components.js"
                 | "foreign-island.js"
                 | "axiom-extension-browser-kernel.mjs"
                 | "axiom-extension-worker.mjs"
@@ -963,6 +971,13 @@ fn web_host_required_files() -> &'static [&'static str] {
         "index.html",
         "host.css",
         "host.js",
+        "acore-schema.js",
+        "acore-pure.js",
+        "acore-dom.js",
+        "acore-observation.js",
+        "acore-reactive.js",
+        "acore-components.js",
+        "acore-application.js",
         "foreign-island.js",
         "axiom-extension-browser-kernel.mjs",
         "axiom-extension-worker.mjs",
@@ -1034,6 +1049,7 @@ fn web_model_with_runtime_config(
         "hotReload": hot_reload,
         "graphRevision": compilation.context.graph_revision,
         "ir": ir,
+        "irSha256": axiom_ui::inspector::ir_fingerprint(ir)?,
         "stylesheet": stylesheet,
         "runtimeConfig": runtime_config,
     }))?)
@@ -1254,12 +1270,24 @@ fn development_web_host_files(
     _runtime_config: &serde_json::Value,
 ) -> Result<HashMap<String, Vec<u8>>> {
     let mut files = extract_web_host(host)?;
-    // A source checkout can evolve the development-only Inspector hooks before
-    // the next signed host archive. Prefer the complete checked-in web shell
-    // while developing the monorepo so its HTML semantics, CSS, and runtime
-    // stay in lockstep. Installed CLIs continue to use the verified archive.
+    // Debug builds can evolve Inspector hooks with the local web shell.
+    // Release builds use the verified archive and never embed or consult the
+    // compiler machine's checkout as an implicit unsigned override.
+    #[cfg(debug_assertions)]
+    {
     let source_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../axiom-ui-host/web");
-    for name in ["index.html", "host.css", "host.js"] {
+    for name in [
+        "index.html",
+        "host.css",
+        "host.js",
+        "acore-schema.js",
+        "acore-pure.js",
+        "acore-dom.js",
+        "acore-observation.js",
+        "acore-reactive.js",
+        "acore-components.js",
+        "acore-application.js",
+    ] {
         let source = source_root.join(name);
         if source.is_file() {
             files.insert(
@@ -1268,6 +1296,7 @@ fn development_web_host_files(
                     .with_context(|| format!("could not read {}", source.display()))?,
             );
         }
+    }
     }
     let host_js = files
         .get_mut("host.js")
@@ -1477,7 +1506,7 @@ fn extension_binding_inspection(result: &UiCompilation) -> serde_json::Value {
     let mut invocations = Vec::new();
     for page in &ir.pages {
         for action in &page.actions {
-            for step in &action.steps {
+            for step in axiom_ui::reactive_syntax::leaves(&action.steps) {
                 let UiActionStep::ExtensionInvoke {
                     local_name,
                     alias,
@@ -1782,6 +1811,112 @@ fn read_installed_ios_runtime_info(host: &UiHostInstallation) -> Option<Installe
         module: plist["AxiomRuntimeModuleVersion"].as_u64()? as u32,
         facade: plist["AxiomRuntimeFacadeProtocolVersion"].as_u64()? as u32,
     })
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum UiTestLayer { Reference, Adapter }
+
+pub async fn handle_test_options(source: PathBuf, lock: PathBuf, target: String, suite: Option<PathBuf>, layer: Option<UiTestLayer>, report: Option<PathBuf>) -> Result<()> {
+    if let Some(path) = suite {
+        let layer = match layer.unwrap_or(UiTestLayer::Reference) { UiTestLayer::Reference => "reference", UiTestLayer::Adapter => "adapter" };
+        let setup_failure = |message: &str, diagnostics: serde_json::Value| -> Result<()> {
+            if let Some(path) = &report {
+                write_ui_test_report(path, &serde_json::json!({
+                    "format":"acore-application-test-report/v1","suiteKind":"application","target":target,"layer":layer,
+                    "passed":false,"assertions":0,"skipped":[],"unsupported":[],"cases":[],
+                    "setupFailure":message,"diagnostics":diagnostics
+                }))?;
+            }
+            Ok(())
+        };
+        let parsed_target = match parse_target(&target) {
+            Ok(target) => target,
+            Err(error) => {setup_failure(&format!("{error:#}"), serde_json::json!([]))?; return Err(error);}
+        };
+        let suite_text = match std::fs::read_to_string(&path).with_context(|| format!("read application suite {}", path.display())) {
+            Ok(text) => text,
+            Err(error) => {setup_failure(&format!("{error:#}"), serde_json::json!([]))?; return Err(error);}
+        };
+        if let Err(message) = axiom_ui::application_test::Suite::parse(&suite_text) {
+            setup_failure(&message, serde_json::json!([]))?;
+            bail!("application suite rejected: {message}");
+        }
+        let compilation = match compile_path_unchecked(&source, lock, parsed_target) {
+            Ok(compilation) => compilation,
+            Err(error) => {setup_failure(&format!("{error:#}"), serde_json::json!([]))?; return Err(error);}
+        };
+        if !compilation.is_valid() {
+            print_diagnostics(&source, &compilation.diagnostics);
+            setup_failure("application suite setup rejected by the frontend compiler", serde_json::to_value(&compilation.diagnostics)?)?;
+            bail!("application suite setup rejected by the frontend compiler");
+        }
+        print_diagnostics(&source, &compilation.diagnostics);
+        let execution = (|| -> Result<serde_json::Value> {
+        let directory = tempfile::Builder::new().prefix("axiom-ui-test-").tempdir()?;
+        std::fs::create_dir(directory.path().join("testing"))?;
+        std::fs::create_dir(directory.path().join("web"))?;
+        for (name, bytes) in [
+            ("testing/run-suite.mjs", axiom_ui::application_test::RUNNER),
+            ("testing/acore-testing.mjs", axiom_ui::application_test::API),
+            ("testing/reference-adapter.mjs", axiom_ui::application_test::REFERENCE),
+            ("testing/web-bindings.mjs", axiom_ui::application_test::WEB_BINDINGS),
+            ("web/host.js", include_str!("../../../../axiom-ui-host/web/host.js")),
+            ("testing/facade.mjs", axiom_ui::application_test::FACADE),
+            ("web/acore-schema.js", include_str!("../../../../axiom-ui-host/web/acore-schema.js")),
+            ("web/acore-pure.js", include_str!("../../../../axiom-ui-host/web/acore-pure.js")),
+            ("web/acore-observation.js", include_str!("../../../../axiom-ui-host/web/acore-observation.js")),
+            ("web/acore-reactive.js", include_str!("../../../../axiom-ui-host/web/acore-reactive.js")),
+            ("web/acore-components.js", include_str!("../../../../axiom-ui-host/web/acore-components.js")),
+            ("web/acore-application.js", include_str!("../../../../axiom-ui-host/web/acore-application.js")),
+        ] { std::fs::write(directory.path().join(name), bytes)?; }
+        std::fs::write(directory.path().join("package.json"), "{\"type\":\"module\"}")?;
+        let input = serde_json::json!({"suite":serde_json::from_str::<serde_json::Value>(&suite_text)?,"target":target,"layer":layer,"compilation":{"ir":compilation.ir,"build":compilation.virtual_build,"target":target}});
+        let mut child = Command::new("node").arg(directory.path().join("testing/run-suite.mjs"))
+            .stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped())
+            .spawn().context("application suites require Node.js 24 or newer")?;
+        child.stdin.take().unwrap().write_all(&serde_json::to_vec(&input)?)?;
+        let output = child.wait_with_output()?;
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout)
+            .with_context(|| format!("application test runner failed: {}", String::from_utf8_lossy(&output.stderr)))?;
+        if !output.status.success() && value["passed"] == true {
+            bail!("application test runner exited unsuccessfully despite claiming success");
+        }
+        Ok(value)
+        })();
+        let mut value = match execution {
+            Ok(value) => value,
+            Err(error) => {setup_failure(&format!("{error:#}"), serde_json::json!([]))?; return Err(error);}
+        };
+        value["graphRevision"] = serde_json::json!(compilation.context.graph_revision);
+        value["profile"] = serde_json::json!(axiom_ui::frontend_program::PROFILE_FORMAT);
+        value["executionEvidence"] = serde_json::to_value(axiom_ui::application_test::execution_evidence(
+            &value, compilation.ir.as_ref().context("compiled application IR missing")?, suite_text.as_bytes(), &layer)?)?;
+        if let Some(path) = report { write_ui_test_report(&path, &value)?; }
+        println!("Application suite {}: target {}, layer {}, {} assertions, {} skipped, {} unsupported.",
+            if value["passed"] == true { "passed" } else { "failed" }, target, layer, value["assertions"], value["skipped"].as_array().map_or(0, Vec::len), value["unsupported"].as_array().map_or(0, Vec::len));
+        if value["passed"] != true {
+            eprintln!("{}", serde_json::to_string_pretty(&value)?);
+            bail!("application assertions failed; inspect the case/step, visible tree, requests and owner traces");
+        }
+        return Ok(());
+    }
+    handle_test(source, lock, target.clone()).await?;
+    if let Some(path) = report { write_ui_test_report(&path, &serde_json::json!({
+        "format":"acore-application-test-report/v1", "suiteKind":"compiler-session-smoke", "target":target,
+        "layer":"compiler", "passed":true, "assertions":3, "skipped":[], "unsupported":[],
+        "checks":["initial-load","compatible-update","invalid-edit-retains-last-good"], "interactionAssertions":0
+    }))?; }
+    Ok(())
+}
+
+fn write_ui_test_report(path: &Path, value: &serde_json::Value) -> Result<()> {
+    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut bytes = serde_json::to_vec_pretty(value)?;
+    bytes.push(b'\n');
+    std::fs::write(path, bytes)?;
+    Ok(())
 }
 
 pub async fn handle_test(source: PathBuf, lock: PathBuf, target: String) -> Result<()> {
@@ -2095,7 +2230,8 @@ fn assemble_application_artifact(
         "runtimeAbiVersion": 1,
         "runtimeFacadeProtocolVersion": 1,
         "uiIrFormat": ir.format,
-        "host": { "version": host_artifact.version, "variant": host_artifact.variant, "sha256": host_artifact.sha256 },
+        "host": { "version": host_artifact.version, "variant": host_artifact.variant, "sha256": host_artifact.sha256,
+            "toolchain": host.toolchain, "compatibility": host.compatibility },
         "unsignedContracts": unsigned,
         "extensionLock": "runtime/extensions/extension-lock.json",
         "extensions": extension_assembly.runtime_entries.clone(),
@@ -2108,6 +2244,9 @@ fn assemble_application_artifact(
         "graphRevision": compilation.context.graph_revision,
         "cliVersion": env!("CARGO_PKG_VERSION"),
         "lynxEngineCommit": LYNX_ENGINE_COMMIT,
+        "lynxEngineSource": LYNX_ENGINE_SOURCE,
+        "frontendToolchainId": FRONTEND_TOOLCHAIN_ID,
+        "bundleEngineVersion": if target == UiTarget::Web { serde_json::Value::Null } else { serde_json::json!(LYNX_BUNDLE_ENGINE_VERSION) },
         "frontendProfile": {
             "registryVersion": PHASE2_CAPABILITY_REGISTRY_VERSION,
             "registrySha256": PHASE2_CAPABILITY_REGISTRY_SHA256,
@@ -2158,6 +2297,16 @@ fn write_deterministic_zip(output: &Path, files: &BTreeMap<String, Vec<u8>>) -> 
 }
 
 fn compile_path(source: &Path, lock: PathBuf, target: UiTarget) -> Result<UiCompilation> {
+    let result = compile_path_unchecked(source, lock, target)?;
+    if !result.is_valid() {
+        print_diagnostics(source, &result.diagnostics);
+        bail!("Acore UI check failed with {} diagnostic(s)", result.diagnostics.len());
+    }
+    print_diagnostics(source, &result.diagnostics);
+    Ok(result)
+}
+
+fn compile_path_unchecked(source: &Path, lock: PathBuf, target: UiTarget) -> Result<UiCompilation> {
     let text = read_ui_source(source)?;
     let result = compile_ui_source_at_path(
         &text,
@@ -2167,22 +2316,6 @@ fn compile_path(source: &Path, lock: PathBuf, target: UiTarget) -> Result<UiComp
             lock_path: lock,
             asset_root: source.parent().map(Path::to_path_buf),
         },
-    );
-    if !result.is_valid() {
-        print_diagnostics(source, &result.diagnostics);
-        bail!(
-            "Acore UI check failed with {} diagnostic(s)",
-            result.diagnostics.len()
-        );
-    }
-    print_diagnostics(
-        source,
-        &result
-            .diagnostics
-            .iter()
-            .filter(|diagnostic| diagnostic.severity == axiom_ui::UiDiagnosticSeverity::Warning)
-            .cloned()
-            .collect::<Vec<_>>(),
     );
     Ok(result)
 }
@@ -2248,7 +2381,7 @@ fn print_diagnostics(source: &Path, diagnostics: &[axiom_ui::UiDiagnostic]) {
             .as_deref()
             .map(|path| source.parent().unwrap_or_else(|| Path::new(".")).join(path))
             .unwrap_or_else(|| source.to_path_buf());
-        println!(
+        eprintln!(
             "{}:{}:{}: {} {}",
             diagnostic_source.display(),
             diagnostic.span.start,
@@ -2265,11 +2398,10 @@ fn print_diagnostics(source: &Path, diagnostics: &[axiom_ui::UiDiagnostic]) {
 fn report_reload(event: &HotReloadEvent) {
     let outcome = match &event.outcome {
         HotReloadOutcome::InitialLoad => "initial virtual graph ready".to_string(),
-        // This is a graph-level candidate for state preservation. The native
-        // delivery policy currently converts it to an explicit reset because
-        // the pinned renderer's patch API has not passed native conformance.
+        // This describes compiler compatibility. Native delivery separately
+        // verifies the mounted host's capture/restore acknowledgement.
         HotReloadOutcome::AppliedStatePreserved => {
-            "applied; graph is patch-compatible (web preserves state; native targets explicitly reset)".to_string()
+            "applied; graph is compatible with state preservation".to_string()
         }
         HotReloadOutcome::AppliedStateReset { reason } => format!("applied; state reset: {reason}"),
         HotReloadOutcome::FullReloadRequired { reason } => {
@@ -2594,6 +2726,11 @@ pub(crate) fn run_packaged_native_application(
         .filter(|(path, _)| path.starts_with("runtime/extensions/"))
         .map(|(path, bytes)| (path.clone(), bytes.clone()))
         .collect::<BTreeMap<_, _>>();
+    let manifest: serde_json::Value = serde_json::from_slice(
+        files
+            .get("manifest.json")
+            .context("AXIOM_APP_MANIFEST: packaged native application has no manifest.json")?,
+    )?;
     let host = UiHostInstallation {
         format: "axiom-ui-host/v1".into(),
         target: target.as_str().into(),
@@ -2605,6 +2742,8 @@ pub(crate) fn run_packaged_native_application(
             sha256: host_sha256.into(),
         }),
         delivery_adapter_ready: true,
+        toolchain: serde_json::from_value(manifest["host"]["toolchain"].clone())?,
+        compatibility: serde_json::from_value(manifest["host"]["compatibility"].clone())?,
     };
     if !host_supports_delivery(&host) {
         bail!(
@@ -2716,8 +2855,8 @@ fn build_verified_runtime_config_value(
                     lock_path.display()
                 )
             })?;
-            if locked.min_runtime_version > 1 {
-                bail!("AXIOM_UI_RUNTIME_ABI: contract `{}` requires runtime ABI {}, but this host provides ABI 1", import.alias, locked.min_runtime_version);
+            if !(1..=3).contains(&locked.min_runtime_version) {
+                bail!("AXIOM_UI_CONTRACT_READER: contract `{}` requires unsupported reader {}", import.alias, locked.min_runtime_version);
             }
             let artifact_path = locked_ui_input(root, &locked.artifact, "artifact")?;
             let artifact = std::fs::read(&artifact_path).with_context(|| {
@@ -2755,11 +2894,13 @@ fn build_verified_runtime_config_value(
                 "path": operation.path,
                 "kind": match &operation.kind { UiOperationKind::Query => "query", UiOperationKind::Mutation => "mutation", UiOperationKind::Stream => "stream" },
                 "cacheIdentity": operation.cache_identity,
+                "schema": operation.schema,
                 "invalidates": operation.invalidates,
             })).collect::<Vec<_>>();
             contracts.push(serde_json::json!({
                 "localName": import.local_name,
                 "namespace": import.alias,
+                "minRuntimeVersion": locked.min_runtime_version,
                 "baseUrl": locked.base_url,
                 "artifactBase64": BASE64.encode(artifact),
                 "signature": signature,
@@ -2916,43 +3057,36 @@ fn assemble_verified_extensions(
             .collect::<Vec<_>>();
         let mut bindings = Vec::new();
         let mut seen_bindings = BTreeSet::new();
-        for page in &ir.pages {
-            for action in &page.actions {
-                for step in &action.steps {
-                    let axiom_ui::UiActionStep::ExtensionInvoke {
-                        alias: step_alias,
-                        export,
-                        interface_sha256,
-                        abi_symbol,
-                        state_scope,
-                        ..
-                    } = step
-                    else {
-                        continue;
-                    };
-                    if step_alias != &alias {
-                        continue;
-                    }
-                    if !exports.contains(export)
-                        || interface_sha256 != &loaded.report.provenance.interface_sha256
-                    {
-                        bail!("AXIOM_EXTENSION_BINDING_MISMATCH: `{alias}` action binding disagrees with its verified export interface");
-                    }
-                    if !seen_bindings.insert(action.semantic_id.value.clone()) {
-                        bail!(
-                            "AXIOM_EXTENSION_BINDING_DUPLICATE: action `{}` invokes `{alias}` more than once; split it into separately named actions so each sandbox event has one exact-once identity",
-                            action.name,
-                        );
-                    }
-                    bindings.push(serde_json::json!({
-                        "actionSemanticId": action.semantic_id.value,
-                        "export": export,
-                        "interfaceSha256": interface_sha256,
-                        "abiSymbol": abi_symbol,
-                        "stateScope": state_scope,
-                    }));
-                }
+        for (action_id, step) in axiom_ui::reactive_program::extension_bindings(ir) {
+            let axiom_ui::UiActionStep::ExtensionInvoke {
+                alias: step_alias,
+                export,
+                interface_sha256,
+                abi_symbol,
+                state_scope,
+                ..
+            } = step
+            else {
+                continue;
+            };
+            if step_alias != &alias {
+                continue;
             }
+            if !exports.contains(export)
+                || interface_sha256 != &loaded.report.provenance.interface_sha256
+            {
+                bail!("AXIOM_EXTENSION_BINDING_MISMATCH: `{alias}` action binding disagrees with its verified export interface");
+            }
+            if !seen_bindings.insert((action_id.to_string(), export.clone(), state_scope.clone())) {
+                continue;
+            }
+            bindings.push(serde_json::json!({
+                "actionSemanticId": action_id,
+                "export": export,
+                "interfaceSha256": interface_sha256,
+                "abiSymbol": abi_symbol,
+                "stateScope": state_scope,
+            }));
         }
         bindings.sort_by(|left, right| {
             left["actionSemanticId"]
@@ -3118,12 +3252,15 @@ fn materialize_runtime_facade_package(project: &Path) -> Result<()> {
     for (name, contents) in [
         (
             "index.js",
-            include_bytes!("../../../../acore-diff/packages/axiom-lynx-runtime/src/index.js").as_slice(),
+            include_bytes!("../../../../acore-diff/packages/axiom-lynx-runtime/src/index.js")
+                .as_slice(),
         ),
         (
             "lynx-adapter.js",
-            include_bytes!("../../../../acore-diff/packages/axiom-lynx-runtime/src/lynx-adapter.js")
-                .as_slice(),
+            include_bytes!(
+                "../../../../acore-diff/packages/axiom-lynx-runtime/src/lynx-adapter.js"
+            )
+            .as_slice(),
         ),
     ] {
         std::fs::write(destination.join(name), contents)?;
@@ -3253,7 +3390,6 @@ fn compile_virtual_lynx_bundle(
             "AXIOM_UI_VIRTUAL_INPUT: native delivery accepts only read-only virtual compiler files"
         );
     }
-    let engine = resolve_lynx_toolchain()?;
     // A graph revision is shared by equivalent iOS and Android compilations.
     // Each watcher needs its own disposable Rspeedy workspace: deleting a
     // graph-global directory lets one target destroy the other target's build
@@ -3308,12 +3444,12 @@ fn compile_virtual_lynx_bundle(
     std::fs::write(project.join("tsconfig.json"), LYNX_TSCONFIG)?;
     std::fs::write(project.join("lynx.config.mjs"), LYNX_RSPEEDY_CONFIG)?;
     let component_modules = ensure_lynx_ui_toolchain()?;
-    link_compiler_dependencies(&engine, &component_modules, &project)?;
+    link_compiler_dependencies(&component_modules, &project)?;
 
-    let node = resolve_rspack_node(&engine)?;
+    let node = resolve_rspack_node()?;
     let rspeedy = component_modules.join("@lynx-js/rspeedy/bin/rspeedy.js");
     if !rspeedy.is_file() {
-        bail!("AXIOM_UI_TOOLCHAIN: pinned ReactLynx compiler is incomplete at {}; provision it with `axiom ui toolchain provision`", engine.display());
+        bail!("AXIOM_UI_TOOLCHAIN: pinned ReactLynx compiler is incomplete at {}; retry provisioning the frozen frontend toolchain", component_modules.display());
     }
     let output = Command::new(&node)
         .arg(&rspeedy)
@@ -3385,9 +3521,9 @@ fn instrument_native_inspector(project: &Path) -> Result<()> {
     Ok(())
 }
 
-fn resolve_rspack_node(engine: &Path) -> Result<PathBuf> {
-    let bundled = engine.join("buildtools/node/bin/node");
-    let candidates = [bundled, PathBuf::from("node")];
+fn resolve_rspack_node() -> Result<PathBuf> {
+    let candidates = std::env::var_os("AXIOM_UI_NODE").map(PathBuf::from)
+        .into_iter().chain(std::iter::once(PathBuf::from("node")));
     for candidate in candidates {
         if candidate.is_absolute() && !candidate.is_file() {
             continue;
@@ -3423,188 +3559,69 @@ fn ui_build_workspace(root: &Path, graph_revision: &str, target: UiTarget, pid: 
         .join(format!("{}-{pid}", target.as_str()))
 }
 
-fn resolve_lynx_toolchain() -> Result<PathBuf> {
-    let configured = std::env::var_os("AXIOM_UI_LYNX_ENGINE_ROOT").map(PathBuf::from);
-    let maintained =
-        dirs::home_dir().map(|home| home.join(".cache/axiom-ui-host/stage/ios-simulator/engine"));
-    let owned = ui_cache_root()?
-        .join("toolchain/lynx")
-        .join(LYNX_ENGINE_COMMIT);
-    for candidate in configured
-        .into_iter()
-        .chain(maintained)
-        .chain(std::iter::once(owned.clone()))
-    {
-        if candidate
-            .join("explorer/homepage/node_modules/@lynx-js/rspeedy/bin/rspeedy.js")
-            .is_file()
-        {
-            verify_lynx_engine_revision(&candidate)?;
-            return Ok(candidate);
-        }
-    }
-    provision_lynx_toolchain(&owned)?;
-    verify_lynx_engine_revision(&owned)?;
-    Ok(owned)
-}
-
-fn verify_lynx_engine_revision(engine: &Path) -> Result<()> {
-    let output = Command::new("git")
-        .args(["-C", engine.to_string_lossy().as_ref(), "rev-parse", "HEAD"])
-        .output()
-        .with_context(|| format!("cannot verify pinned UI toolchain at {}", engine.display()))?;
-    require_success("pinned UI toolchain revision check", &output)?;
-    let revision = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if revision != LYNX_ENGINE_COMMIT {
-        bail!(
-            "AXIOM_UI_TOOLCHAIN_PIN: expected Lynx {}, found {}",
-            LYNX_ENGINE_COMMIT,
-            revision
-        );
-    }
-    Ok(())
-}
-
-fn provision_lynx_toolchain(engine: &Path) -> Result<()> {
-    let parent = engine.parent().expect("engine cache has parent");
-    std::fs::create_dir_all(parent)?;
-    if !engine.exists() {
-        require_success(
-            "pinned UI toolchain clone",
-            &Command::new("git")
-                .args([
-                    "clone",
-                    "--filter=blob:none",
-                    LYNX_ENGINE_SOURCE,
-                    engine.to_string_lossy().as_ref(),
-                ])
-                .output()?,
-        )?;
-    }
-    require_success(
-        "pinned UI toolchain checkout",
-        &Command::new("git")
-            .args([
-                "-C",
-                engine.to_string_lossy().as_ref(),
-                "checkout",
-                "--detach",
-                LYNX_ENGINE_COMMIT,
-            ])
-            .output()?,
-    )?;
-    require_success(
-        "pinned ReactLynx dependency install",
-        &Command::new("corepack")
-            .args(["pnpm", "install", "--frozen-lockfile"])
-            .current_dir(engine)
-            .env("COREPACK_ENABLE_DOWNLOAD_PROMPT", "0")
-            .output()?,
-    )?;
-    Ok(())
-}
-
 fn ensure_lynx_ui_toolchain() -> Result<PathBuf> {
-    let root = ui_cache_root()?
-        .join("toolchain/lynx-ui")
-        .join(format!("{LYNX_UI_VERSION}-react-{LYNX_REACT_VERSION}"));
+    let root = ui_cache_root()?.join("toolchain/frontend")
+        .join(FRONTEND_TOOLCHAIN_ID.trim_start_matches("sha256:"))
+        .join(format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH));
     let modules = root.join("node_modules");
     let package = modules.join("@lynx-js/lynx-ui/package.json");
     if package.is_file() {
-        if verify_lynx_ui_toolchain(&root, &package).is_ok() {
-            return Ok(modules);
-        }
-        bail!("AXIOM_UI_COMPONENT_PIN: cached Lynx UI package does not match the pinned version and integrity; remove the versioned cache directory and retry");
+        verify_lynx_ui_toolchain(&root, &package).with_context(|| format!(
+            "LYNX_PACKAGE_MISMATCH: frozen toolchain cache {} is incomplete or changed; remove that cache and retry", root.display()))?;
+        return Ok(modules);
     }
-    std::fs::create_dir_all(&root)?;
-    std::fs::write(
-        root.join("package.json"),
-        format!(
-            "{{\"private\":true,\"dependencies\":{{\"@lynx-js/lynx-ui\":\"={LYNX_UI_VERSION}\",\"@lynx-js/react\":\"={LYNX_REACT_VERSION}\",\"@lynx-js/react-rsbuild-plugin\":\"={LYNX_REACT_RSBUILD_PLUGIN_VERSION}\",\"@lynx-js/rspeedy\":\"={LYNX_RSPEEDY_VERSION}\",\"@lynx-js/types\":\"={LYNX_TYPES_VERSION}\",\"@types/react\":\"={TYPES_REACT_VERSION}\",\"typescript\":\"={TYPESCRIPT_VERSION}\"}}}}\n"
-        ),
-    )?;
+    let parent = root.parent().expect("toolchain cache has a parent");
+    std::fs::create_dir_all(parent)?;
+    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos();
+    let staging = parent.join(format!(".install-{}-{nonce}", std::process::id()));
+    std::fs::create_dir(&staging)?;
+    std::fs::write(staging.join("package.json"), FRONTEND_PACKAGE_JSON)?;
+    std::fs::write(staging.join("package-lock.json"), FRONTEND_PACKAGE_LOCK)?;
     let output = Command::new("npm")
-        .args([
-            "install",
-            "--ignore-scripts",
-            "--legacy-peer-deps",
-            "--no-audit",
-            "--no-fund",
-            "--package-lock=true",
-        ])
-        .current_dir(&root)
-        .output()
-        .with_context(|| "cannot provision the pinned official Lynx UI component package")?;
-    require_success("pinned Lynx UI component install", &output)?;
-    verify_lynx_ui_toolchain(&root, &package)?;
+        .args(["ci", "--ignore-scripts", "--legacy-peer-deps", "--no-audit", "--no-fund"])
+        .current_dir(&staging).output()
+        .context("cannot provision the frozen frontend npm resolution")?;
+    require_success("frozen frontend npm ci", &output)?;
+    verify_lynx_ui_toolchain(&staging, &staging.join("node_modules/@lynx-js/lynx-ui/package.json"))?;
+    if std::fs::rename(&staging, &root).is_err() {
+        // Another target may have completed the same install. Reuse only a
+        // fully verified winner; npm ci never deletes another build's modules.
+        verify_lynx_ui_toolchain(&root, &package)?;
+        std::fs::remove_dir_all(&staging)?;
+    }
     Ok(modules)
 }
 
-fn verify_lynx_ui_toolchain(root: &Path, package: &Path) -> Result<()> {
-    let payload: serde_json::Value = serde_json::from_slice(&std::fs::read(package)?)?;
-    let lock: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(root.join("package-lock.json"))?)?;
-    let packages = &lock["packages"];
-    let locked = &packages["node_modules/@lynx-js/lynx-ui"];
-    if payload["version"].as_str() != Some(LYNX_UI_VERSION)
-        || locked["version"].as_str() != Some(LYNX_UI_VERSION)
-        || locked["integrity"].as_str() != Some(LYNX_UI_NPM_INTEGRITY)
+fn verify_lynx_ui_toolchain(root: &Path, _package: &Path) -> Result<()> {
+    let lock_bytes = std::fs::read(root.join("package-lock.json"))?;
+    if sha256_bytes(&lock_bytes) != FRONTEND_PACKAGE_LOCK_SHA256
+        || std::fs::read(root.join("package.json"))? != FRONTEND_PACKAGE_JSON.as_bytes()
     {
-        bail!(
-            "AXIOM_UI_COMPONENT_PIN: @lynx-js/lynx-ui did not match version {}, integrity {}, source {}",
-            LYNX_UI_VERSION,
-            LYNX_UI_NPM_INTEGRITY,
-            LYNX_UI_SOURCE_COMMIT
-        );
+        bail!("LYNX_PACKAGE_MISMATCH: complete npm resolution/package metadata differs from the embedded frontend toolchain");
     }
-    for (name, version, integrity) in [
-        (
-            "@lynx-js/react",
-            LYNX_REACT_VERSION,
-            LYNX_REACT_NPM_INTEGRITY,
-        ),
-        (
-            "@lynx-js/react-rsbuild-plugin",
-            LYNX_REACT_RSBUILD_PLUGIN_VERSION,
-            LYNX_REACT_RSBUILD_PLUGIN_NPM_INTEGRITY,
-        ),
-        (
-            "@lynx-js/rspeedy",
-            LYNX_RSPEEDY_VERSION,
-            LYNX_RSPEEDY_NPM_INTEGRITY,
-        ),
-        (
-            "@lynx-js/types",
-            LYNX_TYPES_VERSION,
-            LYNX_TYPES_NPM_INTEGRITY,
-        ),
-    ] {
-        let locked = &packages[format!("node_modules/{name}")];
-        if locked["version"].as_str() != Some(version)
+    let lock: serde_json::Value = serde_json::from_slice(&lock_bytes)?;
+    for &(name, version, integrity) in FRONTEND_PACKAGES {
+        let locked = &lock["packages"][format!("node_modules/{name}")];
+        let installed: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(root.join("node_modules").join(name).join("package.json"))?
+        )?;
+        if installed["version"].as_str() != Some(version)
+            || locked["version"].as_str() != Some(version)
             || locked["integrity"].as_str() != Some(integrity)
         {
-            bail!(
-                "AXIOM_UI_COMPONENT_PIN: {name} did not match version {version} and its reviewed npm integrity"
-            );
+            bail!("LYNX_PACKAGE_MISMATCH: {name} must match exact version {version} and the frozen npm integrity");
         }
     }
     Ok(())
 }
 
 #[cfg(unix)]
-fn link_compiler_dependencies(engine: &Path, components: &Path, project: &Path) -> Result<()> {
-    let engine_modules = engine.join("explorer/homepage/node_modules");
-    if !engine_modules.is_dir() {
-        bail!(
-            "AXIOM_UI_TOOLCHAIN: ReactLynx dependencies are missing at {}",
-            engine_modules.display()
-        );
-    }
+fn link_compiler_dependencies(components: &Path, project: &Path) -> Result<()> {
     let destination = project.join("node_modules");
     std::fs::create_dir_all(&destination)?;
-    // Companion packages from the reviewed lynx-ui source revision must win
-    // over the older versions in the pinned engine's explorer demo.
-    for source in [components, engine_modules.as_path()] {
+    // Every module comes from the complete frozen resolution; an engine demo
+    // cannot supply an unrecorded transitive dependency.
+    for source in [components] {
         for entry in std::fs::read_dir(source)? {
             let entry = entry?;
             let name = entry.file_name();
@@ -3630,7 +3647,7 @@ fn link_compiler_dependencies(engine: &Path, components: &Path, project: &Path) 
 }
 
 #[cfg(not(unix))]
-fn link_compiler_dependencies(_engine: &Path, _components: &Path, _project: &Path) -> Result<()> {
+fn link_compiler_dependencies(_components: &Path, _project: &Path) -> Result<()> {
     bail!("AXIOM_UI_PLATFORM: native UI bundle compilation currently requires a Unix host")
 }
 
@@ -3642,6 +3659,7 @@ fn deliver_ios_simulator_bundle(
     runtime_config_fingerprint: &str,
     extension_files: &BTreeMap<String, Vec<u8>>,
 ) -> Result<IosDeliveryAcknowledgement> {
+    check_installed_frontend(host, UiTarget::Ios)?;
     let artifact = host.artifact.as_ref().ok_or_else(|| {
         anyhow::anyhow!("native iOS delivery requires an installed signed UI Host release")
     })?;
@@ -3674,7 +3692,12 @@ fn deliver_ios_simulator_bundle(
         boot?;
     }
     let existing_container = ios_host_data_container(&device)?;
-    let installed_artifact_matches = existing_container.as_ref().is_some_and(|container| {
+    let expected_executable = sha256_file(&app.join("AxiomUIHost"))?;
+    let installed_executable_matches = ios_host_container(&device, "app")?.is_some_and(|container| {
+        sha256_file(&PathBuf::from(container.trim()).join("AxiomUIHost")).ok().as_deref()
+            == Some(expected_executable.as_str())
+    });
+    let installed_artifact_matches = installed_executable_matches && existing_container.as_ref().is_some_and(|container| {
         let marker = PathBuf::from(container.trim())
             .join("Library/Application Support/AxiomUIHost")
             .join(HOST_ARTIFACT_MARKER);
@@ -3737,7 +3760,7 @@ fn deliver_ios_simulator_bundle(
             .args(["simctl", "terminate", &device, IOS_HOST_BUNDLE_ID])
             .output()?;
     }
-    let (delivery_mode, fallback_reason) = ios_delivery_plan(event);
+    let (delivery_mode, fallback_reason) = native_delivery_plan(event, restart_required);
     let base_graph_revision = previous_ios_graph_revision(&support);
     // UiDevelopmentSession sequence numbers restart with every CLI process.
     // The host, however, is long-lived and uses the sequence/graph pair to
@@ -3768,6 +3791,7 @@ fn deliver_ios_simulator_bundle(
     }
     let acknowledgement =
         wait_for_ios_acknowledgement(&support, delivery_sequence, &event.graph_revision)?;
+    std::fs::write(support.join(NATIVE_APPLIED_GRAPH_MARKER), format!("{}\n", event.graph_revision))?;
     std::fs::write(
         support.join(NATIVE_RUNTIME_CONFIG_MARKER),
         format!("{runtime_config_fingerprint}\n"),
@@ -3797,6 +3821,7 @@ fn deliver_android_emulator_bundle(
     loopback_base_urls: &[String],
     extension_files: &BTreeMap<String, Vec<u8>>,
 ) -> Result<IosDeliveryAcknowledgement> {
+    check_installed_frontend(host, UiTarget::Android)?;
     let artifact = host.artifact.as_ref().ok_or_else(|| {
         anyhow::anyhow!("native Android delivery requires an installed signed UI Host release")
     })?;
@@ -3854,7 +3879,7 @@ fn deliver_android_emulator_bundle(
             .output()?,
         )?;
     }
-    let (delivery_mode, fallback_reason) = ios_delivery_plan(event);
+    let (delivery_mode, fallback_reason) = native_delivery_plan(event, restart_required);
     let base_graph_revision = previous_android_graph_revision(&device);
     let delivery_sequence = next_android_delivery_sequence(&device, event.sequence);
     let revision = serde_json::json!({
@@ -3889,6 +3914,9 @@ fn deliver_android_emulator_bundle(
     }
     let acknowledgement =
         wait_for_android_acknowledgement(&device, delivery_sequence, &event.graph_revision)?;
+    let applied_graph = support.join(NATIVE_APPLIED_GRAPH_MARKER);
+    std::fs::write(&applied_graph, format!("{}\n", event.graph_revision))?;
+    android_push_private_file(&device, &applied_graph, NATIVE_APPLIED_GRAPH_MARKER)?;
     let marker = support.join(NATIVE_RUNTIME_CONFIG_MARKER);
     std::fs::write(&marker, format!("{runtime_config_fingerprint}\n"))?;
     android_push_private_file(&device, &marker, NATIVE_RUNTIME_CONFIG_MARKER)?;
@@ -4124,9 +4152,12 @@ fn android_private_text(device: &str, name: &str) -> Option<String> {
 }
 
 fn previous_android_graph_revision(device: &str) -> Option<String> {
+    if let Some(graph) = android_private_text(device, NATIVE_APPLIED_GRAPH_MARKER) {
+        if !graph.trim().is_empty() {return Some(graph.trim().to_string());}
+    }
     android_private_text(device, "axiom.app.ack.json")
         .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-        .and_then(|ack| ack["graphRevision"].as_str().map(str::to_string))
+        .and_then(|ack| acknowledged_native_graph(&ack))
 }
 
 fn next_android_delivery_sequence(device: &str, fallback: u64) -> u64 {
@@ -4146,7 +4177,7 @@ fn wait_for_android_acknowledgement(
     delivery_sequence: u64,
     graph_revision: &str,
 ) -> Result<IosDeliveryAcknowledgement> {
-    let deadline = Instant::now() + Duration::from_secs(12);
+    let deadline = Instant::now() + Duration::from_secs(75);
     while Instant::now() < deadline {
         if let Some(text) = android_private_text(device, "axiom.app.ack.json") {
             let ack = serde_json::from_str::<serde_json::Value>(&text).unwrap_or_default();
@@ -4193,11 +4224,14 @@ fn recover_android_host() -> Result<()> {
     Ok(())
 }
 
-fn ios_delivery_plan(event: &HotReloadEvent) -> (IosDeliveryMode, Option<String>) {
+fn native_delivery_plan(event: &HotReloadEvent, restart_required: bool) -> (IosDeliveryMode, Option<String>) {
+    if restart_required && matches!(event.outcome, HotReloadOutcome::AppliedStatePreserved) {
+        return (IosDeliveryMode::StateResetTemplate, Some("native runtime configuration or host changed; explicit state reset required".to_string()));
+    }
     match native_reload_directive(event) {
         NativeReloadDirective::StatePreservingPatch => (
-            IosDeliveryMode::StateResetTemplate,
-            Some("native state preservation is not certified for the pinned Lynx renderer; full template reload applied".to_string()),
+            IosDeliveryMode::StatePreservingPatch,
+            None,
         ),
         NativeReloadDirective::InitialTemplate => (
             IosDeliveryMode::StateResetTemplate,
@@ -4214,10 +4248,20 @@ fn ios_delivery_plan(event: &HotReloadEvent) -> (IosDeliveryMode, Option<String>
 }
 
 fn previous_ios_graph_revision(support: &Path) -> Option<String> {
+    if let Ok(graph) = std::fs::read_to_string(support.join(NATIVE_APPLIED_GRAPH_MARKER)) {
+        if !graph.trim().is_empty() {return Some(graph.trim().to_string());}
+    }
     std::fs::read_to_string(support.join("axiom.app.ack.json"))
         .ok()
         .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-        .and_then(|ack| ack["graphRevision"].as_str().map(str::to_string))
+        .and_then(|ack| acknowledged_native_graph(&ack))
+}
+
+fn acknowledged_native_graph(ack: &serde_json::Value) -> Option<String> {
+    match ack["status"].as_str() {
+        Some("applied_state_preserved" | "applied_state_reset") => ack["graphRevision"].as_str().map(str::to_string),
+        _ => None,
+    }
 }
 
 fn next_ios_delivery_sequence(support: &Path, fallback: u64) -> u64 {
@@ -4232,13 +4276,17 @@ fn next_ios_delivery_sequence(support: &Path, fallback: u64) -> u64 {
 }
 
 fn ios_host_data_container(device: &str) -> Result<Option<String>> {
+    ios_host_container(device, "data")
+}
+
+fn ios_host_container(device: &str, kind: &str) -> Result<Option<String>> {
     let output = Command::new("xcrun")
         .args([
             "simctl",
             "get_app_container",
             device,
             IOS_HOST_BUNDLE_ID,
-            "data",
+            kind,
         ])
         .output()
         .context("cannot inspect the Axiom UI Host Simulator container")?;
@@ -4252,31 +4300,51 @@ fn ios_host_data_container(device: &str) -> Result<Option<String>> {
 }
 
 fn extract_ios_host_application(archive: &Path, version: &str) -> Result<PathBuf> {
+    extract_ios_host_application_in(archive, version, &ui_cache_root()?)
+}
+
+fn extract_ios_host_application_in(archive: &Path, version: &str, cache: &Path) -> Result<PathBuf> {
     if !archive.is_file() {
         bail!(
             "installed iOS UI Host archive is missing: {}",
             archive.display()
         );
     }
-    let root = ui_cache_root()?.join("installed-hosts/ios").join(version);
+    let archive_digest = sha256_file(archive)?;
+    let parent = cache.join("installed-hosts/ios").join(version);
+    let root = parent.join(&archive_digest);
     let app = root.join("AxiomUIHost.app");
-    if app.is_dir() {
-        return Ok(app);
-    }
-    std::fs::create_dir_all(&root)?;
+    let valid = || -> bool {
+        let Ok(marker) = std::fs::read_to_string(root.join("extraction.json")) else { return false; };
+        let Ok(marker) = serde_json::from_str::<serde_json::Value>(&marker) else { return false; };
+        let Some(expected) = marker["executableSha256"].as_str() else { return false; };
+        marker["archiveSha256"].as_str() == Some(archive_digest.as_str())
+            && sha256_file(&app.join("AxiomUIHost")).ok().as_deref() == Some(expected)
+    };
+    if valid() { return Ok(app); }
+    std::fs::create_dir_all(&parent)?;
+    let staging = tempfile::Builder::new().prefix(".extract-").tempdir_in(&parent)?;
     require_success(
         "Axiom UI Host archive extraction",
         &Command::new("ditto")
-            .args([
-                "-x",
-                "-k",
-                archive.to_string_lossy().as_ref(),
-                root.to_string_lossy().as_ref(),
-            ])
+            .args(["-x", "-k", archive.to_string_lossy().as_ref(), staging.path().to_string_lossy().as_ref()])
             .output()?,
     )?;
-    if !app.is_dir() {
-        bail!("Axiom UI Host archive did not contain AxiomUIHost.app");
+    let staged_app = staging.path().join("AxiomUIHost.app");
+    let executable_digest = sha256_file(&staged_app.join("AxiomUIHost"))
+        .context("Axiom UI Host archive did not contain the host executable")?;
+    std::fs::write(staging.path().join("extraction.json"), serde_json::to_vec(&serde_json::json!({
+        "archiveSha256":archive_digest, "executableSha256":executable_digest
+    }))?)?;
+    if valid() { return Ok(app); }
+    if root.exists() {
+        // Retain an incomplete/corrupt generated cache for diagnosis. Never
+        // reuse a version-only extraction or install partially extracted bytes.
+        let quarantine = parent.join(format!(".invalid-{}", uuid::Uuid::new_v4()));
+        std::fs::rename(&root, quarantine)?;
+    }
+    if let Err(error) = std::fs::rename(staging.path(), &root) {
+        if !valid() { return Err(error.into()); }
     }
     Ok(app)
 }
@@ -4313,7 +4381,7 @@ fn wait_for_ios_acknowledgement(
     delivery_sequence: u64,
     graph_revision: &str,
 ) -> Result<IosDeliveryAcknowledgement> {
-    let deadline = Instant::now() + Duration::from_secs(12);
+    let deadline = Instant::now() + Duration::from_secs(75);
     let path = support.join("axiom.app.ack.json");
     while Instant::now() < deadline {
         if let Ok(text) = std::fs::read_to_string(&path) {
@@ -4352,6 +4420,10 @@ fn parse_ios_acknowledgement(
         }
         Some("rejected_last_good") => bail!(
             "AXIOM_UI_HOST_REJECTED_LAST_GOOD: the native host rejected revision {delivery_sequence} and retained its prior bundle: {}",
+            ack["reason"].as_str().unwrap_or("no reason provided")
+        ),
+        Some("failed_reload") => bail!(
+            "AXIOM_UI_HOST_RELOAD_FAILED: native revision {delivery_sequence} began its state handoff but did not complete: {}",
             ack["reason"].as_str().unwrap_or("no reason provided")
         ),
         Some(status) => bail!(
@@ -4440,14 +4512,7 @@ const LYNX_TSCONFIG: &str = r#"{
 }
 "#;
 
-const LYNX_RSPEEDY_CONFIG: &str = r#"import { defineConfig } from '@lynx-js/rspeedy';
-import { pluginReactLynx } from '@lynx-js/react-rsbuild-plugin';
-export default defineConfig({
-  source: { entry: './virtual/main.tsx' },
-  output: { distPath: { root: './dist' } },
-  plugins: [pluginReactLynx({ enableCSSInheritance: true })],
-});
-"#;
+const LYNX_RSPEEDY_CONFIG: &str = include_str!("../../../../axiom-ui-host/toolchain/lynx.config.mjs");
 
 async fn ensure_ui_host(target: UiTarget) -> Result<UiHostInstallation> {
     let existing = read_ui_host(target)?;
@@ -4536,6 +4601,8 @@ async fn install_ui_host(
         // Local source registrations are intentionally not trusted as a
         // development transport. A signed release must identify its protocol.
         delivery_adapter_ready: false,
+        toolchain: None,
+        compatibility: None,
     };
     let path = ui_host_record_path(target)?;
     let parent = path.parent().expect("host record has parent");
@@ -4756,6 +4823,8 @@ fn install_released_ui_host(
             sha256: asset.sha256.clone(),
         }),
         delivery_adapter_ready,
+        toolchain: manifest.toolchain.clone(),
+        compatibility: asset.compatibility.clone(),
     };
     let path = ui_host_record_path(target)?;
     std::fs::create_dir_all(path.parent().expect("host record has parent"))?;
@@ -4845,7 +4914,44 @@ fn select_release_asset<'a>(
             target.as_str()
         );
     }
+    check_release_frontend(manifest, asset, target)?;
     Ok(asset)
+}
+
+fn check_release_frontend(
+    manifest: &UiHostReleaseManifest,
+    asset: &UiHostReleaseAsset,
+    target: UiTarget,
+) -> Result<()> {
+    if manifest.format != "axiom-ui-host-release/v1" {
+        bail!("LYNX_BUNDLE_INCOMPATIBLE: unsupported host manifest reader version");
+    }
+    match (&manifest.toolchain, &asset.compatibility) {
+        (Some(metadata), Some(compatibility)) => {
+            frontend_toolchain::check_host_metadata(metadata, compatibility, target.as_str(), &asset.file, &asset.sha256)
+                .map_err(anyhow::Error::msg)?;
+            if manifest.engine.as_ref().map(|engine| engine.commit.as_str()) != Some(metadata.engine_commit.as_str()) {
+                bail!("LYNX_BUNDLE_INCOMPATIBLE: signed manifest engine and toolchain metadata disagree");
+            }
+        }
+        (None, None) if manifest.engine.as_ref().is_some_and(|engine|
+            frontend_toolchain::allows_legacy_host(&manifest.version, Some(&engine.commit))) => {}
+        _ => bail!("LYNX_BUNDLE_INCOMPATIBLE: missing, partial or unknown host metadata for release {}; install a signed host/CLI with a supported compatibility record", manifest.version),
+    }
+    Ok(())
+}
+
+fn check_installed_frontend(host: &UiHostInstallation, target: UiTarget) -> Result<()> {
+    let Some(artifact) = &host.artifact else { return Ok(()); };
+    match (&host.toolchain, &host.compatibility) {
+        (Some(metadata), Some(compatibility)) => {
+            frontend_toolchain::check_host_metadata(metadata, compatibility, target.as_str(), &artifact.file, &artifact.sha256)
+                .map_err(anyhow::Error::msg)?;
+        }
+        (None, None) if frontend_toolchain::allows_legacy_host(&artifact.version, None) => {}
+        _ => bail!("LYNX_BUNDLE_INCOMPATIBLE: installed {} host {} has missing or unsupported toolchain metadata; install a compatible signed release", target.as_str(), artifact.version),
+    }
+    Ok(())
 }
 
 fn verify_release_manifest_signature(manifest: &Path) -> Result<()> {
@@ -4937,6 +5043,7 @@ fn read_ui_host(target: UiTarget) -> Result<Option<UiHostInstallation>> {
     {
         return Ok(None);
     }
+    check_installed_frontend(&host, target)?;
     Ok(Some(host))
 }
 
@@ -4991,6 +5098,73 @@ all compiler output in memory.
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn ios_extraction_tracks_archive_bytes_and_repairs_corrupt_cache() {
+        let temporary = tempfile::tempdir().unwrap();
+        let cache = temporary.path().join("cache");
+        let archive = temporary.path().join("host.zip");
+        let old = cache.join("installed-hosts/ios/0.6.6/AxiomUIHost.app");
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("AxiomUIHost"), b"stale version-only host").unwrap();
+        let write = |bytes: &[u8]| write_deterministic_zip(&archive, &BTreeMap::from([
+            ("AxiomUIHost.app/AxiomUIHost".into(), bytes.to_vec())
+        ])).unwrap();
+        write(b"first host");
+        let first = extract_ios_host_application_in(&archive, "0.6.6", &cache).unwrap();
+        assert_eq!(std::fs::read(first.join("AxiomUIHost")).unwrap(), b"first host");
+        write(b"second host with the same version");
+        let second = extract_ios_host_application_in(&archive, "0.6.6", &cache).unwrap();
+        assert_ne!(first, second);
+        assert_eq!(std::fs::read(second.join("AxiomUIHost")).unwrap(), b"second host with the same version");
+        std::fs::write(second.join("AxiomUIHost"), b"corrupt cache").unwrap();
+        let repaired = extract_ios_host_application_in(&archive, "0.6.6", &cache).unwrap();
+        assert_eq!(std::fs::read(repaired.join("AxiomUIHost")).unwrap(), b"second host with the same version");
+        assert_eq!(std::fs::read(old.join("AxiomUIHost")).unwrap(), b"stale version-only host");
+    }
+
+    #[test]
+    fn frozen_frontend_resolution_and_explicit_engine_target_agree() {
+        assert_eq!(sha256_bytes(FRONTEND_PACKAGE_LOCK.as_bytes()), FRONTEND_PACKAGE_LOCK_SHA256);
+        let lock: serde_json::Value = serde_json::from_str(FRONTEND_PACKAGE_LOCK).unwrap();
+        for &(name, version, integrity) in FRONTEND_PACKAGES {
+            assert_eq!(lock["packages"][format!("node_modules/{name}")]["version"], version);
+            assert_eq!(lock["packages"][format!("node_modules/{name}")]["integrity"], integrity);
+        }
+        assert!(FRONTEND_PACKAGES.iter().any(|pin| pin.0 == "@lynx-js/lynx-ui-overlay"));
+        assert!(LYNX_RSPEEDY_CONFIG.contains(&format!("engineVersion: \"{LYNX_BUNDLE_ENGINE_VERSION}\"")));
+        assert_eq!(FRONTEND_TOOLCHAIN_ID, frontend_toolchain::FRONTEND_TOOLCHAIN_ID);
+    }
+
+    #[test]
+    fn stale_npm_lock_or_installed_primary_package_fails_before_bundling() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("package.json"), FRONTEND_PACKAGE_JSON).unwrap();
+        std::fs::write(root.path().join("package-lock.json"), FRONTEND_PACKAGE_LOCK).unwrap();
+        for &(name, version, _) in FRONTEND_PACKAGES {
+            let path = root.path().join("node_modules").join(name).join("package.json");
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, serde_json::json!({"version": version}).to_string()).unwrap();
+        }
+        let package = root.path().join("node_modules/@lynx-js/lynx-ui/package.json");
+        verify_lynx_ui_toolchain(root.path(), &package).unwrap();
+        std::fs::write(&package, "{\"version\":\"99.0.0\"}").unwrap();
+        assert!(verify_lynx_ui_toolchain(root.path(), &package).unwrap_err().to_string().contains("LYNX_PACKAGE_MISMATCH"));
+        std::fs::write(root.path().join("package-lock.json"), "{}").unwrap();
+        assert!(verify_lynx_ui_toolchain(root.path(), &package).unwrap_err().to_string().contains("complete npm resolution"));
+    }
+
+    #[test]
+    fn host_metadata_reader_rejects_partial_or_unknown_legacy_release() {
+        let mut release = manifest(vec![asset("web", "browser", "host.zip")]);
+        select_release_asset(&release, UiTarget::Web, None, true).unwrap();
+        release.version = "0.6.11".into();
+        assert!(select_release_asset(&release, UiTarget::Web, None, true).unwrap_err().to_string().contains("LYNX_BUNDLE_INCOMPATIBLE"));
+        release.toolchain = Some(frontend_toolchain::supported_metadata());
+        assert!(select_release_asset(&release, UiTarget::Web, None, true).is_err());
+    }
+
 
     #[test]
     fn ui_host_release_tags_are_scoped_to_the_public_artifact_repository() {
@@ -5079,14 +5253,17 @@ mod tests {
             variant: variant.to_string(),
             file: file.to_string(),
             sha256: "a".repeat(64),
+            compatibility: None,
         }
     }
 
     fn manifest(assets: Vec<UiHostReleaseAsset>) -> UiHostReleaseManifest {
         UiHostReleaseManifest {
             format: "axiom-ui-host-release/v1".to_string(),
-            version: "0.1.0".to_string(),
+            version: "0.6.10".to_string(),
             assets,
+            engine: Some(UiHostEngine { commit: LYNX_ENGINE_COMMIT.into() }),
+            toolchain: None,
         }
     }
 
@@ -5360,6 +5537,11 @@ page Home { view { Page { Card() } } }
             ("index.html".to_string(), b"<main id=app></main>".to_vec()),
             ("host.css".to_string(), b"body{}".to_vec()),
             ("host.js".to_string(), b"// static host".to_vec()),
+            ("acore-pure.js".to_string(), b"export {}".to_vec()),
+            ("acore-dom.js".to_string(), b"export {}".to_vec()),
+            ("acore-reactive.js".to_string(), b"export {}".to_vec()),
+            ("acore-components.js".to_string(), b"export {}".to_vec()),
+            ("acore-application.js".to_string(), b"export {}".to_vec()),
             ("foreign-island.js".to_string(), b"export {}".to_vec()),
             (
                 "axiom-extension-browser-kernel.mjs".to_string(),
@@ -5383,6 +5565,8 @@ page Home { view { Page { Card() } } }
                 sha256: sha256_file(&host_archive).unwrap(),
             }),
             delivery_adapter_ready: true,
+            toolchain: None,
+            compatibility: None,
         };
         let source = directory.join("main.acore");
         std::fs::write(&source, STARTER_SOURCE).unwrap();
@@ -5417,6 +5601,13 @@ page Home { view { Page { Card() } } }
             "reports/frontend-support.json",
             "index.html",
             "host.js",
+            "acore-schema.js",
+        "acore-pure.js",
+        "acore-dom.js",
+            "acore-observation.js",
+        "acore-reactive.js",
+            "acore-components.js",
+        "acore-application.js",
             "foreign-island.js",
             "axiom-extension-browser-kernel.mjs",
             "axiom-extension-worker.mjs",
@@ -5531,6 +5722,8 @@ page Home { view { Page { Card() } } }
                 sha256: "a".repeat(64),
             }),
             delivery_adapter_ready: true,
+            toolchain: None,
+            compatibility: None,
         };
         assert!(host_supports_delivery(&host));
         let mut old = host.clone();
@@ -5551,6 +5744,8 @@ page Home { view { Page { Card() } } }
                 sha256: "a".repeat(64),
             }),
             delivery_adapter_ready: true,
+            toolchain: None,
+            compatibility: None,
         };
         assert!(host_supports_delivery(&host));
         let mut device = host.clone();
@@ -5574,7 +5769,7 @@ page Home { view { Page { Card() } } }
             diagnostics: Vec::new(),
         };
         assert_eq!(
-            ios_delivery_plan(&initial),
+            native_delivery_plan(&initial, true),
             (
                 IosDeliveryMode::StateResetTemplate,
                 Some("initial native template load".to_string())
@@ -5585,12 +5780,13 @@ page Home { view { Page { Card() } } }
             ..initial.clone()
         };
         assert_eq!(
-            ios_delivery_plan(&patch),
+            native_delivery_plan(&patch, false),
             (
-                IosDeliveryMode::StateResetTemplate,
-                Some("native state preservation is not certified for the pinned Lynx renderer; full template reload applied".to_string())
+                IosDeliveryMode::StatePreservingPatch,
+                None
             )
         );
+        assert_eq!(native_delivery_plan(&patch, true), (IosDeliveryMode::StateResetTemplate, Some("native runtime configuration or host changed; explicit state reset required".to_string())));
         let reset = HotReloadEvent {
             outcome: HotReloadOutcome::AppliedStateReset {
                 reason: "view shape changed".to_string(),
@@ -5598,7 +5794,7 @@ page Home { view { Page { Card() } } }
             ..initial
         };
         assert_eq!(
-            ios_delivery_plan(&reset),
+            native_delivery_plan(&reset, false),
             (
                 IosDeliveryMode::StateResetTemplate,
                 Some("view shape changed".to_string())
@@ -5637,6 +5833,19 @@ page Home { view { Page { Card() } } }
             .expect_err("last-good rejection must be actionable")
             .to_string()
             .contains("AXIOM_UI_HOST_REJECTED_LAST_GOOD"));
+        let failed = serde_json::json!({
+            "format": "axiom-ui-host-ack/v2", "sequence": 7,
+            "graphRevision": "graph-b", "status": "failed_reload",
+            "reason": "replacement realm did not restore",
+        });
+        let error = parse_ios_acknowledgement(&failed, 7, "graph-b")
+            .expect_err("a failed handoff must not claim the last good realm survived")
+            .to_string();
+        assert!(error.contains("AXIOM_UI_HOST_RELOAD_FAILED"));
+        assert!(!error.contains("retained its prior bundle"));
+        assert_eq!(acknowledged_native_graph(&reset), Some("graph-b".to_string()));
+        assert_eq!(acknowledged_native_graph(&rejected), None);
+        assert_eq!(acknowledged_native_graph(&failed), None);
     }
 
     #[test]
@@ -5673,6 +5882,8 @@ page Home { view { Page { Card() } } }
                 sha256: selected.sha256.clone(),
             }),
             delivery_adapter_ready: true,
+            toolchain: None,
+            compatibility: None,
         };
         assert!(host_supports_delivery(&host));
     }

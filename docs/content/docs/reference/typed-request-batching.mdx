@@ -1,0 +1,96 @@
+---
+title: Typed request batching
+description: Declare bounded read aggregation with generated correlation envelopes and per-item outcomes.
+---
+
+`batchOperation` derives an interface from a scalar resource read.
+`batchPolicy` connects that interface to bounded host aggregation. Call sites
+remain ordinary typed reads. This initial native profile aggregates compatible
+calls within one admitted operation root. Separate roots, principal/permission
+partitions, attempts and deadline ceilings remain separate.
+
+```acore
+project(id: "bounded-batch", version: "1")
+model Key { id: Int32 }
+model Task { title: String }
+model Missing { message: String }
+failure missing(payload: Models.Missing, status: 404)
+resource tasks(lifetime: ProviderLifetime.application) {
+  operation lookup(input: Models.Key, output: Models.Task, effect: EffectKind.read, errors: [Failures.missing])
+  batchOperation lookupMany(operation: .lookup)
+}
+batchPolicy taskLookup(resource: Resources.tasks, operation: .lookup,
+  batchOperation: .lookupMany, maxItems: 8, maxBytes: 65536, window: 100ms)
+action dashboard(kind: ActionKind.query, input: Void, output: List<Models.Task>) {
+  errors(Failures.missing)
+  managed {
+    let tasks = await parallel(limit: 3) {
+      first = Resources.tasks.lookup(input: {id: 1})
+      second = Resources.tasks.lookup(input: {id: 2})
+      third = Resources.tasks.lookup(input: {id: 3})
+    }
+    return [tasks.first, tasks.second, tasks.third]
+  }
+}
+action mixed(kind: ActionKind.query, input: Void, output: Models.Task) {
+  managed {
+    let tasks = await parallel(limit: 3, mode: ParallelMode.collect) {
+      first = Resources.tasks.lookup(input: {id: 1})
+      second = Resources.tasks.lookup(input: {id: 2})
+      third = Resources.tasks.lookup(input: {id: 3})
+    }
+    match tasks.second {
+      case .success(task) { return task }
+      case Failures.missing(problem) { return {title: problem.message} }
+    }
+  }
+}
+```
+
+The compiler generates `Batch_tasks_lookupMany_Input` with `itemId: String` and
+`input: Models.Key`, `Batch_tasks_lookupMany_Output` with `itemId: String`, an
+optional `value: Models.Task`, and optional typed failure cases. Failure payloads
+come from the scalar's exact declarations. The output selects exactly one value
+or one failure case; missing, duplicate or unknown IDs, wrong payload types and
+ambiguous outcomes reject the whole malformed envelope before publication.
+Replies may arrive in a different order; IDs retain logical association. Duplicate
+inputs remain distinct logical items with distinct IDs.
+
+The factory must implement and independently attest `supports_batch` for the
+exact scalar/batch pair and single-attempt read safety for both operations.
+Activation also requires grants for both operations and the exact resource
+interface. A declaration cannot enable a provider lacking this protocol. Generated
+envelopes currently require the scalar and its failures to be locally declared.
+The ordinary `lookupMany` operation can also use an explicitly authored compatible
+list envelope; the same structural checks apply.
+
+Each root pays for its logical calls before queuing. One coordinator owns each
+physical dispatch, its fixed deadline, independent cancellation and one physical
+attempt. Bounds are 1–32 items, 1,024–65,536 bytes and a 1–100ms window, with at
+most 256 active coordinators. Providers must honor the effective I/O deadline.
+Canceled items leave the queue before dispatch. After dispatch their results are
+suppressed while eligible siblings retain ownership; canceled I/O drains before
+capacity is released. Malformed batch outcomes are terminal. A selected eligible
+per-item retry policy can retry a failed item; successful siblings are retained.
+
+The executable synthetic native fixture compiles this source and exercises the
+real `ActionHost` and provider boundary. Its dashboard expects three authorized
+logical calls and one physical dispatch. Its mixed case receives a typed missing
+result for the second item while retaining correct association for the others.
+The fixture also rejects unqualified factories and five malformed reply shapes.
+Run `cargo test --test request_batching` in the server crate to reproduce it;
+this is fixture qualification, not certification of an external production provider.
+
+Provider batching is private. Frontends and guests receive only their selected
+public or granted interfaces. A public batch endpoint must be declared and locked
+explicitly; this policy does not discover one or merge arbitrary HTTP requests.
+The initial profile excludes commands, transaction-bound resources, invocation
+lifetime providers, Workers and unqualified transports. Guest read requests can
+use the host boundary only under their exact existing grants and owned context;
+generated SDK batch helpers and real-guest qualification are separate delivery gates.
+
+Static inspection shows scalar and physical-operation dependencies. Runtime
+`batch_usage()` reports active coordinators, logical items and physical dispatches.
+`batch.dispatch` observations use declared operation labels and omit arguments,
+IDs, credentials and principal values. Editor navigation and schema diagnostics
+are supplied by the shared compiler; a graph edge is declared evidence.

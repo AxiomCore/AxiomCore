@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use axiom_extractor::evaluate_acore_config;
 use clap::ValueEnum;
 use regex::Regex;

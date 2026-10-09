@@ -60,6 +60,28 @@ requests during evaluation. Continue implementing production service handlers
 in the extracted backend, or use the deterministic mock engine for local
 contract development.
 
+## Route groups and HEAD
+
+Route groups compose literal path prefixes while keeping endpoint names and
+compiler-owned IDs at module scope:
+
+```acore
+group api(prefix: "/api") {
+  group v1(prefix: "/v1") {
+    endpoint health(method: HEAD, path: "/health") {
+      response(type: Void)
+    }
+  }
+}
+```
+
+This expands to `HEAD /api/v1/health`. A group contains endpoints or nested
+groups. Prefixes have no trailing slash or path parameters. `HEAD` describes a
+bodyless response, so server bindings require `Void`. Server plans reject
+ambiguous route templates before starting an adapter. See the
+[HTTP server adapters](/reference/server-adapters) for incoming request
+validation and native handler integration.
+
 ## Types and collections
 
 Models use a familiar `field: Type` form. `List<T>` describes a response or
@@ -109,15 +131,18 @@ model Task {
 } also entity
 
 projection taskUpdate(
-  entity: Entities.task,
+  entity: Entities.Task,
   fields: [.title, .completed],
   audience: Audience.mobile
 )
 ```
 
-`Task` creates `Entities.task`; `TaskItem` creates `Entities.taskItem`, and
-`HTTPTask` creates `Entities.httpTask`. This is equivalent to writing
-`entity task(model: Models.Task)`. Keep an explicit entity declaration when
+`Task` exposes `Entities.Task`; `TaskItem` exposes `Entities.TaskItem`, and
+`HTTPTask` exposes `Entities.HTTPTask`. Completion suggests the model’s case,
+just like `Models.Task`, including models from amended files. Existing lower
+camel case references (`Entities.task`, `Entities.taskItem`, `Entities.httpTask`)
+remain compatible, and compiled entity keys and identities remain unchanged.
+The underlying entity is equivalent to `entity task(model: Models.Task)`. Keep an explicit entity declaration when
 its name, identity key, or documentation differs. Declaring both forms with
 the same entity name is an error. Entity identity inference is unchanged:
 models need an `id`/`uuid` field, or an explicit entity with `key:`.
@@ -241,7 +266,7 @@ and an executable test suite. From its directory:
 ```sh
 axiom check axiom.acore
 axiom build axiom.acore
-axiom serve axiom.acore --port 8080
+axiom run axiom.acore --mode mock --port 8080
 ```
 
 In another terminal in the same directory, run `axiom test axiom.acore`.
@@ -341,3 +366,21 @@ named references, preserving nested constraints and required fields. Validation
 fails when a payload exceeds 64 reference traversals. Existing acyclic validator
 output is unchanged. Contracts using recursive validators require the updated
 bundled Rod runtime shipped with this compiler.
+
+## Execution boundaries
+
+A declared resource operation may be query-safe without being pure. Pure code
+cannot obtain time, randomness, secrets, or a host service. Managed steps run in
+source order and share their invocation deadline and budgets with nested actions.
+Cancellation prevents later dispatch and publication; it does not undo an earlier
+committed provider call. Use a qualified persistence program for an atomic
+database boundary.
+
+## M1 bounded business logic
+
+The matching working compiler supports immutable locals, pure normalization,
+`await`, branches, guards, exhaustive matches and terminal `return`/`fail` in
+managed blocks. Requirements include all branches and transitive calls; inferred
+requirements never supply grants. Legacy `perform`/`invoke`/`result` syntax remains
+accepted. See [managed language](/acore-language/managed-language) for checked
+examples, boundedness and target requirements.

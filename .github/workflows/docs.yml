@@ -24,6 +24,32 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  frontend-snippets:
+    name: Execute frontend documentation assertions
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      AXIOM_CLOUD_URL: http://127.0.0.1:8000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: AxiomCore/examples
+          path: .frontend-examples
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - uses: actions/setup-node@v4
+        with: {node-version: '26.3.0'}
+      - name: Install verified toolchain
+        run: python .frontend-examples/scripts/install_released_toolchain.py --bin-dir "$RUNNER_TEMP/axiom-bin" --extractor-dir "$RUNNER_TEMP/acore-extractors"
+      - name: Execute exact marked snippets and dashboard suites
+        run: python .frontend-examples/scripts/verify_frontend_tests.py --doc docs/content/docs/acore-language/frontend-testing.mdx --report-dir "$RUNNER_TEMP/frontend-doc-reports"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: frontend-doc-assertions
+          path: ${{ runner.temp }}/frontend-doc-reports
   validate:
     name: Policy, types, build, and routes
     runs-on: ubuntu-latest

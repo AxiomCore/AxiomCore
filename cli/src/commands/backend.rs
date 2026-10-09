@@ -1,5 +1,5 @@
 //! Shared local backend compilation and semantic-baseline handling.
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use axiom_extractor::EvaluatedAcoreConfig;
 use axiom_lib::action::{Action, StepStatus};
 use std::io::Write;
@@ -60,12 +60,14 @@ pub fn build_evaluated(
     Ok(artifact)
 }
 
-pub async fn build(
+pub async fn build_to(
     source: &Path,
     variant: &str,
     tx: Option<tokio::sync::mpsc::UnboundedSender<Action>>,
     compatibility_baseline: Option<&Path>,
+    output: &Path,
 ) -> Result<String> {
+    super::contract_build::validate_output(output)?;
     dotenvy::dotenv().ok();
     let emit = |status, message| {
         if let Some(tx) = &tx {
@@ -89,19 +91,45 @@ pub async fn build(
         }
     };
     emit(StepStatus::Success, "Acore evaluation complete.".into());
-    build_evaluated(
-        source,
-        evaluated,
+    // Compile the contract and private companion plan before touching any
+    // successful project outputs. Individual files are replaced atomically.
+    let staging = tempfile::tempdir()?;
+    let staged = staging.path().join("backend.axiom");
+    axiom_build::core::build::build_evaluated_config_with_baseline(
+        evaluated.config,
         variant,
         tx,
-        Path::new("axiom.axiom"),
+        &staged,
         compatibility_baseline,
-    )
+    )?;
+    let plan = output.with_extension("server.json");
+    if plan.is_symlink() {
+        bail!(
+            "Private server plan output cannot be a symlink: {}",
+            plan.display()
+        );
+    }
+    let staged_plan = staged.with_extension("server.json");
+    if staged_plan.is_file() {
+        super::contract_build::atomic_write(&plan, &std::fs::read(staged_plan)?)?;
+    } else if plan.is_file() {
+        let generated = std::fs::File::open(&plan)
+            .ok()
+            .filter(|f| f.metadata().is_ok_and(|m| m.len() <= 16_777_216))
+            .and_then(|f| serde_json::from_reader::<_, axiom_lib::backend::ServerPlan>(f).ok())
+            .is_some_and(|plan| plan.source_managed);
+        if generated {
+            std::fs::remove_file(&plan)?;
+        }
+    }
+    super::contract_build::write_artifact(output, &std::fs::read(staged)?)?;
+    write_baseline(source, variant, &evaluated.json)?;
+    Ok(output.to_str().context("output path is not UTF-8")?.into())
 }
 
-pub fn check(file: &Path, variant: Option<&str>, json: bool) -> Result<()> {
+pub fn validate(file: &Path, variant: Option<&str>) -> Result<()> {
     let variant = variant.unwrap_or("default");
-    let result = (|| -> Result<()> {
+    (|| -> Result<()> {
         let path = file.to_str().context("Acore path is not valid UTF-8")?;
         let config = axiom_extractor::evaluate_acore_config(path, Some(variant))?;
         // Use the real compiler, including domain/security and code generation
@@ -110,22 +138,7 @@ pub fn check(file: &Path, variant: Option<&str>, json: bool) -> Result<()> {
         let artifact = directory.path().join("checked.axiom");
         axiom_build::core::build::build_evaluated_config(config, variant, None, &artifact)?;
         Ok(())
-    })();
-    if json {
-        println!(
-            "{}",
-            serde_json::json!({
-                "valid":result.is_ok(), "file":file.to_string_lossy(), "variant":variant,
-                "diagnostics":result.as_ref().err().map(|error| vec![format!("{error:#}")]).unwrap_or_default()
-            })
-        );
-    } else if result.is_ok() {
-        println!(
-            "Valid backend contract: {} (variant: {variant})",
-            file.display()
-        );
-    }
-    result
+    })()
 }
 
 pub fn explain(
@@ -431,17 +444,15 @@ mod tests {
         write_baseline(&source, "default", CONFIG).unwrap();
         let previous = std::fs::read(baseline_path(&source, "default")).unwrap();
         let invalid = r#"{"variants":{"default":{}}}"#;
-        assert!(
-            build_evaluated(
-                &source,
-                evaluated(invalid),
-                "default",
-                None,
-                &dir.path().join("failed.axiom"),
-                None
-            )
-            .is_err()
-        );
+        assert!(build_evaluated(
+            &source,
+            evaluated(invalid),
+            "default",
+            None,
+            &dir.path().join("failed.axiom"),
+            None
+        )
+        .is_err());
         assert_eq!(
             std::fs::read(baseline_path(&source, "default")).unwrap(),
             previous
@@ -458,13 +469,11 @@ mod tests {
         let source = Path::new("/tmp/contract.acore");
         let baseline = baseline_path(source, "../../other/mobile");
         assert_eq!(baseline.parent(), source.parent());
-        assert!(
-            baseline
-                .file_name()
-                .unwrap()
-                .to_string_lossy()
-                .contains("%2F")
-        );
+        assert!(baseline
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .contains("%2F"));
         assert_ne!(baseline_path(source, "a/b"), baseline_path(source, "a%2Fb"));
     }
 

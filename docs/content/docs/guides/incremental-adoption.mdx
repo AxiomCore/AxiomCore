@@ -43,7 +43,7 @@ axiom domain validate axiom.acore
 axiom security check axiom.acore
 axiom test axiom.acore
 axiom build axiom.acore
-axiom inspect axiom.axiom
+axiom inspect backend.axiom
 ```
 
 Only run the domain or security command when the source declares that optional
@@ -55,10 +55,10 @@ it does not prove production backend behavior.
 Pull from the immutable local artifact first:
 
 ```bash
-axiom pull ./axiom.axiom --framework atmx-web --out ./web/axiom
+axiom pull ./backend.axiom --framework atmx-web --out ./web/axiom
 ```
 
-Then start the existing backend or `axiom serve axiom.acore` and test the real
+Then start the adapted backend or `axiom serve axiom.acore` with reviewed deployment configuration when using managed/sandbox actions, and test the real
 application boundary: base URL, CORS, credentials, request validation, error
 mapping, cache behavior, and one representative success and failure.
 

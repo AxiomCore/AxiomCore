@@ -11,7 +11,7 @@ paths.
 ```bash
 axiom doctor
 axiom onboard --role frontend --framework atmx-web
-axiom pull --contract ../backend/axiom.axiom --framework atmx-web
+axiom pull --contract ../backend/backend.axiom --framework atmx-web
 ```
 
 Use `atmx-react`, `flutter`, or `dart` only after checking the current
@@ -38,6 +38,23 @@ imports under `[contracts.<alias>]` in that file; keep the backend's
 shows the `tasks` alias, artifact path, optional audience, and lock resolution.
 The playground presents both manifests as separate tabs.
 
+Choose **Database · tasks** or **Database · inventory** in the
+[playground](https://playground.axiomcore.dev). Each example adds editable
+`Database.acore`, database `AxiomDeps.toml` and explicit table/model bindings to
+the same frontend/backend workspace. Run compiles all three contracts. Database
+edits appear in the existing Changes and Impact views with mapped backend and
+frontend consumers.
+
+The lower **Database** tab lists every table in its left sidebar. Creating,
+completing/restocking or deleting a record in the preview updates its rows and
+change activity live. The browser validates storage types, primary keys, unique
+keys, foreign keys and supported check constraints before publishing a complete
+mutation. Failed checks preserve the previous store. Run resets the example's
+data; Source ↓ includes the database contract, manifest and bindings, and Schema ↓
+downloads its compiled package. These examples use a bounded local browser
+simulation; PostgreSQL persistence and migrations use the separate reviewed
+native database workflow.
+
 The run command discovers local contract and extension manifests, builds stale
 local `.acore` contracts, maintains its development lock under `.axiom`, and
 compiles and verifies registered sandbox modules. No preparation command or
@@ -48,3 +65,23 @@ requires a verified UI Host and a running emulator or simulator.
 
 See the [Acore UI profile](/acore-language/ui-profile) and
 [application lifecycle](/workflows/acore-ui-application-lifecycle).
+
+## Complete candidate task project
+
+The matching source checkout includes `examples/advanced-language-dx/tasks`:
+backend/database source, an inherited-rule form, selected public failures,
+runtime-owned submission identity, query invalidation, an app preference store,
+bounded snapshot reduction and a generated TypeScript normalization guest.
+
+```bash
+python3 examples/advanced-language-dx/prepare.py \
+  --cli /absolute/path/to/axiom-cli --example tasks \
+  --out /absolute/path/to/new-task-project --run-suites
+```
+
+Preparation checks web/iOS/Android lowering and runs 23 assertions for each
+reference and generated adapter. These suites use scripted transport and check
+disposal; they do not certify mounted mobile behavior. The project's README
+documents separate signed guest and private provider preparation. Its SSE source
+returns one authenticated complete snapshot per subscription; it does not
+promise a continuous change feed or resumable event history.

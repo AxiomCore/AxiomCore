@@ -70,3 +70,17 @@ an explicit URL can perform real writes.
 
 Run contract tests alongside, not instead of, the backend's unit/integration
 tests and the consuming application's tests.
+
+## Repeat retries and cancellation with logical time
+
+Use the matching source build's [typed development scenarios](/tooling/axiom-test-runner#typed-development-scenarios)
+for deterministic compiled managed-query behavior. Keep the complete Acore
+resource/policy declarations, selected artifact identities and synthetic replies
+in the same reviewed fixture project. `axiom scenario check` rejects wrong input
+rules, undeclared failures and stale plans before acquiring resources.
+
+A scenario uses an arrival barrier before advancing backoff, joins every started
+operation, and checks terminal outcomes, physical calls and cleanup. A failed
+assertion still drains work. Reports separate the primary failure from cleanup
+failure and identify the actual execution level; a compiler-host scenario does
+not certify persistence, transport or native OS behavior.

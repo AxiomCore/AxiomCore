@@ -17,7 +17,7 @@ release artifact.
 ## The authoring model
 
 `Models` is populated from the backend source. `Entities` is a separate,
-autocomplete-friendly vocabulary. Append `also entity` to a local model for an inferred lower camel case entity name, or promote a model with `entity name(model: Models.Name)`,
+autocomplete-friendly vocabulary. Append `also entity` to a local model to reference the inferred entity with the model’s case (`Entities.Task`, like `Models.Task`), or promote a model with `entity name(model: Models.Name)`,
 then use the resulting `Entities.name` value in every semantic boundary.
 
 ```acore

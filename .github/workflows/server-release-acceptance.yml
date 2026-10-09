@@ -1,0 +1,55 @@
+name: Local server release acceptance
+
+# Cross-repository source dependencies must be assembled by the runner operator.
+# No pull_request trigger: this privileged local Docker runner executes reviewed source only.
+on:
+  workflow_dispatch:
+    inputs:
+      workspace:
+        description: Absolute path to the assembled matching source workspace
+        required: true
+        type: string
+      cli:
+        description: Absolute path to its freshly built matching CLI
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: local-server-release-acceptance
+  cancel-in-progress: false
+
+jobs:
+  acceptance:
+    runs-on: [self-hosted, axiom-assembled-workspace]
+    timeout-minutes: 180
+    env:
+      AXIOM_ACCEPTANCE_WORKSPACE: ${{ inputs.workspace }}
+      AXIOM_ACCEPTANCE_CLI: ${{ inputs.cli }}
+      NEXT_TELEMETRY_DISABLED: '1'
+      CI: 'true'
+    steps:
+      - name: Confirm reviewed repository revision
+        shell: bash
+        run: |
+          test "$(git -C "$AXIOM_ACCEPTANCE_WORKSPACE/AxiomCore" rev-parse HEAD)" = "$GITHUB_SHA"
+          for repo in AxiomCore axiom-lib axiom-runtime axiom-frontend acore axiom-ui axiom-build rod; do
+            test -z "$(git -C "$AXIOM_ACCEPTANCE_WORKSPACE/$repo" status --porcelain)"
+          done
+          test -x "$AXIOM_ACCEPTANCE_CLI"
+      - name: Run local profiles and regression gates
+        shell: bash
+        run: |
+          node "$AXIOM_ACCEPTANCE_WORKSPACE/examples/server-workflow/acceptance/verify.mjs" \
+            --workspace "$AXIOM_ACCEPTANCE_WORKSPACE" --cli "$AXIOM_ACCEPTANCE_CLI" \
+            --output "$RUNNER_TEMP/server-acceptance-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" --regressions true
+      - name: Retain results including failed gate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-server-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/server-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: warn
+          retention-days: 30

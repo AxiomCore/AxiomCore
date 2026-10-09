@@ -1,0 +1,319 @@
+---
+title: Server policies and identity
+description: Verified principals, mandatory guards, CORS, rate limits and bounded idempotency at the native server boundary.
+---
+
+Server policies belong to the private execution plan. Client `cache(...)` and
+`retry(...)` declarations keep their existing meanings. Typed Acore declarations
+compile to an `backend.server.json` companion beside the public `backend.axiom`.
+Authored reusable actions and managed execution are still being implemented.
+
+## Typed policy authoring
+
+Use `type = "backend"` in `AxiomDeps.toml`. Server declarations share the usual
+named-argument syntax and resolve against the same models and imported sources:
+
+```acore
+project(id: "task-service", version: "1.0.0")
+variant default(include: ["*"])
+model Task { title: String completed: Bool }
+model Owner { owner: String tenant: String }
+model Failure { reason: String }
+
+permission readTask(claim: "task.read")
+guard signedIn(kind: GuardKind.authenticated)
+guard reader(permission: Permissions.readTask)
+resource owners(lifetime: ProviderLifetime.invocation) {
+  operation lookup(input: Int32, output: Models.Owner, effect: EffectKind.read)
+}
+guard owner(
+  resource: Resources.owners,
+  operation: .lookup,
+  input: Input.path.id,
+  claim: Principal.subject,
+  field: .owner
+)
+failure unavailable(payload: Models.Failure, status: 503)
+serverPolicy global(timeout: 10s, guards: [Guards.signedIn])
+serverPolicy read(timeout: 2s, overrides: [ServerPolicyField.timeoutMs])
+serverDefaults(policy: ServerPolicies.global)
+
+service api(prefix: "/api") {
+  group v1(prefix: "/v1", policy: ServerPolicies.read) {
+    endpoint getTask(method: GET, path: "/tasks/{id}") {
+      request { path("id", type: Int32) }
+      require(guard: Guards.reader)
+      require(guard: Guards.owner)
+      rateLimit(requests: 20, window: 1m, key: RateLimitKey.principal, distributed: true)
+      response(type: Models.Task)
+      errors(Failures.unavailable)
+    }
+  }
+}
+```
+
+`service` and `group` compose literal path prefixes; they do not start a host.
+The resulting path above is `/api/v1/tasks/{id}`. Policy precedence is defaults,
+service, outer groups, inner groups, then the endpoint's `server(policy: ...)`.
+Changing an inherited value requires an explicit `overrides` entry. Guards are
+additive and execution limits remain bounded by the action's budget.
+`server inspect` reports effective limits and the originating policy names.
+
+Relative `.lookup` and `.owner` selections resolve against the declared resource
+and operation output model. The editor supplies completion, definition navigation
+and rename across imports. `Principal.subject` and `Principal.tenant` are typed
+choices; misspellings produce compiler errors. Declarations may be imported with
+`amends`; local declarations preserve imported server defaults.
+
+For mutation endpoints, `response(type: Models.Task, status: 201)` declares the
+success status and `idempotency(retention: 1h, durable: true)` requests persistent
+replay protection. Native handlers must return the declared status. A typed
+failure uses the existing error envelope with its declared payload and status.
+
+```sh
+axiom check axiom.acore
+axiom build axiom.acore
+axiom server inspect backend.axiom backend.server.json
+```
+
+Public endpoint JSON and codec layout do not acquire private guard/provider
+settings. Review both artifacts when behavior changes. JSON plans remain
+available for existing extracted contracts without authored server settings.
+
+## Private deployment configuration
+
+After building and reviewing a server plan, scaffold its provider references:
+
+```sh
+axiom server deployment backend.axiom backend.server.json --output deployment.json
+```
+
+Review the generated provider choices, authentication issuer/audience and grants.
+The scaffold contains environment variable names, never credential values.
+Resource grants start empty: binding a resource does not authorize its use.
+The deployment is linked to the exact server-plan hash; regenerate it after a
+plan change. Unknown providers and unsupported guarantees prevent startup.
+
+Pass it to FastAPI with
+`NativeBoundary(["axiom", "server", "boundary"], "backend.axiom", "backend.server.json", deployment="deployment.json")`.
+In Go use
+`axiom.StartCLIConfigured("axiom", "backend.axiom", "backend.server.json", "deployment.json")`.
+
+## Verified identity
+
+The deployment's `authentication` selects one provider. JWT example:
+
+```json
+{
+  "kind": "jwt",
+  "issuer": "https://issuer.example",
+  "audience": "task-server",
+  "algorithm": "RS256",
+  "keyEnv": "AXIOM_JWT_PUBLIC_KEY"
+}
+```
+
+Supported algorithms are `HS256`, `RS256`, `ES256` and `EdDSA`. The algorithm is
+fixed by the deployment. JWTs require signature, issuer, audience, subject and
+expiry checks; future `nbf`/`iat` values and ambiguous claim documents fail.
+HS256 secrets must contain at least 32 bytes. Verification keys are loaded at
+startup; key changes require a new boundary process.
+
+Verified principals contain `subject`, optional `tenant`, `roles`, `permissions`
+and bounded string claims. JWT `scope` values add permissions. Request bodies and
+identity-looking headers cannot supply trusted claims. `Audience.mobile` remains
+contract exposure metadata; it grants no request authorization.
+
+An API-key provider uses a dedicated header and a private file reference:
+
+```json
+{"kind":"apiKey","header":"x-api-key","registryFileEnv":"AXIOM_KEYS_FILE"}
+```
+
+The referenced environment variable contains an absolute path to a JSON file.
+The file maps lowercase SHA-256 token digests to records containing `principal`
+and `expiresUnixSeconds`. Raw keys never appear in that registry. It must be a
+regular file of at most 1 MiB and 4096 records, with mode `0600` on Unix. Each
+request rereads it; atomic replacement revokes or rotates keys without restart.
+Missing or malformed provider data denies access with a 503.
+
+The `session` provider similarly verifies externally issued opaque session
+cookies, with `cookie`, `registryFileEnv`, `csrfHeader` and exact `origins` fields.
+Every session record also contains a `csrfSha256` digest. Unsafe methods require
+the correct CSRF proof and an allowed Origin. Duplicate session cookies fail.
+The application remains responsible for issuing, rotating and expiring cookies,
+including their Secure, HttpOnly and SameSite attributes. This bounded file
+provider does not implement a distributed session service.
+
+## Mandatory guards and resource lookups
+
+Actions can require `authenticated`, `permission`, `role`, or `ownership` guards.
+Endpoint guards add requirements; they cannot remove action guards. Extracted
+required scopes follow the action. A configured provider must also satisfy the
+contract's declared authentication method.
+
+An ownership guard specifies a typed resource operation, an action input field,
+a trusted principal claim and a resource output field. The output field must be
+a required String. `claim: Principal.subject` checks ownership; `claim: Principal.tenant` checks
+tenant membership. Missing claims, missing resources and mismatches deny access.
+The operation must be read-only and separately granted by the deployment.
+
+The `jsonSnapshot` reference provider accepts a `path` environment reference and
+reads a bounded file shaped as operation → scalar key → typed output. It checks
+all records at startup and each result at use. It is useful for controlled
+fixtures and static authorization data; it does not introduce a database.
+
+Existing `security(mode: SecurityMode.audit, ...)` manifests remain advisory.
+Inspection labels them `auditOnly` and the boundary emits `security.audit`;
+they do not supply runtime authorization. Explicit typed guards still apply.
+
+Strict manifests support global permission policies, a single required role,
+a named principal category containing exactly one role,
+named bearer JWT profiles with exact issuer/audience matching, writable-field
+allowlists, CORS and distributed rate limits. Those guards follow the action
+and cannot be removed from a hand-edited plan. A strict idempotency requirement
+also needs an authored durable policy with an explicit retention period.
+Known model fields outside a writable allowlist are rejected, preventing mass
+assignment even when they are optional in the public input model.
+
+An existing `resourceBinding` can use the bounded form
+`principal.claim == resource.field`. The protected resource must resolve to a
+domain entity with a required String comparison field. The action must also
+require a typed ownership guard comparing the same claim and field, whose
+read-only resolver returns that entity's model. Binding text does not create a
+resolver or grant access. Missing, mismatched, or endpoint-only guards prevent
+startup. `principal.sub` and `principal.subject` refer to the same verified subject.
+
+Legacy relationship joins, principal categories with compound membership,
+multiple roles without explicit any/all semantics, native-effect restrictions, and session issuance or
+rotation guarantees need further execution adapters. Legacy classification,
+cache, observability and invariant requirements also need their respective
+enforcement adapters. Strict contracts requiring
+them fail clearly. Typed resource ownership guards remain available independently;
+a declared legacy relationship requires its own execution adapter.
+
+## Invocation admission for native hosts
+
+The Rust boundary exposes `Boundary::invoke` for direct native calls,
+`Boundary::invoke_job` for worker attempts, `Boundary::invoke_consumer` for
+consumer attempts and `Boundary::invoke_http` for HTTP callbacks. These entry points use the same
+input validation, verified identity, mandatory guards, writable-field checks,
+rate counters and idempotency provider as the framework adapters. They validate
+typed success/failure output and apply the associated response projection.
+
+`InvocationRequest` names the `action`, an `origin` (`direct`, `job`, or
+`consumer`), an `identity` (`caller`, `service`, or `delegated`), the typed `input`
+record and credential `headers`. Action inputs use their private-plan names;
+an extracted path parameter is named `path.id`. Private JSON bridges use
+`InvocationRequest::from_json`, which rejects duplicate keys, unknown fields
+and caller-supplied principal objects.
+
+The trusted host chooses the entry point. The request's `origin` must match it;
+a worker or consumer cannot use request data to downgrade to direct-call rules.
+
+```json
+{
+  "action": "getTask",
+  "origin": "job",
+  "identity": "service",
+  "input": {"path.id": 1},
+  "headers": {"authorization": "Bearer <provider-issued-token>"}
+}
+```
+
+Jobs and consumers require explicit service or delegated credentials on every
+attempt. A service credential must attest `claims["axiom.identity"] = "service"`.
+Delegated credentials attest `"delegated"`, a matching
+`claims["axiom.action"]`, and a nonempty `claims["axiom.delegate"]` label. These
+claims come from a verified JWT or the deployment-owned API-key registry;
+choosing an identity label or adding identity-looking headers grants nothing.
+Browser sessions are not background credentials. Revocation, expiry, tenant
+membership and permissions are checked again for each attempt and replay.
+
+The host supplies its native callback only after admission. It receives an
+immutable, invocation-scoped `InvocationContext`; it cannot construct, clone,
+deserialize or retain that context after the callback returns. The context
+checks cancellation and deadlines before provider calls and before accepting
+output. Native code must cooperate with cancellation. Concurrency slots remain
+occupied until callbacks exit, including failure and panic cleanup.
+
+These native entry points currently require one existing endpoint binding.
+Required interceptors and HTTP response metadata must be fulfilled by a capable
+host; the basic Rust caller rejects unsupported requirements. The framework
+adapters continue enforcing their registered interceptor lifecycle. Authored
+reusable actions, managed composition, sandbox execution and queue delivery
+require their respective host capabilities.
+
+## Effect admission and evidence
+
+Provider operations use `InvocationContext::dispatch_effect(resource, operation,
+input)`. Dispatch checks the active invocation, the current action's declared
+effect, query safety, the typed resource signature and a separate deployment
+grant before provider I/O. Binding a provider supplies no authority. The bounded
+reference provider currently supports typed `jsonSnapshot` reads. An invocation
+permits at most 256 provider attempts; failed attempts also consume that budget.
+Cancellation, expired deadlines, undeclared operations and unavailable providers
+deny dispatch. Effect calls without an admitted context are denied.
+
+The boundary reports guard enforcement and observed provider operations
+separately. Arbitrary native handler effects remain `unknown`; a successful
+provider call does not establish complete knowledge of the handler. Effect
+decision traces contain validated operation labels, result codes and trace
+context, with credential claims, arguments and outputs omitted. Output validation
+and cancellation cannot undo an effect that has already occurred.
+
+## CORS and server admission
+
+The plan's `cors` contains exact `origins`, `methods`, `headers`, `credentials`
+and `maxAgeSeconds`. Credentialed CORS prohibits wildcard origins. Valid
+preflights target a declared route and run before authentication. Allowed-origin
+error responses retain CORS headers. The adapters apply `nosniff`, a
+`no-referrer` policy and `X-Frame-Options: DENY` to normal policy-controlled paths.
+
+An action's `admission.rateLimit` has `requests`, `windowMs`, `key` and
+`distributed`. Keys can be `principal`, `tenant` or `global`. Principal keys
+include tenant identity. Authentication and guards run before counters are
+consumed. The memory provider is bounded to one process; `distributed: true`
+requires Redis. Fixed windows begin with the first request in a new window.
+
+## Idempotency and uncertain outcomes
+
+An action's `admission.idempotency` contains a dedicated `header`, `retentionMs`
+and `durable`. It applies to guarded commands. Keys are scoped by project,
+HTTP binding (or `@action:<name>` for action-host direct/job/consumer calls),
+tenant and principal. Fingerprints include the execution-plan hash and
+canonical typed input. Reusing a key with different input returns 409.
+
+Only one concurrent invocation enters a handler. After output validation, the
+provider records its response for replay, including across workers. Replay
+rechecks current authentication and guards. An in-progress duplicate returns
+409. Response records are limited to 64 KiB; validated typed cookies are retained
+alongside the response for replay.
+
+If execution fails, expires or disconnects after it may have performed an
+effect, the key becomes indeterminate. A new worker must not automatically
+repeat that effect. Reconcile the external system before deciding to use a new
+key. Retention is explicit: once a key expires, its protection has ended. This
+is not an exactly-once effect or database transaction guarantee.
+
+For Redis use deployment coordination
+`{"kind":"redis","urlEnv":"AXIOM_REDIS_URL","namespace":"backend"}`.
+`redis://` and `rediss://` URLs are supported. Durable idempotency requires
+`appendonly yes`, `appendfsync always`, `maxmemory-policy noeviction`, and
+permission to inspect those settings at startup. The certified guarantee is
+recovery after a single Redis server and its workers restart using intact
+storage. Replication failover, lost storage and external-system atomicity are
+separate guarantees. Provider errors deny admission; there is no memory fallback.
+
+## Typed configuration and secret purposes
+
+M1 typed setup validates required/default fields and pure checks at trusted startup.
+Bindings retain references and exact configuration/interface digests. A resolved
+configuration is not a grant; guards and operation grants still apply at dispatch.
+Opaque `signRequest` handles have no authored/guest byte-reveal operation.
+See [private setup](/acore-language/managed-language).
+
+
+## Owned operations
+
+`operationPolicy` selects one resource boundary, with total/attempt deadlines, typed retry cases, replay evidence, bounded admission, and circuits. Provider activation independently verifies safety and retry ownership. See [logical resource policies](/acore-language/owned-operations#logical-resource-policies).

@@ -7,6 +7,13 @@ Service contracts can declare cache and retry policy. The runtime applies only
 the behavior implemented for the selected client target; inspect the generated
 contract and validate the target before relying on it.
 
+Private `serverCache` policies are a separate host boundary. Their canonical
+identity includes the exact plan/schema/codec, normalized input and verified
+identity/permission partition. Each read authenticates and runs guards, even on
+a hit. A shared fill has independent waiter cancellation and a fixed action
+deadline capped at 30 seconds. `invalidateOn` observes accepted command success;
+it does not attest an external transaction commit. See [server integrations](/reference/server-integrations).
+
 ## Global policy
 
 ```acore
@@ -94,3 +101,8 @@ or idempotency requirements where appropriate.
 
 Policy declarations are not server enforcement and do not replace rate limits,
 timeouts, circuit breakers, or observability in the backend.
+
+
+## Owned operations
+
+Logical resource `operationPolicy` declarations preserve existing client and `serverPolicy` meanings. Total deadlines cover queues, attempts, and host backoff; trusted providers attest safety independently. See [operation policies and composition](/acore-language/owned-operations#logical-resource-policies).

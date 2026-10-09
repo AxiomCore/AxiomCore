@@ -1,0 +1,138 @@
+---
+title: Cloudflare Workers local profile
+description: Portable managed JSON APIs with shared Rust enforcement, pinned workerd validation and separate hosted acceptance.
+---
+
+`cloudflare-workers-local` packages and runs a managed JSON API locally. The
+hosted `cloudflare-workers` target remains unavailable until its account-backed
+acceptance gate passes. Generic `edge` and Lambda `serverless` certification
+remain pending. Local workerd results do not establish hosted CPU, billing,
+network, version deployment or rollback behavior.
+
+The `axiom-worker-fetch/v1` adapter uses the existing Rust HTTP admission,
+typed validation, projections, signed security rules, authentication, action
+and endpoint guards, callee guards, resource signatures, deployment grants and
+effect gate. It executes managed composition in a request-local WASM instance.
+The public `.axiom` bytes are preserved in the Worker bundle.
+
+| Profile setting | Selected bound or version |
+| --- | --- |
+| Rust | `1.93.0`, `wasm32-unknown-unknown`, locked dependencies |
+| Wrangler / workerd | `4.132.0` / `1.20260915.1` |
+| Compatibility date | `2026-09-15`, no compatibility flags |
+| Request / JSON response | 1 MiB each; UTF-8, strict JSON, at most 16,384 JSON values per document |
+| URL / request headers | 16 KiB / 32 KiB, at most 128 headers |
+| WASM memory / isolate admission | 32 MiB per request instance / two active requests per isolate |
+| Wall deadline | At most 30 seconds, including remote work; declared shorter action/provider deadlines still apply |
+| Managed composition | Depth 32, 128 calls, 256 steps |
+| Remote operations | At most 16 sequential calls, one attempt each, 2 MiB aggregate response transcript |
+| Release | 16 MiB total; core module at most 8 MiB; JSON artifacts at most 1 MiB each |
+
+These are adapter bounds. Isolate admission and circuit counters are local to
+one deployment isolate, with no distributed or durable coordination promise.
+Platform limits still apply; no Free-plan CPU or hosted performance claim is
+made. See Cloudflare's [limits](https://developers.cloudflare.com/workers/platform/limits/)
+and [compatibility-date contract](https://developers.cloudflare.com/workers/configuration/compatibility-dates/).
+
+## Build and verify
+
+Use the source checkout's CLI and reviewed workspace root:
+
+```sh
+rustup toolchain install 1.93.0
+rustup target add wasm32-unknown-unknown --toolchain 1.93.0
+axiom build service.acore
+python3 configure.py
+axiom server inspect backend.axiom backend.server.json --deployment deployment.json --target cloudflare-workers-local
+axiom server package backend.axiom backend.server.json --deployment deployment.json \
+  --target cloudflare-workers-local --runtime-source /path/to/AxiomCore --output worker-release
+axiom server verify-bundle worker-release
+cd worker-release
+pnpm install
+pnpm verify
+pnpm dry-run
+```
+
+Packaging resolves no secrets and makes no Cloudflare requests. The output
+contains the WASM core, reviewed fetch glue, unchanged public contract, private
+plan and deployment references, pinned Wrangler configuration and an exact
+hashed inventory. `verify-bundle` binds the built-in target, artifact closure,
+glue, compatibility date, imports and memory limit. `pnpm verify` also executes
+the portable semantic gate. Verification establishes integrity against the
+reviewed manifest, not publisher authenticity; retain a trusted manifest and
+review the selected runtime source.
+
+Configuration values enter through trusted Worker `env` bindings. For local
+development, create a private `.dev.vars` file in the release directory with
+the references listed in `worker-release.json`. Never commit it. Then run
+`pnpm dev`; the script verifies the release before starting Wrangler locally.
+`axiom server validate ... --target cloudflare-workers-local` resolves the same
+references from local environment variables, checks shared configuration and
+authentication, and opens no listener or remote connection. Native `serve`
+and `run-bundle` remain their existing host workflows.
+
+## Providers and unsupported declarations
+
+Authentication supports HS256 JWT only, with a key of at least 32 bytes,
+signature verification, issuer/audience, expiry, not-before, issued-at and
+unambiguous claims. API-key/session files and other JWT algorithms are rejected.
+
+Resources require the certified `httpClient` interface and a reviewed
+`outbound` declaration for every operation. Bind `origin`, `credential`,
+`allowLoopback` and `idempotencySupported` through environment references.
+Origins must be HTTPS, with no credentials, paths, query or fragment;
+`allowLoopback` must be `false`. Literal IP and loopback origins are rejected.
+Paths and methods come from the private plan, redirects are rejected and
+the complete authorization header value (for example, `Bearer TOKEN`) comes
+from the trusted credential binding. GET object fields become
+query parameters; other methods send the exact Rust-encoded JSON input.
+Idempotency-key policies require provider attestation and a bounded typed key.
+Unsafe failures return `outbound_indeterminate` and are never automatically
+retried. Invalid, ambiguous, oversized and incorrectly typed remote output is
+rejected before composition resumes.
+
+The adapter retains completed typed effects only inside that request. It
+resumes deterministic managed composition using the verified transcript, so
+completed effects are not fetched again. Cancellation/deadline failure stops
+further dispatch and drops the request instance; it cannot undo a remote write.
+Only immutable code/artifacts and bounded admission/circuit counters survive
+between requests. Principals, secrets and provider results are never cached
+across requests. Application resource declarations describe stateless remote
+interfaces; they do not create persistent Worker storage.
+
+Native callbacks, Wasmtime/WASI sandbox modules, Unix/custom providers, resource
+dependencies, retries, jobs/queues/schedules, uploads, streams, native
+interceptors, server caches and admission coordination are unavailable. Plans
+receive diagnostics at the unsupported declaration. Smaller per-action
+concurrency limits than the selected two-request isolate bound require a
+separate profile. D1, KV, R2, Durable Objects, sockets and cache APIs need their
+own adapter and conformance gate before availability changes.
+
+## Local and hosted acceptance
+
+The source example at `examples/server-workflow/workers` runs the shared
+native/workerd corpus, intercepts remote HTTPS calls locally and exercises
+warm isolates, tenant isolation, typed outputs, provider failures, deadlines,
+circuits, request admission, cancellation, bundle tampering and local version
+replacement/restoration. It requires no cloud account.
+The test-only interception is outside the production Worker; production has
+no mock or loopback fallback.
+
+Hosted acceptance is a separate operator gate. After selecting an account,
+Worker name, region-independent provider destinations and cost/resource budget,
+verify the immutable bundle, bind platform secrets separately, upload a version,
+send authenticated hosted requests and record the runtime/version evidence.
+Promote and roll back explicit reviewed versions using Cloudflare's
+[version workflow](https://developers.cloudflare.com/workers/versions-and-deployments/)
+and [Wrangler commands](https://developers.cloudflare.com/workers/wrangler/commands/).
+Code rollback does not restore provider data, and credential rotation needs
+its own version/binding review. No account, upload, deployment or rollback was
+performed by the local gate.
+
+Follow the [server release workflow](/reference/server-release-workflow) for one
+API across real serving, full mocks, native bundles, both Linux container
+architectures and local Workers, including capability diagnostics, external
+credential rotation, promotion and compatible rollback. Hosted AWS and
+Cloudflare certification remain unavailable. The playground's **Portable ·
+deployment profiles** example exposes source-only target assessments and
+includes downloadable setup helpers.

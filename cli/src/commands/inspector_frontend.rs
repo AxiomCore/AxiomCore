@@ -10,8 +10,8 @@ use anyhow::{Context, Result};
 use axiom_lib::application_evidence::{ApplicationEvidence, EvidenceDiagnostic, EvidenceReference};
 use axiom_ui::inspector::{add_cross_layer_edges, add_ir, add_readiness, span_reference};
 use axiom_ui::{
-    UiCompileOptions, UiTarget, compile_ui_source_at_path,
-    compile_ui_source_with_package_lock_at_path,
+    compile_ui_source_at_path, compile_ui_source_with_package_lock_at_path, UiCompileOptions,
+    UiTarget,
 };
 use sha2::{Digest, Sha256};
 
@@ -207,40 +207,63 @@ mod tests {
         )
         .unwrap();
         assert_eq!(first.graph_revision, second.graph_revision);
-        assert!(
-            first
-                .nodes
-                .iter()
-                .any(|node| node.kind == EvidenceNodeKind::FrontendModule)
-        );
-        assert!(
-            first
-                .nodes
-                .iter()
-                .any(|node| node.kind == EvidenceNodeKind::Action)
-        );
+        assert!(first
+            .nodes
+            .iter()
+            .any(|node| node.kind == EvidenceNodeKind::FrontendModule));
+        assert!(first
+            .nodes
+            .iter()
+            .any(|node| node.kind == EvidenceNodeKind::Action));
     }
 
     #[test]
     fn shopping_fixture_has_cross_layer_lineage_and_authority() {
         use axiom_lib::application_evidence::{
-            AXIOM_QUERY_FORMAT, AxiomQuery, EvidenceIndex, QueryDirection, QueryOperation,
+            AxiomQuery, EvidenceIndex, QueryDirection, QueryOperation, AXIOM_QUERY_FORMAT,
         };
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/axiom-shopping-app");
         if !root.exists() {
             return; // The public examples repository is a separate checkout.
         }
+        // The public checkout may carry a lock from an older descriptor schema.
+        // Resolve this test's current types in an owned copy, preserving source.
+        fn copy_fixture(from: &Path, to: &Path) {
+            fs::create_dir_all(to).unwrap();
+            for entry in fs::read_dir(from).unwrap() {
+                let entry = entry.unwrap();
+                let kind = entry.file_type().unwrap();
+                if kind.is_symlink()
+                    || matches!(
+                        entry.file_name().to_str(),
+                        Some(".git" | "node_modules" | "target" | "dist")
+                    )
+                {
+                    continue;
+                }
+                if kind.is_dir() {
+                    copy_fixture(&entry.path(), &to.join(entry.file_name()));
+                } else if kind.is_file() {
+                    fs::copy(entry.path(), to.join(entry.file_name())).unwrap();
+                }
+            }
+        }
+        let temporary = tempfile::tempdir().unwrap();
+        copy_fixture(&root, temporary.path());
+        let root = temporary.path();
+        let manifest = root.join("frontend/AxiomDeps.toml");
+        let lock = axiom_lib::ui_contract::resolve_manifest(&manifest).unwrap();
+        axiom_lib::ui_contract::write_lock(&root.join("frontend/axiom.ui.lock.json"), &lock)
+            .unwrap();
         let graph = enrich(
             &root,
             axiom_lib::application_inspector::inspect_workspace(&root, "test").unwrap(),
         )
         .unwrap();
-        assert!(
-            graph
-                .nodes
-                .iter()
-                .any(|node| node.kind == EvidenceNodeKind::StyleRule)
-        );
+        assert!(graph
+            .nodes
+            .iter()
+            .any(|node| node.kind == EvidenceNodeKind::StyleRule));
         assert!(graph.nodes.iter().any(|node| {
             node.kind == EvidenceNodeKind::SourceUnit
                 && node.label == "frontend/pages/home.acore"
@@ -290,19 +313,15 @@ mod tests {
                 max_results: 1_000,
             })
             .unwrap();
-        assert!(
-            trace
-                .nodes
-                .iter()
-                .any(|node| node.kind == EvidenceNodeKind::Extension && node.label == "pricing")
-        );
-        assert!(
-            trace
-                .nodes
-                .iter()
-                .any(|node| node.kind == EvidenceNodeKind::State
-                    && node.label == "Home.cart.subtotal_cents")
-        );
+        assert!(trace
+            .nodes
+            .iter()
+            .any(|node| node.kind == EvidenceNodeKind::Extension && node.label == "pricing"));
+        assert!(trace
+            .nodes
+            .iter()
+            .any(|node| node.kind == EvidenceNodeKind::State
+                && node.label == "Home.cart.subtotal_cents"));
         let checkout = graph
             .nodes
             .iter()
@@ -329,11 +348,9 @@ mod tests {
             .iter()
             .find(|node| node.label == "Product.price_label")
             .unwrap();
-        assert!(
-            graph
-                .edges
-                .iter()
-                .any(|edge| { edge.from == field.id && edge.kind == EvidenceEdgeKind::Impacts })
-        );
+        assert!(graph
+            .edges
+            .iter()
+            .any(|edge| { edge.from == field.id && edge.kind == EvidenceEdgeKind::Impacts }));
     }
 }

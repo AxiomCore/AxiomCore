@@ -3,7 +3,11 @@ title: Streaming and WebSockets
 description: Contract types for HTTP streams, server-sent events, WebSockets, and files.
 ---
 
-Attach one `StreamingDef` subtype to an endpoint.
+Attach one `StreamingDef` subtype to an endpoint. The executable action host
+supports typed SSE, JSON/message HTTP streams and bidirectional JSON WebSockets
+with explicit limits and per-message authorization. See
+[server integrations](/reference/server-integrations) for source policies,
+provider bindings and supported transport boundaries.
 
 ## HTTP and server-sent streams
 
@@ -47,4 +51,123 @@ Disposition is `attachment` or `inline`.
   The schema is implemented, but transport lifecycle, reconnect behavior,
   binary framing, cancellation, and backpressure must be validated on the
   selected runtime/client. A declaration is not a cross-target parity claim.
+</StatusNote>
+
+## Bounded frontend views
+
+The source toolchain adds `overflow`, `max_bytes`, `idle_timeout`, and
+`sequence` to frontend stream options. Compiler, SDK and installed-editor
+qualification is still in progress. Use a matching compiler and host; the
+public installation cohort is qualified separately.
+
+A bounded view can select `overflow: "error"` to stop before exceeding its
+item capacity. `max_bytes` bounds the UTF-8 JSON representation of retained
+items to 64–1048576 bytes. `idle_timeout` is an owner-scoped 10ms–1h deadline,
+reset by received events and cleared on close, disposal or session change.
+New builds require `acore-data/v3`; an older host cannot silently ignore these
+options.
+
+`sequence` names a selected public Int field containing the source's monotonically
+increasing event sequence. It must not name a task ID or other business key.
+After the first event, duplicates, reorder and missing sequence numbers stop the
+subscription before publication and set `gap`. Automatic reconnect cannot repair
+a missing history contract; refresh from an authoritative snapshot before opening
+a new subscription.
+
+`overflow: "drop_oldest"` explicitly makes the retained presentation view lossy:
+`dropped` counts removed view items and `gap` records the loss. This is not a
+durable event-processing or sink policy. Older policies retain their previous
+bounded-view behavior for compatibility. Durable sinks have a separate
+transaction and acknowledgment boundary, described below.
+The pure fold/window options below add bounded presentation aggregation.
+
+`map` and `filter` can name checked pure functions taking the selected event type.
+The initial profile requires `map(Event) -> Event` and `filter(Event) -> Bool`.
+They receive explicit event values, with the normal pure evaluator's fuel and
+value limits. Sequence and source cursor progress follow the original event even
+when a filter excludes it; a map cannot rewrite transport progress.
+
+The owned-runtime cases are executable with:
+
+```sh
+node --test axiom-ui-host/tests/m3-stream-ownership.test.mjs
+```
+
+Those cases qualify helper semantics with synthetic transport callbacks. They do
+not establish mounted native delivery or durable provider behavior.
+
+### Candidate bounded pure folds and windows
+
+The source toolchain also supports a pure fold over an explicitly supplied current
+view and ordered event batch. The initial view is an empty typed list. A fold
+returns the same event-list type; it cannot capture page, session or store state.
+
+```acore
+module advanced.windows.ui
+use contract Workflow from "workflow" audience "mobile"
+model Change { id: Int; title: String; cursor: String }
+pure fn replaceWindow(state: List<Change>, batch: List<Change>): List<Change> = batch
+page Home {
+  stream updates = Workflow.updates(after: null) options(
+    fold: replaceWindow,
+    window_items: 2,
+    window_time: 100ms,
+    buffer: 4,
+    max_bytes: 65536,
+    overflow: "error",
+    sequence: "id"
+  )
+  view { Text(updates.status) Text(to_string(updates.items.length)) }
+}
+```
+
+This complete source is compiled and executed with the selected development
+`updates(after: String?) -> Change` contract in
+`axiom-ui/tests/frontend_data.rs`. Its `id` is a synthetic contiguous sequence
+in that fixture. Select a real transport sequence field in an application; an
+ordinary entity ID does not establish stream ordering.
+
+A count window flushes at `window_items` (1–256). An optional `window_time`
+(10ms–1m) starts when the first item enters an empty window and remains fixed as
+more items arrive. The host owns the timer. Natural close flushes the remaining
+batch. Cancellation, session replacement and disposal discard unpublished items
+and clear the timer. The queue and resulting view each respect `max_bytes`; the
+view also respects `buffer`. Fold overflow is terminal and cannot silently drop
+required events. These are bounded frontend presentation windows.
+
+## Durable batch sinks
+
+The native PostgreSQL profile uses the existing `event`, `publisher`, `consumer`,
+managed `transaction`, and typed resource operation declarations. A source
+publishes an immutable bounded batch with a stable receipt key; a trusted worker
+consumes it through the guarded action. There is no separate `sink` or `pipeline`
+keyword to learn.
+
+The complete source is in `examples/advanced-language-dx/stream-archive`, including
+the database, public endpoint, validation, transaction, outbox, publisher and
+consumer. Its batch has one to 32 items and each title has a 200-character bound.
+The private runtime specification binds `writeBatch` to two checked `insertBatch`
+steps and one receipt in the same serializable transaction. See
+[server integrations](/reference/server-integrations#transactional-batch-writes)
+for the private provider contract.
+
+A worker acknowledges the queue only after the action succeeds. If the process
+dies after database commit but before acknowledgment, the queue may deliver the
+same message again; the unchanged batch key and input replay the database
+receipt. Changed input for an established key conflicts. The source must retain
+stable keys across redelivery. Queue retention and database receipt retention
+are separate responsibilities. This does not make an arbitrary external
+publication transactional or provide a general exactly-once guarantee.
+
+Activation requires a signed, qualified database schema, a least-privilege
+application role, exact resource grants, explicit service credentials and the
+durable Redis configuration. Queue ordering applies to the declared binding;
+required business events cannot use frontend `drop_oldest`. Count/time
+presentation windows do not automatically start background workers or provide
+durable upstream history.
+
+<StatusNote status="alpha" title="Native batch-sink source profile">
+  Source compilation and offline transaction preparation are validated. Actual
+  database/queue recovery and editor distribution are separate qualification
+  gates; use the current support matrix for installation availability.
 </StatusNote>

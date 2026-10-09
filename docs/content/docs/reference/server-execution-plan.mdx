@@ -1,0 +1,353 @@
+---
+title: Server execution plan
+description: The versioned action interface, resource requirements, and enforcement boundary for server adapters.
+---
+
+The server execution plan is an implementation foundation for the backend
+framework. Its Rust representation and validation are available in
+`axiom_lib::backend`. The [HTTP adapter preview](/reference/server-adapters)
+executes native framework handlers. `axiom_server::host::ActionHost` executes
+authored native, managed and verified sandbox actions. A validated plan alone does not start a service or
+prove that a handler enforces its requirements.
+
+## Public contract and private execution
+
+Legacy `axiom-server-plan/v1` and advanced `axiom-server-plan/v2` are separate canonical JSON documents. It binds to the
+SHA-256 of the canonical public `.axiom` contract. Adding a plan does not add
+handler names, provider configuration, or secret references to the client
+artifact. The usual public contract, endpoint identity, JSON-Atom diff, and
+codec layouts retain their meaning.
+
+`ServerPlan::validate` checks the public contract binding, complete endpoint
+coverage, action input/output compatibility, failure mappings, guard references,
+resource interfaces, capability requirements, and execution ordering.
+
+Every endpoint binds to one action. Each action input maps to exactly one
+existing path, query, header, or body parameter with matching type and
+optionality. Parameters cannot be silently dropped. Domain failures have a
+typed payload and category; the endpoint separately maps them to HTTP status
+codes. No-content responses require `Void`.
+
+## Actions and guards
+
+An action has typed input, output, declared failures, implementation identity,
+effects, dependencies, and bounded execution policy. Native, managed, and
+sandbox implementations share the invocation contract.
+
+Action guards are mandatory. Endpoint guards add to them; an empty endpoint
+guard list never makes a guarded action public. Direct invocation, jobs, and
+consumers must use the same guarded invocation boundary. A background caller
+needs an explicit service or delegated identity.
+
+Authentication, permission, role, and ownership guards have distinct forms.
+An ownership resolver is a read-only typed resource operation. Its input must
+match a required action input, and its result must expose the selected ownership
+field. The host compares that field to a trusted principal claim, not to an
+identity supplied in the request body.
+
+Server policy scopes compose in global, service, outer group, inner group, and
+endpoint order. A different inherited execution setting requires an explicit
+override; unused overrides are errors. Guards accumulate. Action deadlines,
+attempt limits, and concurrency remain ceilings, including on non-HTTP entry
+points. `resolve_scopes` returns effective settings and authored origins. This
+server composition rule leaves existing client cache/retry semantics unchanged.
+
+The declaration catalog uses typed namespaces for the execution
+surface: `Actions`, `Guards`, `Failures`, `Resources`, `Events` and `Jobs`.
+[Durable asynchronous delivery](/reference/server-delivery) binds jobs and
+consumers to this same action interface. An action reference
+resolves its input/output/failure interface; a resource-operation reference
+resolves its typed signature and effect category. Projected field references
+resolve against the selected model. Catalog entries carry valid contexts,
+defaults, source spans, diagnostics, and server-plan mappings. New declarations
+must enter this shared catalog before compiler/LSP authoring is advertised.
+
+### Authored actions
+
+```acore
+model Selector { id: Int32(min: 1) }
+model Task { title: String completed: Bool }
+
+action readTask(kind: ActionKind.query, input: Models.Selector, output: Models.Task) {
+  native(symbol: "tasks.read")
+}
+
+endpoint getTask(method: GET, path: "/tasks/{id}") {
+  request { path("id", type: Int32) }
+  handle(action: Actions.readTask, input: {id: Input.path.id})
+  response(type: Models.Task)
+}
+```
+
+The compiler retains the input model's field constraints and resolves explicit
+transport mappings to one shared action. An input may be a model or `Void`;
+omitting it means `Void`. Action failures use typed `Failures.*` references.
+Mandatory `require(...)` guards and execution policies belong on the action;
+endpoint guards can add requirements. An action has exactly one `native(...)`,
+`managed { ... }`, or `sandbox(extension: Extensions.name, export: .name)` binding.
+Native symbols must be registered in a trusted Rust host. The CLI does not load
+arbitrary native plugins.
+
+Authored declarations require `reusableActions`. The action host supports that
+capability; the FastAPI/Chi stdio boundary continues to reject it. Existing
+extracted native routes remain executable through those adapters.
+
+### Managed composition
+
+```acore
+project(id: "managed-example", version: "1.0.0")
+variant default(include: ["*"])
+model Selector { id: Int32(min: 1) }
+model Task { title: String completed: Bool }
+resource tasks(lifetime: ProviderLifetime.invocation) {
+  operation lookup(input: Int32, output: Models.Task, effect: EffectKind.read)
+}
+action fetchTask(kind: ActionKind.query, input: Models.Selector, output: Models.Task) {
+  managed {
+    perform task(resource: Resources.tasks, operation: .lookup, input: Input.id)
+    result(value: Steps.task)
+  }
+}
+action readTask(kind: ActionKind.query, input: Models.Selector, output: Models.Task) {
+  managed {
+    invoke fetched(action: Actions.fetchTask, input: {id: Input.id})
+    result(value: Steps.fetched)
+  }
+}
+endpoint getTask(method: GET, path: "/tasks/{id}") {
+  request { path("id", type: Int32) }
+  handle(action: Actions.readTask, input: {id: Input.path.id})
+  response(type: Models.Task)
+}
+```
+
+`perform` dispatches a typed resource operation; `invoke` calls an authored
+action through fresh authentication and that callee's mandatory guards. A
+callee's typed failures must also be declared by its caller. The final `result`
+binds the output. Values are literals, records, lists, required `Input` model
+fields, or preceding `Steps` outputs. The legacy representation retains this finite data-only behavior. The matching
+advanced profile adds checked expressions, optional selection and branches; see
+[managed language](/acore-language/managed-language). Unrestricted loops and
+parallel execution are unavailable in this profile.
+
+The compiler checks types, references, dependency cycles and query-safe effect
+categories. Each program has at most 64 steps, 4,096 binding nodes and 32 levels
+of value nesting. Execution shares a root deadline and cancellation token, with
+at most 128 action calls, 32 levels of calls, 256 managed steps and 256 provider
+attempts per request. Each callee inherits its immediate caller's deadline and
+also retains its own deadline and concurrency
+ceiling. No effect is undone by cancellation after it has happened.
+
+### Run and invoke
+
+Build the source, scaffold a deployment and review its bindings and grants:
+
+```sh
+axiom build main.acore
+axiom server deployment backend.axiom backend.server.json --output deployment.json
+axiom server run backend.axiom backend.server.json \
+  --deployment deployment.json --listen 127.0.0.1:8080
+axiom server invoke backend.axiom backend.server.json \
+  --deployment deployment.json --request request.json
+```
+
+The deployment binds to the exact private plan hash. The CLI runs actual action
+implementations. Missing native symbols, missing providers and unavailable
+capabilities fail startup. `GET /_axiom/ready` reports readiness; SIGTERM drains
+HTTP work and closes the host. Providers must honor their supplied deadlines.
+Native callbacks check `InvocationContext::check_active()` during long work;
+they retain their slots until they exit.
+
+A direct invocation file contains typed business input:
+
+```json
+{
+  "action": "readTask",
+  "origin": "direct",
+  "identity": "caller",
+  "input": {"id": 1},
+  "headers": {}
+}
+```
+
+Credentials use the configured authentication provider. Identity labels do not
+grant authority. Trusted Rust hosts use `invoke_job` and `invoke_consumer` for
+service or action-bound delegated identities on every attempt. These entry
+points do not implement a delivery provider or schedule.
+
+Action rate limits are shared across transports. Idempotency is scoped to the
+verified principal and the HTTP binding, or to `@action:<name>` for direct/job/
+consumer calls. The separate namespaces preserve transport-specific statuses,
+projections and metadata. Replays recheck guards, return the recorded typed
+outcome and retain unknown native behavior.
+
+### Register native code and lifecycle hooks
+
+Trusted Rust hosts register an `Arc` native handler in `HostRegistry::native`,
+then construct `ActionHost::configured` with the exact contract, plan,
+deployment, registry and trusted `ConfigurationResolver`. The callback receives
+an immutable admitted context and returns `ActionOutcome::Success` or a declared
+`ActionOutcome::Failure`. Required HTTP headers and cookies need a registered
+`HostRegistry::metadata` producer; outputs are validated before completion.
+
+`HostRegistry::lifecycle` registers startup, shutdown, request-begin/end and
+action-begin/end hooks. Begin hooks run in registration order; end and shutdown
+hooks run in reverse order, attempting remaining cleanup after a failure.
+Request hooks also cover denied requests and replay; action hooks cover executed
+actions. Panics and hook failures release admission and abandon unfinished
+claims. Hooks and native providers are trusted code with cooperative deadlines;
+their internal effects remain unknown. Transaction hooks are deferred. Authored
+native interceptor declarations continue to use the framework adapters and
+fail explicitly on the action host.
+
+### Verified sandbox bindings
+
+`VerifiedSandbox::load` reuses the existing backend extension host, WASM kernel
+and capability broker. It requires a verified executable package, exact module
+digest, matching application identity and a release-pinned authority lock.
+Package imports and action declarations supply no authority.
+
+The current server sandbox adapter supports bounded computation and denies
+every external host operation, including operations that an extension lock
+would otherwise permit. Broker denials are audited and returned to the guest;
+a guest may handle a denied effect and return a valid fallback. No denied effect
+reaches a provider. Memory, fuel, messages, deadlines and cancellation use the
+existing kernel limits. The typed JSON/ABI bridge excludes floating-point and
+byte model fields and recursive or deeply nested models.
+
+The CLI accepts `--bindings sandbox-bindings.json` on run or invoke. The private
+document uses `axiom-action-bindings/v1`, the exact `planSha256`, and a
+`sandboxes` map. Each alias contains `packageEnv`, `authorityEnv`, `moduleEnv`
+and the approved `authoritySha256`. Environment references resolve private
+artifact paths; the pin must come from the reviewed release manifest.
+
+## Resources and deployment
+
+A resource has named operations, typed inputs/outputs, effect classifications,
+dependencies, and an application or invocation lifetime. Application providers
+cannot retain invocation-scoped dependencies. Dependency cycles are rejected.
+
+`axiom-server-deployment/v1` binds each resource to a provider with the same
+interface hash. Configuration values are environment-variable references;
+resolved credentials and configuration never enter the plan. Binding a resource
+does not grant authority. Exact resource-operation grants are separate.
+
+Deployment capabilities must satisfy the plan and be supported by the actual
+host. A manifest cannot enable an unimplemented host capability. Providers must
+also be verified against their registered implementation at startup; a claimed
+interface hash is not proof of an implementation.
+
+`HostRegistry::providers` registers trusted `ProviderFactory` implementations.
+The factory must expose the exact operation signatures and configuration key
+schema. A `ConfigurationResolver` resolves references once at startup; resolved
+configuration has redacted debug output and is never serialized by the host.
+Factory validation runs before readiness. Application dependencies initialize
+once in topological order. Invocation dependencies are acquired lazily and shared
+across guard checks and nested actions in that request. Cleanup runs once in
+reverse acquisition order, including partial creation and failure paths.
+
+The built-in `jsonSnapshot` provider reads private, bounded JSON files using
+typed scalar keys. Custom provider implementations and lifecycle hooks remain
+opaque native code; their presence prevents a complete effect claim, including
+on replay. Resource bindings, provider dependencies and model declarations never
+install a database or grant resource-operation authority.
+
+## Effects and evidence
+
+Effects identify a resource operation, its kind, and source provenance. The
+initial taxonomy includes reads, writes, deletion, network calls, publication,
+consumption, file access, secret use, scheduling, jobs, logging, tracing, clocks,
+and random input. Database adapters are outside this implementation project.
+
+Declared, inferred, and extracted provenance differ from runtime evidence.
+Implementation kind also differs from enforcement evidence: a native handler
+may have enforced input validation while its internal network behavior remains
+unknown. Native implementations cannot assert complete effect analysis in a
+plan, and unknown behavior propagates through action dependencies.
+
+Queries reject declared business mutations and calls to command/stream actions.
+Explicit framework tracing and similar operations can remain permitted. An
+unclassified network call is not assumed to be read-only. A list of effects
+does not establish their temporal order.
+
+## Execution and termination
+
+The execution graph contains limits, decoding, input validation, identity,
+authorization context, authorization, cache access, dependencies, an effect
+gate, execution, output validation, and response stages. Dependencies must be
+acyclic and preserve these rules:
+
+- Apply request limits before decoding.
+- Obtain identity and validated inputs before resolving authorization context.
+- Authorize before protected cache reads or ordinary provider resolution.
+- Install the invocation's effect gate before executing the implementation.
+- Validate managed effect permissions before each dispatch. Output validation
+  cannot undo an external effect that already happened.
+- Validate output before responding.
+- Clean up on success, rejection, failure, cancellation, deadline, and disconnect.
+
+Retries remain inside the original deadline. A command cannot opt into automatic
+retries merely by increasing an attempt count. In particular, an indeterminate
+external outcome is not automatically retryable. Transaction and after-commit
+stages belong to the future database integration.
+
+## Verify the foundation
+
+From the multi-repository workspace root:
+
+```sh
+cargo test --manifest-path axiom-lib/Cargo.toml --test backend_plan --locked
+```
+
+This suite tests contract identity, canonical serialization, input mapping,
+guard composition, failure typing, unsafe execution ordering, capability
+requirements, provider grants, resource lifetimes, and opaque effect propagation.
+Adapter conformance and real HTTP tests are separate release requirements.
+
+## M1 managed flow and typed outcomes
+
+The working v2 plan adds bounded managed statements and explicit public failure
+contracts. Action failure payloads remain private; `exposeFailure` selects public
+fields/audiences and `failureStatus` maps transport status independently. Native
+and verified guest outcomes pass the same host validation. Cancellation/deadline
+checks precede translation of a business failure. See the complete
+[managed-language examples](/acore-language/managed-language).
+
+## Ownership, release and prepared transactions
+
+Managed flow retains exact source spans on awaited dispatches and errors. Calls
+share the root cancellation token, generation and budget, while each child also
+keeps its own deadline ceiling. Provider acquisition is owned and released once;
+shutdown or duplicate teardown cannot reacquire a disposed provider.
+
+Cleanup attempts every remaining acquisition in reverse order. Safe secondary
+issues accompany the original failure, with at most 16 issues and an explicit
+truncation marker. A release context has a separate 250 ms cooperative deadline
+and 128 work units. Release errors and panics never export private provider text.
+A callback that ignores cancellation or release bounds remains trusted native
+work; its invocation/admission accounting lasts until actual exit.
+
+A source transaction becomes one derived resource operation after exact offline
+preparation against the declared qualified SQL programs. Deployment and
+simulation reject missing preparation or changed programs. The reviewed grant
+names the derived operation. Atomicity covers the business/outbox/receipt work in
+that provider, with precommit result validation and the existing commit-resolution
+protocol; it does not cover another resource or an external network effect.
+
+A private plan diff retains exact before/after hashes. It may classify a finite
+bounded straight-line legacy-to-await rewrite as representation changes while
+showing an empty behavior diff. Validation activation, branches, computations,
+unbounded values and unknown native behavior remain ordinary changes requiring
+review.
+
+
+## Owned operations
+
+Named finite parallel groups infer joined records or collected outcomes and require the structured-concurrency host capability. Children retain parent ceilings and ownership through cancellation and drain. See [owned concurrency](/acore-language/owned-operations#named-parallel-reads).
+
+
+Typed [`batchPolicy`](/reference/typed-request-batching) declarations derive the
+`requestBatching` capability. The initial host groups read calls only within one
+admitted root with matching authority, attempt and deadline ceilings. Factory
+protocol/read-safety evidence and grants for both scalar and physical operations
+are checked at activation; commands and transaction-bound aggregation reject.

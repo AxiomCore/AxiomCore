@@ -173,12 +173,15 @@ async fn rebuild_with_version(
         source_path.display()
     );
 
-    let artifact =
-        crate::commands::backend::build(source_path, variant, None, Some(previous_artifact))
-            .await
-            .map_err(|error| {
-                anyhow::anyhow!("Could not rebuild {}: {error}", source_path.display())
-            })?;
+    let artifact = crate::commands::backend::build_to(
+        source_path,
+        variant,
+        None,
+        Some(previous_artifact),
+        previous_artifact,
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!("Could not rebuild {}: {error}", source_path.display()))?;
     let artifact_path = PathBuf::from(artifact);
     let artifact_bytes = std::fs::read(&artifact_path)?;
     let contract = axiom_lib::unpackager::unpack_axiom_bytes(&artifact_bytes)?;

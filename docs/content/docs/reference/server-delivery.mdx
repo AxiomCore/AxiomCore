@@ -1,0 +1,169 @@
+---
+title: Events, jobs, schedules and webhooks
+description: Typed asynchronous work with durable Redis delivery, guarded attempts and explicit recovery.
+---
+
+Asynchronous bindings live in the private server execution plan. They require
+the `jobs` capability and an explicitly configured delivery worker. Ordinary
+HTTP/action hosts reject that requirement. The CLI worker executes managed and
+verified sandbox actions; a trusted Rust host registers native implementations.
+
+```acore
+project(id: "delivery-example", version: "1.0.0")
+variant default(include: ["*"])
+model Work { id: Int64 mode: String }
+guard signed(kind: GuardKind.authenticated)
+action execute(kind: ActionKind.command, input: Models.Work, output: Models.Work) {
+  managed { result(value: {id: Input.id, mode: Input.mode}) }
+  require(guard: Guards.signed)
+}
+event changed(payload: Models.Work)
+publisher publishChanged(event: Events.changed)
+consumer consumeChanged(event: Events.changed, action: Actions.execute,
+  attempts: 3, backoff: 1s, maxBackoff: 1m, deadline: 1h,
+  ordering: DeliveryOrdering.binding)
+job executeWork(action: Actions.execute, attempts: 3, deadline: 1h)
+schedule periodic(job: Jobs.executeWork, every: 1h, timezone: "UTC",
+  overlap: ScheduleOverlap.queue, missed: MissedRun.catchUp, maxCatchUp: 2,
+  input: {id: 1, mode: "scheduled"})
+webhook notify(event: Events.changed, attempts: 3, timeout: 5s,
+  deadline: 1h, replayWindow: 5m)
+```
+
+Events require a named payload model. Consumers must match that model exactly.
+Jobs and consumers target guarded, non-streaming actions. Publication validates
+the payload and atomically creates a bounded fanout of consumer/webhook tasks.
+An unbound event is rejected. A source binding does not grant publication,
+enqueueing, cancellation or recovery authority.
+
+The private `axiom-delivery-deployment/v1` manifest binds to the exact plan hash.
+It selects a Redis URL reference, namespace, lease and receipt retention; exact
+`job:name` and `consumer:name` credential references; webhook destinations and
+signing-key references; and explicit operation grants. These references and
+secrets never enter the public `.axiom` artifact or queue payload. Keep this
+manifest private alongside the server deployment manifest.
+
+```sh
+axiom server delivery-deployment backend.axiom backend.server.json --output delivery.json
+axiom server enqueue backend.axiom backend.server.json --delivery delivery.json --request submission.json
+axiom server worker backend.axiom backend.server.json --deployment deployment.json --delivery delivery.json
+axiom server delivery-inspect backend.axiom backend.server.json --delivery delivery.json --dead
+```
+
+Review the generated manifest, configure trusted secret references, and grant
+only the desired operations before starting a worker. Grants use
+`enqueue:jobName`, `publish:publisherName`, `cancel:job:jobName` and
+`recover:job:jobName`; cancellation/recovery also accept `consumer` and `webhook`
+bindings. Native symbols need a Rust registration; the CLI loads no arbitrary
+native plugin. `--once` processes one attempt and ticks schedules. SIGTERM stops
+new attempts and cooperatively cancels current work; native callbacks must check
+their action context and return.
+
+A submission supplies a stable producer identity, typed payload and optional
+delay and trace parent:
+
+```json
+{"kind":"job","name":"executeWork","id":"order-42","payload":{"id":42,"mode":"normal"},"delayMs":1000}
+```
+
+Use `kind: "publish"` and a publisher name for events. Repeating the same
+identity and payload returns the same receipts during retention. Changing the
+payload or delay under that identity fails with a conflict. Event identity is
+scoped to the event, so two publisher bindings for the same event share dedupe.
+Publication and an application's database write are separate operations.
+Transactional publication and outbox support require a database integration.
+
+## Delivery and recovery
+
+The supported provider is a single Redis server with readable configuration
+`appendonly=yes`, `appendfsync=always`, and `maxmemory-policy=noeviction`.
+Startup rejects weaker configurations and a namespace bound to another plan.
+Availability and durability depend on that server and its storage; Redis
+Cluster, failover certification and an in-memory production queue are outside
+this provider's supported guarantee. See Redis's
+[persistence documentation](https://redis.io/docs/latest/management/persistence/).
+
+Leases have random fencing tokens. Claim, retry, acknowledgment, cancellation,
+schedule commit and dead-letter transitions use atomic provider scripts. A
+worker acknowledges only a validated success; a dead process loses its lease
+and the next worker recovers the task. Execution is **at least once**: a crash
+after an external effect and before acknowledgment can repeat that effect.
+Queue dedupe prevents duplicate enqueueing within receipt retention. It does
+not make arbitrary consumer effects exactly once. Receivers should use the
+stable receipt identity in their own durable dedupe/transaction boundary.
+
+`unordered` permits independent tasks. `binding` preserves enqueue order for
+the whole job or consumer binding, including delayed and retrying tasks; a
+delayed head holds later tasks. There is no global or cross-binding order.
+
+Only declared retryable action failures retry automatically; authorization,
+invalid input and indeterminate failures are terminal. Transport failures,
+HTTP 429 and HTTP 5xx retry webhooks. Backoff doubles up to its explicit cap.
+Expired leases count as attempts. Deadlines include delay and retries and also
+clamp the action deadline. Attempt exhaustion enters the dead-letter ledger.
+Inspection exposes states, attempts, trace parents, failure codes and bounded
+recovery history, without payloads or credentials. `delivery-cancel --id ...`
+cancels pending work or signals the active attempt. `delivery-redrive --id ...`
+requires a recovery grant and explicitly accepts that effects may repeat.
+An action's indeterminate idempotency claim still blocks unsafe replay.
+
+Every job/consumer attempt resolves its trusted credentials anew and enters
+the same guarded action boundary. Provider-verified service claims require
+`claims["axiom.identity"] = "service"`. Delegated claims require
+`"axiom.identity" = "delegated"`, the exact `"axiom.action"`, and a nonempty
+`"axiom.delegate"`. Browser sessions and caller identities cannot authorize
+background work. An expired or revoked credential prevents callback dispatch.
+
+## Schedule semantics
+
+Intervals are anchored to UTC epoch multiples. Daily schedules use
+`at: "HH:MM"` and an explicit IANA timezone. A repeated local time fires at its
+earliest occurrence once; a nonexistent local time skips that day. Cursors begin
+when a schedule first acquires ownership, so first startup does not backfill
+historical occurrences. Redis time drives due times and deadlines.
+
+| Setting | Behavior |
+| --- | --- |
+| `overlap: allow` | Occurrences can execute independently; job ordering still applies. |
+| `overlap: queue` | Occurrences serialize in their schedule lane, or the job's binding lane. |
+| `overlap: skip` | A due occurrence is skipped if that lane already contains unfinished work. |
+| `missed: skip` | Only the most recent occurrence within `grace` is eligible. |
+| `missed: latest` | Enqueue the most recent missed occurrence. |
+| `missed: catchUp` | Enqueue at most `maxCatchUp` occurrences per tick; retain the remaining backlog. |
+
+Owners renew a provider lease. Committing occurrences and advancing the cursor
+is atomic and checks both the owner token and previous cursor. Competing or
+restarted schedulers cannot commit under an expired owner. Recovery waits for
+the prior ownership lease. Deterministic occurrence identities prevent repeated
+enqueueing after a crash. Skipped overlap occurrences still advance the cursor.
+
+## Webhook signatures and replay
+
+Destinations are private exact URL references. Production requires HTTPS;
+explicit development configuration permits literal loopback HTTP. Redirects
+and environment proxies are disabled. Attempts resolve the signing key again,
+use a bounded timeout and retain no response payload.
+
+Headers include `x-axiom-delivery`, `x-axiom-timestamp` (Unix milliseconds),
+`x-axiom-attempt`, `traceparent`, and `x-axiom-signature`. The signature is
+`v1=` followed by the hex HMAC-SHA256 of
+`timestamp + "." + deliveryId + "." + exactBodyBytes`, with a key of at least
+32 bytes. Retries keep the delivery identity and use a fresh timestamp and MAC.
+Signatures alone do not prevent replay. Receivers must check their freshness
+window, verify the MAC in constant time, and reject a previously accepted
+identity in a durable replay ledger. The Rust `verify_webhook` and
+`RedisQueue::accept_replay_id` helpers support those checks. Record the identity
+only after verifying the signature; coordinate business effects with the
+receiver's own durability rules.
+
+Payloads are limited to 64 KiB, fanout to 128 tasks and records to 4096 per
+namespace. Retry attempts are 1–16; backoff caps at one hour; delivery deadlines
+at seven days; webhook timeouts at 30 seconds; catch-up at 32 per tick; history
+at 32 entries per receipt. Receipt retention is explicitly configured from one
+minute to 30 days. Once retained receipts expire, reusing an identity may enqueue
+again. A full queue/replay ledger fails explicitly instead of evicting evidence.
+
+
+## Owned operations
+
+Managed commands can call `Jobs.<name>.enqueue(input: ..., key: ..., delay: 1h)` through a trusted exact-plan delivery controller. Input, grants, producer fingerprints, receipts, and per-attempt worker identities keep the existing durable delivery semantics. See [typed enqueue](/acore-language/owned-operations#typed-durable-enqueue).

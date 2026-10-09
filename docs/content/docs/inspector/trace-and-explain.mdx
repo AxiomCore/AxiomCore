@@ -41,6 +41,92 @@ Apply member price button
 Every arrow is a typed relationship. The path is not produced from label
 similarity.
 
+Cache declarations and invalidation references describe dependencies; static
+inspection does not read a live cache. The native host's bounded observations
+distinguish `cache.hit`, `cache.fill`, `cache.join` and `cache.invalidate`.
+An invalidation observation means accepted action success, not an independently
+observed database commit. Labels use declared policy names and exclude cache
+keys, inputs, credentials and verified principal values.
+
+## Candidate observation envelopes
+
+### Classified application fields
+
+Applications can opt in to a small, typed field catalog in the private plan:
+
+```acore
+serverTelemetry(maxSeries: 32, maxEvents: 128, applicationFields: {
+  stage: {type: "enum", classification: "public", values: ["started", "complete"]},
+  count: {type: "int32", classification: "public"},
+  draft: {type: "string", classification: "private"},
+  credential: {type: "string", classification: "secret"}
+})
+```
+
+The trusted native host producer calls
+`ActionHost::record_application_telemetry(action, fields, trace)` for a compiled
+action. This explicit API checks every field before emitting an event. Public
+values support Boolean, Int32 and finite enums; arbitrary public strings are
+rejected. Private and secret values become the literal `[redacted]` before
+collection. At most 16 fields and 32 enum cases are permitted. Unknown fields,
+wrong types and undeclared enum values fail without emitting a partial event.
+These fields never become metric labels. No request, guest or transport payload
+is collected automatically, and hashing private values is not used as redaction.
+
+Inspector imports only the exact compiled field catalog and rejects unredacted
+private values. Field declarations convey no guest capability: sandbox events
+remain host-owned. Passive editor analysis checks the catalog and cannot emit
+telemetry. Existing declarations without `applicationFields` retain their
+default payload-free behavior.
+
+The candidate native host exposes a local `axiom-observation/v2` snapshot through
+`ActionHost::observations()`. Its identity contains the exact compiled contract
+and private plan digests, plus the execution layer (`native-host` or
+`scripted-provider`). This is a trusted host API; a static Inspector trace does
+not fetch it or start application work.
+
+Retained events have an ordered sequence, an explicit `observed` evidence label,
+and a terminal cause: `success`, `businessFailure`, `abort`, `fault`,
+`cleanupFailure`, or `indeterminate`. Owned events include the runtime's actual
+root and operation IDs, attempt, owner generation, inherited deadline tick and
+remaining shared work. A cleanup failure also gets a separate event, preserving
+the primary business or fault outcome. These values describe the executed
+boundary; they do not imply that an external commit succeeded.
+
+Resource evidence records entry into the checked provider dispatch boundary,
+including a typed failure or an unknown outcome. Admission denial is not a
+dispatch. For aggregation, only included items acquire dispatch evidence;
+canceled items removed before flushing do not. The physical batch count advances
+at dispatch, and a malformed reply cannot erase a dispatch that already happened.
+Native provider internals retain `unknown` evidence.
+
+The native collector bounds series and retained events using `serverTelemetry`.
+Labels are validated against the exact plan's actions, resources, endpoints,
+cache policies and qualified batch operations. Unknown labels aggregate into
+overflow. Payloads, credential bytes, principal claims, error messages and
+submission keys are absent. Retention saturation reports `droppedEvents`.
+
+Portable and generated frontend owners emit `acore-observation/v2` events with
+opaque owner correlation, checked semantic/operation identities, generations and
+safe event metadata. Route item keys and arbitrary provider text are excluded.
+The portable collector tests, generated adapter tests, native action-host tests,
+mounted targets and installed editor views are separate qualification levels.
+The complete cross-transport timeline and editor delivery remain under
+qualification.
+
+For explicit native observation import, the candidate CLI joins through the
+exact compiler-owned contract/plan catalog. It preserves source event order and
+links each supported event's `semanticId` to its captured graph fact. Wrong or
+ambiguous catalogs fail; source labels alone cannot reconnect a stale run.
+See [native managed observation import](/inspector/runtime-and-audits).
+
+The candidate frontend capture envelope also binds the complete compiled UI IR
+digest to an exact source catalog. It retains bounded capture order and separate
+coordinator/owner sequences, with logical trace IDs and shared physical-request
+links. Secure transport parents allow correlation with native observations;
+producer ordering stays separate. Portable tests and mounted captures retain
+distinct execution layers. See [frontend owner observations](/inspector/runtime-and-audits).
+
 ## Ask why
 
 ```bash

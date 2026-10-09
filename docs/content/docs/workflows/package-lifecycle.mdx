@@ -8,6 +8,13 @@ database schemas, extensions, and application policies. Package envelopes are
 declarative. Extension packages carry metadata and a digest for separately
 distributed code, not executable bytes.
 
+Typed `axiom-database-schema/v2` packages describe experimental offline PostgreSQL
+contracts and target servers only. The database compiler validates every typed
+object and verifies canonical locked imports. Legacy v1 database exports remain
+inspectable data and cannot enter typed database workflows. Neither version
+carries connection or migration authority. See
+[Database contracts](/acore-language/database-contracts).
+
 ## Author and build
 
 Create a package source envelope that conforms to the selected kind, then build
@@ -23,8 +30,12 @@ canonical encoding.
 ## Declare and lock dependencies
 
 ```toml
+format = "axiom-package-deps/v1"
+targets = ["android", "ios", "web"]
+
 [packages.theme]
-source = "./packages/theme.axiom"
+artifact = "packages/theme.axiom"
+name = "example.theme"
 version = "1.0.0"
 kind = "theme"
 ```
@@ -58,6 +69,18 @@ compiled for a concrete target:
 axiom packages check-source main.acore --target web
 axiom packages run main.acore --target web --once
 ```
+
+The source-checkout compiler supports `axiom-component-library/v2` node
+property/event bindings, named slot placement and bounded typed local
+state/derived/action/lifecycle behavior. It compiles these through the same
+component semantics as local Acore declarations and preserves artifact/export
+provenance. Packages remain data-only and capability-neutral; emit typed events
+to the consumer for application operations. V1 retains its passive executable
+subset. Unsupported legacy metadata and refinement descriptors reject instead
+of disappearing during lowering. Envelope validity alone is not consumer
+validation. See the [UI profile](/acore-language/ui-profile#elements-and-components)
+for the exact bounds and matching compiler/host versions; older installed CLI
+releases need the corresponding update.
 
 The compiler rejects kind mismatches, missing exports, target incompatibility,
 and lock/integrity failures. Catalog discovery and one-click installation are

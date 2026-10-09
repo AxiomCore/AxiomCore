@@ -33,6 +33,98 @@ axiom inspect record . --target ios --session release-check --disabled
 Sessions are kept under the ignored local Inspector workspace and remain bound
 to their application graph revision.
 
+## Native managed observations
+
+The candidate source-built CLI also accepts `axiom-observation/v2` snapshots.
+The inspected workspace must contain the exact public contract and private
+server plan. Its compiler-owned `axiom-observation-catalog/v1` binds supported
+action, resource, cache, batch and endpoint event labels to precise graph facts.
+Matching names in another plan cannot establish that relationship.
+
+The native HTTP host can export its bounded observations after owned shutdown:
+
+```bash
+axiom server run backend.axiom prepared.server.json \
+  --deployment deployment.json --bindings bindings.json \
+  --observations actual.observation.json
+# Exercise the application, then stop the host with Ctrl+C.
+axiom inspect record . --target server \
+  --input actual.observation.json --session actual-observed
+axiom inspect runtime . --session actual-observed --format json
+```
+
+The destination must be new. The CLI prepares private output before activation
+and writes it after host cleanup; Unix output permissions are `0600`. The
+snapshot labels its layer `native-host`, binds the executed contract/plan and
+keeps only the events allowed by `serverTelemetry` bounds. It excludes request
+arguments, results, credentials and submission keys. Native observations do
+not establish unobserved provider or guest internals. Capturing and importing
+the file are explicit actions.
+
+The complete [deterministic scenario example](/tooling/axiom-test-runner)
+can export actual host boundaries with synthetic read providers:
+
+```bash
+axiom scenario run axiom.axiom \
+  --plan axiom.server.json --deployment deployment.json \
+  --scenario retry.scenario.json --report retry.report.json \
+  --observations retry.observation.json
+axiom inspect record . --target server \
+  --input retry.observation.json --session retry-observed
+axiom inspect runtime . --session retry-observed --format json
+```
+
+The export labels its execution layer `scripted-provider`. Normalization keeps
+producer order, trace and parent span, root/operation identity, attempt, owner
+generation, work ceiling and stable terminal cause. It rejects mismatched
+artifacts, unknown/private fields, invalid trace identities, unsupported catalog
+labels and excess retention. Input and stored session reads are bounded to
+25 MiB before JSON parsing. Truncated events retain their original source
+sequence and a partial retention label; aggregate durations do not invent an
+ordering between independent work.
+
+This is explicit offline observation. Passive source editing does not capture
+runtime values or execute tests. A scripted provider observation proves the
+checked host boundary and does not qualify production durability or native
+provider internals. Complete cross-transport and installed editor delivery are
+still under qualification.
+
+## Frontend owner observations
+
+The candidate browser host offers explicit bounded capture through its developer
+console. Start recording before the interaction to diagnose, then stop and save
+the returned JSON object as `frontend.observation.json`:
+
+```javascript
+window.__axiomObservations.start({ maximumEvents: 512 });
+// Perform the interaction in the mounted application.
+window.__axiomObservations.stop();
+```
+
+`acore-observation-session/v1` binds the exact compiled UI IR digest and target.
+It retains capture order separately from coordinator/owner order, generation,
+operation terminal category and validated trace/span IDs. Captures omit request
+arguments, result payloads, credentials, submission keys and runtime route keys.
+At most 1,024 events can be retained; replaced records remain counted as dropped.
+
+Import against the same compiled frontend workspace:
+
+```bash
+axiom inspect record . --target web \
+  --input frontend.observation.json --session frontend-observed
+axiom inspect runtime . --session frontend-observed --format json
+```
+
+The compiler-owned `acore-observation-catalog/v1` maps runtime symbols to authored
+graph facts. Import rejects stale IR digests, missing source facts, private or
+unknown fields and invalid source order. Portable owner tests label their layer
+`compiled-portable-owner`; actual browser capture labels `mounted-web`. Neither
+label establishes provider internals. Transport dispatch carries a secure trace
+parent when the host supports it, including a physical-dispatch link for shared
+queries. Cross-host events keep their producer order; a common trace does not
+establish a total order. Browser delivery and the final installed editor cohort
+remain under qualification.
+
 ## Inspect a session
 
 ```bash

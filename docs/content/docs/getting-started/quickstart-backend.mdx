@@ -29,7 +29,7 @@ axiom init main.py:app --module axiom-fastapi
 
 ```bash
 axiom build axiom.acore
-axiom inspect axiom.axiom
+axiom inspect backend.axiom
 ```
 
 The build evaluates Acore, invokes the configured extractor, validates the
@@ -41,13 +41,88 @@ the backend.
 ```bash
 axiom test axiom.acore
 axiom run axiom.acore
-axiom run axiom.acore --mode mock --debug
+axiom mock axiom.acore --profile contract --debug
 ```
 
-Service mode is the default. A contract-only Acore backend currently executes
-through the same deterministic engine as mock mode, while an extracted
-`BackendConfig` launches its declared service entrypoint. Explicit mock mode
-uses authored mock data and state and can enable verbose request diagnostics.
+Service mode is the default and starts the real declared Python/Go application,
+or the managed/sandbox host when the source authors a server plan and reviewed
+deployment. Contract-only source fails explicitly. `axiom serve axiom.acore`
+uses the same real execution path. Install the
+[server adapter](/reference/server-adapters) in external applications for
+contract enforcement. Explicit contract mock mode uses authored endpoint data and state without enforcing absent private actions. For managed/sandbox plans, follow the [full server simulation guide](/reference/server-simulation) to prepare typed fixtures and reviewed identities. See [command migration](/reference/server-cli-migration) for profile selection.
 
 Next, follow the full [Backend contract lifecycle](/workflows/backend-contract-lifecycle)
 for semantic review and immutable release.
+
+Follow the [server release workflow](/reference/server-release-workflow) for one
+API across real serving, full mocks, native bundles, both Linux container
+architectures and local Workers, including capability diagnostics, external
+credential rotation, promotion and compatible rollback. Hosted AWS and
+Cloudflare certification remain unavailable. The playground's **Portable ·
+deployment profiles** example exposes source-only target assessments and
+includes downloadable setup helpers.
+
+
+## Add bounded managed logic
+
+With the working compiler and matching native ActionHost, normalization and
+branching can remain in Acore. This complete starter rejects blank normalized
+titles and returns a checked task without a native callback:
+
+```acore
+project(id: "managed-quickstart", version: "1")
+variant default(include: ["*"])
+model Create { title: String(minLength: 1, maxLength: 200) }
+model Task { id: Int32 title: String }
+model Problem { message: String }
+failure invalidTitle(payload: Models.Problem, status: 422)
+pure fn normalizeTitle(value: String): String = value.trim()
+
+action create(kind: ActionKind.command, input: Models.Create, output: Models.Task) {
+  errors(Failures.invalidTitle)
+  managed {
+    let title = normalizeTitle(Input.title)
+    guard title.length > 0 else fail Failures.invalidTitle({message: "Title is required"})
+    return {id: 1, title: title}
+  }
+}
+endpoint create(method: POST, path: "/tasks") {
+  request { body("title", type: String) }
+  handle(action: Actions.create, input: {title: Input.body.title})
+  response(type: Models.Task)
+  errors(Failures.invalidTitle)
+  exposeFailure(failure: Failures.invalidTitle, fields: [.message], audiences: ["web"])
+}
+```
+
+This starter returns a value; persistent creation needs a declared provider,
+private binding, and reviewed operation grants. See
+[managed language foundations](/acore-language/managed-language) for shared
+rules, typed failure handling, exact codecs, configuration, and an explicit
+database transaction. Managed expressions have finite work limits. Each awaited
+call rechecks ownership, cancellation, deadlines and the original root budget.
+New executable metadata requires compatible version 2 readers; a Worker without
+the required flow capability rejects activation.
+
+## Build the complete task application
+
+The workspace example `examples/advanced-language-dx/tasks` combines shared
+draft validation, public typed failures, authenticated read caching, private
+dependency bindings, signed sandbox title normalization, and a managed
+transaction containing the task, outbox event and submission receipt. Its
+frontend consumes the selected public contract and an authenticated finite SSE
+snapshot. Each subscription closes after one complete bounded snapshot.
+
+Use the example README and shared `examples/advanced-language-dx/prepare.py`
+with the matching CLI to build contracts, private plans, locks and application
+test reports. Preparation does not start a database or contact a deployment.
+Real serving also needs the documented signed PostgreSQL schema/readiness,
+least-privilege tenant policies, Redis admission storage and explicit grants.
+Do not infer transaction durability from the frontend reference suite.
+
+The sibling `batch-dashboard` example measures three logical reads through one
+qualified native batch callback. `stream-archive` demonstrates a bounded
+receipt-backed PostgreSQL batch sink and separate Redis delivery acknowledgements.
+See [typed batching](/reference/server-integrations),
+[streaming](/acore-language/streaming-and-websockets), and
+[frontend testing](/acore-language/frontend-testing) for their boundaries.

@@ -1,0 +1,160 @@
+---
+title: SQLite contracts
+description: Experimental SQLite desired-state authoring and private signed local database lifecycle.
+---
+
+SQLite is the first additional Acore database dialect. Its selected local profile
+is **Experimental**. MySQL/MariaDB and other adapters remain later work.
+Describe the desired schema in Acore; the Rust engine manages private transition
+history and renders SQL internally. Backend database operations and codecs remain
+later work.
+
+Use a database manifest as described in [Database contracts](./database-contracts).
+The selected SQLite profile manages the whole `main` schema of an explicitly
+bound file enrolled from empty. Existing native objects are inspected and retained,
+but block enrollment and planning until a future adoption workflow is available.
+
+```acore
+profile database 1
+module example.storage
+
+database storage(engine: DatabaseEngine.sqlite) {
+  manage(schemas: [Schemas.main], mode: ManagementMode.ownedObjects)
+  schema main {
+    table users(strict: true) {
+      id: Sqlite.Integer(autoIncrement: true)
+      email: Sqlite.Text(collation: "NOCASE")
+      visits: Sqlite.Integer(default: 0)
+      doubled: Sqlite.Integer(
+        generated: Sqlite.multiply(.visits, 2), generatedKind: "stored"
+      )
+      primaryKey(columns: [.id])
+      unique email(columns: [.email])
+      check nonnegative(predicate: Sqlite.gte(.visits, 0))
+      index active(columns: [.visits], where: Sqlite.gt(.visits, 0))
+    }
+  }
+}
+```
+
+`Sqlite.Int`, `Integer`, `Real`, `Text`, `Blob`, `Any` and
+`Native(declared: "VARCHAR(255)")` preserve SQLite storage semantics. STRICT
+tables allow only SQLite's six native strict type names. `Integer` with a single
+primary key is the rowid alias; `Int` is distinct. AUTOINCREMENT requires that
+required INTEGER alias. `withoutRowid: true` requires a primary key and excludes
+AUTOINCREMENT. Only BINARY, NOCASE and RTRIM collations are selected.
+
+Ordered primary/unique/foreign keys, FK actions, checks, partial column indexes,
+virtual/stored generated columns, views and before/after insert/update/delete
+triggers are available. Views use `Sql.query`; triggers use `Sql.body` inside a
+structured declaration:
+
+```acore
+view activeUsers(
+  query: Sql.query(
+    source: "SELECT id, email FROM users WHERE visits > 0",
+    dependencies: [Tables.main.users], effects: SqlEffects.unknown
+  )
+)
+```
+
+The SQL source stays in private input/history. Published `.axiom` packages carry
+interfaces, declared dependencies and definition digests. Effects and view result
+types remain unknown. Table dependencies include the table interface in contract
+impact reports; backend/frontend runtime impact remains unknown until consumers
+are mapped.
+
+## Offline authoring
+
+The ordinary `axiom database check`, `build`, `inspect`, `diff`, `format` and source
+graph/editor operations consume SQLite contracts. `axiom database catalog` lists the
+separate SQLite primitives. Offline compilation and WebAssembly use Rust and
+perform no provider resolution, library loading or database connection.
+
+## Explicit native lifecycle
+
+Native commands are under `axiom database sqlite`: `binding-check`, `inspect-live`,
+`plan`, `sign`, `release-verify`, `register`, `apply`, `status`, `verify` and
+`reconcile`. PostgreSQL deployment/history formats cannot authorize SQLite.
+
+Use a private deployment JSON file with format `axiom-sqlite-deployment/v1`,
+profile `sqlite-experimental-owned-local/v1`, namespace matching the manifest application name and database matching the
+declaration, intent `inspect`, `plan` or `apply`, `fileRef`, `libraryRef`, and
+`busyTimeoutMs` between 1 and 5000. File/library references use explicit
+`config:env/NAME` or `config:file/path` providers and resolve to absolute paths.
+The UTF-8 database file must already exist with owner-only permissions and one link.
+
+For a manifest application named `example.sqlite` and declaration `storage`, an
+inspection binding is:
+
+```json
+{
+  "format": "axiom-sqlite-deployment/v1",
+  "profile": "sqlite-experimental-owned-local/v1",
+  "namespace": "example.sqlite",
+  "database": "storage",
+  "intent": "inspect",
+  "fileRef": "config:env/AXIOM_SQLITE_FILE",
+  "libraryRef": "config:env/AXIOM_SQLITE_LIBRARY",
+  "busyTimeoutMs": 1000,
+  "sourceId": null,
+  "trustedKey": null,
+  "incarnation": null,
+  "expectedHead": null
+}
+```
+
+Set the referenced environment values to the existing database file and installed
+library paths, and store this binding with owner-only permissions. Validate and
+inspect it explicitly:
+
+```bash
+axiom database sqlite binding-check .axiom/database/deployment.json
+axiom database sqlite inspect-live --deployment .axiom/database/deployment.json --source database.acore
+```
+
+The adapter requires an explicitly selected installed external SQLite library;
+the distribution includes no SQLite engine, C build or helper executable.
+Native lifecycle is currently Unix-only. The first selected test platform is
+macOS arm64. SQLite 3.37+ is the API floor; planning/application pin the exact
+observed source ID rather than certifying every release above that floor.
+
+Inspection reports the engine `sourceId`. Plan/apply bindings require that value
+as `sourceId`. Apply also requires `trustedKey`; registration returns the new
+`incarnation` for subsequent bindings. Set `expectedHead` to the accepted head
+when planning a follow-up candidate. Planning a follow-up also requires the
+previous complete candidate directory with `--prefix`.
+
+Plans replay the whole prefix on a fresh private native database and validate
+the candidate on a populated backup. Defaults use
+`.axiom/database/v1/sqlite/candidates/`; internal history and authorization are
+owner-only files. CI can retain these same private artifacts. Sign with a private
+key created by `axiom database release keygen`. Rebuilds require
+`--allow-data-dependent`; removal of stored data requires `--allow-destructive`.
+
+Each release commits schema changes and the revision ledger in one native
+transaction. Rebuilds preserve retained values/storage classes, rowids,
+AUTOINCREMENT high-water marks, and selected dependent objects. Failed copy,
+foreign-key or integrity checks roll back. DELETE and WAL journaling are selected.
+Read-only WAL access needs readable WAL/SHM sidecars. Initialize an initial WAL
+file with an existing native writer connection before its first plan. Writable
+adapter operations retain sidecars for later read-only checks. External writers
+can remove them again; an enrolled target can explicitly reconcile to restore
+native readiness. A new empty file's default DELETE mode needs no WAL bootstrap.
+Reconciliation permits SQLite's own native journal recovery before verifying the
+committed checkpoint; it executes no migration SQL. Signature scope, file
+identity, source ID and any incarnation bound by the signature are checked before opening that native
+handle. Inspection, status and verify remain read-only and may require explicit
+reconciliation first after a crash. Repeated apply skips committed releases.
+
+The initial root signature authorizes enrollment and native access to the exact
+bound file before an incarnation exists. Later candidates sign the enrolled
+incarnation and reject mismatches before native access. Every execution checks
+the observed ledger incarnation before migration SQL or checkpoint acceptance.
+
+Production data safety and workload certification remain unproved. Storage-type
+conversion, rowid identity changes, attached/temp databases, existing-object
+adoption, SQL/HCL imports, virtual tables, custom/loadable extensions,
+custom functions/collations, deferred FKs and richer index/trigger forms remain
+gated. SQLite inspection reports use separate formats and are not PostgreSQL
+catalog adoption inputs.

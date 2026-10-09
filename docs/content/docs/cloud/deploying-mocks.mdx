@@ -27,15 +27,23 @@ boundary before running it.
 
 ## Consume locally
 
+`axiom serve` now starts a real local API and no longer downloads a saved Cloud
+mock when its input is omitted. Local contract simulation remains explicit:
+
 ```bash
-axiom serve --port 8080
+axiom mock axiom.acore --profile contract --port 8080
 ```
 
-When no local file is supplied, the connected serve path can obtain saved mock
-configuration for the linked project. The Cloud mock endpoint supports ETag
-validation, so an unchanged response can be reused without transferring the
-body again. Keep a local contract available in CI when you need a completely
-offline, deterministic test.
+Use explicit Cloud retrieval from a linked project with a Cloud session:
+
+```bash
+axiom mock --cloud --port 8080
+```
+
+The command preserves the configuration cache and ETag. It is a labeled
+contract-only profile and rejects local inputs, variants, private plans,
+fixtures, real deployment bindings and watch. Local paths work offline; no
+source/configuration error triggers Cloud retrieval.
 
 ## Provision a managed environment
 

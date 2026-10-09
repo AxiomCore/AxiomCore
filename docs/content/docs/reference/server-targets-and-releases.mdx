@@ -1,0 +1,157 @@
+---
+title: Server targets and release verification
+description: Versioned target requirements, deterministic offline bundles, strict inventories and runtime-compatible rollback.
+---
+
+Deployment support comes from the compiled target contract and its recorded
+conformance gates. A target name or `--target` flag cannot grant capabilities.
+
+```sh
+axiom server targets
+axiom server inspect backend.axiom backend.server.json --deployment deployment.json --target native-server
+axiom inspect server backend.axiom backend.server.json --deployment deployment.json --target native-server --format json
+axiom server validate backend.axiom backend.server.json --deployment deployment.json --target native-server
+```
+
+Both Inspectors and validation use the same `targetAssessment`. Add
+`--bindings bindings.json` for sandbox plans. Inspection without deployment
+bindings exposes declared requirements and reports provider review pending;
+it cannot establish release compatibility. Validation also constructs actual
+providers and authentication, verifies sandbox assets and checks cleanup before
+opening any listener. Missing credentials still fail validation.
+
+## Available profiles
+
+| Target | Available release scope | Evidence |
+| --- | --- | --- |
+| `native-server` | macOS `aarch64` and Linux `aarch64`/`x86_64`, managed and verified sandbox HTTP actions | Local ActionHost, managed release, three-language sandbox and target/release conformance |
+| `container-amd64`, `container-arm64` | Linux source-built managed/sandbox HTTP images | Linux container, three-language sandbox, lifecycle/resource and adapter gates |
+| `container` | Select an architecture-specific target | An unqualified architecture does not identify a runtime |
+| `serverless` | Unavailable | Lambda runtime/lifecycle and hosted gates pending |
+| `cloudflare-workers-local` | Portable managed JSON API with HS256 and bounded HTTP providers | Local workerd gate; hosted acceptance not performed |
+| `cloudflare-workers` | Unavailable | Hosted acceptance pending |
+| `edge` | Unavailable | No generic edge certification |
+
+Other OS/architecture combinations cannot package the certified native profile.
+See [Linux containers](/reference/server-containers) for source contexts, cgroup
+budgets, external credentials, adapter bases and the emulated amd64 evidence boundary.
+See [Workers local profile](/reference/server-workers) for the pinned portable runtime, separate Worker bundles, configuration and hosted gate.
+Existing development runners and registered application hosts retain their own
+platform support. Adapter conformance does not certify a generic ActionHost
+bundle. HTTP releases do not certify delivery workers.
+
+Each `axiom-server-target/v1` record binds a runtime ABI/version, OS and
+architecture, transports, provider features, implementation kinds, facilities,
+limits and evidence scope. The native record includes HTTP JSON, typed SSE,
+JSON message streams, WebSockets and multipart uploads, plus the supported
+snapshot/cache/HTTP/upload/authentication/coordination providers. Distributed
+admission requires its declared Redis configuration. Hosted-platform validation
+is explicitly separate from local conformance.
+
+## Transitive and opaque requirements
+
+`axiom-server-requirements/v1` records each action's reachable calls, resources,
+resource dependencies, guards and opaque requirements, alongside aggregate
+capabilities, provider features, transports, sandbox exports, configuration
+references and minimum protocol/artifact limits. Provider bindings retain their
+exact typed interface hashes and operation grants. Sandbox bindings must cover
+exactly the plan's extensions and its exact hash. Unknown keys, missing or extra
+extensions and artifact references that shadow provider/authentication
+configuration fail.
+
+Native callbacks, native interceptors, custom providers and required HTTP
+metadata producers are opaque. The generic CLI cannot register them and cannot
+certify them from declarations. A registered trusted application host may use
+the shared Rust assessment API with its own reviewed target, a declaration
+bound to the exact target/plan/deployment/bindings/runtime digests, complete opaque requirements
+and hashed conformance tests. The caller supplies its independently established
+runtime digest. These declarations record trusted host evidence; hashes alone
+do not prove tests ran. There is no CLI JSON override for target availability
+or native registrations.
+
+Incompatible packaging/validation fails with the selected target and the
+originating action, resource, capability or limit before a release is created.
+Public endpoint IDs, codecs and client semantics remain independent of the
+private target and release metadata.
+
+## Offline local packaging
+
+```sh
+axiom server package backend.axiom backend.server.json --deployment deployment.json --target native-server --output release-2026-10-02
+axiom server verify-bundle release-2026-10-02
+release-2026-10-02/bin/axiom server run-bundle release-2026-10-02 --listen 127.0.0.1:8080
+```
+
+Packaging checks structural authority, target compatibility and captured sandbox
+assets. It does not read production provider data or credential registries,
+start providers, provision remote resources, upload a release or expand grants.
+Only sandbox artifact references must resolve during packaging. The result
+reports `preflightScope: artifacts-only`; startup still requires actual
+configuration preflight. An invalid sandbox package/module/authority/export
+fails offline verification without running its business action.
+
+The same executable and artifact bytes yield identical canonical bundles.
+Sandbox assets use `assets/<sha256>.<suffix>` addresses and a complete sealed
+reference map. `launch.json` records the local entrypoint, configuration
+**reference names** and the deployment's exact grants. Provider paths, resolved
+secrets and permissions beyond those grants do not enter that template.
+Provisioning and publication are external operations.
+
+## Release v2 verification
+
+`axiom-server-release/v2` binds:
+
+- The complete target record and its canonical digest.
+- Runtime ABI/version/platform and the executable's digest.
+- Canonical public contract, private plan, deployment and optional bindings hashes.
+- Recomputed transitive requirements and the exact launch template.
+- Every asset's relative path, byte length, SHA-256 and executable role.
+
+The directory must contain exactly that bound closure and `release.json`.
+Unlisted files or directories, missing assets, duplicate/unknown JSON fields,
+path aliases/traversal, symlinks, hard links, special files and excessive size or
+file counts fail. Limits are 256 inventory files, 512 MiB aggregate, 256 MiB
+executable, 16 MiB per JSON/package artifact and 4 MiB per sandbox module.
+Verification and activation consume captured verified artifact bytes.
+Activation also requires the exact packaged executable, the current certified
+target/runtime version and fresh private configuration preflight.
+
+The manifest is an integrity inventory, not a publisher signature. Deliver the
+complete immutable directory through a trusted release channel; hashes do not
+authenticate a manifest rewritten by an attacker. Choose a new output directory
+for each release.
+
+**Legacy rule:** `axiom-server-release/v1` lacks a bound target/runtime contract.
+Verification, activation and rollback reject it with a repackage diagnostic.
+Use the original public/private artifacts, deployment and sandbox bindings with
+the current CLI to produce a v2 release; changing the manifest's format string
+is not a migration. Unknown future formats also fail closed.
+
+## Rollback review
+
+```sh
+axiom server rollback-check current-release previous-release
+```
+
+Both bundles must pass v2 verification and match the certified target contract,
+runtime ABI/version and platform. The command also compares public IR,
+codec/schema bytes, validators, security/client policies and metadata, allowing
+release version/schema-hash identity updates. Private behavior changes remain
+visible for review. A mismatch exits with failure.
+
+The check does not activate the previous release or reverse provider data.
+Drain the current service, provide reviewed configuration and explicitly run
+the previous bundle's executable. Data migrations and remote orchestration
+remain outside this local release profile.
+
+Run the maintained [server workflow](/reference/server-workflow) and its
+`examples/server-workflow/verify_target_releases.py` gate to reproduce local
+packaging, target agreement and the inventory/runtime negative cases.
+
+Follow the [server release workflow](/reference/server-release-workflow) for one
+API across real serving, full mocks, native bundles, both Linux container
+architectures and local Workers, including capability diagnostics, external
+credential rotation, promotion and compatible rollback. Hosted AWS and
+Cloudflare certification remain unavailable. The playground's **Portable ·
+deployment profiles** example exposes source-only target assessments and
+includes downloadable setup helpers.

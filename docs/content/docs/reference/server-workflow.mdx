@@ -1,0 +1,267 @@
+---
+title: Local server workflow and releases
+description: Build, run, reload, test, inspect, package and deploy a backend locally without a cloud account.
+---
+
+The current CLI supports managed and verified sandbox actions through the Rust
+`ActionHost` and Axum transport. Native handlers use a registered Rust host;
+FastAPI and Go Chi retain their documented boundary adapter profile. Use the
+CLI built from the matching workspace revision when following this walkthrough.
+
+`axiom serve` runs real managed/sandbox actions or a declared Python/Go service.
+It defaults to local `axiom.acore`, never retrieves Cloud mock data and never
+falls back to endpoint mock responses. `axiom server run` remains the artifact
+entry point. Use `axiom mock FILE.acore --profile contract` for legacy contract
+scenarios, or `serve --mock` / `mock --profile server` for
+[full server simulation](/reference/server-simulation) with private typed fixtures.
+
+## Real developer command
+
+```sh
+axiom serve service.acore --deployment deployment.json --port 8080
+axiom serve backend.axiom --plan backend.server.json --deployment deployment.json
+axiom run service.acore --mode service --deployment deployment.json
+axiom serve service.acore --deployment deployment.json --watch
+```
+
+Source builds use the normal compiler in owned temporary storage. Checked
+artifacts, diff baselines, reviewed deployments and bindings are preserved.
+Explicit auxiliary paths are relative to the invocation directory; deployment
+otherwise defaults to adjacent `deployment.json`. Artifact plans default to
+adjacent `INPUT.server.json`. Source variants use `--variant`; artifact variants
+are immutable. Missing providers, credentials, grants, handlers or mismatched
+hashes fail before readiness. `--port 0` selects an ephemeral port outside watch.
+Ctrl-C/SIGTERM drain the real host and close its providers.
+
+Watch requires a fixed loopback address and a source-owned managed/sandbox plan.
+The initial deployment and bindings must match exactly. Reloads temporarily
+bind the new plan within the existing interfaces and grants; invalid edits or
+failed provider preflight retain the last service. Production files are never
+rewritten. External Python/Go applications use their own reload tooling.
+
+Generic CLI serving cannot register arbitrary native symbols. A trusted Rust
+application can register its `ActionHost` and use
+`axiom_server::development::real_session`, with caller-owned cancellation and
+signals. Declared Python/Go services run their actual entrypoint and report
+`application-adapter-required`; install the
+[application adapter](/reference/server-adapters) to enforce the contract. The
+CLI does not add middleware to an unadapted application or advertise readiness
+on its behalf.
+
+## Start from source
+
+The workspace's `examples/server-workflow` contains `service.acore`, a backend
+`AxiomDeps.toml`, `tasks.json`, `configure.py`, and the executable `verify.py`.
+Copy that example into a working directory. Python 3.11+ is sufficient for this
+managed example; it needs no Redis, database, container runtime, or cloud account.
+
+```sh
+axiom check service.acore
+axiom build service.acore
+python3 configure.py
+export TASKS_FILE="$PWD/tasks.json"
+export API_KEYS_FILE="$PWD/api-keys.json"
+axiom server validate backend.axiom backend.server.json --deployment deployment.json
+axiom server run backend.axiom backend.server.json --deployment deployment.json --listen 127.0.0.1:8080
+```
+
+`configure.py` creates a private deployment with an explicit `tasks.lookup`
+grant and the exact provider interface and plan hashes. It creates a hashed
+API key registry with one local reader. The printed key is an example fixture.
+Configuration files contain environment reference names; credentials remain
+outside the public contract and release bundle. `validate` performs actual
+provider, authentication, capability, grant and handler preflight, then cleans
+up without opening a listener. The startup JSON is emitted only after preflight
+and listener binding succeed.
+
+In another terminal, make a successful request and deliberately rejected ones:
+
+```sh
+curl --fail http://127.0.0.1:8080/_axiom/ready
+curl --fail -H 'x-api-key: workflow-local-key-00000001' http://127.0.0.1:8080/tasks/1
+curl -i http://127.0.0.1:8080/tasks/1
+curl -i -H 'x-api-key: workflow-local-key-00000001' http://127.0.0.1:8080/tasks/0
+```
+
+The responses are ready, a validated task, `401` for the missing credential,
+and `400` for invalid input. The managed wrapper calls the guarded action;
+direct invocation and nested calls enforce its guard too. Ctrl-C or SIGTERM
+starts draining, rejects new invocations, lets bounded in-flight work finish,
+and closes owned providers. Readiness returns `503` during draining. There is
+no public endpoint that supplies deployment authority or disables a guard.
+
+## Reload and diagnose
+
+Stop the first service, then run:
+
+```sh
+axiom server dev service.acore --deployment deployment.json --listen 127.0.0.1:8080
+axiom server inspect backend.axiom backend.server.json
+axiom inspect backend . --format json
+axiom server types backend.axiom backend.server.json --language python --output handlers.py
+axiom server types backend.axiom backend.server.json --language go --output handlers.go
+```
+
+The development supervisor snapshots source into a temporary project, compiles
+it, rebinds only its temporary plan hash, and validates the reviewed provider
+interfaces and grants. Invalid source or incompatible configuration leaves the
+previous service running. A valid candidate is activated after the previous
+listener drains; a startup failure restarts the last validated snapshot.
+External provider or credential unavailability can also prevent that restart
+and produces an actionable error. Reload has a short listener interruption;
+it is not a rolling production deployment. Checked source artifacts and the
+reviewed deployment are never rewritten by reload. Source, deployment and binding bytes are captured together before compilation. Environment changes require
+restarting the supervisor; edits to the deployment file are watched.
+
+Source snapshots are bounded to 1,024 files, 16 levels and 16 MiB, with a 32 MiB total including reviewed companions. Build and
+preflight processes have a 30-second limit. Keep third-party dependencies
+installed and use the normal manifest/lock workflow before starting reload.
+Native application hosts manage their own registrations and development runner.
+
+Inspection shows effective endpoint guards and policies, action programs,
+implementation kind, nested effects, dependencies and source provenance.
+`managed`, `native`, and `sandbox` are implementation kinds. Declared facts stay
+`declared`; they do not become runtime enforcement evidence because a hash was
+verified. A managed action calling an opaque native dependency retains an
+incomplete effect summary. Invocation traces separately report guards and
+effects observed or enforced by the running host.
+
+Startup prints a private mode-0600 `sessionFile`. Use the exact matching artifacts
+with `axiom inspect server backend.axiom backend.server.json --session PATH --format json`
+to see the selected mode and implementation/provider categories. Without the
+receipt, mode is `not-observed`. This local startup observation does not capture
+requests or certify production internals. Shutdown deletes the owned receipt.
+
+The LSP uses the compiler's declaration catalog for completion, signatures,
+hover, navigation, rename and formatting. Enum/reference diagnostics offer
+compiler-owned token quick fixes; stale diagnostics cannot modify another token.
+The playground's **Managed · local server** example is editable and inspectable.
+It identifies its external runtime requirement, preserves source downloads,
+and disables browser mock execution and application export for private plans. Its source download includes setup helpers for real and full-mock CLI execution. Browser contract previews label private guards unavailable and production internals unknown.
+
+## Test the actual host
+
+```sh
+python3 verify.py --cli /absolute/path/to/axiom
+```
+
+This exercise copies only example source into a clean temporary directory. It
+checks deterministic builds, direct and real HTTP requests, authorization and
+validation failures, inspection, generated interfaces, semantic diff, packaging,
+local deployment, reload recovery, tamper rejection, drain and rollback checks.
+It removes its listeners and temporary releases afterwards.
+
+Rust application tests can use `axiom_server::testing::TestServer` for isolated
+loopback ports and graceful shutdown, `write_api_keys` for real principal
+registries, `ScriptedProvider` for bounded success/failure replies, and
+`ManualClock` with `HostRegistry::testing_clock` for memory admission expiry.
+Fixtures still enforce authentication, grants and typed output. The clock does
+not replace JWT/session wall time, action deadlines, cache clocks, or Redis TIME;
+Redis conformance requires a real Redis process.
+
+The maintained FastAPI/Chi examples and shared negative conformance suite live
+under `axiom-runtime/server/tests/fixtures` and `tests/verify.py`; see
+[server adapters](/reference/server-adapters). The full suite requires Python
+3.11+, FastAPI/uvicorn, Go, Rust and Redis. It checks generated interfaces as
+well as both live adapter request paths. Adapter examples are not certificates
+for the ActionHost's broader production integrations.
+
+## Python, Rust and TypeScript server sandboxes
+
+`examples/server-workflow/sandbox/{python,rust,typescript}` contains a pure
+`echo` export, its pinned manifest and a guarded `.acore` action. Each uses the
+maintained extension SDK, signed local source-release workflow, verified module
+identity, pinned authority lock and backend capability broker. No external host
+operations are granted. Python uses the portable AOT subset; TypeScript uses
+Javy; Rust compiles to WASM. This does not start an unrestricted interpreter.
+
+Install the guest toolchains documented in the example README, then run:
+
+```sh
+python3 sandbox/verify.py --cli /absolute/path/to/axiom
+```
+
+The script creates and verifies each signed local release in a clean temporary
+project, invokes its typed action directly, packages it, and invokes the packaged
+server through real HTTP. Unauthorized and invalid inputs fail. Sandbox package
+exports using the standard `Invocation` → `GuestMessage` envelope describe the
+transport ABI. The host still validates the concrete action input and completed
+payload. Packages declaring concrete payload type names must match the action.
+The package's implementation language never implies that its effects are proven.
+
+## Package and deploy locally
+
+Packaging needs only declared sandbox artifact references. Supply the earlier
+production configuration references when validating or starting the bundle:
+
+```sh
+axiom server targets
+axiom server package backend.axiom backend.server.json --deployment deployment.json --target native-server --output release-v1
+axiom server verify-bundle release-v1
+release-v1/bin/axiom server run-bundle release-v1 --listen 127.0.0.1:8080
+```
+
+For a sandbox plan, pass `--bindings bindings.json` to validation, execution and
+packaging. Packaging seals its verified package, module and authority bytes;
+startup consumes these captured assets from the verified inventory. Credential registries and
+resource configuration remain external. Native symbols require their registered
+Rust application host and are rejected by this generic CLI bundle workflow.
+Delivery workers use their separate documented runner and durable queue setup;
+this CLI HTTP release profile does not certify a queue worker deployment.
+
+A v2 release contains the exact CLI executable, canonical public artifact, private
+plan and deployment, optional sealed sandbox assets, a launch template and a
+bounded SHA-256 inventory. It binds the complete target/runtime contract and
+recomputed transitive requirements. Packaging preflight checks artifacts only;
+production configuration is checked at activation. The same executable and inputs produce identical file and manifest
+bytes. This is packaging reproducibility; it is not a promise that arbitrary
+Rust toolchains produce identical executable bytes. The release records its
+native architecture/OS. Startup checks the exact file closure and packaged executable, rejects unlisted
+assets, path aliases, links and special files, validates all bound artifacts,
+and repeats private configuration preflight. Files are bounded individually and to 512 MiB total.
+The manifest is an integrity inventory, not a publisher signature; distribute
+bundles through your trusted release channel. Existing release directories are
+immutable; choose a new output path.
+
+| Profile | Current status |
+| --- | --- |
+| Conventional native server | Certified on macOS `aarch64` and Linux `aarch64`/`x86_64`; the matching target/runtime is required. Linux amd64 runtime checks use emulation in the recorded local gate. |
+| Container | `container-arm64` / `container-amd64` build Linux managed/sandbox images from pinned inputs. See [Linux containers](/reference/server-containers). |
+| Serverless / edge | Rejected until target capability, lifecycle and conformance gates exist. |
+
+See [target and release verification](/reference/server-targets-and-releases)
+for the complete v2 contract, offline packaging boundary and native v1 migration.
+Legacy v1 bundles must be repackaged from original artifacts before verification,
+activation or rollback.
+
+## Review a rollback
+
+```sh
+axiom server diff previous.axiom previous.server.json backend.axiom backend.server.json
+axiom server rollback-check release-v2 release-v1
+release-v1/bin/axiom server run-bundle release-v1 --listen 127.0.0.1:8080
+```
+
+`rollback-check` verifies both v2 inventories and target/runtime compatibility, compares the complete public semantics, including IR, codec/schema bytes,
+validators, security manifests, client policies and UI metadata, and reports the private behavior
+diff. A public contract change exits with failure; a private-only change still
+needs review. The command does not activate a release or reverse provider data.
+Stop/drain the active listener, preflight the previous release against current
+private configuration, and explicitly run its packaged executable. Schema/data
+migrations and cloud orchestration are outside this profile.
+
+Follow the [server release workflow](/reference/server-release-workflow) for one
+API across real serving, full mocks, native bundles, both Linux container
+architectures and local Workers, including capability diagnostics, external
+credential rotation, promotion and compatible rollback. Hosted AWS and
+Cloudflare certification remain unavailable. The playground's **Portable ·
+deployment profiles** example exposes source-only target assessments and
+includes downloadable setup helpers.
+
+## Typed provider setup
+
+Private provider scaffolds include typed configuration digests, reference names and
+empty grants. Review/select a compatible factory and supply required references
+before readiness. Public configuration uses a separate field/audience projection.
+The default environment resolver resolves once at startup; file/vault resolvers
+and stronger rotation lifecycles require qualified trusted implementations.

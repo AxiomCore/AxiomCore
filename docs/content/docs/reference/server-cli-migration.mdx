@@ -1,0 +1,44 @@
+---
+title: Server CLI migration
+description: Choose real APIs, full server simulation or contract mocks explicitly when migrating local development commands.
+---
+
+`axiom serve` now runs the real local API. It defaults to local `axiom.acore`
+and requires an executable managed/sandbox plan or a declared Python/Go service.
+Missing implementation/configuration fails before readiness. Local commands
+need no account; Cloud retrieval is explicit.
+
+| Previous intention | Current command |
+| --- | --- |
+| Serve endpoint mock responses from source | `axiom mock contract.acore --profile contract` |
+| Retrieve mocks from the linked Cloud project | `axiom mock --cloud` |
+| Execute real managed/sandbox actions | `axiom serve service.acore --deployment deployment.json` |
+| Simulate a private server API with guards | `axiom serve service.acore --mock --fixtures mock.json --identities mock-identities.json` |
+| Run backend source in mock mode | `axiom run service.acore --mode mock --fixtures mock.json --identities mock-identities.json` |
+| Reload real managed/sandbox source | `axiom serve service.acore --watch --port 8080` |
+| Reload source and full mock fixtures | `axiom mock service.acore --fixtures mock.json --identities mock-identities.json --watch --port 8080` |
+
+`mock` auto-selects full simulation when compilation yields a private plan.
+`--profile contract` rejects such a plan instead of silently ignoring its
+authority. `serve --mock` cannot downgrade to contract mocks. Real serving
+rejects mock companions; full simulation rejects production deployment/bindings.
+Do not rename endpoint fixtures into a private fixture document: full simulation
+requires exact contract/plan hashes and typed resource/action replies.
+
+Follow the [real server example](/reference/server-workflow) to build, configure,
+send successful/denied/invalid requests and stop with Ctrl-C. The
+[simulation example](/reference/server-simulation) generates bound private data,
+separately reviewed identities and owned development credentials. Successful
+mock reload resets state and rotates credentials; invalid edits retain the last
+valid service. Public type/guard/authority changes require review and restart.
+
+Standalone contract scenarios keep their selection strategies, state, docs and
+reset controls. Non-loopback contract listeners protect those routes with an
+owned sandbox key. Cloud mocks retain authentication and ETag caching, and do
+not support watch. Contract mocks cannot enforce absent private actions.
+
+Frontend/package `axiom run` execution keeps its existing target semantics and
+rejects backend-only options. The browser playground runs contract scenarios
+and verified browser extensions; private server examples provide editable
+source plus real/full-mock CLI setup helpers. Inspector separates declared
+facts, local startup observations and unknown production internals.

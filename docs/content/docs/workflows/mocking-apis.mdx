@@ -7,6 +7,13 @@ The local mock server reads endpoint-level `MockConfig` declarations from an
 Acore contract. It is implemented in Rust and intended for development and
 contract tests.
 
+This page describes the explicit `axiom mock FILE.acore --profile contract`
+profile. It does not run private server actions or establish that their guards
+and providers were executed. `axiom mock` selects full server simulation when
+compilation supplies a private server plan; `axiom serve --mock` always requires
+that plan and bound fixtures. See [Full server simulation](/reference/server-simulation)
+and the [real server workflow](/reference/server-workflow).
+
 ## Declare an endpoint response
 
 ```acore
@@ -25,8 +32,12 @@ endpoint listTasks(method: GET, path: "/tasks") {
 Start the server with the contract as a positional argument:
 
 ```bash
-axiom serve axiom.acore --port 8080 --debug
+axiom mock axiom.acore --profile contract --port 8080 --debug
 ```
+
+For local source reload, add `--watch` on a fixed loopback port. Invalid source
+leaves the last valid scenarios running; successful reload starts fresh state.
+Cloud/artifact watch and changes that add a private server plan require a restart.
 
 ## Conditional selection
 

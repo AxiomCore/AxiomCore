@@ -1,0 +1,171 @@
+---
+title: Linux server containers
+description: Build verified managed and sandbox HTTP releases for Linux amd64 and arm64, with external configuration and bounded lifecycle.
+---
+
+Use `container-amd64` or `container-arm64` for the stock managed/sandbox
+ActionHost. The CLI produces a reviewed build context. Docker builds the Linux
+runtime from source, then seals a strict v2 release using that Linux executable.
+A macOS executable never becomes a Linux runtime image.
+
+## Build a release
+
+Compile your application and review its private deployment and sandbox bindings
+first. From a workspace containing the matching runtime source:
+
+```sh
+axiom build service.acore
+axiom server inspect backend.axiom backend.server.json --deployment deployment.json --target container-arm64
+axiom server package backend.axiom backend.server.json --deployment deployment.json --target container-arm64 --runtime-source /path/to/AxiomCore-workspace --output container-context
+cat container-context/container.json
+docker buildx build --platform linux/arm64 --load --tag my-api:candidate container-context
+```
+
+For `amd64`, select `container-amd64` and `--platform linux/amd64`. The
+unqualified `container` target requires architecture selection and remains
+unavailable. Add `--bindings bindings.json` and the three referenced artifact
+paths for sandbox plans, as described in the
+[sandbox examples](/reference/server-workflow#python-rust-and-typescript-server-sandboxes).
+Production provider paths and credentials are resolved at startup; packaging
+verifies artifacts without opening providers or provisioning infrastructure.
+
+The context contains the exact public/private artifacts, content-addressed
+sandbox package/module/authority files, the source allowlist and hashes, pinned
+Dockerfile, image metadata and a Compose template. It excludes production
+configuration files, mock fixtures, caches and host executables. The image's
+`/app/release.json` binds the exact runtime, target, requirements, launch template
+and complete application file inventory. Modified, extra, symlinked or unbound
+release files fail verification.
+
+The builder uses Rust 1.93.0 and digest-pinned Debian images. Cross-compilation
+uses the signed Debian archive at the fixed snapshot in `toolchain.sh` and the
+matching Rust standard-library target. Runtime packaging and requests execute
+on the selected Linux architecture. `amd64` runtime evidence was obtained under
+emulation on an arm64 Linux VM; native performance and production-host
+certification require the deployment operator's own measurements.
+
+## Configuration, credentials and readiness
+
+The image runs as UID/GID `65532`, listens on `0.0.0.0:8080`, and provides
+`GET /_axiom/ready`. `AXIOM_LISTEN` accepts an explicit socket address. Place
+TLS termination and public network routing in your deployment configuration.
+The image healthcheck probes the real readiness endpoint.
+Use a fixed nonzero port so the listener and healthcheck resolve the same service.
+
+Bind the exact references listed in `/app/launch.json`. Credential registries
+must be regular private files, readable by UID `65532`, with mode `0600` or
+`0400`. A normal Compose file secret can retain host ownership and broader
+permissions; it does not satisfy this requirement automatically. The supplied
+Compose template uses an external volume whose credential files the operator
+prepares with the correct owner and mode. Keep secret values out of image build
+arguments, Dockerfiles, release artifacts and source control.
+
+For the managed task example, provide a readable, read-only `tasks.json` and
+an external credential volume containing `api_keys`. Set:
+
+```sh
+export AXIOM_IMAGE='registry.example/my-api@sha256:REVIEWED_IMAGE_DIGEST'
+export AXIOM_TASKS_FILE='/absolute/path/to/tasks.json'
+export AXIOM_SECRETS_VOLUME='my-api-private-credentials'
+docker compose -f container-context/compose.yaml up -d
+```
+
+The template requires a read-only root filesystem, dropped capabilities,
+`no-new-privileges`, one CPU, 256 MiB memory, 64 processes, a private 32 MiB
+`/tmp` tmpfs and a 15-second stop grace period. The stock host requires cgroup
+v2 with finite CPU and memory budgets; missing/unbounded limits, root execution,
+missing resources or credentials, stale artifacts and invalid listen settings
+fail before readiness. The accepted memory range is 64 MiB–64 GiB; size actual
+budgets for your plans and guest engines. The 256 MiB example budget is a tested
+starting point, not a universal capacity claim.
+
+## Shutdown, storage and separate workers
+
+SIGTERM removes readiness and stops new admission. The HTTP transport allows
+five seconds to drain, then cancels remaining work; provider cleanup has its
+own five-second bound. A missed drain/cleanup deadline produces a failure exit,
+so monitor termination status. Use at least the template's 15-second platform
+stop grace. Request deadlines, disconnect cancellation, overload admission and
+sandbox limits remain enforced within the process. Restart recreates owned
+session state and preflights external configuration again. A verified guest
+instance admits one invocation at a time; concurrent busy requests receive
+redacted `503 overloaded` responses. Retry within the caller's declared deadline
+and size capacity for the application's accepted workload.
+
+`/tmp` and memory caches/coordination are ephemeral. For declared upload
+resources, mount only the configured private upload directory, owned by UID
+`65532`, mode `0700`, with one writer and explicit retention, quota and backup
+policies. A tmpfs upload directory loses files on restart; a dedicated volume
+persists them. Read-only deployments without the required upload mount fail
+startup. Do not share one local upload directory between replicas.
+
+Distributed rate limiting and durable idempotency require the declared external
+Redis provider, reachable network/TLS configuration and appropriate persistence
+and availability. Memory coordination does not become distributed when an image
+has multiple replicas. HTTP containers do not start workers, schedules or
+consumers. Worker plans need a separately registered and tested application
+host/container; the stock HTTP target rejects `jobs` and opaque native code.
+
+## FastAPI and Chi images
+
+The runtime repository provides separately identified `fastapi-base` and
+`chi-base` targets in `containers/Dockerfile.conformance`. They contain the
+pinned enforcement boundary and adapter dependencies, without application or
+failure fixtures. Their profile is the existing native HTTP boundary: typed
+requests/responses, guards, declared effects/resources, HTTP metadata, native
+interceptors and certified admission providers. Managed actions, sandbox,
+streams, caching, outbound HTTP, uploads and workers are unsupported.
+
+Add your own reviewed ASGI application or Linux Go binary, exact public/private
+artifacts and native registrations. The base alone is not an HTTP application.
+Route/interceptor registration, provider preflight, readiness and bounded
+framework shutdown belong to that application. Re-run its conformance gate
+before promotion; an adapter image label cannot certify arbitrary native code.
+The generic ActionHost packager never resolves native symbols from these labels.
+`containers/Dockerfile.fastapi.example` and `Dockerfile.chi.example` provide
+application layer templates. Supply `AXIOM_ADAPTER_IMAGE` as the reviewed base's
+immutable digest and add the registered application and its exact artifacts.
+Bind configuration and credentials at runtime, and validate the resulting
+application before promotion.
+
+## Promote and roll back by digest
+
+Review the generated source inventory, release hashes, target assessment,
+Dockerfile, build provenance and test record. Record the actual OCI manifest
+or index digest after export/publication, then promote that digest through your
+trusted channel. A local Docker image configuration ID is not a registry image
+digest. This workflow performs no registry publication or infrastructure changes.
+
+Keep the previous immutable image and its external configuration references.
+Run the new image's bundled executable with `server rollback-check CURRENT
+PREVIOUS` against read-only release directories. Both releases must pass exact
+inventory/target/runtime checks and public contract compatibility; review the
+private behavior diff and preflight the previous release's configuration before
+switching the deployment back. The check does not automatically activate a
+release or promise storage/data compatibility.
+
+Image-byte reproducibility requires the same base/toolchain/platform,
+Dockerfile, Cargo locks, source/artifact bytes, builder/BuildKit version, build
+options, timestamps, metadata and provenance settings. Deterministic source and
+release inventories alone do not prove identical OCI bytes. Retain those inputs
+and the actual built digest with each promotion.
+
+## Reproduce the gates
+
+Use the runtime repository's `containers/prepare.py` with the documented SDK and
+Python/Rust/TypeScript guest compiler pins, then run `containers/verify.py` from
+an assembled workspace on a Linux/container-capable runner. It builds pinned
+validation and production images for both architectures and exercises real
+managed/sandbox requests, denials/failures, integrity/fixture exclusion,
+external secrets, startup rejection, bounded resource load, readiness, SIGTERM,
+restart, compatible rollback, real/mock parity and full supported adapter/server
+conformance. Toolchains and failure applications exist only in the validation
+image or an external test mount, not the production image inventory.
+
+Follow the [server release workflow](/reference/server-release-workflow) for one
+API across real serving, full mocks, native bundles, both Linux container
+architectures and local Workers, including capability diagnostics, external
+credential rotation, promotion and compatible rollback. Hosted AWS and
+Cloudflare certification remain unavailable. The playground's **Portable ·
+deployment profiles** example exposes source-only target assessments and
+includes downloadable setup helpers.

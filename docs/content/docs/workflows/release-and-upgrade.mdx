@@ -9,7 +9,7 @@ description: Promote immutable contracts and applications without losing semanti
 2. Run contract, domain, and security checks applicable to the project.
 3. Review the semantic diff from the previous immutable version.
 4. Release a new version with `axiom build --release --version …` or
-   `axiom release axiom.axiom --version …`.
+   `axiom release backend.axiom --version …`.
 5. Open a contract review in the Cloud control plane when team approval is
    required.
 
@@ -37,3 +37,45 @@ See [Contract pull requests](/workflows/contract-pull-requests) for the Cloud
 review record and [Security review and release gates](/workflows/security-review-and-release-gates)
 for security-specific evidence.
 
+## Advanced language cohort upgrades
+
+Retain the old source, public contracts, private plans, locks, SDK source/build
+receipts and compatible host before selecting the M3/M4 advanced language cohort.
+Rebuild and inspect the selected public contract, prepare its exact private
+resources, then run the application and provider suites for each enabled target.
+Matching generated mobile tests and mounted web tests are separate evidence.
+
+Use `axiom migrate OLD.acore --output NEW.acore` to create a verified sibling
+source without overwriting the original. A supported finite legacy action rewrite
+can preserve endpoint identities and public codecs while introducing checked
+managed execution. Review both the public contract diff and private behavior:
+
+```bash
+axiom server diff old.axiom old.server.json new.axiom new.server.json
+```
+
+The private report separates a verified representation change from a behavior
+change. New validation, failure exposure, authority, batch/cache policy or stream
+semantics require consumer review. Unsupported computed rewrites retain their
+legacy representation; migration never invents an equivalent managed body.
+
+Development reload keeps the last good application after an invalid edit.
+Compatible replacement rechecks artifacts and ownership before transferring
+eligible logical-submission state. Incompatible contracts, descriptors or
+session identities reject transfer. Rollback uses retained immutable inputs;
+it does not reuse stale grants or claim an unknown write was rolled back.
+
+The cohort also adds classified application telemetry and an explicit
+development-only expiry environment. Rebuild the native CLI/LSP and playground
+compiler from the same compiler input closure. A telemetry policy is private;
+changing it never adds user values to metric labels. Scenario environment files
+are test inputs bound into the scenario identity, and cannot enable logical
+credential expiry in a deployed server. See [Trace and explain](/inspector/trace-and-explain)
+and [Test runner](/tooling/axiom-test-runner) for the complete examples.
+
+The playground includes task and inventory database examples in the same
+application editor. Their database contract, dependency manifest, bindings,
+live table preview, Changes and Impact ship together with the static site.
+The browser store demonstrates the documented checked preview profile;
+production database preparation, migrations and recovery retain their separate
+provider gates. See [Frontend quickstart](/getting-started/quickstart-frontend).

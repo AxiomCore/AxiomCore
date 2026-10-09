@@ -7,6 +7,24 @@ This matrix separates an implemented path from the broader AxiomCore product
 direction. It was last reviewed against the local repositories on
 **September 22, 2026**.
 
+The database boundary was rechecked on **October 5, 2026**: PostgreSQL authoring,
+explicit inspection, isolated Rust planning and signed controlled application/
+registration/recovery on owned local/staging targets and offline serial fleets
+are Experimental. D9 qualifies the named PostgreSQL 17.11/Darwin 25.2 arm64
+production release with exact-build recovery admission. Wider profiles and
+application workload SLOs need separate evidence. Bounded evolution and
+concurrent btree recovery retain their stated subsets. Other entries
+retain their stated review baseline.
+
+The M1 language foundation was rechecked in the **October 7–8, 2026 working
+cohort**: shared schemas/codecs, typed public failures, finite managed flow,
+typed private setup and owned cleanup are implemented on their qualified
+profiles. Advanced metadata requires matching readers and hosts. Generated
+iOS/Android helper parity does not promote a native ABI or a physical-device
+claim; existing published tools retain their declared capabilities. See
+[managed language foundations](/acore-language/managed-language) for the profile
+limits and complete examples.
+
 ## Status definitions
 
 | Status | Meaning |
@@ -20,7 +38,11 @@ direction. It was last reviewed against the local repositories on
 
 <CapabilityTable rows={[
   { capability: 'Acore language toolchain', status: 'alpha', scope: 'Parser, evaluator, standard library, diagnostics, and language-server foundations.' },
+  { capability: 'M1 managed language foundations', status: 'experimental', scope: 'Working compiler and matching native ActionHost: bounded shared validation/codecs, selected typed failures, finite managed branches/await, private typed configuration and purpose-bound secrets, owned cleanup and explicitly prepared PostgreSQL transactions. Web owners and verified Rust/Wasm guests use selected checked helpers. Worker, generated mobile readers, editor cohorts and distribution retain their separate capability gates.' },
+  { capability: 'M2 owned concurrency, operation policies and timing', status: 'experimental', scope: 'Matching working compiler/native host: finite named read groups, typed collected outcomes, cancellation/drain, root budgets, provider-attested retry policies and typed durable enqueue through an explicit reviewed controller. Redis recovery and composed job/provider attempt bounds have separate native fixture evidence. Web and generated mobile owners support bounded foreground polling/debounce; mobile activation requires the explicit foreground-events host capability. Compiled lifecycle queues and generated owner tests do not certify a mounted mobile application. Rust/Wasm query groups require a group-capable trusted broker adapter; other SDK/host profiles reject unsupported groups. Installed editor and public binary publication retain exact-cohort gates.' },
   { capability: '.axiom service contracts', status: 'alpha', scope: 'Build, inspect, semantic diff, local test/mock, release, pull, and runtime workflows.' },
+  { capability: 'M3 advanced application candidate', status: 'experimental', scope: 'Matching source compiler/native host: bounded authority-partitioned read caching, typed read batches, managed finite snapshot streams, qualified receipt-backed archive batches, inherited form rules and selected failures, runtime-owned submission identity, and generated selected Rust/TypeScript/Python codecs with finite named reentry. The complete task source combines signed pure guest computation, managed PostgreSQL receipt/outbox writes, cache invalidation and bounded snapshot reduction. Reports bind actual execution level, artifact hashes, assertions and cleanup. Actual durable-provider and mounted web fixtures remain distinct from scripted/generated mobile adapters; exact installed editor delivery, wider target qualification and public artifact promotion retain separate gates.' },
+  { capability: 'M4 observability, scenarios and delivery', status: 'experimental', scope: 'Exact source-linked private observations; opt-in typed public/private/secret telemetry fields with redaction; strict artifact-bound native scenarios with logical retry and batch-window barriers, cancellation and cleanup; explicit synthetic credential/provider expiry environments that cannot activate in production. Reference frontend scenarios virtualize polling and stream windows; native OS containment and actual provider recovery retain distinct real-time gates. The playground task/inventory examples include editable database contracts/manifests and live checked table previews. Matching CLI/LSP, VS Code/Zed adapters, compiler and host readers are required.' },
   { capability: 'Typed package envelope', status: 'alpha', scope: 'Service, theme, component-library, database-schema, extension, and application-policy kinds with canonical encoding and validation.' },
   { capability: 'Theme and component packages', status: 'alpha', scope: 'Typed exports, targets, roles/props/slots/composition constraints, lock resolution, and semantic change classification.' },
   { capability: 'Executable extensions', status: 'experimental', scope: 'Typed Rust, managed TypeScript/Javy, and restricted Python AOT source profiles lower to one WebAssembly ABI, signed authority locks, and bounded broker. Supported third-party package forms are deliberately narrow and pre-stable.' },
@@ -35,8 +57,22 @@ direction. It was last reviewed against the local repositories on
   { capability: 'Go', status: 'alpha', scope: 'Route and type extraction exists; review the extracted surface before release.' },
   { capability: 'OpenAPI input', status: 'experimental', scope: 'Bounded composition/domain bootstrap path. It is not full parity with every Acore behavior.' },
   { capability: 'SQL schema input', status: 'experimental', scope: 'Bounded domain bootstrap path, not a complete database runtime or management UI.' },
+  { capability: 'Acore database contracts', status: 'experimental', scope: 'Offline PostgreSQL authoring, typed server-only schema packages, semantic comparison, editor services and WebAssembly preview. Legacy v1 remains data-only; separately qualified private persistence mappings use the named PostgreSQL application profile.' },
+  { capability: 'Schema-derived PostgreSQL persistence', status: 'experimental', scope: 'Private typed native operations, pools, primary readiness, tenant transactions, codecs, bounded retry/cancel, atomic outbox/idempotency and compiler-linked API/UI impact. Exact PG17.11/Darwin25.2 arm64/loopback TLS/file profile; other runtimes, replicas and general ORM remain gated.' },
+  { capability: 'PostgreSQL inspection and adoption preparation', status: 'experimental', scope: 'Explicit private bindings, verified native Rust TLS, read-only scoped catalogs, static SQL/HCL imports, physical comparison and sanitized dependency graphs. Native fixture validation: PostgreSQL 17.5/macOS arm64. No baseline registration or backend query provider.' },
+  { capability: 'PostgreSQL isolated planning and private history', status: 'experimental', scope: 'Rust typed transitions, disposable pinned dev replay, source-linked risks/impacts, typed fixture tests and checksummed offline candidate history. Native acceptance: PostgreSQL 17.5/macOS arm64. Target history remains unregistered; no production data-safety claim.' },
+  { capability: 'PostgreSQL controlled local/staging application', status: 'experimental', scope: 'Rust signed private prefixes, explicit target/role/incarnation bindings, owned revision ledger, locks, fresh drift/ownership checks, empty or no-change baseline registration, explicit Atlas adoption provenance, atomic group outcomes and bounded status/verify/reconcile. Native fault acceptance: PostgreSQL 17.5/macOS arm64. No production data or online-workload certification.' },
+  { capability: 'PostgreSQL data evolution', status: 'experimental', scope: 'Exact Acore intent, stable physical renames, bounded resumable transforms, fenced catch-up/enforcement, scoped insert/upsert/synchronize, explicit scalar/finite-enum conversion, simple concurrent btree indexes with signed OID repair, data-retaining checkpoints and new fresh-target roots. PostgreSQL 17.5/macOS arm64 local/staging; application dual writes, general cursors/SQL and production workload compatibility remain unproved.' },
+  { capability: 'PostgreSQL advanced objects and security', status: 'experimental', scope: 'Selected domains/composites/ranges/sequences, views/materialized refresh, SQL/PLpgSQL routines, triggers/event hooks, aggregates/casts, libc collations and pgcrypto/postgres_fdw; exact scoped roles/memberships/ACLs/default privileges/RLS, private runtime credentials and security impact. Native PostgreSQL 17.5/macOS arm64; opaque/dynamic effects stay unknown and unmodeled properties block coverage.' },
+  { capability: 'PostgreSQL partitions, storage and foreign objects', status: 'experimental', scope: 'Finite range/list/hash/default bounds, retained detach, separately checkpointed attach/recovery, selected ordinary heap storage/tablespace/owner/options and secret-safe postgres_fdw server/table/mapping. Native writer/placement/foreign tests on PostgreSQL 17.5/macOS arm64; repartitioning, parent storage, inherited CHECK/FK and remote compatibility/availability remain unproved.' },
+  { capability: 'Frozen database fleet delivery', status: 'experimental', scope: 'Enrolled PostgreSQL/SQLite targets, bounded frozen inventories, source/security/operations review with an independent policy digest, serial canary groups, native checkpoint reruns, immutable offline promotion, masked monitoring and typed column/impact dashboard. CI/Axiom-operator/Terraform CLI protocol; production execution requires exact D9 admission.' },
+  { capability: 'Named PostgreSQL production management', status: 'available', scope: 'D9: PostgreSQL 17.11, Darwin 25.2 arm64, Rust 1.93 native release digest, verified TLS and private file providers. Reviewed exact-build admission requires actual populated physical backup/PITR and native data/history comparison; fenced failover/rotation and retained feature drills. Bounded measured workloads only; other engines/platforms/providers, full property coverage, unsupported mixed transitions and backend runtime remain separate gates.' },
+  { capability: 'SQLite contracts and local lifecycle', status: 'experimental', scope: 'Separate SQLite authoring, private views/triggers, populated rebuild validation, signed prefixes, owned empty enrollment and atomic schema/revision recovery. Explicit installed external SQLite library; Unix native adapter, first test platform macOS arm64. Backend codecs, adoption, attached databases, richer objects and production data safety remain later gates. MySQL/MariaDB and other adapters remain deferred.' },
   { capability: 'Other backend languages', status: 'coming-soon', scope: 'No supported first-party extractor is documented today. Custom integration work is required.' },
 ]} />
+
+See [Database contracts](/acore-language/database-contracts) for the current
+authoring, explicit inspection and adoption workflows, and later impact boundaries.
 
 ## Frontend and application targets
 

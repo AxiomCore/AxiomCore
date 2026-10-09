@@ -49,6 +49,11 @@ axiom ui inspect ir src/main.acore --target web
 axiom ui inspect context src/main.acore --target web
 ```
 
+`axiom ui test` checks compilation and development-session reload/rejection.
+It does not execute application interactions or contract responses. Record
+click, input, navigation, failure and cleanup outcomes separately in the actual
+host; an application interaction test API remains planned.
+
 Use `axiom ui inspect lowered` when investigating host output. `context` is a
 bounded, redacted semantic view for tooling, not the generated application
 source.
@@ -97,3 +102,149 @@ or `ios`, start the corresponding emulator/simulator, and pass that target to
 Portable Playground exports are development inputs, not prebuilt signed
 native binaries. `axiom package` combines native build artifacts and does not
 repackage these portable exports.
+
+## Dispose owners and reject stale work
+
+App, session, route and component owners fence asynchronous results by generation
+and revision. Navigation, owner removal, session replacement and hot reload
+retire old work and run permitted cleanup. Cleanup can cancel owned work and
+release element/extension resources; it cannot mutate stores, navigate, submit
+new operations or emit business events from a disposed owner.
+
+A rejected guest revision proposal reports a typed conflict. The host validates
+all authorized patches against a private candidate before committing its
+supported local store boundary, so one invalid patch does not publish a partial
+update. Frontend stores remain local scoped state unless a separately qualified
+durable adapter is selected. A UI commit before await and a backend transaction
+are distinct boundaries.
+
+Legacy applications use UI IR 10 and frontend program 1. Selected executable
+validation or typed failure cases require UI IR 11, frontend program 2, reader 11
+and the exact `axiom-validation-schema/v1` helper. Matching host metadata advertises
+frontend reader 2 with schema-helper support; older hosts reject these inputs
+before work begins. Merely setting a legacy version on an advanced graph is
+rejected. See [versioning](/reference/versioning-and-deprecation).
+
+## A12 candidate: contract-aware forms and uncertain writes
+
+This source candidate requires `acore-application/v2` and `acore-data/v3`; the
+accepted M2 compiler/host/editor cohort does not support the new syntax. Installed
+editor delivery and mounted target qualification remain pending. The candidate
+now includes selected durable logical-submission mappings; its qualification is
+tracked separately from the accepted M2 cohort.
+
+`FormValidation.contract` inherits the selected mutation's public structural and
+pure validation descriptors. It requires a compatible checked draft/request
+mapping. Field timing and presentation messages control feedback; local checks
+can add requirements. Submission validates the complete selected request again
+before transport. A private backend invariant is not automatically copied into a
+form.
+
+```acore
+module advanced.forms.ui
+use contract Workflow from "workflow" audience "mobile"
+model Draft { title: String; start: Int; end: Int }
+page Home {
+  state draft: Draft = {title: "initial", start: 1, end: 2}
+  mutation save = Workflow.save_draft(draft: draft)
+  form_model edit(values: draft, submit: save, validation: FormValidation.contract) {
+    field title(parse: raw.trim(), timing: "blur", message: "Enter a task title")
+    field start(parse: to_int(raw), timing: "change")
+    field end(parse: to_int(raw), timing: "submit")
+    server Workflow.Failures.titleTaken(field: .title, message: server_error.payload.message)
+  }
+  action submit() { form edit.submit() }
+  view {
+    Input(value: edit.fields.title.raw, accessibility_label: "Task title")
+    Text(edit.fields.title.error ?? "")
+    Text(to_string(edit.fields.start.value ?? 0))
+    Text(to_string(edit.issues.length))
+    Text(edit.status)
+    Button(label: "Save", disabled: edit.pending, on_press: submit)
+  }
+}
+```
+
+The complete fixture is `axiom-ui/tests/fixtures/application/m3-shared-form.acore`.
+Its selected development contract supplies `save_draft(draft: Draft)`, title and
+nonnegative integer constraints, the cross-field `end >= start` rule, and the
+public `titleTaken` case with only a `message` field. The compiler rejects a
+private payload field, wrong contract alias, missing selected validation or an
+unknown form field. `frontend_application.rs` executes the fixture for all three
+target IRs through the portable owner. These checks do not establish mounted
+mobile keyboard or accessibility behavior.
+
+`fields.start.raw` retains an invalid string while `fields.start.value` becomes
+null; the last parsed draft value remains distinct. `issues` contains at most 64
+entries and 32 KiB with `field`, `code`, `message` and `origin`
+(`parse`, `local`, `contract` or `server`). `issues_truncated` reports bounded
+presentation loss. Existing `fields.title.error`, `errors` and legacy server-code
+mappings remain available.
+
+A mutation transport failure, timeout or cancellation after dispatch cannot
+establish that a write failed to commit. The candidate exposes `save.uncertain`
+and an `indeterminate` status, retains the optimistic view and requests an
+authoritative query refresh. A definite checked business/validation failure can
+revert its patch. A newer query revision is preserved. Failed local reconciliation
+after a successful remote reply also requests a read instead of displaying a
+fictional rollback. Receipt-based resolution is still required where the provider
+contract supplies it; query repair alone does not establish exactly-once writes.
+
+
+## A12 candidate: logical submission and resolution
+
+A mutation can use `options(idempotency: IdempotencyMode.logicalSubmission)` only
+when its selected signed contract declares an enforced durable admission ledger
+and dedicated transport-header mapping. An `idempotent` flag alone does not
+qualify. The public mapping uses `axiom-logical-submission/v1` in
+`axiom-ui-operation-schema/v3`, signed UI metadata v2 and minimum artifact reader
+3. A stale lock, absent mapping or incompatible reader fails during checking.
+The mapping does not remove a required body argument.
+
+The backend may explicitly capture the owned key as one required `String`
+header without a default and pass it to a receipt-backed managed transaction.
+That capture is removed from the selected frontend request arguments: the host
+supplies the transport header. Optional, non-string, defaulted or duplicate
+case-insensitive key captures are rejected. The resolution-control header cannot
+be captured as application input. This keeps admission and transaction receipts
+on the same logical submission without requiring a developer-created second key.
+
+The complete frontend component fixture is
+`axiom-ui/tests/fixtures/application/m3-logical-submission.acore`. It uses the
+shared-rule form above with this checked mutation:
+
+```acore
+mutation save = Workflow.save_draft(draft: draft) options(
+  idempotency: IdempotencyMode.logicalSubmission
+)
+```
+
+The web/native host creates a secure random key. Developers do not put that key
+in draft state or persisted preferences. Pending duplicate submits dispatch once.
+An uncertain dispatched submission retains its key and normalized input; submitting
+it again sends the same key with `x-axiom-submission-resolution: only`. The server
+reauthenticates and checks the guard, authority partition and input fingerprint
+before replaying a completed response. Resolution never starts a new invocation,
+even after the ledger's retention expires. A missing, running or indeterminate
+receipt remains unresolved. A confirmed terminal result permits a later explicit
+submission to create a new key; changed input creates a distinct submission.
+
+The actual HTTP fixture is
+`axiom-runtime/server/tests/fixtures/logical-submission.acore`. If CORS is enabled,
+its policy must explicitly allow both the declared key header and
+`x-axiom-submission-resolution`, alongside the application's required headers.
+The compiler rejects a selected public mapping whose CORS policy omits either
+header. A configured durable provider must satisfy its persistence/readiness
+checks; memory coordination cannot qualify a durable mapping.
+
+Compatible native development reload transfers unresolved keys only in an
+in-memory `acore-native-reload/v2` snapshot with the same settled session,
+operation, contract, schema and transport mapping. Changed authority or selected
+artifact requires replacement. Old callbacks cannot publish into the new owner.
+The submission records are bounded to 256 and 1 MiB of canonical input identity,
+with a 64 KiB limit per submission. Default observations omit keys and inputs.
+This handoff is not a persisted draft or a production crash-recovery mechanism.
+
+The source candidate has portable and generated-hook tests. Mounted mobile key
+bridge/reload/input/accessibility checks and the final installed editor cohort
+remain separate required acceptance gates.

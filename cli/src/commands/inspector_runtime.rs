@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
@@ -9,7 +10,7 @@ use axiom_lib::{
     application_evidence::{ApplicationEvidence, EvidenceNodeKind},
     runtime_evidence::{
         normalize_extension_audit, AuditBundle, RuntimeCaptureState, RuntimeSession,
-        AUDIT_BUNDLE_FORMAT, RUNTIME_EVIDENCE_FORMAT,
+        AUDIT_BUNDLE_FORMAT, RUNTIME_EVIDENCE_FORMAT, MAX_RUNTIME_EVIDENCE_BYTES,
     },
 };
 use serde_json::Value;
@@ -220,7 +221,7 @@ fn load_session(workspace: &Path, selector: &str) -> Result<RuntimeSession> {
         selector.to_owned()
     };
     let id = validate_session_id(id.trim())?;
-    let bytes = fs::read(root.join(id).join(SESSION_FILE))
+    let bytes = read_runtime(&root.join(id).join(SESSION_FILE))
         .with_context(|| format!("read runtime session `{id}`"))?;
     let session = RuntimeSession::decode(&bytes)?;
     verify_append_log(&root.join(id).join(EVENT_FILE), &session)?;
@@ -237,7 +238,7 @@ fn latest_session_containing(workspace: &Path, trace_id: &str) -> Result<Runtime
     candidates.sort_by_key(|entry| entry.metadata().and_then(|meta| meta.modified()).ok());
     for candidate in candidates.into_iter().rev() {
         let path = candidate.path().join(SESSION_FILE);
-        if let Ok(bytes) = fs::read(path) {
+        if let Ok(bytes) = read_runtime(&path) {
             if let Ok(session) = RuntimeSession::decode(&bytes) {
                 if !session.traces(trace_id).is_empty() {
                     return Ok(session);
@@ -253,9 +254,10 @@ fn normalize_input(
     session_id: &str,
     evidence: &ApplicationEvidence,
 ) -> Result<RuntimeSession> {
-    let bytes = fs::read(input).with_context(|| format!("read {}", input.display()))?;
-    let value: Value = serde_json::from_slice(&bytes).context("parse runtime audit JSON")?;
-    match value.get("format").and_then(Value::as_str) {
+    let bytes = read_runtime(input)?;
+    let value: Value = axiom_server::serve::parse_json(&bytes, MAX_RUNTIME_EVIDENCE_BYTES)
+        .context("parse unambiguous bounded runtime audit JSON")?;
+    let session=match value.get("format").and_then(Value::as_str) {
         Some(RUNTIME_EVIDENCE_FORMAT) => RuntimeSession::decode(&bytes),
         Some(AUDIT_BUNDLE_FORMAT) => {
             let bundle: AuditBundle = serde_json::from_value(value)?;
@@ -270,13 +272,31 @@ fn normalize_input(
                 env!("CARGO_PKG_VERSION"),
             )
         }
+        Some(axiom_lib::observation_evidence::NATIVE_FORMAT) => {
+            axiom_lib::observation_evidence::normalize_native_observation(
+                &value, session_id, evidence, env!("CARGO_PKG_VERSION"),
+            )
+        }
+        Some(axiom_lib::frontend_observation_evidence::FORMAT) => {
+            axiom_lib::frontend_observation_evidence::normalize(&value, session_id, evidence, env!("CARGO_PKG_VERSION"))
+        }
         Some(format) => bail!("unsupported runtime input format `{format}`"),
         None => bail!("runtime input has no format discriminator"),
+    }?;
+    if session.graph_revision != evidence.graph_revision {
+        bail!("runtime observation graph revision differs from the captured workspace");
     }
+    let facts=evidence.nodes.iter().map(|node|node.id.as_str()).collect::<BTreeSet<_>>();
+    for event in &session.events {
+        if event.semantic_id.as_ref().is_some_and(|id| !facts.contains(id.as_str())) {
+            bail!("runtime observation references a fact absent from the captured workspace");
+        }
+    }
+    Ok(session)
 }
 
 fn verify_append_log(path: &Path, session: &RuntimeSession) -> Result<()> {
-    let content = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    let content = String::from_utf8(read_runtime(path)?).context("runtime append log is not UTF-8")?;
     let records = content
         .lines()
         .filter(|line| !line.trim().is_empty())
@@ -286,6 +306,11 @@ fn verify_append_log(path: &Path, session: &RuntimeSession) -> Result<()> {
         bail!("runtime append log does not match its canonical session");
     }
     Ok(())
+}
+
+fn read_runtime(path: &Path) -> Result<Vec<u8>> {
+    Ok(axiom_server::serve::read(path, MAX_RUNTIME_EVIDENCE_BYTES as u64)
+        .with_context(|| format!("read bounded runtime evidence {}", path.display()))?)
 }
 
 fn application_name(evidence: &ApplicationEvidence) -> String {

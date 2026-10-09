@@ -47,6 +47,17 @@ fn default_application_version() -> String {
 }
 
 pub fn classify_acore_source(source: &Path) -> Result<AcoreSourceKind> {
+    let uri = reqwest::Url::from_file_path(source.canonicalize()?)
+        .map_err(|_| anyhow::anyhow!("invalid Acore source path"))?;
+    if let Some((_, manifest)) =
+        acore::backend::audience::manifest(uri.as_str(), &std::collections::HashMap::new())
+    {
+        if axiom_lib::deps_manifest::authored_contract_type(&manifest)?.as_deref()
+            == Some("database")
+        {
+            bail!("ADB158: database contracts use axiom database check/build; axiom run cannot execute them");
+        }
+    }
     if source.extension().and_then(|value| value.to_str()) != Some("acore") {
         bail!(
             "`axiom run` expected an .acore source or .axiomapp package, got {}",
@@ -70,54 +81,133 @@ pub async fn handle_backend(
     host: String,
     port: u16,
     debug: bool,
+    variant: Option<String>,
+    deployment: Option<PathBuf>,
+    bindings: Option<PathBuf>,
+    delivery: Option<PathBuf>,
+    fixtures: Option<PathBuf>,
+    identities: Option<PathBuf>,
+    watch: bool,
 ) -> Result<()> {
     match mode {
-        RunMode::Mock => crate::commands::serve::handle_serve(Some(source), port, debug).await,
-        RunMode::Service => run_declared_service(&source, &host, port, debug).await,
+        RunMode::Mock => {
+            super::mock::handle(super::server_command_contract::MockInput {
+                cloud: false,
+                profile: super::server_command_contract::MockProfile::Auto,
+                common: super::server_command_contract::CommonInput {
+                    input: Some(source),
+                    plan: None,
+                    delivery,
+                    deployment,
+                    bindings,
+                    fixtures,
+                    identities,
+                    variant,
+                    watch,
+                    host: host.parse().context("mock host must be an IP address")?,
+                    port,
+                    debug,
+                },
+            })
+            .await
+        }
+        RunMode::Service => {
+            super::serve::handle(super::server_command_contract::ServeInput {
+                mock: false,
+                common: super::server_command_contract::CommonInput {
+                    input: Some(source),
+                    plan: None,
+                    delivery,
+                    deployment,
+                    bindings,
+                    fixtures,
+                    identities,
+                    variant,
+                    watch,
+                    host: host
+                        .parse()
+                        .context("backend --host must be an IP address")?,
+                    port,
+                    debug,
+                },
+            })
+            .await
+        }
     }
 }
 
-async fn run_declared_service(source: &Path, host: &str, port: u16, debug: bool) -> Result<()> {
-    let canonical = fs::canonicalize(source)
-        .with_context(|| format!("resolve backend source {}", source.display()))?;
-    let source_text = canonical
-        .to_str()
-        .context("backend source path is not valid UTF-8")?;
-    let config = axiom_extractor::evaluate_acore_config(source_text, Some("default"))?;
-    let Some(backend) = config.backend else {
-        println!(
-            "Starting Acore service on {host}:{port}. This release uses the deterministic Acore runtime shared with mock mode; the service boundary is preserved for future runtime differentiation."
-        );
-        return crate::commands::serve::handle_serve(Some(canonical), port, debug).await;
-    };
-    let root = canonical
+pub(super) async fn run_external_service(
+    source: &Path,
+    backend: axiom_lib::config::BackendConfig,
+    listen: std::net::SocketAddr,
+    debug: bool,
+    cancellation: axiom_server::invocation::InvocationCancellation,
+) -> Result<()> {
+    if cancellation.is_cancelled() {
+        return Ok(());
+    }
+    let host = listen.ip().to_string();
+    let port = listen.port();
+    let root = source
         .parent()
         .context("backend source has no containing directory")?;
     let language = backend.language.trim().to_ascii_lowercase();
     let mut command = match language.as_str() {
-        "python" => python_service_command(&backend.entrypoint, host, port)?,
-        "go" => go_service_command(&backend.entrypoint, host, port)?,
-        other => bail!(
-            "service mode does not yet know how to launch backend language `{other}`; run the service directly or use `--mode mock`"
-        ),
+        "python" => python_service_command(&backend.entrypoint, &host, port)?,
+        "go" => go_service_command(&backend.entrypoint, &host, port)?,
+        other => bail!("real serving does not know how to launch backend language `{other}`; use its registered application runner"),
     };
     command
         .current_dir(root)
-        .env("HOST", host)
+        .env("HOST", &host)
         .env("PORT", port.to_string())
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
+        .stderr(Stdio::inherit())
+        .kill_on_drop(true);
+    // Own the complete process group: `go run` can launch a second executable.
+    #[cfg(unix)]
+    command.process_group(0);
     println!(
-        "Starting {} backend service `{}` on {}:{}...",
-        backend.language, backend.entrypoint, host, port
+        "{}",
+        serde_json::json!({"mode":"real","profile":"external-service","language":language,"address":listen,"debug":debug,"enforcement":"application-adapter-required"})
     );
-    let status = command
-        .status()
-        .await
-        .with_context(|| format!("launch {} backend service", backend.language))?;
-    if !status.success() {
-        bail!("backend service exited with status {status}");
+    let mut child = command.spawn().with_context(|| format!("launch {} backend service; ensure its runtime and application dependencies are installed", backend.language))?;
+    let process_id = child.id();
+    let status = tokio::select! {
+        result=child.wait()=>Some(result?),
+        _=async { while !cancellation.is_cancelled() { tokio::time::sleep(std::time::Duration::from_millis(25)).await; } }=>None,
+    };
+    #[cfg(unix)]
+    {
+        // Also terminate descendants if the parent exited unexpectedly.
+        if let Some(id) = process_id {
+            let _ = Command::new("/bin/kill")
+                .args(["-TERM", "--", &format!("-{id}")])
+                .status()
+                .await;
+        }
+    }
+    if let Some(status) = status {
+        if !status.success() {
+            bail!("backend service exited with status {status}");
+        }
+    } else {
+        #[cfg(not(unix))]
+        child.start_kill()?;
+        if tokio::time::timeout(std::time::Duration::from_secs(6), child.wait())
+            .await
+            .is_err()
+        {
+            #[cfg(unix)]
+            if let Some(id) = process_id {
+                let _ = Command::new("/bin/kill")
+                    .args(["-KILL", "--", &format!("-{id}")])
+                    .status()
+                    .await;
+            }
+            child.kill().await?;
+        }
     }
     Ok(())
 }
@@ -357,7 +447,14 @@ async fn prepare_local_contracts(manifest: &Path) -> Result<()> {
 }
 
 fn local_contract_source(artifact: &Path) -> PathBuf {
-    if artifact.file_name().and_then(|value| value.to_str()) == Some("axiom.axiom") {
+    if matches!(
+        artifact.file_name().and_then(|value| value.to_str()),
+        Some("axiom.axiom" | "backend.axiom")
+    ) {
+        let named = artifact.with_extension("acore");
+        if named.is_file() {
+            return named;
+        }
         artifact.with_file_name("axiom.acore")
     } else {
         artifact.with_extension("acore")

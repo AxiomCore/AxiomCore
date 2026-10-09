@@ -91,3 +91,11 @@ detailed diagnostic context in protected logs, not in a user-visible message.
 - refresh or clear credentials before retrying an authentication failure; and
 - treat cache errors separately from network success so a write failure does
   not masquerade as a failed server operation.
+
+## Typed domain cases and execution aborts
+
+Named action failures are declared payload cases. Their endpoint status and public
+field projection are explicit. Unknown/malformed cases are sanitized; execution
+aborts (cancelled, deadline, budget, host fault and indeterminate outcome) remain
+separate from recoverable business cases. New payload contracts require the
+version-2 reader. See [typed outcomes](/acore-language/managed-language).

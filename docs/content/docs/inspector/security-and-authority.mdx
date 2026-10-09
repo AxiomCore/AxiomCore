@@ -115,3 +115,11 @@ resource identities, policies, hashes, and redacted audit metadata are enough.
 If a security answer depends on an unavailable value or external enforcement,
 the result must retain that limitation rather than copying the value into the
 evidence graph.
+
+## Typed setup is separate from authority
+
+Configuration/interface digests establish compatible wiring. Inferred dependencies
+and successfully resolved secret references do not grant operations. The M1
+`signRequest` binding exposes a purpose-specific operation to a trusted provider,
+not secret bytes to authored or guest code. Passive inspection reads references
+and schema identities; it never resolves credentials or starts providers.

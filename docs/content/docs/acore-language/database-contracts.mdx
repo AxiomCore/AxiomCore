@@ -1,0 +1,897 @@
+---
+title: Database contracts
+description: Experimental PostgreSQL schema, routines, access policies, partitioning, signed private releases, and recovery.
+---
+
+Acore database contracts are **Experimental**. You can describe a PostgreSQL
+schema, check it offline, build a typed schema package, compare desired contracts,
+inspect explicitly bound PostgreSQL catalogs, prepare schema imports, and validate
+hidden migration candidates on a disposable database. Signed controlled application,
+baseline registration, drift checks and explicit recovery are Experimental for
+owned PostgreSQL 17 local/staging targets.
+
+The selected PostgreSQL 17.5 profile also supports advanced types, views,
+SQL/PLpgSQL routines and triggers, scoped roles/grants/RLS, partitions, heap
+storage and audited `pgcrypto`/`postgres_fdw` objects. These capabilities remain
+Experimental on macOS arm64. Production workload certification is later work.
+
+The compiler and browser preview use Rust. They do not require PostgreSQL to be
+running, a Go helper, Atlas Cloud, credentials, or a commercial Atlas license.
+[SQLite contracts](./sqlite-contracts) have a separate Experimental local profile.
+MySQL/MariaDB and other dialects remain later adapters.
+
+## Select the database profile
+
+Create an `AxiomDeps.toml` beside the project's sources:
+
+```toml
+type = "database"
+targets = ["server"]
+
+[application]
+name = "commerce.storage"
+version = "1.0.0"
+```
+
+The owning manifest selects the compiler. A file's name does not select its
+profile. Pass the entry file explicitly; it declares exactly one database.
+The optional `profile database 1` header must agree with this profile.
+Database contracts are server-only packages, separate from backend entities and
+frontend source. Keep those profiles in their own manifest scopes.
+
+```acore
+module commerce.storage
+
+database commerce(engine: DatabaseEngine.postgres) {
+  manage(schemas: [Schemas.app], mode: ManagementMode.ownedObjects)
+
+  schema app {
+    enum taskStatus(values: ["todo", "doing", "done"])
+
+    table users {
+      tenantId: Pg.Uuid(sqlName: "tenant_id")
+      id: Pg.Uuid(default: Pg.genRandomUuid())
+      email: Pg.VarChar(length: 320)
+      primaryKey(columns: [.tenantId, .id])
+      unique emailPerTenant(columns: [.tenantId, .email])
+    }
+
+    table tasks {
+      tenantId: Pg.Uuid(sqlName: "tenant_id")
+      id: Pg.Uuid(default: Pg.genRandomUuid())
+      ownerId: Pg.Uuid(sqlName: "owner_id")
+      title: Pg.VarChar(length: 240)
+      status: Types.app.taskStatus(default: "todo")
+      attempts: Pg.Int32(default: 0)
+      doubled: Pg.Int32(generated: Pg.multiply(.attempts, 2))
+      archivedAt: Pg.TimestampTz(nullable: true)
+      primaryKey(columns: [.tenantId, .id])
+      foreignKey owner(
+        columns: [.tenantId, .ownerId],
+        references: Tables.app.users,
+        targetColumns: [.tenantId, .id],
+        onDelete: ReferenceAction.restrict
+      )
+      index byOwner(columns: [.tenantId, .ownerId])
+      check validAttempts(predicate: Pg.gte(.attempts, 0))
+    }
+  }
+}
+```
+
+`Schemas.app`, `Tables.app.users`, `Types.app.taskStatus` and
+`Columns.app.tasks.ownerId` are resolved symbols. `.ownerId` refers to the
+current table; a foreign key's `targetColumns` refers to its referenced table.
+Every authored or imported schema must occur once in `manage.schemas`.
+`ownedObjects` records desired ownership; it grants no migration authority.
+
+## Check, build and compare
+
+```bash
+axiom check schema.acore
+axiom build schema.acore
+# Profile-specific authoring commands also remain available:
+axiom database check schema.acore
+axiom database build schema.acore
+axiom database inspect schema.acore
+axiom database diff before.axiom after.axiom
+axiom database fmt schema.acore --write
+axiom database catalog
+```
+
+Check returns schema dependencies, source hashes, exact exported column shapes
+and diagnostics. Build writes a canonical `database.axiom` package beside the
+source file, with an owner-only artifact file. Add `--out schema.axiom` to choose
+an explicit export location. Migration history remains in its separate private
+storage; building a schema creates no migration history or authority. The
+package contains declarative schema data and no connection or migration SQL.
+A failed check or build produces no new package and leaves existing output intact.
+
+Inspect reads source or a typed package without contacting a database. Diff
+compares source entries or typed packages in the same logical database. It
+reports changed properties and affected schema objects. Its compatibility
+findings require later transition validation; live state is not observed and
+backend impact is `unknown-no-runtime-mappings`.
+
+Format prints source unless `--write` is supplied. Catalog lists the exact
+supported declarations, options, types and expression constructors. Unknown
+properties, misspelled references and unsupported declarations fail validation.
+
+## Types, values and write shapes
+
+The initial catalog covers signed integers, floats, booleans, text, bounded
+`VarChar`, bounded exact `Numeric`, UUID, date/time/timestamps, JSON/JSONB,
+bytea, one-dimensional arrays and declared enums. This is a bounded storage
+catalog, not a backend query codec. `Numeric` accepts precision 1–1000 and
+scale 0–precision; more PostgreSQL numeric forms remain unsupported.
+
+Integer defaults are range-checked. `Int64` and exact decimals remain strings
+inside the typed representation, preserving values above JavaScript's safe
+integer range. Float defaults retain their spelling and must be finite. Enum
+labels and array elements retain their order. JSON defaults use validated JSON
+text. Date/time/bytea literal default constructors are not available yet.
+
+Columns are nonnullable unless `nullable: true` is written. An absent default
+and `default: null` are different. Null defaults require nullable columns.
+`default`, `generated` and `identity` are mutually exclusive. Supported defaults
+are compatible literals, `Pg.now()` for timestamp types and
+`Pg.genRandomUuid()` for UUID. Generated expressions and check/index predicates
+use bounded typed constructors, never arbitrary SQL. Generated expressions
+cannot depend on another generated column and must be immutable.
+
+`identity: Identity.always` and `Identity.byDefault` require nonnullable integer
+columns. Export metadata distinguishes required insert fields, optional fields,
+fields with defaults, generated fields and identity fields. Generated fields
+and always-identity fields are excluded from ordinary insert input. These shapes
+prepare future typed backend operations; no database execution API is installed.
+
+Primary keys require distinct nonnullable columns. Foreign keys require matching
+arity and exact declared types plus an eligible unique target key. `setNull`
+requires nullable local fields; `setDefault` requires explicit local defaults.
+Indexes support simple columns, btree/hash, uniqueness and typed predicates;
+hash indexes must have one column and cannot be unique. JSON lacks the built-in
+key/index comparison supported by this catalog; use JSONB where appropriate.
+SQL names obey PostgreSQL's 63-byte limit, collision rules and reserved names.
+See PostgreSQL's [constraint rules](https://www.postgresql.org/docs/17/ddl-constraints.html)
+and [generated-column rules](https://www.postgresql.org/docs/17/ddl-generated-columns.html).
+
+## Imports and editor snapshots
+
+Use `import "./tables.acore"` for source fragments that declare schemas. Imports
+stay inside the owning project and cannot cross another manifest. Cycles,
+missing imports and supplied Acore files outside the entry graph are errors.
+Formatting and moving a source file preserve logical object identities.
+Identities are scoped by application name, logical database and declaration
+lineage; package-version changes alone do not change them.
+
+A declared local database-schema package can be imported by its manifest alias,
+for example `import "base"`. Run `axiom packages resolve` to write its canonical
+`AxiomPackages.lock`. The compiler verifies locked artifact bytes, identity,
+targets, signatures when declared and export hashes. Composition currently
+requires typed v2 packages for the same application name and logical database,
+with disjoint schema ownership. Imported declarations are read-only.
+Legacy `axiom-database-schema/v1` packages remain inspectable data and cannot
+be typed database inputs.
+
+The language server supplies diagnostics, completion, hover, definition,
+references, formatting and validated rename from the compiler's project
+snapshot, including unsaved imported sources. Configure the explicit entry
+through initialization options for projects that open fragments first:
+
+```json
+{"database": {"entry": "schema.acore"}}
+```
+
+Rename requires a valid, current snapshot; conflicting renames and changes to
+imported declarations reject. Completion remains available during incomplete
+edits. Editor offsets in the WebAssembly API are UTF-8 bytes; native LSP ranges
+use UTF-16 positions.
+
+Try **Database · tasks** and **Database · inventory** in the
+[playground](https://playground.axiomcore.dev). The same page exposes database,
+backend and frontend sources and their separate `AxiomDeps.toml` files. Explicit
+table/model bindings connect database columns to backend and frontend Impact
+paths. Run checks the real offline contract, and Schema ↓ downloads its canonical
+package. The Database Inspector tab lists all tables and updates rows live as
+the preview inserts, updates and deletes records. Storage, key, foreign-key and
+supported check constraints validate the whole candidate before publication.
+Failed source edits retain the last valid preview and schema. The bounded local
+browser simulation contacts no database or secret provider. Native compilation
+retains limits of 256 KiB per file, 128 project files, 1 MiB total compiler input
+and syntax nesting of 24 levels.
+
+## Inspect an existing PostgreSQL database
+
+Native inspection requires an explicit private deployment. Keep it under
+`.axiom/database/v1/deployments/`, outside the authored schema and committed
+package. On Unix, use owner-only permissions for the deployment and credentials.
+
+```json
+{
+  "format": "axiom-database-deployment/v1",
+  "namespace": "commerce.storage",
+  "database": "commerce",
+  "contractSha256": null,
+  "postgresMajor": 17,
+  "schemas": ["app"],
+  "connection": {
+    "intent": "inspect",
+    "endpointRef": "config:file/endpoint.json",
+    "credentialRef": "secret:file/credential.json",
+    "tls": {"mode": "verify-full", "caRef": "config:file/ca.pem"},
+    "connectTimeoutSeconds": 5,
+    "statementTimeoutSeconds": 15
+  },
+  "dev": null
+}
+```
+
+File references are relative to the deployment directory. The endpoint provider
+returns a JSON object with `host`, numeric `port`, and physical `database`.
+The credential provider returns `username` and `password`; supply those values
+privately. Explicit environment providers use `config:env/NAME` and
+`secret:env/NAME`, with the same JSON shapes. No implicit `DATABASE_URL`, `PGHOST`
+or DSN credential lookup is used.
+
+TCP verifies the certificate chain and hostname. Omit `caRef` or set it to `null`
+to use standard trust roots. An explicit `{"mode":"local-socket"}` exemption
+requires an absolute Unix socket directory as the host; it cannot enable
+plaintext TCP. This workflow uses the native Rust engine.
+
+```bash
+axiom database binding-check .axiom/database/v1/deployments/staging.json
+axiom database inspect-live --deployment .axiom/database/v1/deployments/staging.json
+```
+
+`binding-check` validates fields without resolving providers or connecting.
+`inspect-live` reads catalog metadata in a repeatable-read read-only transaction,
+with bounded connection/query timeouts. It reports selected schema coverage,
+recorded dependencies, external objects and sanitized identity/role/TLS facts.
+It changes neither schema nor rows and writes no ownership/revision ledger.
+`database inspect` remains an offline source/package command.
+
+Coverage is `complete`, `partial`, or `unknown` for the bounded authoring profile.
+Unmodeled routine, policy, privilege, storage, extension and index properties
+stay visible as findings. Missing schema/identity privileges
+produce unknown coverage. A complete core report does not establish production
+safety or discover dynamic application queries. Native validation currently covers
+PostgreSQL 17.5 on macOS arm64; protocol recognition of major 18 is not native
+certification for that version.
+
+Add `--source schema.acore` to compare the observed normalized physical state
+with an explicit desired contract. If `contractSha256` is present in the private
+deployment, that source/package and its exact digest/scope must match before any
+provider is resolved. Comparison is `equal`, `different`, or `unknown`;
+it does not authorize a transition.
+
+## Prepare SQL, HCL or live-schema imports
+
+```bash
+axiom database import-sql schema.sql --namespace commerce.storage --database commerce --schema app --out imported-db
+axiom database import-hcl schema.hcl --namespace commerce.storage --database commerce --schema app --out imported-hcl
+axiom database adopt --deployment .axiom/database/v1/deployments/staging.json --out adopted-db
+```
+
+SQL is parsed without execution. Static Atlas schema HCL is parsed without
+evaluation: supported schema/enum/table/column/key/check/simple-index blocks,
+literal attributes, explicit references, and bounded `sql("...")` expression/type
+strings. Wide numeric literals retain their exact decimal values. Variables,
+templates, datasources and executable HCL functions are
+unavailable. Arbitrary migration scripts and pg_dump output are not generally
+supported static inputs. Unknown attributes and unrepresentable casts prevent
+a complete candidate. Repeat `--schema` for each selected schema.
+Static SQL checks require explicit `CONSTRAINT` names so import does not guess
+PostgreSQL's automatic naming. Live inspection retains the catalog names.
+
+`--out` requires a new directory. A complete candidate contains reviewable
+`schema.acore` and `AxiomDeps.toml`, with typed packages and sanitized inspection
+evidence under `.axiom/database/v1/`. It contains no generated SQL or credentials.
+Existing destinations are preserved; incomplete coverage creates no project.
+Without `--out`, the command prints the report for review.
+
+Adoption remains preparation: ownership is proposed, `accepted` and
+`baselineRegistered` stay false, and migration authority stays false. Later
+isolated validation and ledger registration are required before management.
+
+```bash
+axiom database graph adopted-db/.axiom/database/v1/adoption/observation.json
+axiom database explain adopted-db/.axiom/database/v1/adoption/observation.json CATALOG_OBJECT_ID
+axiom database graph schema.acore
+```
+
+Graph/explain expose schema relationships and affected recorded consumers.
+Backend/frontend impact remains unknown until runtime mappings are implemented.
+If a private deployment includes `dev: {"disposable": true, "connection": ...}`,
+`axiom database verify-isolation --deployment FILE` can observe target/dev
+separation. Host aliases or different schemas in one database do not establish
+isolation. This check modifies neither target nor dev.
+
+For `adopt` or `verify-isolation`, supply `--source schema.acore` when the private
+deployment binds `contractSha256`. The same digest and scope checks run before
+provider resolution.
+
+## Plan and validate on a disposable database
+
+`database plan` compiles the source, observes the target read-only, and replays
+the desired state, previous private history and candidate transition on a separate
+disposable PostgreSQL database. Target and dev identity, exact server version,
+encoding, locales and extension pins are checked before dev DDL. Dev must be empty;
+existing user objects are preserved. Successful validation leaves it empty again.
+
+Use the private inspection deployment described above for the target. Create a
+separate owner-only `development.json` with explicit dev provider references:
+
+```json
+{
+  "format": "axiom-database-dev/v1",
+  "disposable": true,
+  "connection": {
+    "intent": "validate",
+    "endpointRef": "config:file/dev-endpoint.json",
+    "credentialRef": "secret:file/dev-credential.json",
+    "tls": { "mode": "verify-full", "caRef": "config:file/ca.pem" },
+    "connectTimeoutSeconds": 10,
+    "statementTimeoutSeconds": 30
+  },
+  "pinned": {
+    "imageSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "postgresVersion": "17.5",
+    "encoding": "UTF8",
+    "collation": "C",
+    "ctype": "C",
+    "localeProvider": "libc",
+    "collationVersion": null,
+    "extensions": [{ "name": "plpgsql", "version": "1.0" }]
+  }
+}
+```
+
+Replace `imageSha256` with the digest of your provisioning artifact and pin the
+actual server facts. The artifact digest is a declaration; binary attestation is
+not implied. Current native acceptance covers PostgreSQL 17.5 on macOS arm64,
+UTF8/libc and the built-in plpgsql extension. Major 18 remains uncertified here.
+Target/dev files resolve relative providers from their own directories. Both
+support the existing verified TLS or explicit local-socket transport policy.
+
+For a new target whose scoped schemas are absent:
+
+```bash
+axiom database plan schema.acore --deployment deployment.json --dev-profile development.json --baseline empty
+```
+
+For an existing target that exactly matches the desired schema, use
+`--baseline adoption`. This validates a no-change adoption candidate and registers
+no ownership or target ledger. Unknown properties, incoming external dependencies,
+DDL hooks, default privileges and unsupported features block planning.
+
+Subsequent plans use the generated local candidate head, or an explicit
+`--parent DIGEST`. Keep the target deployment's scope equal to the union of desired
+and previous history schemas, including removed schemas. Public/system/ledger
+schemas are outside the current planning boundary.
+
+```bash
+axiom database plan schema.acore --deployment deployment.json --dev-profile development.json
+axiom database history export schema.acore --out private-ci-bundle
+axiom database history verify private-ci-bundle
+```
+
+The report includes source-linked changes, an operation dependency graph,
+transaction groups, consumed properties, replay results, risk findings and affected
+schema consumers. Generated SQL and fixture values stay in owner-only
+`.axiom/database/v1/candidates/` and private exported bundles. The generated
+`history.lock.json` records a local candidate head; `acceptedHead` stays null.
+Export requires a new directory. Keep history durable; only cache is disposable.
+These commands run locally without a Cloud session.
+
+The planner supports bounded add/modify/drop transitions, composite/cyclic FKs,
+enum additions, stored-generated/identity changes and supported indexes. Enum
+additions commit before new labels are used. Destructive/data-dependent findings
+require review; empty replay does not establish production data or lock safety.
+Explicit evolution intent supports physical renames, bounded backfills, scalar conversions, finite enum replacement, reference data and simple concurrent btree indexes on the certified PostgreSQL 17.5 profile. Logical alias replacement, column reorder and same-type enum label removal/reordering remain blocked. Value-preserving legacy integer/varchar/numeric widening retains the existing planner path; other type changes require business intent.
+
+Optional `--tests FILE` accepts `axiom-database-tests/v1`: named cases with `seed`
+literal rows keyed by semantic table/column IDs and `assertAfter` equality
+filters/counts. It runs only on dev and can detect populated-data failures, such
+as NULL or uniqueness violations. It accepts no raw SQL. Use a disposable fixture,
+with at most 64 cases and 128 rows per case; reports contain results without row
+values. A failed run publishes no candidate and may require dev recreation.
+
+## Review, enroll and apply an explicit target
+
+Controlled application requires a private signed release and an independently
+selected trust key. Planning, building, importing, editor services and application
+startup never apply schema changes. The current execution profile is owned
+local/staging PostgreSQL 17; native acceptance covers 17.5 on macOS arm64.
+Conservative table locks are used for ordinary changes and final evolution enforcement. The bounded concurrent-index strategy below permits writers during its PostgreSQL scans; production workload and rolling application compatibility remain unproved.
+
+Export the validated prefix, generate an owner-only signing key once, review the
+source-linked findings, and sign the exact bundle:
+
+```bash
+axiom database history export schema.acore --out .axiom/database/v1/reviewed-release
+axiom database release keygen --out .axiom/database/v1/signing-key.json
+axiom database release sign .axiom/database/v1/reviewed-release --key-file .axiom/database/v1/signing-key.json --allow-data-dependent
+axiom database release verify .axiom/database/v1/reviewed-release --trusted-key PUBLIC_KEY
+```
+
+The signing command requires `--allow-data-dependent` for data/lock/key findings
+and `--allow-destructive` for destructive findings anywhere in the prefix. Supply
+only the reviewed flags. These flags authorize that exact prefix; they do not
+prove production data safety. Key generation and signing never overwrite existing
+files. Keep the signing key private and configure the public key independently
+in the target binding; a key supplied by the bundle itself is not trusted.
+
+Create an owner-only execution binding beside its endpoint/credential/CA files.
+It has a different format from the read-only inspection deployment:
+
+```json
+{
+  "format": "axiom-database-target/v1",
+  "profile": "postgres-experimental-owned-local-staging/v1",
+  "namespace": "commerce.storage",
+  "database": "commerce",
+  "schemas": ["app"],
+  "targetSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "roleSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "incarnation": null,
+  "expectedHead": null,
+  "trustedKey": "0000000000000000000000000000000000000000000000000000000000000000",
+  "pinned": {
+    "imageSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "postgresVersion": "17.5",
+    "encoding": "UTF8",
+    "collation": "C",
+    "ctype": "C",
+    "localeProvider": "libc",
+    "collationVersion": null,
+    "extensions": [{ "name": "plpgsql", "version": "1.0" }]
+  },
+  "connection": {
+    "intent": "apply",
+    "endpointRef": "config:file/endpoint.json",
+    "credentialRef": "secret:file/credential.json",
+    "tls": { "mode": "verify-full", "caRef": "config:file/ca.pem" },
+    "connectTimeoutSeconds": 10,
+    "statementTimeoutSeconds": 30
+  }
+}
+```
+
+Replace the placeholder hashes with `live.targetIdentitySha256` and
+`live.roleSha256` from explicit `inspect-live`, your independently selected public
+key, and the same provisioning/environment pin used by the validated release.
+The target's schema scope must equal the full signed prefix scope, retaining
+removed schemas for absence checks. The selected role must own the database and
+scoped objects, or be an explicitly selected superuser on a writable primary.
+There is one logical ledger per physical database in this profile.
+
+```bash
+axiom database target binding-check execution.json
+axiom database target register .axiom/database/v1/reviewed-release --deployment execution.json
+```
+
+Registration requires an empty or exactly matching no-change adoption baseline.
+It creates a private target ledger and returns an incarnation marker. Pin that
+marker in `execution.json` before apply/verify/reconcile. For adoption, also set
+`expectedHead` to the registered accepted root. For an empty baseline it stays
+null until the first accepted release. Repeated registration can recover a lost
+baseline acknowledgement only at the same unchanged baseline.
+
+```bash
+axiom database apply .axiom/database/v1/reviewed-release --deployment execution.json
+axiom database target status .axiom/database/v1/reviewed-release --deployment execution.json
+axiom database target verify .axiom/database/v1/reviewed-release --deployment execution.json
+```
+
+Before a later release, set `expectedHead` to the currently accepted target head.
+A signed prefix, fresh target identity/environment, immutable history, physical
+state and owned object identities must all agree. Stale history, unknown effects,
+mutated releases and drift reject execution. Competing deployers cannot interleave.
+Applying the already accepted head performs fresh verification and is a no-op.
+Reports expose hashes, schema/operation IDs and evidence limits, with no generated
+SQL, credentials or row values. Private target metadata is in `_axiom_database`;
+keep it durable together with local generated history.
+
+Each transaction group commits its schema effects and checkpoint together. Enum
+additions commit before their labels can be used. A later failure can leave a
+`partial` revision; all SQL committed without final acceptance is `unverified`.
+A crash or lost commit response never causes an automatic reconnect/retry. Inspect
+status, address reported drift or data violations, and explicitly reconcile:
+
+```bash
+axiom database target reconcile .axiom/database/v1/reviewed-release --deployment execution.json
+```
+
+Reconciliation reloads the durable checkpoint and checks fresh state/ownership
+before resuming remaining groups or acknowledging an already committed revision.
+It repairs one pending revision. A longer approved suffix needs a subsequent
+apply with an updated expected head. `target verify` only checks acceptance and
+never advances a pending head. Arbitrary SQL and unknown nontransactional strategies are rejected. Supported concurrent-index recovery requires a separately signed OID-bound permit as described below.
+
+For offline CI or another checkout of the same compiled desired package:
+
+```bash
+axiom database history import PRIVATE_BUNDLE --source schema.acore
+```
+
+Import extends only an exact local candidate prefix, verifies the desired package,
+and grants no accepted target head or apply authority. Static SQL/HCL or live
+adoption follows import, no-change disposable validation, reviewed signing and
+explicit baseline registration.
+
+An existing Atlas migration directory has an explicit handoff before signing
+its zero-change adoption bundle. Stop the legacy applicator, then use the same
+private target binding with a null incarnation and expected head:
+
+```bash
+axiom database history import-atlas UNSIGNED_ADOPTION_BUNDLE \
+  --directory ATLAS_DIRECTORY --deployment TARGET_FILE \
+  --revision-schema public --legacy-stopped
+axiom database history import UNSIGNED_ADOPTION_BUNDLE --source schema.acore
+axiom database release sign UNSIGNED_ADOPTION_BUNDLE --key-file PRIVATE_KEY_FILE
+```
+
+This read-only handoff verifies the exact `atlas.sum`, cumulative SQL checksums,
+complete matching revisions and current physical baseline. It retains exact
+legacy bytes and revision metadata as private provenance, bound to the signed
+Acore root. It accepts at most 64 flat versioned SQL files and fully executed
+revisions in the standard builtin revision-table shape. Partial/resolved or
+baseline records, checksum-ignore directives and custom revision stores require
+later support. Use `--revision-table` for a different table name outside the
+managed schema scope.
+
+Future history exports retain that adoption receipt. Target operations use
+Atlas's default PostgreSQL migration lock and check that the legacy table and
+records remain unchanged; a competing lock holder or changed history blocks
+application. Keep the legacy applicator stopped. Acore preserves its revision
+table and retains its SQL without executing it. Register and pin the returned
+incarnation as described above before using `apply`.
+
+## Declare data evolution
+
+Keep the final shape in `schema.acore`. Put business intent in a separate project
+`evolution.acore`; it is consumed only when explicitly selected. `Previous` is the
+exact selected private history parent and `Current` is the compiled desired
+contract. The private release retains the intent source and exact bindings.
+
+```acore
+profile database 1
+
+evolution populateAmount(
+  from: Previous,
+  to: Current,
+  coordination: EvolutionCoordination.maintenanceFenced
+) {
+  backfill(
+    table: Current.Tables.app.payments,
+    key: Previous.Columns.app.payments.id,
+    column: Current.Columns.app.payments.amount,
+    using: cast(column: Previous.Columns.app.payments.legacyAmount),
+    batchSize: 500,
+    batchesPerRun: 20,
+    maxRows: 1000000,
+    catchUpRows: 5000
+  )
+}
+```
+
+Here `amount` is a new ordinary column and `legacyAmount` remains in the previous
+contract. The planner adds a nullable intermediate target, backfills in bounded
+transactions, and validates/enforces the desired final contract. A retained
+single-column, nonnullable integer primary key is required. Each batch commits
+its data and cursor together. Exhausting `batchesPerRun` leaves a durable `partial`
+revision; inspect status and use explicit `target reconcile` to continue.
+
+A final write fence re-evaluates differences, including updates and inserts behind
+the cursor. Catch-up and final constraint installation share one transaction.
+Arrange maintenance for that final stage and exclusive schema administration for
+the complete operation. This strategy does not coordinate application releases,
+old/new dual writes, triggers, or rolling compatibility. Exceeding a signed row or
+catch-up limit fails without accepting the contract.
+
+```bash
+axiom database evolution-check schema.acore --previous previous/schema.acore --evolution evolution.acore
+axiom database plan schema.acore --deployment deployment.json --dev-profile development.json --evolution evolution.acore
+```
+
+`evolution-check` is offline and emits operation IDs/counts, with ownership still
+requiring verified private history. Planning performs native disposable replay.
+Supported transforms are `copy(column: Previous.Columns...)`, explicit
+`cast(column: Previous.Columns...)`, `value(literal: ...)`, and exhaustive
+`enumMap(column: Previous.Columns..., values: {...})`. Arbitrary SQL, volatile
+expressions and unsupported synchronization are rejected. Explicit casts cover
+integer, boolean, text/varchar, numeric, UUID and enum storage in this profile;
+other type-changing casts remain gated. Identity/generated
+column type changes and generalized cursor/transform strategies need later support.
+
+For an in-place type change, use
+`convert(column: Current.Columns.app.payments.amount, using: cast(column: Previous.Columns.app.payments.amount))`.
+This uses explicit conversion under the final fence. PostgreSQL NULL, unique,
+foreign-key and conversion violations fail safely and leave the accepted head
+unchanged. Enum expansion retains its earlier commit-before-use path; replace a
+finite enum with a distinct desired type and exhaustive mapping. Commit same-type
+label additions in a preceding release before using them in D5 data intent.
+
+For a physical rename, keep the stable logical alias, change `sqlName`, and declare
+`rename(object: Current.Columns.app.payments.legacyAmount)` in the evolution block.
+Schemas, enums, tables, columns, constraints and indexes have explicit rename paths.
+A changed logical alias has a new identity. `adoptName(object: Current.Columns...,
+physical: "legacy_amount")` checks an explicit legacy physical binding; initial
+adoption still requires a complete zero-change comparison. Deploy data in a
+successor to an adoption root.
+
+## Own deployment reference data
+
+Reference data belongs to a release and is separate from `--tests` fixtures.
+Use a proved nonnullable primary/unique key, an explicit literal ownership scope,
+and row/change limits:
+
+```acore
+evolution seedCodes(
+  from: Previous,
+  to: Current,
+  coordination: EvolutionCoordination.maintenanceFenced
+) {
+  referenceData codes(
+    table: Current.Tables.app.codes,
+    keys: [Current.Columns.app.codes.id],
+    scope: scope(column: Current.Columns.app.codes.owner, value: "acore"),
+    mode: ReferenceMode.upsert,
+    rows: [{id: 1, owner: "acore", label: "Active"}],
+    maxRows: 100,
+    maxChanges: 20
+  )
+}
+```
+
+`insert` appends or confirms identical authored values, `upsert` updates declared
+keys, and `synchronize` removes only that owner's previously recorded scoped keys.
+Ownership comes from the complete immutable prefix. Unknown scoped rows, another
+scope's key, overlapping owners, unproved keys, incompatible literals and exceeded
+limits reject the operation. Cascading/set-action foreign keys that could modify
+unowned rows are rejected for the corresponding operation. Keys/scopes use bounded
+integer, text/varchar or boolean values; identity/generated fields cannot be
+written. Authored values and catch-up targets require built-in equality; use Jsonb
+in these actions instead of JSON/JSON arrays. Existing owned row/column bindings
+must remain compatible with the desired contract. Owned data is checked by target verification. Literal values remain in
+private intent/history and are omitted from public reports.
+
+A forward repair is a new signed successor with `repairOf: "ACCEPTED_PARENT_SHA256"`
+on its evolution declaration. It retains the previous release. Pending revisions
+require explicit reconciliation and cannot be replaced by a repair successor.
+
+## Build a concurrent index and approve recovery
+
+Declare a new simple default btree index in the desired schema and add
+`concurrently(index: Current.Indexes.app.payments.byAmount)` to its evolution.
+The release records intent before native `CREATE INDEX CONCURRENTLY`. It checks
+all remaining managed objects and the exact table/index shape. The strategy is
+certified for PostgreSQL 17.5 local/staging; partial/expression/nondefault indexes
+and general nontransactional SQL remain unsupported.
+
+An interrupted build may leave an invalid index; a valid build may finish before
+its checkpoint is acknowledged. Status then includes `indexRecovery` with the
+object ID, observed OID and validity. Reconciliation requires an independently
+trusted signed permit for that exact incarnation:
+
+```bash
+axiom database release repair-index PRIVATE_BUNDLE --deployment execution.json --index-id INDEX_ID --index-oid OBSERVED_OID --strategy drop-rebuild-concurrently --key-file PRIVATE_KEY_FILE --out .axiom/database/v1/index-repair.json
+axiom database target reconcile PRIVATE_BUNDLE --deployment execution.json --repair .axiom/database/v1/index-repair.json
+```
+
+Use `accept-valid` only for an exactly valid observed candidate. An OID mismatch,
+changed table incarnation or unknown shape blocks repair. A saved signed rebuild
+permit also supports explicit restart after an authorized drop. No name-only
+adoption or automatic reconnect/retry is performed. Ordinary inspection continues
+to report invalid indexes as unsupported. PostgreSQL documents the independent
+transactions and invalid-index failure state in [CREATE INDEX](https://www.postgresql.org/docs/17/sql-createindex.html).
+
+## Preserve data history in a checkpoint
+
+```bash
+axiom database history checkpoint schema.acore --out .axiom/database/v1/checkpoint
+axiom database history verify .axiom/database/v1/checkpoint
+```
+
+A checkpoint contains the complete original prefix, resolved reference ownership
+and required data-release hashes. Existing targets continue their accepted history;
+using a checkpoint bundle at the accepted head is a verified no-op.
+
+For a separate empty target, compile the exact checkpoint schema and plan a new
+root with its own target/dev bindings:
+
+```bash
+axiom database plan schema.acore --deployment new-target.json --dev-profile development.json --baseline empty --checkpoint PRIVATE_CHECKPOINT
+```
+
+The optimized fresh root installs the final schema and resolved deployment
+reference rows, retaining the entire original canonical prefix in its private
+release. Existing-target transforms are retained as provenance; application data
+is not copied. The original checkpoint must have a root-empty prefix with at most
+32 releases/4 MiB of canonical source history. Atlas-adopted and nested optimized
+archives are not certified. `--checkpoint` supplies its exact seed intent and
+cannot be combined with `--evolution`, adoption or existing local private history.
+Use a new checkout/project history root for the independently bound fresh target. Export, review,
+sign and enroll this new target separately. A checkpoint is not a backup and
+cannot squash an applied prefix or discard required seed/history data.
+
+## Advanced PostgreSQL declarations
+
+Advanced objects use the same declarative profile, named arguments and resolved
+references. `Types`, `Views`, `Routines`, `Sequences`, `Collations`, `Extensions`,
+`ForeignTables` and `Objects` are schema namespaces; `Roles` and `Servers` are
+explicit instance namespaces. Run `axiom database catalog` for exact signatures.
+
+```acore
+profile database 1
+module storage
+
+database storage(engine: DatabaseEngine.postgres) {
+  manage(schemas: [Schemas.app], mode: ManagementMode.ownedObjects)
+  schema app {
+    domain positive(storageType: Pg.Int32, nullable: true)
+    table items {
+      id: Types.app.positive(nullable: true)
+    }
+    function plus(
+      arguments: [{name: "x", storageType: Pg.Int32, mode: "in"}],
+      returns: {kind: "scalar", storageType: Pg.Int32, set: false},
+      language: "sql",
+      body: Sql.body(source: "SELECT x + 1", dependencies: [], effects: SqlEffects.unknown),
+      volatility: "immutable", strict: true,
+      securityDefiner: false, parallel: "safe", settings: {}
+    )
+    view labels(
+      query: Sql.query(source: "SELECT id FROM app.items", dependencies: [Tables.app.items], effects: SqlEffects.unknown),
+      columns: [{name: "id", storageType: Types.app.positive, nullable: true}],
+      securityInvoker: true, securityBarrier: false, checkOption: "none"
+    )
+  }
+}
+```
+
+`Sql.query`, `Sql.predicate` and `Sql.body` are explicit private definition
+contexts. Queries and predicates reject additional statements, write CTEs and
+`INTO`; native creation/replay validates PostgreSQL semantics. Bodies retain
+unknown effects, including dynamic SQL. An asserted dependency or `immutable`
+classification does not prove purity or discover every runtime dependency.
+Definer routines require an explicit trusted search path beginning with
+`pg_catalog`; privilege and unknown-effect findings remain visible.
+
+The public package carries interfaces, dependency assertions and definition
+digests. Exact SQL bodies, queries and foreign options stay in the private
+source/release inputs. A public advanced package cannot reconstruct executable
+source, so advanced package imports and general advanced SQL/HCL imports remain
+unavailable. Live adoption preparation can reconstruct supported definitions
+privately. Keep the original private project history available to CI.
+
+| Family | Selected behavior | Boundary |
+| --- | --- | --- |
+| Types and sequences | Domain nullability/check, ordered composites and append, default-opclass ranges/multiranges, integer sequence parameters and owned column | Destructive type edits, domain defaults, custom range functions and sequence business restarts require another strategy. Named types have no backend codec yet. |
+| Views and routines | Native result shapes, view invoker/barrier/check options, explicit materialized refresh, SQL/PLpgSQL functions/procedures and overloads | Interface-changing replacement, routine defaults/cost/support attributes and materialized indexes/concurrent refresh are unavailable. |
+| Triggers, aggregates, casts | Row/constraint/event triggers, normal transition/final aggregates, explicitly scoped cast pairs | Conditions, transition tables, moving/ordered aggregates, operators and text-search objects need separate coverage. |
+| Collations and extensions | Deterministic libc locale, exact `pgcrypto` and `postgres_fdw` installation | Other modules, providers and unmodeled attributes remain unsupported. Server installation is external to the Rust distribution. |
+| Access and RLS | Managed/external roles, PG17 membership options, object/column/PUBLIC grants, schema default privileges, enabled/forced command/principal policies | Nondefault owner ACLs, delegated grantors and global default privileges block coverage. Tenant pool initialization/reset is later work. |
+| Placement and foreign objects | Range/list/hash/default bounds, retained detach, separate attachment checkpoints, heap storage and postgres_fdw server/table/mapping | Repartitioning, changed child bounds/parents, expression keys, inherited parent CHECK/FK, concurrent detach and parent storage descriptors are unavailable. Remote schema/access/availability remains unproved; server/table edits need another in-place strategy. |
+
+New authored routines revoke implicit PUBLIC EXECUTE; new advanced types revoke
+implicit PUBLIC USAGE. Declare intended grants explicitly. Native-generated
+range constructors and multirange permissions follow their native owning type.
+Source editor rename updates resolved references; private SQL strings require
+their own edit and fresh native validation. Advanced identity/name moves are
+gated to avoid implicit drop/recreate.
+
+## Role scope, credentials and tenant policies
+
+Schema management does not grant permission to manage instance roles, event
+hooks, casts or servers. Add a private `postgres` scope to both the inspection
+deployment and enrolled execution target. For example, an application role
+requires this exact inventory:
+
+```json
+{
+  "roles": ["application"],
+  "ownedRoles": ["application"],
+  "servers": [],
+  "eventTriggers": [],
+  "casts": [],
+  "extensions": [],
+  "administration": true,
+  "databaseCode": true,
+  "credentials": {"applicationLogin": "secret:file/application-login.json"}
+}
+```
+
+This is the `postgres` member of a private binding, not a complete deployment
+file. Inventory must match the union of the entire release prefix, including
+removed objects. An external role is asserted inventory and is never created,
+altered or removed. Reserved/provider roles and the migration actor cannot be
+owned. The initial instance-role profile requires an explicit administrator.
+Previously enrolled core-only history cannot silently acquire a different native
+ownership inventory; a rejected scope expansion requires a separately supported
+ownership transition.
+
+A role declaration's `credentialRef` is a logical slot such as
+`applicationLogin`. Its private provider supplies JSON `username`/`password`,
+using the same owner-only file or explicit environment provider rules as the
+connection binding. Dev bindings resolve their own credentials; role replay
+requires `isolatedInstance: true` on an explicitly disposable, independently
+observed **separate PostgreSQL instance**. A second database in the same cluster
+is insufficient. Its `credentials` map must bind the exact slots needed by the
+prefix; unrelated user roles prevent reset/replay.
+
+Credential provisioning is a signed typed action. Password SQL is constructed
+only in memory and is absent from release, history and generated SQL files.
+Execution requires `log_statement=none` and `log_min_error_statement=panic`;
+the engine checks this profile without changing operator logging settings.
+Offline compilation, signing and status never resolve application/foreign
+credential slots. A later credential rotation requires a changed, versioned
+logical slot and a new signed candidate; changing a provider value alone does
+not create a schema transition. Fresh verification detects authentication drift.
+
+RLS declares table enable/force state and each policy's command, roles,
+permissive/restrictive mode, `using`, `check` and `sessionSettings` requirements.
+The native profile tests real migrator, forced-owner, application and BYPASSRLS
+behavior. Permission expansion, required-access denial and tenant context have
+separate impact findings. Declaring `sessionSettings: ["app.tenant"]` records a
+requirement; application pool initialization and reset are deferred.
+
+## Partitions, storage and foreign dependencies
+
+`partitioning` declares a table, method and column keys. `partition` declares a
+child, parent, finite `PartitionBound.range`, `.list`, `.hash` or `.default`, and
+`attached` state. Parent primary/unique keys must include every partition key;
+children declare matching key shape. Parent CHECK/FK inheritance is gated.
+Detach retains the declared child and its rows; removing its table is a separate
+destructive change. Automatic repartitioning or retention deletion is unavailable.
+
+Attachment installs an unattached child checkpoint, then acquires parent SHARE
+UPDATE EXCLUSIVE, child ACCESS EXCLUSIVE and ledger fences for the native attach
+and atomic checkpoint. Existing-partition writers are exercised in acceptance;
+default-partition validation can require additional native locks. Interrupted
+attachments use explicit signed `target reconcile`, including a committed but
+unacknowledged checkpoint. This does not certify every production workload.
+
+`tableStorage` selects permanent/unlogged heap storage, an existing tablespace,
+owner, bounded supported options and replica identity for ordinary/child tables.
+Server tablespace provisioning remains external. Parent storage, arbitrary table
+access methods, full TOAST/compression options and replica identity indexes are
+not part of this slice.
+
+Foreign objects use the audited `postgres_fdw` extension, a separately scoped
+server, explicit result columns and a mapping. `Options.private(values: {...})`
+stores endpoint/placement settings privately; public interfaces contain only a
+digest. User/password options are forbidden there and use a runtime credential
+slot instead. Server connections require verify-full TLS. A locally verified
+foreign definition leaves remote schema, permissions and availability uncertain;
+foreign impact retains that uncertainty and implies no distributed atomicity.
+
+## Schema evolution and later support
+
+Authors edit desired state. Generated migrations and SQL stay in private project
+history and private CI artifacts. That history and the enrolled target ledger must
+be durable; disposable cache cannot replace accepted history. Controlled local/
+staging execution and the bounded data-evolution strategies above are available. Production workload certification and tenant-fleet coordination remain later work.
+
+Advanced candidates use the private v3 planner/release boundary. Existing v1/v2
+history remains readable. Combining advanced objects/security/storage with D5
+data evolution is gated until that effect and synchronization strategy is proved.
+Complete PostgreSQL attribute coverage, schema/database tenant fleet coordination
+remain separate gates. The named D9 PostgreSQL 17.11 production profile uses
+[deployment recovery and exact-build admission](/acore-language/database-fleets#named-postgresql-production-admission).
+
+The separately qualified [database persistence](/acore-language/database-persistence) profile imports the signed schema into a private typed runtime plan, derives explicit API projections and follows actual backend/frontend consumers. It adds native application pools, transactions and tenant context for the named PostgreSQL primary profile. Ordinary schema diff and opaque SQL retain unknown downstream effects.
+
+See [Support and availability](/introduction/support-matrix) and
+[Declarative package lifecycle](/workflows/package-lifecycle).
+
+Frozen tenant inventories, policy review, offline promotion and resumable delivery
+are described in [database fleets](/acore-language/database-fleets).
+
+
+The D9 production profile requalifies the selected maintained subsets on exact
+PostgreSQL 17.11/Darwin 25.2 arm64 with private file providers and verified TLS.
+See [production admission](/acore-language/database-fleets#named-postgresql-production-admission)
+for release digest, actual physical recovery, bounded workloads and experimental
+installation migration. The 17.5 examples above remain experimental profiles;
+D9 does not rewrite their histories or claim full PostgreSQL property coverage.

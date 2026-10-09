@@ -71,6 +71,14 @@ fn detect_role(root: &Path) -> OnboardRole {
     }
 }
 
+fn local_backend_commands() {
+    println!("  Local real API: axiom serve axiom.acore (requires an executable service/plan).");
+    println!("  Endpoint scenarios: axiom mock axiom.acore --profile contract.");
+    println!("  Private plan simulation: axiom serve axiom.acore --mock --fixtures mock.json --identities mock-identities.json.");
+    println!("  Cloud mocks: axiom mock --cloud (requires a linked project and login).");
+    println!("  Guide: https://docs.axiomcore.dev/reference/server-cli-migration");
+}
+
 async fn onboard_backend(
     root: &Path,
     entrypoint_flag: Option<&str>,
@@ -81,10 +89,12 @@ async fn onboard_backend(
     if acore.exists() {
         println!("{} axiom.acore already exists", style("✓").green());
         println!("  Next: `axiom build` to create an immutable local artifact.");
+        local_backend_commands();
         println!("  Then: `axiom login` and `axiom build --release` to publish it.\n");
         return Ok(());
     }
 
+    local_backend_commands();
     let detected = detect_backend(root);
     let entrypoint = entrypoint_flag
         .map(str::to_string)

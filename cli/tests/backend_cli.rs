@@ -66,7 +66,7 @@ endpoint list(method: GET, path: "/tasks") {
     )
     .unwrap();
     success(&cli(directory.path(), &["build", "axiom.acore"], true));
-    std::fs::write(directory.path().join("AxiomDeps.toml"), "type = \"backend\"\naudiences = [\"mobile\"]\n[contracts.tasks]\nartifact = \"axiom.axiom\"\nbaseUrl = \"http://localhost:8080\"\n").unwrap();
+    std::fs::write(directory.path().join("AxiomDeps.toml"), "type = \"backend\"\naudiences = [\"mobile\"]\n[contracts.tasks]\nartifact = \"backend.axiom\"\nbaseUrl = \"http://localhost:8080\"\n").unwrap();
     for action in ["resolve", "verify"] {
         let result = Command::new(env!("CARGO_BIN_EXE_axiom-cli"))
             .current_dir(directory.path())
@@ -188,7 +188,6 @@ fn cloud_commands_retain_cloud_configuration_and_access_checks() {
         vec!["build", "--release"],
         vec!["release"],
         vec!["deploy", "mock-server"],
-        vec!["serve"],
         vec!["watch"],
         vec!["pull", "org/project"],
         vec![
@@ -216,7 +215,7 @@ fn cloud_commands_retain_cloud_configuration_and_access_checks() {
             "{arguments:?}: {output:?}"
         );
     }
-    assert!(!directory.path().join("axiom.axiom").exists());
+    assert!(!directory.path().join("backend.axiom").exists());
 }
 
 #[test]
@@ -337,7 +336,7 @@ fn check_explain_eval_and_empty_tests_remain_local_and_do_not_write_baselines() 
         &["test", "--variant", "mobile"],
         true,
     ));
-    assert!(!directory.path().join("axiom.axiom").exists());
+    assert!(!directory.path().join("backend.axiom").exists());
     assert!(!directory.path().join("axiom.acore.lockfile").exists());
 }
 
@@ -488,8 +487,10 @@ testConfig(suites: [TestSuite(
         Command::new(env!("CARGO_BIN_EXE_axiom-cli"))
             .current_dir(directory.path())
             .args([
-                "serve",
+                "run",
                 "axiom.acore",
+                "--mode",
+                "mock",
                 "--variant",
                 "mobile",
                 "--port",

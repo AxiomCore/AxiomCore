@@ -41,7 +41,7 @@ policies(retry: RetryPolicy(maxAttempts: 3))
 
 ```bash
 axiom build axiom.acore
-axiom inspect axiom.axiom
+axiom inspect backend.axiom
 ```
 
 The build produces the canonical contract artifact. Inspection reads the
@@ -51,7 +51,7 @@ artifact; it does not run the backend.
 
 ```bash
 axiom test axiom.acore
-axiom serve axiom.acore --port 8080 --debug
+axiom run axiom.acore --mode mock --port 8080 --debug
 ```
 
 Contract tests can target a configured live/staging base URL. The mock server
@@ -77,6 +77,14 @@ axiom build axiom.acore --release --version 1.2.0
 ```
 
 Alternatively release an already built artifact with `axiom release
-axiom.axiom`. A release is immutable; promote a new version instead of
+backend.axiom`. A release is immutable; promote a new version instead of
 overwriting evidence.
 
+
+Follow the [server release workflow](/reference/server-release-workflow) for one
+API across real serving, full mocks, native bundles, both Linux container
+architectures and local Workers, including capability diagnostics, external
+credential rotation, promotion and compatible rollback. Hosted AWS and
+Cloudflare certification remain unavailable. The playground's **Portable ·
+deployment profiles** example exposes source-only target assessments and
+includes downloadable setup helpers.

@@ -56,3 +56,117 @@ Invalid authored types or structural references stop a build. Runtime payload
 failure is reported through the selected SDK/runtime error state. Exact error
 transport differs by target; test your consuming framework and avoid assuming
 one UI error shape across all clients.
+
+## Shared executable validators and codecs
+
+Backend modules can opt into `axiom-server-plan/v2` by declaring pure functions,
+validators, codecs, or explicit model defaults. Legacy plans keep their version
+and validation behavior. Public language metadata requires reader version 2.
+
+This complete backend module compiles with the updated compiler:
+
+```acore
+project(id: "schema-example", version: "1")
+model Window {
+  title: String(minLength: 1, maxLength: 200)
+  start: Int32(min: 0)
+  end: Int32(min: 0)
+  count: Int32 = 4
+  note: String?
+}
+pure fn normalizeTitle(value: String): String = value.trim()
+validator dates(input: Models.Window) {
+  check(condition: Input.end >= Input.start, field: .end,
+    code: "end_before_start", message: "End must follow start")
+}
+validation(model: Models.Window, rules: [Validators.dates], expose: true)
+codec taskId(encoded: String, decoded: Int64,
+  decode: Functions.parseCanonicalInt64,
+  encode: Functions.formatCanonicalInt64, expose: true)
+```
+
+A default applies to an absent field. Explicit `null` is a supplied value and
+requires a nullable rule; `String?` allows absence. Defaults are checked against
+both the structural type and its field constraints. Validation returns ordered
+issues with field, list-index, or hashed map-key paths, stable codes, message keys,
+safe fallback messages, and rule identities. It never copies a rejected value
+into an issue. Independent fields accumulate; cross-field rules wait for their
+structural dependencies. Truncation is an invalid report, never a successful
+validation.
+
+The descriptor bounds work to 10,000 units, nesting to 32, input to 1 MiB, and
+issues to 64 / 32 KiB. Pure expressions cannot access providers, application state,
+time, randomness, or extensions. Recursion and unbounded loops are rejected.
+Validation is separate from authorization and asynchronous availability checks.
+The backend rechecks input, output and provider values. Guests use the selected
+helpers; the broker still checks guest values and proposals independently.
+
+A native endpoint can bind a named model body and expose its approved projection:
+
+```acore
+project(id: "checked-window", version: "1")
+variant default(include: ["*"])
+model Window {
+  title: String(minLength: 1, maxLength: 200)
+  start: Int32(min: 0)
+  end: Int32(min: 0)
+}
+entity window(model: Models.Window, key: ["start"])
+projection windowInput(entity: Entities.window,
+  fields: [.title, .start, .end], audience: Audience.web)
+validator dates(input: Models.Window) {
+  check(condition: Input.end >= Input.start, field: .end,
+    code: "end_before_start", message: "End must follow start")
+}
+validation(model: Models.Window, rules: [Validators.dates], expose: true)
+model CreateWindow { value: Models.Window }
+action createWindow(kind: ActionKind.command,
+  input: Models.CreateWindow, output: Models.Window) {
+  managed { return Input.value }
+}
+endpoint createWindow(method: POST, path: "/windows") {
+  request(projection: Projections.windowInput) {
+    body("value", type: Models.Window)
+  }
+  handle(action: Actions.createWindow, input: {value: Input.body.value})
+  response(type: Models.Window)
+}
+```
+
+The HTTP body is `{"title":"Review","start":1,"end":2}`. The named body
+parameter supplies the action's `value`; selected frontend arguments are
+`title`, `start` and `end`. Invalid fields accumulate before action dispatch.
+
+Rules and codecs are private by default. `expose: true` selects public metadata;
+frontend operation locks further select the authorized request fields and
+function closure. A rule requiring unselected input cannot leak into a client.
+Declare `request(projection: Projections.taskCreate)` using the input model's
+approved projection. The native authored backend uses one named model body
+parameter; its HTTP body and selected form fields remain flat. The selected
+descriptor carries the projection's field constraints and exposed cross-field
+rules. Legacy flat-parameter projection contracts use the same selected rules.
+Separate
+scalar body parameters without a projection carry their declared types; they
+do not infer an action's private input model or rules.
+Forms and request adapters consume these descriptors, apply absent defaults, and
+reject malformed input before dispatch. Backend admission remains authoritative.
+
+Backend Int64 codecs preserve exact signed 64-bit values. Portable helpers reject
+integers outside ±9,007,199,254,740,991; they never round an identifier into a
+JavaScript number. Use canonical string codecs for larger integers, arbitrary
+precision integer/decimal strings, dates, UTC timestamps and base64 bytes. The
+`canonicalBigInt`, `canonicalDecimal`, `canonicalDate`, `canonicalTimestamp` and
+`canonicalBase64` intrinsics reject noncanonical input. Decimal strings include a
+decimal point and omit trailing fractional zeros except the single `.0` form.
+Canonical UTC timestamp fractions have 3, 6 or 9 digits with no redundant final
+zero group. Codec encode/decode checks both types and inverse round trips.
+
+Portable selection currently rejects IP/date Rod rules, recursive Rod expansion,
+and regex outside its qualified bounded subset before activation. The portable
+regex subset supports literals, character classes and anchors with at most one
+repetition; groups, alternatives and engine-specific escapes are rejected. Structural
+model recursion remains bounded in the shared backend engine. Existing portable
+UI type rules still determine whether a model can be selected by that UI profile.
+The Rust guest SDK exposes the shared engine with its `schema` feature; the
+TypeScript guest SDK exposes `@axiomcore/extension-sdk/schema`. Neither helper
+grants an effect or bypasses a guard.

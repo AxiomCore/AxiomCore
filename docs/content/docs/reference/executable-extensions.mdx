@@ -196,3 +196,191 @@ protocol and audit evidence. It is not the supported application-authoring
 walkthrough and does not replace the ordinary Acore target commands.
 
 For the review workflow, see [Executable extension lifecycle](/workflows/executable-extension-lifecycle).
+
+## Shared data contracts
+
+The Rust schema helper (including its Wasm feature) and generated portable
+TypeScript helper consume selected canonical descriptors. Guest validation remains
+advisory: the broker/host independently validates results and proposals. Typed
+failure payloads are checked before public projection. Private configuration and
+opaque secret handles are never guest values.
+
+
+## Owned operations
+
+The versioned named guest group descriptor has an explicit adapter capability and initially accepts granted contract queries. Ordered effect plans retain their sequential meaning. Group cancellation drains started work before resume; guests cannot expand root budgets or retry/scheduling authority. See [sandboxed owned operations](/acore-language/owned-operations#sandboxed-extensions).
+
+
+Backend [`batchPolicy`](/reference/typed-request-batching) aggregation is a host
+facility under explicit deployment grants and owned operation context. Existing
+`Batch` capability declarations alone do not implement aggregation or grant a
+private batch operation. A guest receives only selected generated or explicit
+granted interfaces. Real-guest tests and generated SDK batch helpers remain
+separate qualification gates for the candidate toolchain.
+
+### Bounded stream decoder candidate
+
+The candidate Rust SDK's `Stream<T>::bounded(handle, max_events, max_bytes)`
+checks the stream handle and generation, at most 256 events, at most 64 KiB,
+bounded nesting, and contiguous sequence numbers before publishing a decoded
+batch. A malformed payload leaves sequence progress unchanged. A terminal
+handle rejects further batches.
+
+`decode_batch` rejects reported event loss. `decode_state_batch` is the explicit
+replaceable-state consumer API and returns `StreamBatch<T>` with `dropped` and
+`terminal` metadata. It does not authorize host coalescing, grant a subscription,
+or certify a durable cursor. Host authorization, generation retirement and
+source capabilities still apply independently. Candidate decoder checks and
+real-guest/editor qualification are tracked separately from previously qualified SDKs.
+
+## Candidate selected extension interfaces
+
+The candidate source toolchain accepts a project-relative `interface` JSON file
+in a source extension declaration. It selects named pure input/output types for
+the declared exports and requested host operations. It cannot add an export,
+host operation, permission or target. The sealed output uses
+`axiom-sdk-interface-ir/v2` and `axiom-sdk-interface-artifact/v2`; existing
+unselected interfaces retain their v1 representation.
+
+```toml
+[extensions.tools]
+language = "rust"
+source = "logic/tools.rs"
+interface = "logic/tools.interface.json"
+exports = ["normalize"]
+targets = ["server"]
+```
+
+`tools.interface.json` can select this complete pure value boundary:
+
+```json
+{
+  "format": "axiom-extension-selection/v1",
+  "types": {
+    "Draft": {
+      "kind": "record",
+      "fields": [
+        {"name": "title", "valueType": {"kind": "scalar", "value": "string"}},
+        {"name": "offset", "valueType": {"kind": "scalar", "value": "signed64"}}
+      ]
+    }
+  },
+  "exports": [
+    {"name": "normalize", "input": {"kind": "named", "value": "Draft"},
+     "output": {"kind": "named", "value": "Draft"}}
+  ],
+  "imports": []
+}
+```
+
+Generated Rust adapters provide records, variants, checked ABI codecs and an
+export trait. A normalizer uses ordinary typed fields:
+
+```rust
+use crate::axiom_bindings::selected::{
+    SelectedExports, SelectedExtension, Type_Draft as Draft,
+};
+use axiom_extension_sdk::{boxed_extension, Extension, Result, TypedInvocation};
+
+struct Tools;
+impl SelectedExports for Tools {
+    fn normalize(&mut self, mut input: Draft, _: &TypedInvocation) -> Result<Draft> {
+        input.title = input.title.trim().to_owned();
+        Ok(input)
+    }
+}
+pub fn axiom_extension() -> Box<dyn Extension> {
+    boxed_extension(SelectedExtension(Tools))
+}
+```
+
+The generated TypeScript bindings expose a checked immediate-export wrapper:
+
+```typescript
+import { defineSelectedExtension } from "@axiomcore/extension-bindings";
+
+export default defineSelectedExtension({
+  normalize({ input, complete }) {
+    return complete({ ...input, title: input.title.trim() });
+  }
+});
+```
+
+The restricted Python compiler preserves the same selection while lowering the
+function into the checked managed entry point. Generated stubs describe the
+dictionary input and completion payload:
+
+```python
+from axiom_extension_sdk import extension
+from axiom_bindings import Context_normalize
+
+@extension.export
+def normalize(context: Context_normalize):
+    draft = context.input
+    return context.complete({
+        "title": draft["title"].strip(),
+        "offset": draft["offset"],
+    })
+```
+
+Records reject missing/unknown fields and noncanonical ABI field order.
+Variants require exactly the selected case and payload. Signed positive numbers
+retain the signed ABI tag. Managed number profiles reject integers outside the
+exact JavaScript range; Rust retains exact 64-bit integers. Pure values have
+finite nesting/work, a 64 KiB boundary, and at most 256 list/byte items. Host
+handles and recursive type graphs are rejected. Scalar/list ports use a named
+alias. These checks do not validate host authority or commit proposals; the
+broker remains responsible for both.
+
+This candidate profile uses the public Rust SDK 0.1.2 and
+TypeScript SDK 0.1.2 source, with Python SDK identity recorded from its actual
+locked distribution. Signed native-host tests exercise actual Rust, TypeScript
+and Python Wasm guests with checked named continuations. Publication and mounted
+target/editor qualification remain separate gates.
+
+### Named continuations
+
+A selection can declare a finite continuation with an export, a pure state type
+and named branches that refer to already requested call operations. For example,
+`load: Key -> Draft` can declare `loaded`, carry `Key` as its state and name a
+`catalog.lookup` branch `task`. The corresponding generated TypeScript entry is:
+
+```typescript
+import { defineSelectedExtension } from "@axiomcore/extension-bindings";
+
+export default defineSelectedExtension({
+  load(context) {
+    return context.effects.loaded(context.input, { task: context.input });
+  },
+  resume: {
+    loaded(context) {
+      const task = context.outcomes.task;
+      if (task.case === "ok") return context.complete(task.value);
+      return context.complete({ title: "Safe failure" });
+    }
+  }
+});
+```
+
+Rust receives generated `Step_load`, `Calls_loaded` and `Outcomes_loaded` types.
+Python uses typed `Context_load` and `Resume_loaded` stubs with
+`@extension.export` and `@extension.resume` functions. Selected Python source is
+checked by the pinned Pyright checker before restricted AST lowering.
+
+The host owns the invocation identity and validated continuation state. It
+checks all branches before dispatch and every outcome before authored resume.
+The control descriptor is never dispatched or charged as a host call. A resume
+can complete once; a second yield, stale identity, unknown branch or malformed
+payload retires the guest. Fresh managed instances recover state from the host
+envelope. General async and persistent authored heaps are outside this profile.
+
+Selected packages use `axiom-extension/v3` with the exact signed interface.
+The native managed adapter uses a separately identified interpreter budget and
+build profile; legacy packages keep their existing profile. The current selected
+profile rejects snapshots, patches, transactions and emitted events. Browser
+and mounted mobile support requires its own host qualification.
+
+The shared language server completes and navigates the `interface` manifest
+field. Explicit SDK preparation emits physical typed helper files for native
+Rust/TypeScript/Python tooling. Changing the captured selection invalidates the
+prepared interface; passive editing never runs a guest or grants permission.

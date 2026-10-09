@@ -1,0 +1,255 @@
+---
+title: Full server simulation
+description: Run isolated typed business fixtures through the real server routing, authentication, guards, validation and transport boundaries.
+---
+
+`axiom serve --mock` simulates business execution through the same ActionHost
+and HTTP transport as real serving. Managed composition, nested guards, typed
+inputs and failures, response projections, metadata, admission and supported
+transport checks remain active. Native/sandbox bodies and application callbacks
+are replaced; no production provider, guest module, network client or worker is
+loaded. Simulated execution does not verify those production implementations.
+
+## Choose a profile
+
+```sh
+axiom serve service.acore --mock --fixtures mock.json --identities mock-identities.json --port 8080
+axiom mock service.acore --fixtures mock.json --identities mock-identities.json --port 8080
+axiom mock backend.axiom --plan backend.server.json --profile server --fixtures mock.json --identities mock-identities.json
+axiom mock contract.acore --profile contract --port 8080
+axiom mock --cloud --port 8080
+```
+
+Omitted local input means exactly `axiom.acore` in the invocation directory.
+`mock` selects the server profile when compilation supplies a private server
+plan; otherwise it selects the labeled contract profile. A broken or unsupported
+server plan fails without downgrading. `serve --mock` always requires a server
+plan. Contract simulation preserves endpoint scenarios and legacy state; it
+cannot enforce private actions absent from its input.
+
+Explicit companion paths are invocation-relative. Defaults are `mock.json` and
+`mock-identities.json` beside the selected source/artifact; artifacts also use
+adjacent `INPUT.server.json`. Full mocks reject real `--deployment` and
+`--bindings`. Real serving rejects fixtures and mock identities. Local commands
+need no Cloud account. Cloud retrieval requires explicit `--cloud`, a linked
+project and a Cloud session; it preserves the configuration cache and ETag.
+
+## Prepare the managed example
+
+Copy the matching workspace's `examples/server-workflow` example. Build its
+public contract/private plan, then generate separate data and identity files:
+
+```sh
+axiom build service.acore
+python3 configure_mock_fixtures.py --cli "$(command -v axiom)" --directory . --output mock.json --identities-output mock-identities.json
+axiom serve service.acore --mock --port 8080
+```
+
+Review the generated identity permissions. Data fixtures cannot create
+principals, credentials, permissions or resource-operation grants. The trusted
+identity companion uses `axiom-mock-identities/v1`:
+
+```json
+{
+  "format": "axiom-mock-identities/v1",
+  "identities": {
+    "reader": { "subject": "reader", "tenant": "development", "permissions": ["task.read"] },
+    "denied": { "subject": "denied", "tenant": "development", "permissions": [] }
+  }
+}
+```
+
+Startup reports `mode: "server-mock"`, the actual port and `credentialsFile`.
+The owned mode-0600 file contains each label's generated request headers and
+real expiry. The host verifies these credentials through the same authenticator
+as real serving; it does not accept request-supplied principals. Development
+JWT keys, API keys or session credentials are isolated from production. With no
+identity file, authenticated requests cannot acquire a development identity.
+
+Use the printed file path to send a request without printing credentials:
+
+```sh
+export AXIOM_MOCK_CREDENTIALS=/absolute/path/from/startup/credentials.json
+python3 - <<'PY'
+import json, os, urllib.request
+with open(os.environ["AXIOM_MOCK_CREDENTIALS"]) as stream:
+    headers = json.load(stream)["reader"]["headers"]
+request = urllib.request.Request("http://127.0.0.1:8080/tasks/1", headers=headers)
+with urllib.request.urlopen(request) as response:
+    print(response.read().decode())
+PY
+```
+
+The example sequence returns a synthetic task, then a sanitized provider
+failure, then `mock_exhausted`. Restart to restore its FIFO and state. Shutdown
+removes owned credentials and upload staging. Debug output remains redacted.
+
+## Private fixture format
+
+`axiom-server-mock/v1` binds `contractSha256` and `planSha256` exactly. Obtain
+them from `axiom server inspect backend.axiom backend.server.json`. Fixtures remain
+private companion files; public `.axiom` codecs and normal production packages
+contain no fixture, identity, generated credential or simulation state.
+
+| Field | Meaning |
+| --- | --- |
+| `seed`, `clockUnixMs` | Required deterministic session controls; FIFO selection does not randomize replies. |
+| `actions` | Native/sandbox action name to finite `replies`; managed programs cannot be overridden. |
+| `resources` | Every resource and declared operation to finite `replies`, including guard dependencies. |
+| `interceptors` | Every declared interceptor to `{ "reject": false, "delayMs": 0 }`; its native callback is never loaded. |
+| `metadata` | Optional endpoint to typed `headers`/`cookies`; required metadata needs an explicit producer fixture. |
+| `webhooks` | Every declared webhook to finite null acknowledgments or `unavailable` outcomes. |
+| `initialState` | Bounded literal synthetic state, separate from identity and authority. |
+
+Each reply contains `outcome`, optional `delayMs`, literal `state` updates and
+optional explicit simulated `effects`. Supported outcomes are:
+
+```json
+{"kind":"value","value":{"title":"Synthetic task","completed":false}}
+{"kind":"failure","failure":"missing","payload":{"message":"Synthetic absence"}}
+{"kind":"unavailable"}
+{"kind":"frames","frames":[{"id":"1","value":1,"padding":""}]}
+{"kind":"input","path":["file"]}
+```
+
+`failure` must be declared on its action. `frames` must match the stream schema
+and policy; WebSocket sequences supply one frame per client message. `input`
+copies a validated typed path, useful for generated upload descriptors; it is
+not an expression or template evaluator. An empty path copies a resource input
+or a whole action input record whose fields exactly match the output model.
+
+Opaque upload successes require explicit fixture effects. For an action whose
+input contains a typed `file` descriptor and whose declared effects include
+`files.store`, a reply can use:
+
+```json
+{
+  "outcome": { "kind": "input", "path": ["file"] },
+  "effects": [{ "resource": "files", "operation": "store", "inputPath": ["file"] }]
+}
+```
+
+The corresponding resource reply uses `{ "kind": "input", "path": [] }`.
+Each effect passes the unchanged action effect and provider-operation gates.
+Fixtures cannot add grants or fabricate undeclared calls. All upload writes use
+owned temporary storage and the real size, content, ownership and cancellation
+checks. Missing, invalid or exhausted scenarios fail explicitly; they never
+invoke a real implementation or provider.
+
+## Bounds, time and lifecycle
+
+Fixtures reject duplicate keys, unknown fields, wrong hashes and invalid typed
+values before listening. Documents are limited to 4 MiB, 32 nesting levels,
+32,768 JSON nodes, 256 targets and 4,096 total replies. Each sequence has 1–256
+replies; values/state entries are at most 256 KiB and delays at most 30 seconds.
+Stream policies can impose smaller limits.
+
+Scenario cursors and state use verified subject and tenant partitions, with a
+separate anonymous partition: at most 64 partitions, 256 state entries per
+partition and 16 MiB aggregate mutable scenario state. Capacity errors preserve
+existing partitions. Declared caches retain their independent entry/byte limits
+and isolation; authorization still precedes every cache read.
+
+Admission and cache TTLs use the simulation clock. The CLI starts it at
+`clockUnixMs`; embedded hosts advance it through `Simulation::advance_clock`.
+Real credential expiry, transport timeouts and cancellation use real time.
+
+For a separate explicit synthetic credential/provider expiry environment and
+logical native batch dispatch windows, use
+[typed development scenarios](/tooling/axiom-test-runner#synthetic-expiry-environments).
+The live simulator does not inherit those fixture clocks.
+Memory admission simulates declared distributed/durable policies for development;
+it does not establish Redis durability, multi-process replay or crash recovery.
+
+Embedded hosts can call `ActionHost::reset_simulation` after active work drains
+to clear scenarios, state, caches and memory admission. The clock remains at its
+current value. Full mock hosts expose no HTTP docs/reset control that could
+bypass action authentication. Contract-profile loopback controls retain their
+legacy behavior; non-loopback contract listeners issue a private
+`X-Axiom-Sandbox-Key` protecting routes, docs, health and reset.
+
+Ctrl-C/SIGTERM use the real bounded drain and cleanup.
+
+## Reload source and fixtures
+
+```sh
+axiom serve service.acore --mock --fixtures mock.json --identities mock-identities.json --watch --port 8080
+axiom run service.acore --mode mock --fixtures mock.json --identities mock-identities.json --watch --port 8080
+axiom mock contract.acore --profile contract --watch --port 8080
+```
+
+Watch requires local source and a fixed loopback port. It captures source,
+fixtures and reviewed identity bytes into an owned snapshot; external companion
+paths are watched too. Invalid source, malformed fixtures, hash drift, or
+incompatible authority leaves the last valid service, credentials and state
+running. Snapshot builds have a 30-second limit.
+
+Full mock reload permits managed computation changes only within unchanged
+public interfaces, guards, implementation kinds, resource operations and action
+authority. Fixture hashes must bind the initial reviewed session or the exact
+candidate. Only after compatibility checks does the supervisor rebind metadata
+in its owned fixture copy. Checked artifacts and your fixture file are never
+rewritten. Type, route, guard, capability or profile changes need a new build,
+reviewed fixtures and an explicit restart. A contract session cannot acquire a
+private server plan through reload.
+
+Activation drains the old listener and briefly interrupts requests. Successful
+reload creates fresh scenario state, FIFO cursors, clock, caches, admission and
+credentials. Read the new `credentialsFile`; the old file and credentials are
+removed. Invalid edits preserve the old session. Failed activation attempts to
+restart the last validated snapshot, also with fresh state and credentials.
+Cloud and artifact watch, non-loopback watch and port-zero watch are unsupported.
+
+The snapshot is limited to 1,024 source files, 16 directory levels and 16 MiB of
+source, with at most 32 MiB including companions. Symlink/special-file inputs
+fail closed. Hidden, build, dependency and generated-artifact directories are
+excluded; prepare installed dependencies before starting watch.
+
+## Inspect the selected execution
+
+Startup prints a private `sessionFile` containing a redacted observation bound
+to the exact contract and plan. Inspect the matching artifacts:
+
+```sh
+axiom inspect server backend.axiom backend.server.json --session /absolute/path/from/startup/session.json --format json
+```
+
+The view reports `server-mock`, managed composition, typed simulated bodies and
+providers, active framework boundaries and unknown production internals. Without
+`--session`, it reports declared plan facts and `not-observed` mode. A mismatched
+receipt fails; after source reload, build matching inspection artifacts in a
+separate directory rather than passing old artifacts. The receipt is startup
+information, not request capture or signed production evidence. Shutdown removes
+it. Contract-only browser/CLI mocks do not produce server enforcement receipts.
+
+## Explicit delivery and evidence
+
+The Rust `SimulatedDelivery` runner requires a mock ActionHost, explicit declared
+enqueue/publish grants and issued service/delegated identity bindings. Its
+`submit` and `run_one` methods simulate typed jobs, consumer fan-out, webhook
+acknowledgments, retries and ordering. It retains at most 128 records with
+64 KiB payloads; reset requires no active attempt. No runner starts with HTTP
+serving, and automatic schedules fail preflight because this profile has no
+simulated scheduler. No Redis or outbound webhook request is performed.
+
+Readiness identifies simulated business execution. Direct invocation evidence
+keeps guards `runtimeEnforced`, reports simulation execution separately and
+marks production opaque internals `unknown`. Native internal calls/effects,
+real provider retry/circuit behavior, user callbacks and infrastructure have
+not been exercised by simulation.
+
+## Logical scenario replay
+
+For deterministic managed query ordering, use the matching source build's
+`axiom scenario` workflow described in [Axiom test runner](/tooling/axiom-test-runner).
+The `native-managed.v1` fixture executes the compiled managed host and explicit
+resource grants with exact scripted read replies. It advances test policy time
+without opening a listener or resolving live provider configuration. The
+`policy.waiting` arrival barrier establishes that the host reached backoff before
+an advancement or cancellation. Every start is joined, and cleanup is asserted.
+
+Use HTTP simulation when routing, authentication or transport behavior is the
+assertion. Logical managed scenarios report `compiler-host`; actual signed guest,
+transport, Redis/database recovery and mounted frontend runs require their own
+qualified adapters. An authored scenario cannot request a higher evidence level
+or inject a principal, credential resolver or production provider.

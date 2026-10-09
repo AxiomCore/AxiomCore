@@ -9,26 +9,29 @@ pub mod telemetry;
 pub mod tui;
 
 use crate::access_config::AccessConfig;
-use crate::components::build_dashboard::render_build_dashboard;
 use crate::components::inspect::endpoint_detail::render_endpoint_detail;
 use crate::components::inspect::endpoint_list::render_endpoint_list;
 use crate::components::inspect::model_browser::render_model_browser;
 use crate::state::InspectTab;
 use crate::telemetry::Telemetry;
 use axiom_cloud::{uses_local_cloud, CliApi, CloudClient};
-use axiom_lib::action::Action;
 use clap::{Parser, Subcommand};
 use console::style;
 use crossterm::event::KeyCode;
 use dialoguer::{theme::ColorfulTheme, Input};
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph};
-use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 #[derive(Parser)]
-#[command(name = "axiom", author, version, about)]
+#[command(
+    name = "axiom",
+    bin_name = "axiom",
+    author,
+    version,
+    about = "Check, build, inspect, and run Acore contracts; manage Axiom Cloud releases"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -36,6 +39,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Offline saved-source checking and editor compatibility metadata
+    Editor {
+        #[command(subcommand)]
+        action: commands::editor::Action,
+    },
     Init {
         /// Entrypoint path (e.g., main.py:app)
         entrypoint: Option<String>,
@@ -97,7 +105,7 @@ enum Commands {
         #[command(subcommand)]
         action: CacheAction,
     },
-    /// Install an intact .axiomapp locally or an Acore compiler module
+    /// Install lsp-server, an intact .axiomapp, or a compiler/extractor module
     Install {
         package: String,
         /// Installs an Acore/Axiom compiler extractor module
@@ -118,14 +126,23 @@ enum Commands {
         #[arg(short, long)]
         variant: Option<String>,
     },
-    /// Validate a backend contract using the complete compiler without writing artifacts
+    /// Check a frontend, backend, or database contract without writing project outputs
     Check {
+        /// Contract source to validate
         #[arg(default_value = "axiom.acore")]
         file: PathBuf,
+        /// Backend contract variant (defaults to default)
         #[arg(long)]
         variant: Option<String>,
+        /// Print a machine-readable validation report, including on failure
         #[arg(long)]
         json: bool,
+        /// Frontend target override: web, ios, or android
+        #[arg(long)]
+        target: Option<String>,
+        /// Existing frontend contract lock; never resolved or modified by check
+        #[arg(long)]
+        lock: Option<PathBuf>,
     },
     /// Print expanded backend JSON or the machine-readable declaration catalog
     Explain {
@@ -138,6 +155,11 @@ enum Commands {
         /// Include source spans, compiler defaults, identities and effective policy origins
         #[arg(long, conflicts_with = "schema")]
         provenance: bool,
+    },
+    /// Inspect and generate typed server plans, OpenAPI, and native handler interfaces offline
+    Server {
+        #[command(subcommand)]
+        action: commands::server::ServerAction,
     },
     /// Migrate a legacy backend contract into a verified new sibling source
     Migrate {
@@ -156,30 +178,43 @@ enum Commands {
         #[arg(long)]
         variant: Option<String>,
     },
-    /// Start a local API Mock Server from your contract
-    Serve {
-        /// Optional path to an .acore file. If omitted, pulls configuration from Axiom Cloud.
-        file: Option<PathBuf>,
-        /// Port to bind the server to
-        #[arg(short, long, default_value = "8080")]
-        port: u16,
-        /// Enable verbose debug logging for incoming requests and responses
-        #[arg(short, long)]
-        debug: bool,
-        /// Contract variant used by the local mock server
-        #[arg(long, requires = "file")]
-        variant: Option<String>,
+    /// Validate and replay development scenarios against exact compiled artifacts
+    Scenario {
+        #[command(subcommand)]
+        action: commands::scenario::ScenarioAction,
     },
+    /// Start the real local API; never falls back to mocks or cloud
+    Serve(commands::server_command_contract::ServeInput),
+    /// Run isolated server simulation or explicit local/cloud contract mocks
+    Mock(commands::server_command_contract::MockInput),
     /// Start the Acore REPL
     Repl,
-    /// Start the Axiom/Acore Language Server
-    Lsp,
-    /// Build the .axiom artifact from local source
+    /// Run the Acore language server over stdin/stdout without cloud access
+    Lsp {
+        #[arg(long, conflicts_with = "version")]
+        version_json: bool,
+        #[arg(long)]
+        version: bool,
+    },
+    /// Build frontend.axiom, backend.axiom, or database.axiom beside the source
     Build {
         /// The Acore file to build (defaults to axiom.acore if not provided)
         #[arg(default_value = "axiom.acore")]
         file: String,
 
+        /// Output .axiom path; relative paths are relative to the current directory
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+
+        /// Frontend target override: web, ios, or android
+        #[arg(long)]
+        target: Option<String>,
+
+        /// Existing frontend contract lock; build does not fetch dependencies
+        #[arg(long)]
+        lock: Option<PathBuf>,
+
+        /// Backend contract variant (defaults to default)
         #[arg(long)]
         variant: Option<String>,
 
@@ -187,37 +222,29 @@ enum Commands {
         #[arg(long)]
         compatibility_baseline: Option<PathBuf>,
 
-        /// Release the compiled contract to Axiom Cloud
+        /// Release the compiled backend contract to Axiom Cloud
         #[arg(long)]
         release: bool,
 
         /// Optional Cloud project ID or slug override. By default the linked
         /// directory project is used automatically.
-        #[arg(long)]
+        #[arg(long, requires = "release")]
         project: Option<String>,
 
         /// Optional immutable Cloud release version. Interactive releases
         /// suggest the next available version on a collision.
-        #[arg(long)]
+        #[arg(long, requires = "release")]
         version: Option<String>,
-
-        /// The branch to deploy to (defaults to main)
-        #[arg(long, default_value = "main")]
-        branch: String,
-
-        /// Deployment commit message
-        #[arg(short, long, default_value = "CLI Deployment")]
-        message: String,
     },
-    /// Inspect an application workspace or a legacy .axiom/.axiomapp artifact
+    /// Inspect an application workspace, contract snapshot, or packaged application
     Inspect {
         #[command(subcommand)]
         action: Option<commands::inspector::InspectorAction>,
-        /// Legacy artifact path; omitted when using an Inspector subcommand
+        /// Artifact or source path; omitted when using an Inspector subcommand
         path: Option<PathBuf>,
     },
     Release {
-        /// Path to the .axiom file (defaults to axiom.axiom in the current directory)
+        /// Backend artifact (defaults to backend.axiom; legacy filenames also accepted)
         file_path: Option<PathBuf>,
 
         /// Optional Cloud project ID or slug override. A linked directory is
@@ -293,6 +320,11 @@ enum Commands {
         #[command(subcommand)]
         action: PackagesAction,
     },
+    /// Author database contracts and explicitly inspect PostgreSQL read-only
+    Database {
+        #[command(subcommand)]
+        action: DatabaseAction,
+    },
     /// Build, sign, verify, inspect, and review sandboxed extensions
     Extensions {
         #[command(subcommand)]
@@ -303,7 +335,7 @@ enum Commands {
         #[command(subcommand)]
         action: DependenciesAction,
     },
-    /// Check an Acore UI module and lower it only into an in-memory graph
+    /// Advanced frontend tooling: hosts, application packaging, tests, and inspection
     Ui {
         #[command(subcommand)]
         action: UiAction,
@@ -327,7 +359,28 @@ enum Commands {
         /// Backend service or mock port
         #[arg(short, long, default_value = "8080")]
         port: u16,
-        /// Enable verbose backend mock diagnostics
+        /// Backend contract variant
+        #[arg(long)]
+        variant: Option<String>,
+        /// Reviewed backend deployment configuration
+        #[arg(long)]
+        deployment: Option<PathBuf>,
+        /// Verified sandbox implementation references
+        #[arg(long)]
+        bindings: Option<PathBuf>,
+        /// Reviewed durable controller for backend producer actions
+        #[arg(long)]
+        delivery: Option<PathBuf>,
+        /// Private typed backend simulation fixtures (mock mode only)
+        #[arg(long)]
+        fixtures: Option<PathBuf>,
+        /// Reviewed development identities (mock mode only)
+        #[arg(long)]
+        identities: Option<PathBuf>,
+        /// Reload source-owned action plans within reviewed grants
+        #[arg(long)]
+        watch: bool,
+        /// Redacted backend startup diagnostics
         #[arg(short, long)]
         debug: bool,
         /// Require reviewed locks and extension workflows without development regeneration
@@ -418,6 +471,261 @@ enum ContractAction {
 }
 
 #[derive(Subcommand)]
+enum DatabaseAction {
+    /// Schema-derived private backend operations and database-to-API impact
+    Runtime {
+        #[command(subcommand)]
+        command: commands::database_runtime::Action,
+    },
+    /// Frozen tenant fleets, policy review, offline delivery and drift monitoring
+    Fleet {
+        #[command(subcommand)]
+        command: commands::database_fleet::Action,
+    },
+    /// Independently scoped SQLite lifecycle; requires an external engine library
+    Sqlite {
+        #[command(subcommand)]
+        command: commands::database_sqlite::Action,
+    },
+    /// Check the explicit source entry and its imports without database I/O
+    Check { source: PathBuf },
+    /// Build a canonical server-only schema package
+    Build {
+        source: PathBuf,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Inspect a source contract or schema package without connecting
+    Inspect { source: PathBuf },
+    /// Compare two source contracts or typed schema packages
+    Diff { before: PathBuf, after: PathBuf },
+    /// Format database source; prints to stdout unless --write is supplied
+    Fmt {
+        source: PathBuf,
+        #[arg(long)]
+        write: bool,
+    },
+    /// Describe supported offline declaration/type signatures
+    Catalog,
+    /// Validate private deployment fields without resolving providers or connecting
+    BindingCheck { deployment: PathBuf },
+    /// Explicit read-only PostgreSQL catalog observation (private binding required)
+    InspectLive {
+        #[arg(long)]
+        deployment: PathBuf,
+        #[arg(long)]
+        source: Option<PathBuf>,
+    },
+    /// Prepare Acore source from a static SQL schema; never execute SQL
+    ImportSql {
+        input: PathBuf,
+        #[arg(long)]
+        namespace: String,
+        #[arg(long)]
+        database: String,
+        #[arg(long = "schema", required = true)]
+        schemas: Vec<String>,
+        #[arg(long, default_value_t = 17)]
+        postgres_major: u16,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Prepare Acore source from static Atlas schema HCL; never evaluate HCL
+    ImportHcl {
+        input: PathBuf,
+        #[arg(long)]
+        namespace: String,
+        #[arg(long)]
+        database: String,
+        #[arg(long = "schema", required = true)]
+        schemas: Vec<String>,
+        #[arg(long, default_value_t = 17)]
+        postgres_major: u16,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Prepare adoption source; does not accept ownership or register a baseline
+    Adopt {
+        #[arg(long)]
+        deployment: PathBuf,
+        #[arg(long)]
+        source: Option<PathBuf>,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Observe target/dev separation without modifying either database
+    VerifyIsolation {
+        #[arg(long)]
+        deployment: PathBuf,
+        #[arg(long)]
+        source: Option<PathBuf>,
+    },
+    /// Show the contract graph or sanitized D2 inspection graph
+    Graph { input: PathBuf },
+    /// Explain one contract or catalog object and its dependency impact
+    Explain { input: PathBuf, id: String },
+    /// Pure typed evolution checking against selected contract snapshots
+    EvolutionCheck {
+        source: PathBuf,
+        #[arg(long)]
+        previous: Option<PathBuf>,
+        #[arg(long)]
+        evolution: PathBuf,
+    },
+    /// Generate hidden candidate history after replay on an isolated pinned dev DB
+    Plan {
+        source: PathBuf,
+        #[arg(long)]
+        deployment: PathBuf,
+        #[arg(long)]
+        dev_profile: PathBuf,
+        #[arg(long, value_parser = ["empty", "adoption"], conflicts_with = "parent")]
+        baseline: Option<String>,
+        #[arg(long)]
+        parent: Option<String>,
+        #[arg(long)]
+        tests: Option<PathBuf>,
+        #[arg(long)]
+        evolution: Option<PathBuf>,
+        #[arg(long, conflicts_with = "evolution", requires = "baseline")]
+        checkpoint: Option<PathBuf>,
+    },
+    /// Export or verify private candidate history without database I/O
+    History {
+        #[command(subcommand)]
+        action: DatabaseHistoryAction,
+    },
+    /// Sign or verify an exact private candidate prefix offline
+    Release {
+        #[command(subcommand)]
+        action: DatabaseReleaseAction,
+    },
+    /// Explicit enrollment, status, verification and bounded reconciliation
+    Target {
+        #[command(subcommand)]
+        action: DatabaseTargetAction,
+    },
+    /// Apply an authorized prefix to an explicitly enrolled local/staging target
+    Apply {
+        bundle: PathBuf,
+        #[arg(long)]
+        deployment: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum DatabaseHistoryAction {
+    /// Export the complete verified prefix into a new private offline directory
+    Export {
+        source: PathBuf,
+        #[arg(long)]
+        head: Option<String>,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Export a complete-prefix checkpoint including deploy data lineage
+    Checkpoint {
+        source: PathBuf,
+        #[arg(long)]
+        head: Option<String>,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Verify an exported bundle; does not connect or grant apply authority
+    Verify { bundle: PathBuf },
+    /// Import exact generated history for the matching compiled project
+    Import {
+        bundle: PathBuf,
+        #[arg(long)]
+        source: PathBuf,
+    },
+    /// Adopt a verified Atlas directory/revision snapshot as private provenance
+    ImportAtlas {
+        bundle: PathBuf,
+        #[arg(long)]
+        directory: PathBuf,
+        #[arg(long)]
+        deployment: PathBuf,
+        #[arg(long)]
+        revision_schema: String,
+        #[arg(long, default_value = "atlas_schema_revisions")]
+        revision_table: String,
+        #[arg(long, required = true)]
+        legacy_stopped: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum DatabaseReleaseAction {
+    /// Generate a private Ed25519 key in a new owner-only file
+    Keygen {
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Approve the exact regenerated prefix and its explicitly reviewed risks
+    Sign {
+        bundle: PathBuf,
+        #[arg(long)]
+        key_file: PathBuf,
+        #[arg(long)]
+        allow_destructive: bool,
+        #[arg(long)]
+        allow_data_dependent: bool,
+    },
+    /// Sign a reviewed repair for an exact observed pending index OID
+    RepairIndex {
+        bundle: PathBuf,
+        #[arg(long)]
+        deployment: PathBuf,
+        #[arg(long)]
+        index_id: String,
+        #[arg(long)]
+        index_oid: String,
+        #[arg(long, value_parser = ["drop-rebuild-concurrently", "accept-valid"])]
+        strategy: String,
+        #[arg(long)]
+        key_file: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Verify signature, checksums, continuity and typed generated SQL offline
+    Verify {
+        bundle: PathBuf,
+        #[arg(long)]
+        trusted_key: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum DatabaseTargetAction {
+    BindingCheck {
+        deployment: PathBuf,
+    },
+    Register {
+        bundle: PathBuf,
+        #[arg(long)]
+        deployment: PathBuf,
+    },
+    Status {
+        bundle: PathBuf,
+        #[arg(long)]
+        deployment: PathBuf,
+    },
+    Verify {
+        bundle: PathBuf,
+        #[arg(long)]
+        deployment: PathBuf,
+    },
+    Reconcile {
+        bundle: PathBuf,
+        #[arg(long)]
+        deployment: PathBuf,
+        #[arg(long)]
+        repair: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
 enum PackagesAction {
     /// Validate and canonically encode a typed package envelope
     Build {
@@ -480,6 +788,17 @@ enum PackagesAction {
 
 #[derive(Subcommand)]
 enum ExtensionsAction {
+    /// Prepare digest-bound physical IDE helpers without compiling or executing guests
+    PrepareIde {
+        alias: String,
+        #[arg(long, default_value = "AxiomDeps.toml")]
+        deps: PathBuf,
+        /// Optional canonical SDK interface; omitted means the manifest-generated SDK ABI
+        #[arg(long)]
+        interface: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
     /// Emit the canonical language-neutral SDK interface for one authored extension
     Interface {
         alias: String,
@@ -870,13 +1189,22 @@ enum UiAction {
         #[arg(long)]
         json: bool,
     },
-    /// Run deterministic compiler/session checks for one Acore UI module
+    /// Run compiler-session smoke, or an explicit application interaction suite
     Test {
         source: PathBuf,
         #[arg(long, default_value = "axiom.ui.lock.json")]
         lock: PathBuf,
         #[arg(long, default_value = "ios")]
         target: String,
+        /// Versioned acore-application-test/v1 JSON suite (omitting keeps session smoke)
+        #[arg(long)]
+        suite: Option<PathBuf>,
+        /// Application execution layer; adapter executes emitted native owner hooks
+        #[arg(long, value_enum, requires = "suite")]
+        layer: Option<commands::ui::UiTestLayer>,
+        /// Write a machine-readable report, including failed assertions and traces
+        #[arg(long)]
+        report: Option<PathBuf>,
     },
     /// Build a deterministic, target-specific Axiom application artifact
     Build {
@@ -979,6 +1307,9 @@ enum CacheAction {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    if commands::lsp::native_entry().await? {
+        return Ok(());
+    }
     // 1. Setup Error Hooks
     let (panic_hook, eyre_hook) = color_eyre::config::HookBuilder::default().into_hooks();
     eyre_hook.install()?;
@@ -990,6 +1321,51 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
     let start_time = Instant::now();
+    // Mode/input errors must precede cloud credentials, registration and I/O.
+    match &cli.command {
+        Commands::Serve(input) => {
+            input.resolve(&std::env::current_dir()?)?;
+        }
+        Commands::Mock(input) => {
+            input.resolve(&std::env::current_dir()?)?;
+        }
+        Commands::Release { file_path, .. } => {
+            let artifact = file_path.clone().unwrap_or_else(default_backend_artifact);
+            if artifact.is_file() {
+                commands::contract_build::validate_release(&artifact)?;
+            }
+        }
+        Commands::Install {
+            package,
+            module: false,
+        } if package != "lsp-server"
+            && !commands::app::is_axiom_application(Path::new(package)) =>
+        {
+            anyhow::bail!("Unsupported install target `{package}`. Use `install lsp-server`, `install FILE.axiomapp`, or `install MODULE --module`.");
+        }
+        Commands::Build {
+            file,
+            target,
+            lock,
+            variant,
+            compatibility_baseline,
+            release,
+            ..
+        } if Path::new(file).is_file() => {
+            let source = commands::contract_build::source(Path::new(file))?;
+            commands::contract_build::validate_options(
+                source.kind,
+                commands::contract_build::Options {
+                    variant: variant.as_deref(),
+                    target: target.as_deref(),
+                    lock: lock.as_deref(),
+                    compatibility_baseline: compatibility_baseline.as_deref(),
+                    release: *release,
+                },
+            )?;
+        }
+        _ => {}
+    }
 
     // 2. GATEKEEPER LOGIC (Private Alpha Check)
     // -------------------------------------------------------------------------
@@ -1020,7 +1396,7 @@ async fn main() -> anyhow::Result<()> {
                 | Commands::Extensions { .. }
                 | Commands::Dependencies { .. }
                 | Commands::Run { .. }
-                | Commands::Lsp
+                | Commands::Lsp { .. }
         ) {
         // The private-alpha referral gate and its telemetry only apply to the
         // public control plane. A loopback endpoint is an explicit developer
@@ -1107,6 +1483,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Extract command name for logging
     let cmd_name = match &cli.command {
+        Commands::Editor { .. } => "editor",
         Commands::Init { .. } => "init",
         Commands::Doctor { .. } => "doctor",
         Commands::Onboard { .. } => "onboard",
@@ -1125,13 +1502,15 @@ async fn main() -> anyhow::Result<()> {
         Commands::Diff { .. } => "diff",
         Commands::Contract { .. } => "contract",
         Commands::Packages { .. } => "packages",
+        Commands::Database { .. } => "database",
         Commands::Extensions { .. } => "extensions",
         Commands::Dependencies { .. } => "dependencies",
         Commands::Ui { .. } => "ui",
         Commands::Run { .. } => "run",
         Commands::Domain { .. } => "domain",
         Commands::Security { .. } => "security",
-        Commands::Serve { .. } => "serve",
+        Commands::Serve(..) => "serve",
+        Commands::Mock(..) => "mock",
         Commands::Deploy { .. } => "deploy",
         Commands::Test { .. } => "test",
         Commands::Eval {
@@ -1142,8 +1521,10 @@ async fn main() -> anyhow::Result<()> {
         Commands::Check { .. } => "check",
         Commands::Explain { .. } => "explain",
         Commands::Migrate { .. } => "migrate",
+        Commands::Server { .. } => "server",
         Commands::Repl => "repl",
-        Commands::Lsp => "lsp",
+        Commands::Lsp { .. } => "lsp",
+        Commands::Scenario { .. } => "scenario",
     };
 
     // Send Telemetry (This internally handles the "Kill Switch" / Access Revocation)
@@ -1166,24 +1547,31 @@ async fn main() -> anyhow::Result<()> {
 /// that publish or retrieve cloud data retain their existing access checks.
 fn is_local_command(command: &Commands) -> bool {
     match command {
+        Commands::Editor { .. } => true,
+        Commands::Scenario { .. } => true,
         Commands::Package { .. }
+        | Commands::Packages { .. }
+        | Commands::Database { .. }
         | Commands::Inspect { .. }
         | Commands::Eval { .. }
         | Commands::Check { .. }
         | Commands::Explain { .. }
         | Commands::Migrate { .. }
+        | Commands::Server { .. }
         | Commands::Contract { .. }
         | Commands::Init { .. }
         | Commands::Domain { .. }
         | Commands::Security { .. }
-        | Commands::Lsp
+        | Commands::Run { .. }
+        | Commands::Lsp { .. }
         | Commands::Repl
         | Commands::Onboard { contract: None, .. }
         | Commands::Diff { .. }
         | Commands::Test { .. }
         | Commands::Build { release: false, .. }
-        | Commands::Serve { file: Some(_), .. }
+        | Commands::Serve(..)
         | Commands::Watch { build: true, .. } => true,
+        Commands::Mock(input) => !input.cloud,
         Commands::Pull {
             source,
             contract,
@@ -1194,7 +1582,8 @@ fn is_local_command(command: &Commands) -> bool {
             .or(contract.as_deref())
             .is_some_and(commands::pull::is_local_artifact_source),
         Commands::Install { package, module } => {
-            !module && commands::app::is_axiom_application(Path::new(package))
+            package == "lsp-server"
+                || (!module && commands::app::is_axiom_application(Path::new(package)))
         }
         _ => false,
     }
@@ -1202,11 +1591,23 @@ fn is_local_command(command: &Commands) -> bool {
 
 async fn execute_command(command: &Commands) -> anyhow::Result<()> {
     match command {
+        Commands::Editor { action } => commands::editor::handle(action),
         Commands::Check {
             file,
             variant,
             json,
-        } => commands::backend::check(file, variant.as_deref(), *json),
+            target,
+            lock,
+        } => commands::contract_build::check(
+            file,
+            commands::contract_build::Options {
+                variant: variant.as_deref(),
+                target: target.as_deref(),
+                lock: lock.as_deref(),
+                ..Default::default()
+            },
+            *json,
+        ),
         Commands::Explain {
             file,
             variant,
@@ -1214,6 +1615,7 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             provenance,
         } => commands::backend::explain(file.as_deref(), variant.as_deref(), *schema, *provenance),
         Commands::Migrate { file, output } => commands::backend::migrate(file, output),
+        Commands::Server { action } => commands::server::handle_async(action).await,
         Commands::Doctor { json, strict } => commands::doctor::handle_doctor(*json, *strict).await,
         Commands::Onboard {
             role,
@@ -1336,6 +1738,24 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             }
         },
         Commands::Extensions { action } => match action {
+            ExtensionsAction::PrepareIde {
+                alias,
+                deps,
+                interface,
+                json,
+            } => {
+                let result = acore::editor::foreign::prepare(deps, alias, interface.as_deref())?;
+                if *json {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!(
+                        "Prepared {}: {}",
+                        alias,
+                        result["receipt"].as_str().unwrap_or("")
+                    );
+                }
+                Ok(())
+            }
             ExtensionsAction::Interface {
                 alias,
                 deps,
@@ -1569,6 +1989,203 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                 }
             },
         },
+        Commands::Database { action } => match action {
+            DatabaseAction::Runtime { command } => commands::database_runtime::run(command),
+            DatabaseAction::Sqlite { command } => commands::database_sqlite::run(command),
+            DatabaseAction::Fleet { command } => commands::database_fleet::run(command).await,
+            DatabaseAction::Check { source } => commands::database::check(source),
+            DatabaseAction::Build { source, out } => {
+                commands::database::build(source, out.as_deref())
+            }
+            DatabaseAction::Inspect { source } => commands::database::inspect(source),
+            DatabaseAction::Diff { before, after } => commands::database::diff(before, after),
+            DatabaseAction::Fmt { source, write } => commands::database::format(source, *write),
+            DatabaseAction::Catalog => commands::database::catalog(),
+            DatabaseAction::BindingCheck { deployment } => {
+                commands::database::binding_check(deployment)
+            }
+            DatabaseAction::InspectLive { deployment, source } => {
+                commands::database::inspect_live(deployment, source.as_deref(), None).await
+            }
+            DatabaseAction::ImportSql {
+                input,
+                namespace,
+                database,
+                schemas,
+                postgres_major,
+                out,
+            } => commands::database::import(
+                input,
+                namespace,
+                database,
+                schemas,
+                *postgres_major,
+                "sql",
+                out.as_deref(),
+            ),
+            DatabaseAction::ImportHcl {
+                input,
+                namespace,
+                database,
+                schemas,
+                postgres_major,
+                out,
+            } => commands::database::import(
+                input,
+                namespace,
+                database,
+                schemas,
+                *postgres_major,
+                "hcl",
+                out.as_deref(),
+            ),
+            DatabaseAction::Adopt {
+                deployment,
+                source,
+                out,
+            } => {
+                commands::database::inspect_live(deployment, source.as_deref(), out.as_deref())
+                    .await
+            }
+            DatabaseAction::VerifyIsolation { deployment, source } => {
+                commands::database::verify_isolation(deployment, source.as_deref()).await
+            }
+            DatabaseAction::Graph { input } => commands::database::graph(input, None),
+            DatabaseAction::Explain { input, id } => commands::database::graph(input, Some(id)),
+            DatabaseAction::EvolutionCheck {
+                source,
+                previous,
+                evolution,
+            } => commands::database::evolution_check(source, previous.as_deref(), evolution),
+            DatabaseAction::Plan {
+                source,
+                deployment,
+                dev_profile,
+                baseline,
+                parent,
+                tests,
+                evolution,
+                checkpoint,
+            } => {
+                commands::database::plan(
+                    source,
+                    deployment,
+                    dev_profile,
+                    baseline.as_deref(),
+                    parent.as_deref(),
+                    tests.as_deref(),
+                    evolution.as_deref(),
+                    checkpoint.as_deref(),
+                )
+                .await
+            }
+            DatabaseAction::History { action } => match action {
+                DatabaseHistoryAction::Export { source, head, out } => {
+                    commands::database::history_export(source, head.as_deref(), out)
+                }
+                DatabaseHistoryAction::Checkpoint { source, head, out } => {
+                    commands::database::history_checkpoint(source, head.as_deref(), out)
+                }
+                DatabaseHistoryAction::Verify { bundle } => {
+                    commands::database::history_verify(bundle)
+                }
+                DatabaseHistoryAction::Import { bundle, source } => {
+                    commands::database::history_import(bundle, source)
+                }
+                DatabaseHistoryAction::ImportAtlas {
+                    bundle,
+                    directory,
+                    deployment,
+                    revision_schema,
+                    revision_table,
+                    legacy_stopped,
+                } => {
+                    commands::database::history_import_atlas(
+                        bundle,
+                        directory,
+                        deployment,
+                        revision_schema,
+                        revision_table,
+                        *legacy_stopped,
+                    )
+                    .await
+                }
+            },
+            DatabaseAction::Release { action } => match action {
+                DatabaseReleaseAction::Keygen { out } => commands::database::release_keygen(out),
+                DatabaseReleaseAction::Sign {
+                    bundle,
+                    key_file,
+                    allow_destructive,
+                    allow_data_dependent,
+                } => commands::database::release_sign(
+                    bundle,
+                    key_file,
+                    *allow_destructive,
+                    *allow_data_dependent,
+                ),
+                DatabaseReleaseAction::RepairIndex {
+                    bundle,
+                    deployment,
+                    index_id,
+                    index_oid,
+                    strategy,
+                    key_file,
+                    out,
+                } => commands::database::release_repair_index(
+                    bundle, deployment, index_id, index_oid, strategy, key_file, out,
+                ),
+                DatabaseReleaseAction::Verify {
+                    bundle,
+                    trusted_key,
+                } => commands::database::release_verify(bundle, trusted_key),
+            },
+            DatabaseAction::Target { action } => match action {
+                DatabaseTargetAction::BindingCheck { deployment } => {
+                    commands::database::target_binding_check(deployment)
+                }
+                DatabaseTargetAction::Register { bundle, deployment } => {
+                    commands::database::target_operation(
+                        bundle,
+                        deployment,
+                        axiom_database::execution::Action::Register,
+                    )
+                    .await
+                }
+                DatabaseTargetAction::Status { bundle, deployment } => {
+                    commands::database::target_operation(
+                        bundle,
+                        deployment,
+                        axiom_database::execution::Action::Status,
+                    )
+                    .await
+                }
+                DatabaseTargetAction::Verify { bundle, deployment } => {
+                    commands::database::target_operation(
+                        bundle,
+                        deployment,
+                        axiom_database::execution::Action::Verify,
+                    )
+                    .await
+                }
+                DatabaseTargetAction::Reconcile {
+                    bundle,
+                    deployment,
+                    repair,
+                } => {
+                    commands::database::target_reconcile(bundle, deployment, repair.as_deref())
+                        .await
+                }
+            },
+            DatabaseAction::Apply { bundle, deployment } => {
+                commands::database::target_operation(
+                    bundle,
+                    deployment,
+                    axiom_database::execution::Action::Apply,
+                )
+                .await
+            }
+        },
         Commands::Ui { action } => match action {
             UiAction::Host { action } => match action {
                 UiHostAction::Install {
@@ -1679,7 +2296,20 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                 source,
                 lock,
                 target,
-            } => commands::ui::handle_test(source.clone(), lock.clone(), target.clone()).await,
+                suite,
+                layer,
+                report,
+            } => {
+                commands::ui::handle_test_options(
+                    source.clone(),
+                    lock.clone(),
+                    target.clone(),
+                    suite.clone(),
+                    *layer,
+                    report.clone(),
+                )
+                .await
+            }
             UiAction::Build {
                 source,
                 lock,
@@ -1708,10 +2338,25 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             frozen,
             once,
             launch,
+            variant,
+            deployment,
+            bindings,
+            delivery,
+            fixtures,
+            identities,
+            watch,
         } => {
             if commands::app::is_axiom_application(source) {
-                if mode.is_some() {
-                    anyhow::bail!("--mode applies to backend .acore sources, not packaged .axiomapp execution");
+                if mode.is_some()
+                    || variant.is_some()
+                    || deployment.is_some()
+                    || bindings.is_some()
+                    || delivery.is_some()
+                    || fixtures.is_some()
+                    || identities.is_some()
+                    || *watch
+                {
+                    anyhow::bail!("--mode, --variant, --deployment, --bindings, --delivery, --fixtures, --identities and --watch apply only to backend .acore sources");
                 }
                 if *once {
                     anyhow::bail!("--once applies to authored .acore sessions, not packaged .axiomapp execution");
@@ -1737,13 +2382,28 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                             host.clone(),
                             *port,
                             *debug,
+                            variant.clone(),
+                            deployment.clone(),
+                            bindings.clone(),
+                            delivery.clone(),
+                            fixtures.clone(),
+                            identities.clone(),
+                            *watch,
                         )
                         .await
                     }
                     commands::run::AcoreSourceKind::Frontend => {
-                        if mode.is_some() {
+                        if mode.is_some()
+                            || variant.is_some()
+                            || deployment.is_some()
+                            || bindings.is_some()
+                            || delivery.is_some()
+                            || fixtures.is_some()
+                            || identities.is_some()
+                            || *watch
+                        {
                             anyhow::bail!(
-                                "--mode applies to backend .acore sources, not frontend execution"
+                                "--mode, --variant, --deployment, --bindings, --delivery, --fixtures, --identities and --watch apply only to backend .acore sources"
                             );
                         }
                         let prepared_lock =
@@ -1771,15 +2431,9 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
         Commands::Test { file, tag, variant } => {
             commands::test::handle_test(file.clone(), tag.clone(), variant.clone()).await
         }
-        Commands::Serve {
-            file,
-            port,
-            debug,
-            variant,
-        } => {
-            commands::serve::handle_serve_variant(file.clone(), *port, *debug, variant.clone())
-                .await
-        }
+        Commands::Scenario { action } => commands::scenario::handle(action).await,
+        Commands::Serve(input) => commands::serve::handle(input.clone()).await,
+        Commands::Mock(input) => commands::mock::handle(input.clone()).await,
         Commands::Deploy { target } => match target {
             DeployTarget::MockServer { file } => {
                 let path = file
@@ -1796,8 +2450,15 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             .unwrap();
             Ok(())
         }
-        Commands::Lsp => {
-            acore::server::run_server().await;
+        Commands::Lsp {
+            version_json,
+            version,
+        } => {
+            if *version_json || *version {
+                commands::lsp::print_version(*version_json);
+            } else {
+                acore::server::run_server().await;
+            }
             Ok(())
         }
         Commands::Eval {
@@ -1831,15 +2492,20 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             Ok(())
         }
         Commands::Install { package, module } => {
-            if *module {
+            if package == "lsp-server" {
+                if *module {
+                    anyhow::bail!("install lsp-server does not accept --module");
+                }
+                commands::lsp::install()?;
+                Ok(())
+            } else if *module {
                 acore::package::install_tool(package)
                     .map_err(|e| anyhow::anyhow!(e.to_string()))?;
                 Ok(())
             } else if commands::app::is_axiom_application(Path::new(package)) {
                 commands::app::handle_install(PathBuf::from(package)).await
             } else {
-                println!("Marketplace installation coming soon for '{}'", package);
-                Ok(())
+                anyhow::bail!("Unsupported install target `{package}`. Use `install lsp-server`, `install FILE.axiomapp`, or `install MODULE --module`.")
             }
         }
         Commands::Package { artifacts, out } => {
@@ -1848,72 +2514,47 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
 
         Commands::Build {
             file,
+            out,
+            target,
+            lock,
             variant,
             compatibility_baseline,
             release,
             project,
             version,
-            branch,
-            message,
         } => {
-            let variant_str = variant.clone().unwrap_or("default".to_string());
-
-            if std::env::var("CI").is_ok() || !std::io::stdout().is_terminal() {
-                match commands::backend::build(
-                    Path::new(file),
-                    &variant_str,
-                    None,
-                    compatibility_baseline.as_deref(),
-                )
-                .await
-                {
-                    Ok(out_file) => {
-                        println!("✅ Build Succeeded! Generated {}", out_file);
-                        if *release {
-                            commands::release::handle_release(
-                                &out_file,
-                                project.as_deref(),
-                                version.as_deref(),
-                                Some(Path::new(file)),
-                                &variant_str,
-                            )
-                            .await?;
-                        }
-                        Ok(())
-                    }
-                    Err(e) => {
-                        eprintln!("❌ Build failed: {}", e);
-                        Err(e.into())
-                    }
-                }
-            } else {
-                handle_build_command(
-                    file,
-                    variant_str,
-                    *release,
+            let output = commands::contract_build::build(
+                Path::new(file),
+                out.as_deref(),
+                commands::contract_build::Options {
+                    variant: variant.as_deref(),
+                    target: target.as_deref(),
+                    lock: lock.as_deref(),
+                    compatibility_baseline: compatibility_baseline.as_deref(),
+                    release: *release,
+                },
+            )
+            .await?;
+            if *release {
+                commands::release::handle_release(
+                    output
+                        .to_str()
+                        .ok_or_else(|| anyhow::anyhow!("Artifact path is not UTF-8"))?,
                     project.as_deref(),
                     version.as_deref(),
-                    compatibility_baseline.as_deref(),
+                    Some(Path::new(file)),
+                    variant.as_deref().unwrap_or("default"),
                 )
-                .await
+                .await?;
             }
+            Ok(())
         }
         Commands::Release {
             file_path,
             project,
             version,
         } => {
-            // `axiom build` now creates the visible `axiom.axiom` artifact.
-            // Retain the legacy hidden filename as a fallback for existing
-            // projects and CI scripts.
-            let path = file_path.clone().unwrap_or_else(|| {
-                let visible = std::path::PathBuf::from("axiom.axiom");
-                if visible.is_file() {
-                    visible
-                } else {
-                    std::path::PathBuf::from(".axiom")
-                }
-            });
+            let path = file_path.clone().unwrap_or_else(default_backend_artifact);
             let default_source = Path::new("axiom.acore");
             commands::release::handle_release(
                 path.to_str().unwrap(),
@@ -1929,7 +2570,7 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             ..
         } => commands::inspector::handle(action).await,
         Commands::Inspect { path, .. } => {
-            let path = path.clone().unwrap_or_else(|| PathBuf::from("axiom.axiom"));
+            let path = path.clone().unwrap_or_else(default_backend_artifact);
             if path.is_dir()
                 || path.extension().and_then(|extension| extension.to_str()) == Some("acore")
             {
@@ -1944,12 +2585,10 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             if commands::app::is_axiom_application(&path) {
                 return commands::app::handle_inspect(path.clone()).await;
             }
-            let artifact = if path.as_path() == Path::new("axiom.axiom") && !path.is_file() {
-                PathBuf::from(".axiom")
-            } else {
-                path.clone()
-            };
-            handle_inspect(&artifact).await
+            if commands::contract_build::inspect(&path)? {
+                return Ok(());
+            }
+            handle_inspect(&path).await
         }
         Commands::Project { action } => match action {
             ProjectAction::List => commands::project::handle_project_list().await,
@@ -2136,97 +2775,12 @@ fn normalize_validator_yaml(raw_spec: &str) -> String {
     }
 }
 
-async fn handle_build_command(
-    file_path: &String,
-    variant: String,
-    release: bool,
-    project_override: Option<&str>,
-    version_override: Option<&str>,
-    compatibility_baseline: Option<&Path>,
-) -> anyhow::Result<()> {
-    let mut state = crate::state::State::new();
-    let (action_tx, mut action_rx) = tokio::sync::mpsc::unbounded_channel::<Action>();
-
-    let mut tui = crate::tui::Tui::new().map_err(|e| anyhow::anyhow!(e))?;
-    tui.enter().map_err(|e| anyhow::anyhow!(e))?;
-
-    // Capture the generated path from the task_result
-    let task_result: anyhow::Result<String> = async {
-        let v_clone = variant.clone();
-        let f_clone = file_path.clone();
-        let baseline_clone = compatibility_baseline.map(Path::to_path_buf);
-
-        tokio::spawn(async move {
-            match commands::backend::build(
-                Path::new(&f_clone),
-                &v_clone,
-                Some(action_tx.clone()),
-                baseline_clone.as_deref(),
-            )
-            .await
-            {
-                Ok(path) => {
-                    let _ = action_tx.send(Action::BuildSuccess(path));
-                }
-                Err(e) => {
-                    let _ = action_tx.send(Action::BuildFailed(e.to_string()));
-                }
-            }
-        });
-
-        loop {
-            tui.draw(|f| render_build_dashboard(f, f.size(), &state))?;
-
-            if let Ok(event) = tui.event_rx.try_recv() {
-                if let crate::tui::Event::Key(key) = event {
-                    if key.code == KeyCode::Char('q') || key.code == KeyCode::Esc {
-                        return Err(anyhow::anyhow!("Build cancelled by user."));
-                    }
-                }
-            }
-
-            while let Ok(action) = action_rx.try_recv() {
-                if let Action::BuildFailed(ref msg) = action {
-                    return Err(anyhow::anyhow!(msg.clone()));
-                }
-                if let Action::BuildSuccess(path) = action {
-                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                    return Ok(path);
-                }
-                state.update(action);
-            }
-
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
-    }
-    .await;
-
-    tui.exit().map_err(|e| anyhow::anyhow!(e))?;
-
-    // Process the result after TUI exits
-    match task_result {
-        Ok(output_filename) => {
-            println!("✅ Build Succeeded! Generated: {}", output_filename);
-
-            // Trigger release if flag was passed
-            if release {
-                println!("\n🚀 Initiating Release...");
-                crate::commands::release::handle_release(
-                    &output_filename,
-                    project_override,
-                    version_override,
-                    Some(Path::new(file_path)),
-                    &variant,
-                )
-                .await?;
-            }
-            Ok(())
-        }
-        Err(e) => {
-            eprintln!("❌ Build failed: {}", e);
-            Err(e)
-        }
-    }
+fn default_backend_artifact() -> PathBuf {
+    ["backend.axiom", "axiom.axiom", ".axiom"]
+        .into_iter()
+        .map(PathBuf::from)
+        .find(|path| path.is_file())
+        .unwrap_or_else(|| PathBuf::from("backend.axiom"))
 }
 
 pub async fn handle_inspect(file_path: &Path) -> anyhow::Result<()> {
@@ -2343,6 +2897,223 @@ mod launch_tests {
     use super::*;
 
     #[test]
+    fn database_controlled_execution_requires_a_bundle_and_explicit_binding() {
+        for action in ["register", "status", "verify", "reconcile"] {
+            assert!(Cli::try_parse_from([
+                "axiom",
+                "database",
+                "target",
+                action,
+                "private-release",
+                "--deployment",
+                "target.json"
+            ])
+            .is_ok());
+            assert!(Cli::try_parse_from([
+                "axiom",
+                "database",
+                "target",
+                action,
+                "private-release"
+            ])
+            .is_err());
+        }
+        assert!(Cli::try_parse_from([
+            "axiom",
+            "database",
+            "apply",
+            "private-release",
+            "--deployment",
+            "target.json"
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from(["axiom", "database", "apply", "private-release"]).is_err());
+        assert!(Cli::try_parse_from([
+            "axiom",
+            "database",
+            "release",
+            "sign",
+            "private-release",
+            "--key-file",
+            "signing-key.json",
+            "--allow-data-dependent"
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "axiom",
+            "database",
+            "release",
+            "verify",
+            "private-release",
+            "--trusted-key",
+            "public-key"
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "axiom",
+            "database",
+            "history",
+            "import",
+            "private-release",
+            "--source",
+            "schema.acore"
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "axiom",
+            "database",
+            "history",
+            "import-atlas",
+            "private-release",
+            "--directory",
+            "atlas-history",
+            "--deployment",
+            "target.json",
+            "--revision-schema",
+            "public",
+            "--legacy-stopped"
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "axiom",
+            "database",
+            "history",
+            "import-atlas",
+            "private-release",
+            "--directory",
+            "atlas-history",
+            "--deployment",
+            "target.json",
+            "--revision-schema",
+            "public"
+        ])
+        .is_err());
+        assert!(
+            Cli::try_parse_from(["axiom", "database", "apply", "--sql", "injected.sql"]).is_err()
+        );
+    }
+
+    #[test]
+    fn database_authoring_and_observation_are_local_without_apply() {
+        for args in [
+            vec!["axiom", "database", "check", "schema.acore"],
+            vec!["axiom", "database", "build", "schema.acore"],
+            vec!["axiom", "database", "inspect", "schema.axiom"],
+            vec!["axiom", "database", "diff", "before.axiom", "after.axiom"],
+            vec!["axiom", "database", "fmt", "schema.acore", "--write"],
+            vec!["axiom", "database", "catalog"],
+            vec!["axiom", "database", "binding-check", "deployment.json"],
+            vec![
+                "axiom",
+                "database",
+                "inspect-live",
+                "--deployment",
+                "deployment.json",
+            ],
+            vec![
+                "axiom",
+                "database",
+                "import-sql",
+                "schema.sql",
+                "--namespace",
+                "example.storage",
+                "--database",
+                "storage",
+                "--schema",
+                "app",
+            ],
+            vec![
+                "axiom",
+                "database",
+                "import-hcl",
+                "schema.hcl",
+                "--namespace",
+                "example.storage",
+                "--database",
+                "storage",
+                "--schema",
+                "app",
+            ],
+            vec![
+                "axiom",
+                "database",
+                "adopt",
+                "--deployment",
+                "deployment.json",
+            ],
+            vec![
+                "axiom",
+                "database",
+                "verify-isolation",
+                "--deployment",
+                "deployment.json",
+                "--source",
+                "schema.acore",
+            ],
+            vec!["axiom", "database", "graph", "observation.json"],
+            vec![
+                "axiom",
+                "database",
+                "plan",
+                "schema.acore",
+                "--deployment",
+                "target.json",
+                "--dev-profile",
+                "dev.json",
+                "--baseline",
+                "empty",
+            ],
+            vec![
+                "axiom",
+                "database",
+                "history",
+                "export",
+                "schema.acore",
+                "--out",
+                "private-bundle",
+            ],
+            vec!["axiom", "database", "history", "verify", "private-bundle"],
+            vec![
+                "axiom",
+                "database",
+                "explain",
+                "observation.json",
+                "catalog-object",
+            ],
+        ] {
+            let cli = Cli::try_parse_from(&args).unwrap();
+            assert!(is_local_command(&cli.command), "{args:?}");
+        }
+        for action in ["connect", "sql", "deploy"] {
+            assert!(Cli::try_parse_from(["axiom", "database", action]).is_err());
+        }
+        assert!(Cli::try_parse_from(["axiom", "database", "inspect-live"]).is_err());
+    }
+
+    #[test]
+    fn frontend_package_commands_are_local_compiler_work() {
+        for args in [
+            vec![
+                "axiom",
+                "packages",
+                "build",
+                "package.json",
+                "--out",
+                "package.axiom",
+            ],
+            vec!["axiom", "packages", "resolve"],
+            vec!["axiom", "packages", "verify"],
+            vec!["axiom", "packages", "inspect", "widgets"],
+            vec!["axiom", "packages", "diff", "before.axiom", "after.axiom"],
+            vec!["axiom", "packages", "check-source", "main.acore"],
+            vec!["axiom", "packages", "run", "main.acore", "--once"],
+        ] {
+            let cli = Cli::try_parse_from(&args).unwrap();
+            assert!(is_local_command(&cli.command), "{args:?}");
+        }
+    }
+
+    #[test]
     fn backend_local_commands_do_not_require_cloud_registration() {
         for args in [
             vec!["axiom", "eval", "contract.acore"],
@@ -2361,7 +3132,34 @@ mod launch_tests {
             vec!["axiom", "diff", "contract.acore"],
             vec!["axiom", "test"],
             vec!["axiom", "serve", "contract.acore"],
+            vec!["axiom", "serve"],
+            vec!["axiom", "mock"],
+            vec!["axiom", "mock", "contract.acore", "--profile", "contract"],
+            vec![
+                "axiom",
+                "serve",
+                "contract.acore",
+                "--mock",
+                "--fixtures",
+                "mock.json",
+            ],
             vec!["axiom", "watch", "--build"],
+            vec!["axiom", "run", "contract.acore"],
+            vec![
+                "axiom",
+                "server",
+                "plan",
+                "axiom.axiom",
+                "--output",
+                "axiom.server.json",
+            ],
+            vec![
+                "axiom",
+                "server",
+                "inspect",
+                "axiom.axiom",
+                "axiom.server.json",
+            ],
         ] {
             let cli = Cli::try_parse_from(&args).unwrap();
             assert!(is_local_command(&cli.command), "{args:?}");
@@ -2370,7 +3168,7 @@ mod launch_tests {
             vec!["axiom", "build", "--release"],
             vec!["axiom", "release"],
             vec!["axiom", "deploy", "mock-server"],
-            vec!["axiom", "serve"],
+            vec!["axiom", "mock", "--cloud"],
             vec!["axiom", "watch"],
             vec!["axiom", "pull"],
             vec![
@@ -2406,7 +3204,7 @@ mod launch_tests {
             "released.axiom"
         ])
         .is_ok());
-        assert!(Cli::try_parse_from(["axiom", "serve", "--variant", "mobile"]).is_err());
+        assert!(Cli::try_parse_from(["axiom", "serve", "--variant", "mobile"]).is_ok());
         assert!(Cli::try_parse_from(["axiom", "explain"]).is_err());
         assert!(Cli::try_parse_from(["axiom", "explain", "contract.acore", "--schema"]).is_err());
     }
@@ -2427,5 +3225,19 @@ mod launch_tests {
             Commands::Run { launch: true, .. }
         ));
         assert!(Cli::try_parse_from(["axiom", "run", "main.acore", "--once", "--launch"]).is_err());
+    }
+}
+
+#[cfg(test)]
+mod development_scenario_commands {
+    use super::*;
+    #[test]
+    fn development_scenarios_are_offline_and_require_explicit_artifacts() {
+        for args in [
+            vec!["axiom", "scenario", "catalog", "axiom.axiom", "--plan", "axiom.server.json"],
+            vec!["axiom", "scenario", "check", "axiom.axiom", "--plan", "axiom.server.json", "--scenario", "test.scenario.json"],
+            vec!["axiom", "scenario", "run", "axiom.axiom", "--plan", "axiom.server.json", "--deployment", "deployment.json", "--scenario", "test.scenario.json"],
+        ] { let cli=Cli::try_parse_from(args).unwrap();assert!(is_local_command(&cli.command)); }
+        assert!(Cli::try_parse_from(["axiom","scenario","run","axiom.axiom","--plan","axiom.server.json","--scenario","test.scenario.json"]).is_err());
     }
 }

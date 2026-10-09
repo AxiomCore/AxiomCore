@@ -1,0 +1,272 @@
+---
+title: HTTP server adapters
+description: Enforce an Axiom contract at a real FastAPI or Go Chi request boundary.
+---
+
+The HTTP adapter preview shares one Rust request/response validator between
+FastAPI and Go Chi. It invokes your native handlers and validates their output.
+It does not run mock declarations. Deployment bindings can enable verified
+authentication, action guards, typed ownership lookups, rate limits and
+idempotency. See [Server policies and identity](/reference/server-policies).
+Unsupported managed actions, sandbox bindings and streaming still fail at
+startup; this preview does not certify those later framework phases.
+
+## Build and inspect locally
+
+From a backend directory containing `AxiomDeps.toml` and `axiom.acore`:
+
+```sh
+axiom check axiom.acore
+axiom build axiom.acore
+axiom server inspect backend.axiom backend.server.json
+axiom server openapi backend.axiom backend.server.json --output openapi.json
+axiom server types backend.axiom backend.server.json --language python --output handler_types.py
+axiom server types backend.axiom backend.server.json --language go --output handler_types.go
+```
+
+Typed server declarations cause `build` to emit `backend.server.json` automatically.
+For a legacy contract with no server declarations, scaffold it once with
+`axiom server plan backend.axiom --output backend.server.json` before inspection.
+Scaffolding and type/OpenAPI generation require a new output path to preserve
+reviewed files; a source build regenerates its companion plan. If all authored
+server declarations are removed, the build removes its generated companion so
+stale private behavior cannot survive. Manually scaffolded plans are preserved.
+
+These commands work without a cloud account. Regenerate the plan after a public contract change; startup rejects a stale
+contract hash. Review the generated success statuses, body mappings, and failure
+payload/status mappings. A legacy error name initially maps to a JSON payload
+and status 500, until the server mapping supplies a narrower declared type and
+status. `server inspect` reports declared effects and preserves unknown native
+behavior; it does not label declarations as runtime evidence.
+
+Private behavior has its own review command:
+
+```sh
+axiom server diff before.axiom before.server.json after.axiom after.server.json
+```
+
+It validates both public-contract bindings and reports deterministic JSON paths
+with before/after values. Behavior changes, scope provenance and public-contract
+hash changes are distinguished. Use it alongside the public contract diff;
+adding a server guard need not change a client artifact. This command does not
+classify arbitrary private behavior changes as backward compatible.
+
+## Request and response rules
+
+The boundary accepts JSON and enforces model field types, enums, constraints,
+optional versus nullable fields, numeric ranges, and unknown-field rejection.
+It rejects duplicate JSON object keys and repeated scalar query parameters.
+Repeated query parameters represent `List<T>` values. Request headers are
+case-insensitive; repeated header fields are rejected by this adapter profile.
+
+A single body parameter uses `bodyEncoding: "whole"`: its action input receives
+the entire JSON document. Multiple body parameters use `bodyEncoding: "fields"`,
+an object keyed by parameter names. Explicit framework embedding can also use
+`fields`. The generated OpenAPI reflects the selected mapping. Framework
+validators can impose further restrictions; to return a contract failure, map
+their errors to the declared envelope rather than leaking an untyped exception.
+
+Successful handler output must match its declared type and status before it is
+sent. A response projection then removes nonselected fields. A request projection
+rejects fields outside its allowlist while validating the selected model fields.
+Typed failures use `{"error":{"code":"name","payload":...}}`; undeclared
+codes, mismatched status codes, and malformed output become a 502 boundary error.
+Multiple `Set-Cookie` headers survive validation. `HEAD` never emits a body.
+
+Transport metadata can be declared with the payload:
+
+```acore
+endpoint getTask(method: GET, path: "/tasks/{id}") {
+  request { path("id", type: Int32) }
+  response(type: Models.Task, statuses: [200, 202], mediaType: "application/vnd.task+json")
+  responseHeader(name: "x-revision", type: Int32)
+  responseCookie(name: "__Host-session", type: String, secure: true, httpOnly: true, sameSite: CookieSameSite.lax)
+}
+```
+
+Use `status:` for one success status or `statuses:` for up to sixteen alternatives
+sharing the response type. Bodyless 204/205 statuses require `Void`. Header and
+cookie values use scalar or enum types; `optional: true` allows omission.
+Required metadata is required on successful responses; any declared metadata
+present on a failure still has to validate. Header names are case insensitive,
+cookie names are case sensitive, and duplicate names are rejected. Transport
+headers such as Content-Length, Content-Type, CORS and trace headers remain
+boundary-owned. Use `mediaType:` to specify Content-Type.
+
+Request media types use `request(mediaType: "application/vnd.task+json") { ... }`.
+Both sides default to `application/json` and support declared `application/*+json`
+subtypes. This profile still serializes JSON; it does not convert a string into
+HTML, multipart data, or a stream. Accept negotiation uses the declared response
+media type. Generated OpenAPI includes success variants, headers and media types;
+`x-axiom-response-cookies` records the cookie schema and attributes.
+
+Every outgoing cookie passes the shared validator, including all repeated
+Set-Cookie fields and cookies stored in an idempotent reply. `__Host-` cookies
+require Secure, Path=/ and no Domain; SameSite.none requires Secure. These checks
+validate application-owned cookies; they do not issue or rotate sessions.
+
+Limits apply before buffering: 1 MiB requests, 8 MiB responses, bounded request
+targets/headers, and at most 32 active requests per adapter. Action concurrency
+can impose a lower limit. Action deadlines cover body acquisition, handler work,
+and response delivery. Disconnects cancel cooperative handlers. Native handlers
+must honor cancellation: the adapter cannot undo their side effects or terminate
+arbitrary native code safely. Go retains the concurrency slot until a timed-out
+handler actually exits.
+
+## FastAPI
+
+Install `axiom-runtime/server/adapters/fastapi` from the workspace. Wrap a FastAPI
+application with `AxiomMiddleware` and pass a process-owned boundary:
+
+```python
+from axiom_server_fastapi import AxiomMiddleware, NativeBoundary
+
+boundary = NativeBoundary(
+    ["axiom", "server", "boundary"],
+    "backend.axiom",
+    "backend.server.json",
+)
+app.add_middleware(AxiomMiddleware, boundary=boundary)
+```
+
+Register all routes before startup and call `boundary.close()` during application
+shutdown. The adapter verifies the actual FastAPI route inventory at middleware
+initialization. Missing or duplicate native routes prevent startup. Handlers can
+read `request.state.axiom_input`, `axiom_action`, `axiom_principal`, and `axiom_trace`. The input keys
+in a scaffolded plan retain their source, such as `path.id` or `body.task`.
+Generated handler types describe these exact keys.
+
+The adapter surrounds framework request validation and exception handling.
+Install it as the outer application middleware when other middleware is present;
+all native responses must pass through its output boundary. Unhandled native
+exceptions return a redacted error. Payloads and credentials are not written by
+the boundary logger.
+
+## Go Chi
+
+The Go module is `axiom-runtime/server/adapters/go`. Start the CLI bridge with
+`axiom.StartCLI("axiom", "backend.axiom", "backend.server.json")`, register
+`boundary.Middleware(router)` as the outer HTTP server handler, then collect
+the actual routes using `chi.Walk` and pass
+them to `boundary.VerifyRoutes`. Verification must succeed before serving.
+Close the boundary after graceful HTTP server shutdown. Use a real `net/http`
+server whose response controller supports read/write deadlines.
+
+The boundary must wrap the router from outside. This keeps Chi's pooled routing
+context alive for the entire native callback when a response times out.
+Installing the boundary through `router.Use` can recycle that context while
+the timed-out callback still runs.
+
+For shutdown, call `boundary.BeginDrain()`, wait for `http.Server.Shutdown`,
+then call `boundary.Wait(ctx)` before closing the bridge. `Wait` includes native
+cleanup that continues after a response was sent. The process owns the final
+shutdown deadline; an uncooperative native handler cannot be safely killed by
+the adapter.
+
+`axiom.Invocation(r.Context())` supplies the validated input, action, deadline
+budget, verified principal, and trace context. JSON numbers retain their exact representation before
+decoding into generated Go types. The conformance fixture contains the complete
+Chi setup, including route verification and signal-driven graceful shutdown.
+
+## Health and diagnostics
+
+`GET /_axiom/health` reports readiness only after route and interceptor verification. The
+`/_axiom/` prefix is reserved. Valid W3C `traceparent` headers propagate a trace
+ID and create a fresh boundary span; invalid tracing input is discarded.
+The private bridge exposes bounded aggregate metrics. Structured logs contain
+endpoint identifiers, decisions, and durations, without payloads or credentials.
+Native handler internals remain opaque to this boundary.
+
+The private bridge's `drain` operation makes readiness false and rejects new
+admissions with 503 while allowing existing responses to complete. FastAPI can
+initiate this with `boundary.begin_drain()` before the ASGI server's graceful
+shutdown; middleware also marks the bridge draining at the lifespan shutdown
+event. Let the ASGI server finish active requests before closing the boundary.
+Draining is irreversible for that process; a fresh process verifies its own
+artifact, configuration, routes and callback registrations before readiness.
+
+`axiom run --mode service` starts a declared external service and labels it as
+external; use the adapter in that application for enforcement. A contract with
+no service returns an error. Select `--mode mock` explicitly for mocks.
+
+## Typed native interceptors
+
+Declare callbacks in the private execution plan and bind them to an endpoint:
+
+```acore
+interceptor trace(stage: InterceptorStage.beforeAction, native: "hooks.trace")
+interceptor decorate(stage: InterceptorStage.afterAction, native: "hooks.decorate")
+interceptor release(stage: InterceptorStage.cleanup, native: "hooks.release")
+
+endpoint getTask(method: GET, path: "/tasks/{id}") {
+  request { path("id", type: Int32) }
+  intercept(interceptor: Interceptors.trace)
+  intercept(interceptor: Interceptors.decorate)
+  intercept(interceptor: Interceptors.release)
+  response(type: Models.Task)
+}
+```
+
+Both action admission and required guards run before the first hook. Before
+hooks run in declaration order and can return an early response, skipping the
+handler and remaining before hooks. After hooks then run in declaration order.
+The shared validator checks the final status, payload, declared failure and
+projection before sending it. An interceptor cannot turn a denied invocation
+into a successful response. Native callbacks remain opaque to effect analysis.
+
+FastAPI registers async callbacks using `Interceptor(before_action=...)`,
+`Interceptor(after_action=...)` or `Interceptor(cleanup=...)`. Pass the symbol map
+as `interceptors={"hooks.trace": ...}` to `AxiomMiddleware`. Exactly one callback
+is registered per symbol. Each receives a typed `InvocationContext` containing
+the verified input, principal, trace and deadline. A before callback returns
+`None` or `HookResponse(status, body, headers)`; an after callback receives and
+returns a `HookResponse`. Cleanup receives the context and an outcome string.
+
+Go uses `boundary.RegisterInterceptors(map[string]axiom.Interceptor{...})` before
+`VerifyRoutes`. Callbacks receive `context.Context` and `axiom.InvocationContext`;
+`BeforeAction` returns `(*axiom.HookResponse, error)`, `AfterAction` receives a
+response and returns `(axiom.HookResponse, error)`, and `Cleanup` receives an
+`axiom.Outcome` and returns an error. Go response bodies are `json.RawMessage`.
+Registration freezes before serving. Missing callbacks and wrong stages prevent
+readiness in both adapters.
+
+Each callback receives an isolated context copy. Cleanup runs in reverse order
+after success, failure, cancellation or disconnect; a failed cleanup cannot
+replace the response. Cleanup has a separate one-second cooperative budget and
+retains the action concurrency slot until it exits. Outcome values are
+`success`, `failed`, `rejected`, `cancelled`, `deadline` and `disconnected`;
+transport cancellation mapping depends on the server. Native code must honor
+cancellation, including during cleanup. Idempotent replay skips the native
+handler and every hook. See the executable `interceptors.acore` fixture and
+callback implementations in `axiom-runtime/server/tests/fixtures`.
+
+## Reproduce the HTTP gate
+
+From the multi-repository workspace root, using the newly built CLI:
+
+```sh
+export CARGO_TARGET_DIR=/tmp/axiom-backend-framework-target
+export CARGO_PROFILE_DEV_DEBUG=0
+export CARGO_PROFILE_TEST_DEBUG=0
+export CARGO_INCREMENTAL=0
+cargo build --manifest-path AxiomCore/cli/Cargo.toml --locked
+python3 axiom-runtime/server/tests/verify.py \
+  --cli "$CARGO_TARGET_DIR/debug/axiom-cli" \
+  --redis-server /path/to/redis-server
+```
+
+The gate requires Python 3.11+, FastAPI, uvicorn, Rust, Go and Redis 7.2 or later. It uses temporary
+artifacts and ephemeral loopback ports. It builds a real `.acore` file, checks
+artifact determinism, loads generated Python types, compiles generated Go types,
+and exercises both real services with the same malformed-request, response,
+deadline, disconnect, concurrency, trace, and cookie checks. It also runs Acore
+test declarations through `axiom test` against each live service. Security tests
+compile typed policies from `security.acore` and `admission.acore` and exercise
+JWT/API-key/session verification, ownership/tenant boundaries, typed failures, status 201, credential
+revocation, CORS, shared rate limits and idempotency across both services. The
+Redis gate kills and restarts its own ephemeral provider and starts a fresh
+worker to verify persisted replay and indeterminate outcomes. It does not touch
+an existing Redis installation or certify later jobs/streaming/deployment phases.
+The interceptor gate compiles `interceptors.acore` and verifies ordering, early
+responses, isolated context, startup drift, error redaction, cancellation,
+cleanup limits and replay behavior through the real adapters.

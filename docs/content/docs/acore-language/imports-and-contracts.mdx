@@ -113,7 +113,7 @@ entity task(model: Models.Task)
 `entity` promotes an already declared or extracted model. For a local model
 whose entity shares its shape and conventional identity key, append `also entity`
 to the model declaration; `model Task { id: String } also entity` creates
-`Entities.task`. It does not import a
+`Entities.Task`. The older `Entities.task` spelling remains compatible. It does not import a
 file, run an extractor, or cross a trust boundary. General evaluator modules
 retain `extend` for value inheritance, and classes may use the conventional
 `class Child extends Parent` form. These differ from a top-level input directive.

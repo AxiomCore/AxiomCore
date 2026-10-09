@@ -1,0 +1,253 @@
+---
+title: Managed language foundations
+description: Shared validation, typed failure contracts, bounded business logic and private typed setup in the working compiler and matching hosts.
+---
+
+These features use the working compiler and matching hosts. New executable
+metadata requires reader version 2 and `axiom-server-plan/v2`. Released v1
+artifacts keep their existing interpretation. A host checks the required
+capability set before activation; a parsed declaration does not establish host
+support. The native ActionHost executes the managed-flow and typed-configuration
+profiles described here. A Worker profile without those capabilities rejects
+them before activation.
+
+## One checked data boundary
+
+Models provide structural fields, absence/null rules and explicit defaults.
+Validators add pure cross-field checks. Independent field errors accumulate in
+field order; dependent checks wait until their inputs have valid types. Issues
+carry typed field/index/map-key-hash paths and stable codes, with no rejected
+values. The report has a bounded issue count, work budget and truncation marker.
+See [validation](/acore-language/validation) for complete validator and codec
+examples and the qualified portable numeric and regex limits.
+
+Backend inputs, provider outputs and action outputs remain authoritative. A form
+uses only its selected signed schema; a guest helper cannot admit its own output
+or gain an operation grant. Defaults apply to omission. Explicit null must be
+permitted separately. Exact Int64 defaults and codecs do not pass through a
+floating-point canonical representation.
+
+## Private outcomes and public failures
+
+An action declares a failure's full payload. An endpoint selects the fields and
+audiences it may expose, and maps a status separately. The audience selects
+locked artifacts; a caller header cannot select a larger payload.
+
+```acore
+project(id: "failure-example", version: "1")
+model Selector { id: Int32 }
+model Problem { message: String internalReason: String }
+failure missing(payload: Models.Problem, status: 404)
+action read(kind: ActionKind.query, input: Models.Selector, output: String) {
+  managed {
+    fail Failures.missing({message: "Task is unavailable", internalReason: "lookup failed"})
+  }
+  errors(Failures.missing)
+}
+endpoint readTask(method: GET, path: "/tasks/{id}") {
+  request { path("id", type: Int32) }
+  handle(action: Actions.read, input: {id: Input.path.id})
+  response(type: String)
+  errors(Failures.missing)
+  exposeFailure(failure: Failures.missing, fields: [.message], audiences: ["web"])
+  failureStatus(failure: Failures.missing, status: 410)
+}
+```
+
+The HTTP failure has only `error.code` and the selected `error.payload`. The
+selected UI schema includes each case's payload and status. UI operation error
+state exposes typed optional cases such as `error.cases.missing?.message`.
+Malformed envelopes, unknown cases, extra fields and wrong representations become
+sanitized transport errors. New consumers do not infer a payload from an arbitrary
+message string. Code-only v1 consumers retain their declared legacy adapter.
+
+The initial public payload profile selects flat scalar/enum fields or lists of
+those values. Nested models and opaque Json need a separately reviewed public
+payload. Portable integer payloads must stay in the exact JavaScript range.
+
+Cancellation, deadline, budget, stale-owner and host faults remain execution
+aborts. An `on_error` business handler cannot recover them and publish disposed
+state. Ordered independent outcome collection belongs to the later concurrency
+profile; sequential calls still stop at a dependent failure.
+
+Trusted tooling can also generate a TypeScript decoder directly from a verified
+public contract's `PublicContracts::typescript_client(endpoint, audience)` API.
+The output imports `@axiomcore/extension-sdk/schema`, exports the selected literal
+case descriptor, and derives its discriminated `Failure` type and checked
+`decode(wire, status)` function. Unapproved audiences and invalid descriptors
+fail generation. Private payload fields are absent from the generated source.
+This offline generation supplies typing and validation; deployment still grants
+calls separately. Rust guests enable the matching workspace SDK's optional
+`schema` feature for the same checked descriptors and exact backend Int64
+conversion. This helper belongs to the M1 workspace cohort; published SDKs keep
+their declared APIs. Validate the exact Wasm artifact against its host limits,
+including first-use initialization and conversion fuel, before activation.
+
+## Bounded business logic
+
+Immutable locals, checked pure calls, optional selection, branches, guards,
+exhaustive enum/optional matches, `fail` and `return` run without a native callback.
+Effects occur only at explicit `await` calls. Every branch contributes to inferred
+requirements, including branches not taken during a particular request.
+
+```acore
+project(id: "managed-example", version: "1")
+model Rename { title: String }
+model Task { title: String }
+model Problem { message: String }
+failure invalidTitle(payload: Models.Problem, status: 422)
+pure fn normalizeTitle(value: String): String = value.trim()
+action rename(kind: ActionKind.command, input: Models.Rename, output: Models.Task) {
+  errors(Failures.invalidTitle)
+  managed {
+    let title = normalizeTitle(Input.title)
+    guard title.length > 0 else fail Failures.invalidTitle({message: "Title is required"})
+    if title.length > 200 {
+      fail Failures.invalidTitle({message: "Title is too long"})
+    } else {
+      return {title: title}
+    }
+  }
+}
+```
+
+Awaited resource operations use `Resources.name.operation(input: value)`; reusable
+actions use `Actions.name(input: record)`. A resource declares its business cases
+with `errors: [Failures.name]`. Unhandled cases must appear in the caller's
+`errors`. A handler uses an exhaustive `match` of its failure binding and must
+terminate with `return` or `fail` on every path. There is no implicit recovery
+fallthrough or definite assignment after a failed await.
+
+For an undeclared awaited failure, the editor offers an explicit private
+`errors(Failures.name)` repair and a terminal handler that propagates its typed
+payload. For a partial handler it can append the missing declared cases while
+preserving existing case bodies. Each proposed edit compiles against the current
+unsaved imports before it is offered. These fixes never add public projections,
+endpoint exposure, grants or payload fields; a failure that needs additional
+public review cannot be repaired by widening its exposure.
+
+Branch locals remain in their scope. Shadowing, unreachable statements, incomplete
+returns, recursive functions/actions and ambient resource/clock/state capture in
+pure expressions are rejected. Evaluation is left to right and short circuits
+boolean/coalescing expressions. Arithmetic is checked; Unicode string length
+counts scalar values. Await cannot undo an earlier committed effect.
+
+The formatter preserves statement boundaries and tokens. LSP analysis uses
+physical source definitions and captured unsaved inputs; it does not execute
+providers or guests.
+
+## Typed private setup and purpose-bound secrets
+
+```acore
+project(id: "configuration-example", version: "1")
+configuration billingSettings(public: [.maxConnections], audiences: ["web"]) {
+  origin: String(format: "https-origin")
+  maxConnections: Int32(min: 1, max: 16) = 4
+}
+secret billingKey(purpose: SecretPurpose.signRequest)
+resource billing(
+  lifetime: ProviderLifetime.application,
+  configuration: Configurations.billingSettings,
+  secrets: [Secrets.billingKey]
+) {
+  operation charge(input: String, output: String, effect: EffectKind.networkCall)
+}
+```
+
+Configuration schemas, defaults, checks and secret references remain in the
+private plan. Trusted startup resolves references, validates values and supplies
+an exact schema digest to a compatible factory. Explicit public fields have a
+separate audience-checked projection; the example exposes the pool limit, not the
+origin or signing material. A trusted publisher can use this projection through
+its ordinary checked endpoint. No public package acquires private resolver access.
+
+Bindings carry environment/file/vault references and explicit operation grants.
+The default resolver reads environment names; file/vault resolution requires a
+qualified trusted resolver. Resolution is startup-only. Rotation requires restart
+unless a separately qualified provider implements a stronger lifecycle.
+
+A trusted factory receives an opaque `signRequest` handle that computes bounded
+HMAC-SHA256 signatures. Authored Acore and guests cannot retrieve its bytes or
+serialize the handle. Declaring a resource, inferring a dependency or resolving a
+secret does not grant an operation. Native factory implementations remain trusted
+code with their declared/observed evidence boundaries.
+
+## Editor support
+
+Use a matching native language server with VS Code or Zed. The shared catalog
+supplies declarations, argument signatures, typed references and diagnostics.
+VS Code uses contextual tokens and starters; Zed uses the matching Tree-sitter
+parser and queries. Both use compiler validation for meaning. Zed exposes
+physical navigation and explicit CLI reports where no live panel is implemented.
+Neither adapter resolves configuration values during passive editing.
+
+## Owned calls and explicit database transactions
+
+Each action invocation owns a root context. Awaited actions and providers inherit
+its deadline, cancellation, generation and remaining budgets; a child cannot
+reset its caller's allowance. Immutable values can leave a block, while a
+transaction-scoped provider name cannot.
+
+```acore
+project(id: "transaction-example", version: "1")
+model Create { title: String eventId: String idempotencyKey: String }
+model Insert { title: String idempotencyKey: String }
+model Outbox { eventId: String taskId: String }
+model Task { id: String title: String }
+model Event { eventId: String }
+resource tasks(
+  lifetime: ProviderLifetime.application,
+  transactionProfile: TransactionProfile.postgres17_11
+) {
+  operation insert(input: Models.Insert, output: Models.Task, effect: EffectKind.write)
+  operation appendOutbox(input: Models.Outbox, output: Models.Event, effect: EffectKind.write)
+}
+action create(kind: ActionKind.command, input: Models.Create, output: Models.Task) {
+  managed {
+    let result = await transaction database(
+      resource: Resources.tasks,
+      isolation: TransactionIsolation.serializable,
+      receipt: Input.idempotencyKey
+    ) {
+      let task = await database.insert(input: {
+        title: Input.title, idempotencyKey: Input.idempotencyKey
+      })
+      await database.appendOutbox(input: {eventId: Input.eventId, taskId: task.id})
+      return task
+    }
+    return result
+  }
+}
+```
+
+This source declares a finite transaction, and offline database preparation
+combines its exact component programs into one derived provider operation.
+Activation requires the prepared program, the exact typed interface, a reviewed
+binding and an explicit grant for the derived operation. Compiling the source
+alone does not establish an atomic database boundary. The receipt-bearing
+component must capture the exact `Input.idempotencyKey`; changing that key changes
+the recovery identity.
+
+The initial profile accepts 1–16 operations and at most 32 SQL steps in one
+application-lifetime PostgreSQL 17.11 provider. Inputs are explicit records of
+scalar input fields, prior result fields and literals. Selected component
+isolation and receipt contracts must agree. HTTP calls, guest execution,
+unrelated resources, branch/loop bodies and mixed write/delete programs are
+rejected. See [database persistence](/acore-language/database-persistence) for
+preparation, tenant enforcement, commit recovery and durable outbox semantics.
+
+Owned providers release once in reverse acquisition order, including after a
+business failure or cancellation. Release gets a separate bounded cooperative
+budget and cannot restart business work. A primary failure keeps its code and
+payload; secondary release failures appear separately as bounded safe cleanup
+issues. A release failure after an otherwise successful action becomes a host
+fault. Trusted native hooks must cooperate: their admission slot remains occupied
+until they actually exit. Qualified Wasm hosts additionally terminate guest work
+at their containment boundary.
+
+Frontend app/session/route/component disposal invalidates old generations.
+Responses and guest proposals from disposed owners cannot publish. A stale
+revision is a typed conflict, and a rejected multi-patch proposal leaves the
+supported local store unchanged. A synchronous UI action segment commits before
+its next await/navigation boundary; this does not make a remote mutation or
+multiple stores across adapters one transaction.

@@ -4,7 +4,8 @@ use serde::Serialize;
 use std::path::Path;
 use std::process::Command;
 
-use crate::commands::pull::{read_axiom_deps, Framework};
+use crate::commands::pull::Framework;
+use axiom_lib::deps_manifest::{migrate_axiom_deps_to_v2, parse_axiom_deps_v2};
 
 /// A deterministic, non-mutating environment report. `doctor` deliberately
 /// never performs a login, pulls an artifact, or writes project files: it is
@@ -80,7 +81,11 @@ pub fn collect_report() -> Result<DoctorReport> {
     checks.push(check_auth());
 
     let acore_path = root.join("axiom.acore");
-    let artifact_path = root.join("axiom.axiom");
+    let artifact_path = ["backend.axiom", "axiom.axiom"]
+        .into_iter()
+        .map(|name| root.join(name))
+        .find(|path| path.is_file())
+        .unwrap_or_else(|| root.join("backend.axiom"));
     let deps_path = root.join("AxiomDeps.toml");
     checks.push(check_contract_source(&acore_path));
     checks.push(check_artifact(&artifact_path));
@@ -182,7 +187,7 @@ fn check_artifact(path: &Path) -> DoctorCheck {
         return check(
             "artifact",
             DoctorStatus::Warn,
-            "No built axiom.axiom artifact found".to_string(),
+            "No built backend.axiom artifact found".to_string(),
             "Build an artifact before releasing or use AxiomDeps.toml in a consumer project."
                 .to_string(),
             Some("Run `axiom build` after creating axiom.acore.".to_string()),
@@ -206,7 +211,7 @@ fn check_artifact(path: &Path) -> DoctorCheck {
         Err(error) => check(
             "artifact",
             DoctorStatus::Fail,
-            "axiom.axiom cannot be decoded".to_string(),
+            "Backend contract cannot be decoded".to_string(),
             error.to_string(),
             Some("Rebuild with `axiom build`; do not hand-edit compiled artifacts.".to_string()),
         ),
@@ -228,19 +233,34 @@ fn check_deps(path: &Path) -> std::result::Result<(DoctorCheck, Option<Framework
             None,
         ));
     }
-    match read_axiom_deps(path) {
+    let manifest = (|| -> Result<_> {
+        let source = std::fs::read_to_string(path)?;
+        let value: toml::Value = toml::from_str(&source)?;
+        let format = value.get("format").and_then(toml::Value::as_str);
+        if matches!(
+            format,
+            Some("axiom-package-deps/v1" | "axiom-ui-manifest/v1")
+        ) || (format.is_none() && value.get("type").is_none())
+        {
+            // Validate a migration in memory. Doctor must never rewrite a
+            // legacy manifest or use the legacy reader's required framework.
+            parse_axiom_deps_v2(&migrate_axiom_deps_to_v2(&source)?)
+        } else {
+            parse_axiom_deps_v2(&source)
+        }
+    })();
+    match manifest {
         Ok(deps) => {
-            let contracts = deps.contracts.len();
-            let framework = deps.framework.clone();
+            let framework = deps.framework.as_deref().and_then(Framework::from_str);
             Ok((
                 check(
                     "dependencies",
                     DoctorStatus::Pass,
-                    format!("AxiomDeps.toml targets {}", framework.as_str()),
-                    format!("{} configured contract dependency/dependencies", contracts),
+                    format!("Valid AxiomDeps.toml: {}", deps.contract_type.as_deref().unwrap_or("legacy dependency manifest")),
+                    format!("{} contract(s), {} package(s), {} extension(s); manifest bytes were not changed", deps.contracts.len(), deps.packages.len(), deps.extensions.len()),
                     None,
                 ),
-                Some(framework),
+                framework,
             ))
         }
         Err(error) => Err(check(
@@ -410,5 +430,52 @@ mod tests {
     fn strict_mode_only_treats_failures_as_blocking() {
         assert_ne!(DoctorStatus::Warn, DoctorStatus::Fail);
         assert_eq!(DoctorStatus::Pass.label(), "PASS");
+    }
+
+    #[test]
+    fn current_project_manifests_do_not_require_a_legacy_framework() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("AxiomDeps.toml");
+        for kind in ["backend", "frontend", "database", "package", "extension"] {
+            let database_fields = if kind == "database" {
+                r#"targets = ["server"]
+[application]
+name = "example.storage"
+version = "1.0.0"
+"#
+            } else {
+                ""
+            };
+            let source =
+                format!("format = \"axiom-deps/v2\"\ntype = \"{kind}\"\n{database_fields}");
+            std::fs::write(&path, &source).unwrap();
+            let (report, framework) = check_deps(&path).unwrap();
+            assert_eq!(report.status, DoctorStatus::Pass);
+            assert!(framework.is_none());
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), source);
+        }
+    }
+
+    #[test]
+    fn legacy_and_invalid_manifests_are_reported_without_mutation_or_panics() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("AxiomDeps.toml");
+        for source in [
+            "framework = \"atmx-web\"\n",
+            "format = \"axiom-package-deps/v1\"\n",
+        ] {
+            std::fs::write(&path, source).unwrap();
+            assert_eq!(check_deps(&path).unwrap().0.status, DoctorStatus::Pass);
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), source);
+        }
+        for source in [
+            "bad = [",
+            "format = \"future/v1\"\n",
+            "format = \"axiom-deps/v2\"\ntype = \"unknown\"\n",
+        ] {
+            std::fs::write(&path, source).unwrap();
+            assert_eq!(check_deps(&path).unwrap_err().status, DoctorStatus::Fail);
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), source);
+        }
     }
 }

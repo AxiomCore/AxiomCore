@@ -116,3 +116,11 @@ profile recognizes it.
 | `import "./shared.acore"` | Evaluate trusted source as a module |
 
 Continue with [Imports, contracts, and composition](/acore-language/imports-and-contracts).
+
+## Backend pure functions and managed locals
+
+Backend `pure fn` functions use explicit parameter/result types and a bounded
+expression body. They may call other acyclic pure functions and bounded string/
+collection methods. They cannot capture state, host services, clock or randomness.
+Managed locals are immutable and lexical; branch/handler locals cannot escape.
+See [managed language](/acore-language/managed-language).

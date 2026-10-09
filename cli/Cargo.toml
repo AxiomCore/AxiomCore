@@ -1,10 +1,12 @@
 [package]
 name = "axiom-cli"
-version = "0.147.4"
+version = "0.148.1"
 edition = "2021"
 
 [dependencies]
 axiom-lib = { path = "../../axiom-lib" }
+axiom-database = { path = "../../axiom-database" }
+axiom-server = { path = "../../axiom-runtime/server" }
 axiom-cloud = { path = "../../axiom-cloud" }
 axiom-extractor = { path = "../../axiom-extractor" }
 axiom-build = { path = "../../axiom-build" }
@@ -33,10 +35,11 @@ tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
 futures = "0.3"
 lazy_static = "1.4"
+logos = "0.14"
 regex = "1.10"
 uuid = { version = "1.0", features = ["v4", "serde"] }
 directories = "5.0"
-os_info = "1.0"
+os_info = "=3.14.0"
 
 clap = { version = "4.4", features = ["derive"] }
 notify = "6.1"

@@ -1,0 +1,142 @@
+---
+title: Owned concurrency, policies, and timing
+description: Finite parallel reads, host-owned operation policies, typed durable enqueue, and foreground UI timing.
+---
+
+Acore describes the work and its bounds. The host owns admission, physical dispatch, cancellation, timers, and joining. Pure functions remain deterministic and have no thread, sleep, clock, or enqueue authority.
+
+## Named parallel reads
+
+A managed action can join a finite set of independent reads:
+
+```acore
+let summary = await parallel(limit: 2) {
+  first = Actions.find(input: Input)
+  second = Resources.tasks.lookup(input: Input)
+}
+return {first: summary.first, second: summary.second}
+```
+
+The compiler infers a record whose fields have each call's output type. Branches capture immutable values available before the group. A branch cannot reference another branch's result. The initial backend profile accepts query actions and resource reads; writes, transactions, enqueue, streams, and nested groups as direct branches reject. A query action must also pass the existing effect and action validation.
+
+A group contains 1–32 distinct names and an explicit `limit` of 1–8 active branches. These bounds do not increase deployment grants, parent deadlines, or root work budgets. The native host checks action admission and resource grants before branch dispatch. Physical operation admission still applies at each boundary. Dispatched native work remains owned until its callback returns, including after cooperative cancellation.
+
+Fail-fast is the default. A branch failure signals sibling cancellation, stops queued branches, and drains started work. Parent cancellation or an invalid host output prevents publication of the joined result. Named field association follows declaration order; JSON object key order and physical completion order are not execution guarantees.
+
+Collect mode returns a checked outcome for each branch. Match success and all declared ordinary failures exhaustively:
+
+```acore
+let sections = await parallel(mode: ParallelMode.collect, limit: 2) {
+  first = Actions.find(input: Input)
+  second = Actions.find(input: Input)
+}
+match sections.first {
+  case .success(task) { return task }
+  case Failures.unavailable(problem) { return {title: problem.message} }
+}
+```
+
+A propagated fail-fast failure must appear in the enclosing action's `errors` declaration. Collect handles declared business outcomes; admission denial, cancellation, invalid boundary output, exhausted budgets, and host faults terminate the group. It cannot turn denied authority into a partial authorized result.
+
+## Logical resource policies
+
+An `operationPolicy` applies to a named resource call. `serverPolicy` retains its existing action ceilings, and client retry policies retain their existing meaning.
+
+```acore
+operationPolicy taskRead(
+  totalTimeout: 2s,
+  attemptTimeout: 500ms,
+  attempts: 3,
+  backoff: Exponential(initial: 100ms, max: 500ms, multiplier: 2.0),
+  jitter: Jitter.full,
+  retryOn: [Failures.unavailable],
+  safety: RetrySafety.readOnly,
+  maxInFlight: 8,
+  queueWait: 100ms,
+  maxQueued: 8,
+  circuitThreshold: 5,
+  resetAfter: 1s
+)
+
+// Inside a managed action that declares the propagated failure:
+let task = await Resources.tasks.lookup(
+  input: Input,
+  policy: OperationPolicies.taskRead
+)
+return task
+```
+
+`Fixed(delay: 100ms)` and `Exponential(initial: 100ms, max: 500ms, multiplier: 2.0)` are the operation-policy backoff forms. Their arguments are distinct from client `Fixed`/`Exponential` constructors. Durations use adjacent unsigned integer literals with `ms`, `s`, `m`, `h`, or `d`; arithmetic is checked. Exponential multipliers range from 1 to 16 with at most three decimal places.
+
+The total timeout covers queue wait, every attempt, and backoff. The attempt timeout can only tighten the remaining parent ceiling. Cancellation and elapsed deadlines take precedence over a late success. A circuit is bounded by statically declared policy/resource/operation identities, with one recovery probe; input values cannot create circuit keys.
+
+Only explicitly retryable domain failures declared by the operation may appear in `retryOn`. Authorization, malformed inputs or outputs, cancellation, validation, indeterminate commits, and unrelated provider faults do not become retryable through an HTTP status code. `RetrySafety.unsafe` requires exactly one attempt and no retry cases.
+
+A trusted provider factory independently attests `readOnly`, `idempotent`, or an established `receiptBound` mapping. Declaring a read effect, naming a receipt, or completing a snippet does not establish external replay safety. Activation rejects mismatched evidence and a second automatic retry owner beneath a retrying policy. Policies on actions or nested policy wrappers reject.
+
+Children share invocation work accounting. A new HTTP request and a worker's next durable delivery attempt have their own admitted invocation trees. For a job allowing three deliveries with a provider allowing three physical attempts, the upper bound is nine provider attempts, subject to each tree's budgets and the job's total deadline. This is an upper bound, not a guarantee that all attempts run. Attempt observations identify policy, root, operation, attempt, eligibility, and remaining work; they omit inputs and credentials.
+
+## Typed durable enqueue
+
+Only a managed command can enqueue a declared job:
+
+```acore
+let receipt = await Jobs.remindTask.enqueue(
+  input: Input,
+  key: Input.producerId,
+  delay: 1h
+)
+return receipt
+```
+
+The compiler checks input against the job action's input and infers `{id: String}`. The producer key is a string. Delay is bounded to seven days and must be shorter than the job's total deadline; this example requires a job deadline greater than one hour, such as `2h`. The action's private plan records its exact job dependencies. Runtime activation requires a trusted `DeliveryController` bound to the exact same plan, an `enqueue:<job>` delivery grant, and explicit worker identities. Missing configuration rejects before serving.
+
+The receipt confirms durable submission. Producer identity and payload/delay fingerprints retain existing duplicate/conflict rules. They do not establish exactly-once external effects. Namespaced producer keys must be derived consistently for the application's tenant/request boundary. Worker authorization is rechecked on every delivery attempt; browser credentials do not become worker credentials. Frontends request job creation through an authorized public command.
+
+Native CLI invoke, validate, run, serve, and development watch accept an explicit `--delivery /absolute/path/delivery.json` alongside the reviewed server deployment. The configuration stays private. Watch reload prepares a new exact-plan configuration from the captured inputs; it retains the reviewed grants and credential references. A durable namespace is bound to its plan. Changing that plan requires an explicitly reviewed new namespace or migration; otherwise reload rejects and the last validated service stays active. Queued work for an old plan still needs its original qualified worker. Starting a development server does not start a durable worker. Container and Workers delivery packaging require their own qualified controller/worker integration.
+
+Existing schedules keep their timezone, overlap, missed-run, bounded catch-up, lease, fencing, dead-letter, cancellation, and explicit redrive semantics. See [server delivery](/reference/server-delivery) for the reviewed private configuration and worker workflow.
+
+## Frontend groups and foreground timers
+
+A frontend action joins declared query operations with their captured arguments:
+
+```acore
+let sections = await parallel(limit: 2) {
+  taskList = tasks.run()
+  taskCounts = counts.run()
+}
+```
+
+The group requires enabled, finite, nonpaginated query operations. It does not update the individual operations' data snapshots. Fail-fast cancels and drains; collect returns each field as `{ok, value, error}` with nullable success/error members. Only checked ordinary contract errors collect. Transport, schema, authorization, disposal, and budget faults terminate the group. Owner disposal cancels all owned groups and suppresses late publication.
+
+Duration aliases keep timing intent readable:
+
+```acore
+query tasks = Tasks.list_tasks() options(
+  debounce: 150ms,
+  poll: 30s,
+  focus: true,
+  reconnect: true
+) when session.status == "authenticated"
+```
+
+`debounce_ms` remains supported. Equal alias values agree; contradictory `debounce` and `debounce_ms` values reject. Poll intervals range from 100ms to one day. Polling is query-only and schedules one next timer after the current operation settles. Hidden owners cancel polled work and pause timers. Foreground return schedules a fresh read. Disposal, disabled state, argument changes, and session changes invalidate prior timer generations.
+
+Browser visibility events supply foreground state. Native generated code requires the facade's explicit foreground-event capability; an older host rejects polling rather than promising background execution. These timers require a live foreground application owner. Durable background work uses server jobs and schedules.
+
+## Sandboxed extensions
+
+Guests cannot create detached threads, increase concurrency or budgets, supply worker credentials, or attest their own retry safety. The Rust SDK has a separate `EffectGroup` descriptor with `axiom-extension-effect-group/v1`, named branches, a limit, and fail-fast/collect mode. It must use `ExtensionResponse::yield_group`; an existing ordered `EffectPlan` remains sequential.
+
+The broker preflights every exact grant and initially permits contract queries. It reserves byte capacity equally for branches before dispatch; unused capacity cannot be borrowed while siblings run. Only a trusted adapter that explicitly supports groups activates them. Domain outcomes may collect, while denial, revocation, invalid input/output, exhaustion, host faults, and parent cancellation are terminal. Started adapter futures are drained before release or guest resume. Existing one-batched-resume and kernel retirement rules still apply.
+
+Guest scheduling uses existing granted host queue operations. It does not introduce an ambient guest timer or a retained private scheduler. Guest requests remain subject to host safety, identities, receipts, and lifecycle bounds.
+
+## Editor and validation workflow
+
+Use the shared LSP for group signatures, inferred record/outcome hovers, physical branch and policy navigation, job input signatures, and compiler diagnostics in unsaved buffers. VS Code and Zed include `acore-parallel`, `acore-operation-policy`, `acore-enqueue`, and `acore-poll` starters. A policy hover describes a declaration; provider attestation remains a runtime activation check.
+
+Build compiler, LSP, UI helper, host, SDK, and grammar from a compatible cohort. Owned frontend operations require IR reader 12 and `acore-owned-operations/v1`; existing programs retain their older reader requirements when they do not use these features. Use explicit saved-input scenarios and host observations to inspect execution. Editing or completing source never dispatches work.
+
+Tests must prove real overlap and retain active work through cancellation, with controlled barriers and adapter futures. Timer tests advance a virtual clock and assert one owner timer, foreground pause, session invalidation, and no late publication. Durable recovery is tested separately against Redis and real worker processes; a timer test cannot qualify job recovery.

@@ -142,3 +142,24 @@ the host drains or retires the instance, invalidates handles, and rejects late
 work. See [Artifact trust](/core-concepts/trust-and-security) and the
 [Executable extensions reference](/reference/executable-extensions) for the
 underlying checks and error model.
+
+## Checked values, cleanup and conflicts
+
+The Rust SDK's optional `schema` feature and TypeScript `./schema` helper consume
+selected validation/codec/failure descriptors. Rust/Wasm retains exact backend
+Int64 values; portable TypeScript rejects integers outside its exact number range.
+Helpers validate and normalize drafts, accumulate safe issues and decode only
+selected public failure cases. They provide no additional resource authority:
+the broker and action boundary independently recheck outputs and proposals.
+
+Business cases are separate from cancellation, deadlines, budget exhaustion,
+revision conflicts, host faults and indeterminate commits. A typed business
+handler cannot convert these execution aborts into publishable work. Stale or
+foreign generation handles fail use-time validation even if a guest retains a
+copy. Duplicate teardown is idempotent; late proposals cannot revive an owner.
+
+Native provider release preserves the primary outcome and records bounded safe
+secondary cleanup issues. Qualified guest hosts terminate trapped or timed-out
+work and invalidate host handles independently. Native cooperative callbacks
+retain their admission slot until actual return. These containment guarantees
+come from the selected host profile, rather than an SDK helper or declaration.

@@ -5,24 +5,24 @@ use std::{
     time::Instant,
 };
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use axiom_lib::{
     application_change::{
-        attach_runtime_diff, impact, semantic_diff, ChangeImpact, ImpactReport,
-        SemanticChangeReport,
+        ChangeImpact, ImpactReport, SemanticChangeReport, attach_runtime_diff, impact,
+        semantic_diff,
     },
     application_evidence::{
-        ApplicationEvidence, AxiomQuery, EvidenceIndex, EvidenceNode, EvidenceNodeKind,
-        QueryDirection, QueryOperation, QueryResult, AXIOM_QUERY_FORMAT, QUERY_RESULT_FORMAT,
+        AXIOM_QUERY_FORMAT, ApplicationEvidence, AxiomQuery, EvidenceIndex, EvidenceNode,
+        EvidenceNodeKind, QUERY_RESULT_FORMAT, QueryDirection, QueryOperation, QueryResult,
     },
     application_inspector::inspect_workspace,
     inspector_exchange::{InspectorExchange, InspectorExchangePayload},
     question::{
-        answer_question, plan_question, unsupported_answer, QuestionAnswer, QuestionRequest,
-        ANSWER_FORMAT,
+        ANSWER_FORMAT, QuestionAnswer, QuestionRequest, answer_question, plan_question,
+        unsupported_answer,
     },
 };
-use base64::{engine::general_purpose::STANDARD, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD};
 use clap::{Subcommand, ValueEnum};
 use ed25519_dalek::{Signer, SigningKey};
 use serde::{Deserialize, Serialize};
@@ -45,6 +45,15 @@ pub enum InspectorPlanner {
 
 #[derive(Debug, Subcommand)]
 pub enum InspectorAction {
+    /// Inspect a saved source or manifest using the same passive capture as the editor.
+    Source {
+        path: PathBuf,
+        /// Select the frontend or database entry when discovery is ambiguous.
+        #[arg(long)]
+        entry: Option<String>,
+        #[arg(long, value_enum, default_value = "human")]
+        format: InspectorFormat,
+    },
     /// Inspect compiler-proven frontend modules, routes, pages, and behavior.
     Frontend {
         #[arg(default_value = ".")]
@@ -84,6 +93,21 @@ pub enum InspectorAction {
     Backend {
         #[arg(default_value = ".")]
         path: PathBuf,
+        #[arg(long, value_enum, default_value = "human")]
+        format: InspectorFormat,
+    },
+    /// Inspect a bound private server plan and optional redacted startup observation.
+    Server {
+        contract: PathBuf,
+        plan: PathBuf,
+        #[arg(long)]
+        session: Option<PathBuf>,
+        #[arg(long)]
+        deployment: Option<PathBuf>,
+        #[arg(long)]
+        bindings: Option<PathBuf>,
+        #[arg(long, default_value = "native-server")]
+        target: String,
         #[arg(long, value_enum, default_value = "human")]
         format: InspectorFormat,
     },
@@ -492,6 +516,18 @@ impl From<InspectorDirection> for QueryDirection {
 
 pub async fn handle(action: &InspectorAction) -> Result<()> {
     match action {
+        InspectorAction::Source {
+            path,
+            entry,
+            format,
+        } => {
+            let mut settings = acore::editor::project::Settings::default();
+            settings.frontend.entry = entry.clone();
+            settings.database.entry = entry.clone();
+            let evidence =
+                acore::editor::inspection::inspect_saved_project_with_settings(path, settings)?;
+            render(&filtered(&evidence, |_| true), *format)
+        }
         InspectorAction::Frontend { path, format } => render_kinds(
             path,
             *format,
@@ -542,6 +578,80 @@ pub async fn handle(action: &InspectorAction) -> Result<()> {
         InspectorAction::Accessibility { path, format } => {
             render_kinds(path, *format, &[EvidenceNodeKind::Accessibility])
         }
+        InspectorAction::Server {
+            contract,
+            plan,
+            session,
+            deployment,
+            bindings,
+            target,
+            format,
+        } => {
+            let contract: axiom_lib::contract::AxiomFile =
+                axiom_server::serve::read_json(contract, 16_777_216)?;
+            let plan: axiom_lib::backend::ServerPlan =
+                axiom_server::serve::read_json(plan, 16_777_216)?;
+            let mut view = super::server_workflow::inspection(
+                &contract,
+                &plan,
+                deployment.as_deref(),
+                bindings.as_deref(),
+                target,
+            )?;
+            view["executionSession"] = match session {
+                Some(path) => axiom_server::serve::read_json::<axiom_lib::backend::ServerSession>(
+                    path, 65_536,
+                )?
+                .inspection(&contract, &plan)?,
+                None => {
+                    json!({"mode":"not-observed","scope":"declared-plan","requestEvidence":"not-captured","productionInternals":"unknown"})
+                }
+            };
+            match format {
+                InspectorFormat::Json | InspectorFormat::Jsonl => {
+                    println!("{}", serde_json::to_string(&view)?)
+                }
+                InspectorFormat::Human => {
+                    println!(
+                        "Server mode: {} ({}); request evidence: not captured",
+                        view["executionSession"]["mode"]
+                            .as_str()
+                            .unwrap_or("unknown"),
+                        view["executionSession"]["scope"]
+                            .as_str()
+                            .unwrap_or("unknown")
+                    );
+                    println!(
+                        "Target {}: compatible={}, binding review={}",
+                        target,
+                        view["targetAssessment"]["compatible"],
+                        view["targetAssessment"]["requirements"]["bindingsReviewed"]
+                    );
+                    for issue in view["targetAssessment"]["issues"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                    {
+                        println!(
+                            "Target requirement {} at {}: {}",
+                            issue["requirement"], issue["path"], issue["message"]
+                        );
+                    }
+                    println!("Production implementation/provider internals: unknown");
+                    for (section, label) in [("actions", "Action"), ("providers", "Provider")] {
+                        for (name, kind) in view["executionSession"][section]
+                            .as_object()
+                            .into_iter()
+                            .flatten()
+                        {
+                            println!("{label} {name}: {}", kind.as_str().unwrap_or("unknown"));
+                        }
+                    }
+                    println!("Plan {}", plan.sha256()?);
+                }
+            }
+            Ok(())
+        }
         InspectorAction::Backend { path, format } => {
             let evidence = load(path)?;
             render(
@@ -559,8 +669,7 @@ pub async fn handle(action: &InspectorAction) -> Result<()> {
                             | EvidenceNodeKind::CachePolicy
                             | EvidenceNodeKind::RetryPolicy
                             | EvidenceNodeKind::Stream
-                    ) || (node.kind == EvidenceNodeKind::Operation
-                        && node.attributes.get("backend") == Some(&json!(true)))
+                    ) || node.attributes.get("backend") == Some(&json!(true))
                 }),
                 *format,
             )
@@ -1147,7 +1256,9 @@ pub async fn handle(action: &InspectorAction) -> Result<()> {
             let report = changes.as_deref().map(read_change_report).transpose()?;
             if *planner == InspectorPlanner::Jev {
                 if !allow_remote {
-                    bail!("Jev planning is remote; repeat with --allow-remote after reviewing the data boundary");
+                    bail!(
+                        "Jev planning is remote; repeat with --allow-remote after reviewing the data boundary"
+                    );
                 }
                 let receipt = super::inspector_jev::plan(
                     &evidence,
@@ -1894,6 +2005,8 @@ fn workspace_fingerprint(workspace: &Path) -> Result<String> {
     let mut digest = Sha256::new();
     digest.update(INSPECTOR_CACHE_FORMAT.as_bytes());
     digest.update(env!("CARGO_PKG_VERSION").as_bytes());
+    digest.update(acore::editor::project::compiler_identity().as_bytes());
+    digest.update(axiom_lib::observation_evidence::CATALOG_FORMAT.as_bytes());
     let mut total = 0u64;
     for file in files {
         let relative = file.strip_prefix(workspace)?;
@@ -2203,106 +2316,126 @@ mod tests {
             "web,ios",
         ]);
         assert!(parsed.is_ok());
-        assert!(Harness::try_parse_from([
-            "test",
-            "record",
-            ".",
-            "--target",
-            "ios",
-            "--input",
-            "audit.json",
-        ])
-        .is_ok());
-        assert!(Harness::try_parse_from([
-            "test",
-            "runtime",
-            ".",
-            "--session",
-            "latest",
-            "--format",
-            "jsonl",
-        ])
-        .is_ok());
-        assert!(Harness::try_parse_from([
-            "test",
-            "export-audit",
-            ".",
-            "--session",
-            "latest",
-            "--output",
-            "audit.axinspect",
-        ])
-        .is_ok());
+        assert!(
+            Harness::try_parse_from([
+                "test",
+                "record",
+                ".",
+                "--target",
+                "ios",
+                "--input",
+                "audit.json",
+            ])
+            .is_ok()
+        );
+        assert!(
+            Harness::try_parse_from([
+                "test",
+                "runtime",
+                ".",
+                "--session",
+                "latest",
+                "--format",
+                "jsonl",
+            ])
+            .is_ok()
+        );
+        assert!(
+            Harness::try_parse_from([
+                "test",
+                "export-audit",
+                ".",
+                "--session",
+                "latest",
+                "--output",
+                "audit.axinspect",
+            ])
+            .is_ok()
+        );
         assert!(
             Harness::try_parse_from(["test", "serve", ".", "--no-open", "--api-only",]).is_ok()
         );
-        assert!(Harness::try_parse_from([
-            "test",
-            "diff",
-            "before.json",
-            "after.json",
-            "--fail-on",
-            "breaking,permission-increase",
-            "--output",
-            "changes.json",
-        ])
-        .is_ok());
-        assert!(Harness::try_parse_from([
-            "test",
-            "impact",
-            "state:cart.discount_cents",
-            ".",
-            "--against",
-            "after.json",
-            "--format",
-            "json",
-        ])
-        .is_ok());
-        assert!(Harness::try_parse_from([
-            "test",
-            "ask",
-            "what executes when i press primitive:button",
-            ".",
-            "--format",
-            "json",
-        ])
-        .is_ok());
-        assert!(Harness::try_parse_from([
-            "test",
-            "answer",
-            "question.json",
-            ".",
-            "--output",
-            "answer.json",
-        ])
-        .is_ok());
-        assert!(Harness::try_parse_from([
-            "test",
-            "export-inspector",
-            ".",
-            "--key",
-            "key.seed",
-            "--output",
-            "app.axinspect",
-        ])
-        .is_ok());
-        assert!(Harness::try_parse_from([
-            "test",
-            "import-inspector",
-            "app.axinspect",
-            "--output-dir",
-            "verified",
-        ])
-        .is_ok());
-        assert!(Harness::try_parse_from([
-            "test",
-            "release-check",
-            ".",
-            "--enforce",
-            "--format",
-            "json",
-        ])
-        .is_ok());
+        assert!(
+            Harness::try_parse_from([
+                "test",
+                "diff",
+                "before.json",
+                "after.json",
+                "--fail-on",
+                "breaking,permission-increase",
+                "--output",
+                "changes.json",
+            ])
+            .is_ok()
+        );
+        assert!(
+            Harness::try_parse_from([
+                "test",
+                "impact",
+                "state:cart.discount_cents",
+                ".",
+                "--against",
+                "after.json",
+                "--format",
+                "json",
+            ])
+            .is_ok()
+        );
+        assert!(
+            Harness::try_parse_from([
+                "test",
+                "ask",
+                "what executes when i press primitive:button",
+                ".",
+                "--format",
+                "json",
+            ])
+            .is_ok()
+        );
+        assert!(
+            Harness::try_parse_from([
+                "test",
+                "answer",
+                "question.json",
+                ".",
+                "--output",
+                "answer.json",
+            ])
+            .is_ok()
+        );
+        assert!(
+            Harness::try_parse_from([
+                "test",
+                "export-inspector",
+                ".",
+                "--key",
+                "key.seed",
+                "--output",
+                "app.axinspect",
+            ])
+            .is_ok()
+        );
+        assert!(
+            Harness::try_parse_from([
+                "test",
+                "import-inspector",
+                "app.axinspect",
+                "--output-dir",
+                "verified",
+            ])
+            .is_ok()
+        );
+        assert!(
+            Harness::try_parse_from([
+                "test",
+                "release-check",
+                ".",
+                "--enforce",
+                "--format",
+                "json",
+            ])
+            .is_ok()
+        );
     }
 
     #[test]

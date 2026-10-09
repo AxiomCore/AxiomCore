@@ -3,19 +3,22 @@ title: Axiom mock engine
 description: Command and runtime boundary for local contract-backed API simulation.
 ---
 
-`axiom serve [FILE]` starts the Rust mock server for endpoint-level
-`MockConfig` declarations. When `FILE` is omitted, the CLI uses its configured
-Cloud path; pass a file explicitly for a reproducible local workflow.
+`axiom mock FILE.acore --profile contract` starts the Rust contract mock engine
+for endpoint-level `MockConfig` declarations. `axiom serve` now starts real backend
+execution and defaults to local `axiom.acore`; it never downloads Cloud mocks.
+`axiom mock` selects full server simulation when compilation supplies a private
+server plan. `serve --mock` always uses that profile; see
+[Full server simulation](/reference/server-simulation).
 
 ```bash
-axiom serve axiom.acore --port 8080
-axiom serve axiom.acore --port 8080 --debug
+axiom mock axiom.acore --profile contract --port 8080
+axiom mock axiom.acore --profile contract --port 8080 --debug
 ```
 
 The engine supports conditional response selection, static/template/collection/
 echo/store-backed data, delays, bounded network faults, and shared in-memory
-state mutations. Debug output can contain request data; do not enable it in an
-environment carrying secrets.
+state mutations. The new CLI prints redacted startup diagnostics with `--debug`;
+embedded legacy hosts retain their separately configured debug behavior.
 
 See [Mocking APIs](/workflows/mocking-apis) for schema examples, state isolation,
 and validation guidance, and the [base schema reference](/reference/acore-schema-reference#mock-schema)

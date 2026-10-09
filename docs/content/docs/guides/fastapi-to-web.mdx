@@ -36,7 +36,7 @@ object has another name:
 axiom init main.py:app --module axiom-fastapi
 axiom eval axiom.acore
 axiom build axiom.acore
-axiom inspect axiom.axiom
+axiom inspect backend.axiom
 ```
 
 Review route paths and methods, request and response shapes, required fields,
@@ -50,7 +50,7 @@ Run declared contract tests, then start the mock server:
 
 ```bash
 axiom test axiom.acore
-axiom serve axiom.acore --port 8080 --debug
+axiom run axiom.acore --mode mock --port 8080 --debug
 ```
 
 The mock follows authored contract responses and state. It is useful for
@@ -61,7 +61,7 @@ frontend work, but does not replace a test against the real FastAPI service.
 In a second terminal, write the generated ATMX web surface into your frontend:
 
 ```bash
-axiom pull ./axiom.axiom --framework atmx-web --out ./web/axiom
+axiom pull ./backend.axiom --framework atmx-web --out ./web/axiom
 ```
 
 Load the generated entry point according to its emitted README or package
@@ -79,5 +79,5 @@ Before treating the integration as complete, verify:
 - loading, empty, retry, and offline/cache states; and
 - a fresh browser session so cached data does not hide startup failures.
 
-For release review, retain `axiom.acore`, `axiom.axiom`, the relevant lock,
+For release review, retain `axiom.acore`, `backend.axiom`, the relevant lock,
 test output, and the semantic diff from the previous accepted contract.

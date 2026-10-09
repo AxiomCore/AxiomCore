@@ -1,0 +1,144 @@
+---
+title: Frontend application tests
+description: Test authored Acore UI behavior with typed contract scripts and explicit evidence layers.
+---
+
+`axiom ui test` keeps its compiler-session smoke behavior when no suite is
+supplied. It checks loading, a compatible edit and retention of the last good
+build after an invalid edit. It reports zero interaction assertions.
+
+Supply `--suite` to execute application assertions. This requires Node.js 24
+or newer and a compiler/runtime cohort supporting `acore-application-test/v1`
+and `acore-pure/v2`.
+
+```sh
+axiom ui test main.acore --suite application.test.json --target web --layer reference --report reference.json
+axiom ui test main.acore --suite application.test.json --target web --layer adapter --report adapter.json
+```
+
+The `reference` layer executes the resolved owner, data, component and routing
+semantics. The `adapter` layer exercises maintained web input/button bindings
+or the emitted native owner hook and runtime facade on controlled targets.
+Neither layer launches a browser, emulator or simulator. Mounted interactions,
+OS keyboard behavior, accessible trees and paint need separate target tests.
+The report names its suite kind, target, layer, assertion count, skipped and
+unsupported cases, failures, visible semantic tree, requests and owner traces.
+
+## An executable counter
+
+Save the following as `main.acore`:
+
+{/* acore-test-source */}
+```acore
+module examples.testing.counter.ui
+page Home {
+  state count: Int = 0
+  action increment() {count = count + 1}
+  view {
+    Text(to_string(count))
+    Button(label: "Increment",on_press: increment)
+  }
+}
+```
+
+Save this as `application.test.json`:
+
+{/* acore-test-suite */}
+```json
+{
+  "format": "acore-application-test/v1",
+  "name": "Counter",
+  "cases": [{
+    "name": "increment and cleanup",
+    "steps": [
+      {"do":"click","query":{"role":"button","name":"Increment"}},
+      {"do":"expect","query":{"role":"text","text":"1"},"count":1},
+      {"do":"dispose"},
+      {"do":"expect_clean"}
+    ]
+  }]
+}
+```
+
+The documentation CI extracts these exact blocks and executes their assertions
+on all compiler targets at both layers. Compilation alone does not satisfy the
+counter or cleanup assertions.
+
+## Queries, scripts and time
+
+Queries support `role`, `name`, `label`, `text`, `id` and `within`. `id` accepts
+a compiler source semantic ID or a complete runtime instance ID; `within`
+selects an ancestor instance. Repeated nodes need an unambiguous name or
+instance. A control operation requires exactly one match. This controlled
+semantic projection is not a native OS accessibility tree.
+
+Steps include `click`, `type`, `blur`, `submit`, `navigate`, `back`, `advance`,
+`respond`, `publish`, `expect`, `expect_state`, `expect_route`,
+`expect_requests`, `expect_trace`, `dispose` and `expect_clean`. Clicks on
+disabled controls do not invoke actions. Unsupported adapter controls or
+capabilities fail explicitly; they are not counted as successful coverage.
+
+Each case may declare `mocks` using a qualified locked `operation`, optional
+exact `args`, and exactly one typed `result` or `error`. Legacy errors contain a
+declared `code` and a String `message`. Operations with selected failure cases
+use `error: {code: "titleTaken", payload: {message: "Choose another title"}}`.
+The runner validates that exact payload against the selected public case and
+rejects unknown cases, fields or malformed values. `delayMs` schedules a response in
+virtual time; `manual: true` requires a `respond` step identifying the
+zero-based request index. `publish` sends a typed stream value. Scripts never
+grant transport or extension authority to the application. Unexpected calls,
+undeclared errors, wrong arguments/results and unused scripts fail the case.
+
+`advance` processes due callbacks in chronological order. Real sleep does not
+advance the controlled clock. Disposal must leave no active owner, request or
+timer. A failed setup, failed assertion, unsupported case, suite with no
+executed cases or case with no assertions cannot pass. The worker has a
+60-second execution limit, including synchronously blocked adapters.
+
+Logical-submission suites use a secure host key hook in the reference and
+generated-adapter runners. Business randomness and credentials are not replaced
+with seeded test values. The transport remains scripted; this does not establish
+server admission durability.
+
+Current application reports include checked per-case cleanup counts and an
+`executionEvidence` envelope in `axiom-development-execution-evidence/v1`. It binds
+the canonical frontend IR, suite, runner, assertion API, adapter and facade hashes,
+and records nonzero assertions and cleanup. Both reference and generated-adapter
+runs have level `compiler-host`; naming a mobile target does not promote them to
+mounted-target evidence. Native typed scenario reports use the same envelope
+with their exact contract, plan, schema and scenario identities.
+
+## Migration and limits
+
+Existing CI can continue using the compiler smoke command. To claim behavior,
+add a suite and retain its JSON report. Do not label adapter results as mounted
+native qualification. The current web binding adapter covers buttons and text
+inputs; forms can submit through an authored submit button. Element methods,
+extensions and other OS surfaces require an explicit capability or mounted
+target adapter.
+
+F6 retains IR 10 and `acore-ui/v6`, and requires `acore-pure/v2` alongside the
+existing reactive/component/data/application helper formats. Rebuild the CLI,
+hosts and playground together. Pure value validation is bounded to 1,000,000
+JSON nodes/keys, depth 128 and 10,000 Unicode scalars per String; expression
+fuel remains 10,000. `List.slice(start, end)` uses an exclusive end, clamps
+indices, accepts negative indices from the end and returns an empty list when
+the end precedes the start. Larger transport values do not increase computation
+fuel or grant custom callbacks.
+
+
+## Owned operations
+
+Owned-operation tests use controlled adapter futures to prove overlap and drain, and a virtual clock to prove timer ownership, foreground pause, session invalidation, and suppression of stale completion. Durable job recovery requires separate Redis/worker evidence. See the [validation workflow](/acore-language/owned-operations#editor-and-validation-workflow).
+
+## Interpret execution levels
+
+Application suite assertions, compiler smoke and mounted target checks identify
+different behavior. The matching source build also has
+[typed development scenarios](/tooling/axiom-test-runner#typed-development-scenarios)
+for compiled native managed queries, strict synthetic read replies and logical
+policy time. Their `compiler-host` reports require nonzero assertions and clean
+ownership. The initial fixture rejects frontend interaction/state controls;
+continue using the frontend suite runner for click/type/navigation and owned
+view assertions. Actual guest, durable provider and mounted target qualification
+must retain evidence from their executing adapters.

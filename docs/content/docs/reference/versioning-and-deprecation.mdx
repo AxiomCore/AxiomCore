@@ -82,3 +82,46 @@ Upgrade one boundary at a time where practical:
 Use the [release and upgrade workflow](/workflows/release-and-upgrade) for the
 artifact lifecycle and the [support matrix](/introduction/support-matrix) for
 the current maturity of each integration.
+
+## Advanced language metadata
+
+Executable schema/default metadata and selected typed failure descriptors use
+reader version 2. Private advanced language plans use `axiom-server-plan/v2`;
+unknown required capabilities fail before activation. V1 contracts and legacy
+code/message adapters keep their wire meaning. New typed consumers require
+selected payload metadata rather than reconstructing it from old envelopes.
+
+Logical-submission descriptors require contract reader 3. The embedded runtime
+reports its contract reader separately from transport/data ABI 1. Matching UI
+builders retain each contract's `minRuntimeVersion`; browser and native facade
+initialization reject a newer required reader before loading contracts or
+acquiring request owners. A legacy host without this capability reports reader
+1. Use the matching host when a locked operation selects inherited validation,
+typed failures, or logical-submission metadata.
+
+Advanced frontend consumers use the exact UI IR 11/frontend program 2/reader 11
+combination with `axiom-validation-schema/v1`. Plain legacy consumers keep IR
+10/program 1/reader 10. Host frontend compatibility metadata reader 2 advertises
+schema-helper support without changing the native bundle ABI or readiness pins.
+Hosts reject unknown pairs, missing helper capability and attempts to downgrade
+an advanced graph to the legacy pair. Use the matching compiled cohort when
+building and testing; no release channel is promoted by a source change alone.
+
+M3 read caches bind plan, contract, schema, codec, deployment authority and
+verified identity; replacing any of these creates a different cache partition.
+Batch descriptors require a provider that explicitly attests the derived
+correlation envelope and read safety. Sink mappings require their qualified
+transaction/receipt profile. Unknown required features reject activation.
+
+Selected generated extension interfaces use the checked schema and SDK profile
+recorded in the package and build lock. A structural interface match does not
+establish module identity, grants or kernel compatibility. Keep named guest
+resume state, bounded codecs and module/authority digests in the same cohort;
+TypeScript/Python live subscription handles remain unsupported.
+
+`axiom-development-execution-evidence/v1` identifies the actual runner, profile, artifact
+hashes, executed assertion count and cleanup result. Legacy reports without
+this optional envelope remain readable. A compiler smoke report with zero
+application assertions cannot qualify a behavior scenario, guest, durable
+provider or mounted target. Native scenarios accept the explicitly supported
+development fixture profiles and reject unavailable controls.

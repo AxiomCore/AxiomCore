@@ -79,7 +79,7 @@ pub async fn handle_watch_dynamic(build_flag: bool, variant: Option<String>) -> 
                         match key.code {
                             KeyCode::Char('q') | KeyCode::Esc => break,
                             KeyCode::Char('r') => {
-                                refresh_backend(&mut state, &acore_path, variant, build_flag, Path::new("axiom.axiom"));
+                                refresh_backend(&mut state, &acore_path, variant, build_flag, Path::new("backend.axiom"));
                             }
                             _ => {}
                         }
@@ -87,7 +87,7 @@ pub async fn handle_watch_dynamic(build_flag: bool, variant: Option<String>) -> 
                 }
                 Some(event) = rx.recv() => {
                     match event {
-                        Ok(_) => refresh_backend(&mut state, &acore_path, variant, build_flag, Path::new("axiom.axiom")),
+                        Ok(_) => refresh_backend(&mut state, &acore_path, variant, build_flag, Path::new("backend.axiom")),
                         Err(error) => state.watch_error = Some(error.to_string()),
                     }
                 }

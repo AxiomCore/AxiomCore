@@ -15,12 +15,23 @@ while [[ -L "$script_source" ]]; do
 done
 script_dir="$(CDPATH= cd -- "$(dirname -- "$script_source")" && pwd)"
 cli_dir="$(CDPATH= cd -- "$script_dir/.." && pwd)"
-cli_bin="${AXIOM_LOCAL_CLI_BIN:-$cli_dir/target/release/axiom-cli}"
+cli_bin="${AXIOM_LOCAL_CLI_BIN:-}"
+if [[ -z "$cli_bin" ]]; then
+  debug_bin="$cli_dir/target/debug/axiom-cli"
+  release_bin="$cli_dir/target/release/axiom-cli"
+  # A local rebuild should immediately reach this wrapper, regardless of the
+  # chosen Cargo profile. An explicit override remains authoritative.
+  if [[ -x "$debug_bin" && ( ! -x "$release_bin" || "$debug_bin" -nt "$release_bin" ) ]]; then
+    cli_bin="$debug_bin"
+  else
+    cli_bin="$release_bin"
+  fi
+fi
 local_api_url="${AXIOM_LOCAL_API_URL:-http://localhost:8000}"
 local_atmx="${AXIOM_LOCAL_ATMX_PATH:-$cli_dir/../packages/atmx-cli/dist/index.js}"
 
 if [[ ! -x "$cli_bin" ]]; then
-  printf 'Local Axiom CLI is not built. Run: cargo build --release --manifest-path "%s/Cargo.toml"\n' "$cli_dir" >&2
+  printf 'Local Axiom CLI is not built. Run: cargo build --manifest-path "%s/Cargo.toml"\n' "$cli_dir" >&2
   exit 1
 fi
 

@@ -1,6 +1,6 @@
 [package]
 name = "axiom-cli"
-version = "0.148.1"
+version = "0.148.2"
 edition = "2021"
 
 [dependencies]

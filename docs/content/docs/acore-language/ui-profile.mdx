@@ -175,6 +175,14 @@ requiredness, result projections and declared error codes. Older descriptor-free
 locks retain their explicitly bounded compatibility path. UI compilation does not discover a
 live backend as a fallback.
 
+Projected request records keep their public field envelope on web, iOS and
+Android. For example, a contract request projection exposing `completed` sends
+`{"completed": true}`, even when it is the only body field. A single
+unprojected body parameter sends its value as the whole JSON body. Path, query
+and header parameters stay in their declared transport locations. These rules
+come from the verified contract; frontend code does not need to build the HTTP
+payload manually.
+
 ## Actions
 
 Actions support typed parameters, immutable `let` values, `if`/`else`, `guard`,
@@ -297,7 +305,22 @@ Theme tokens and stylesheets are parsed into typed UI records. Their supported
 properties, selectors, at-rules, and datatypes are also exposed by
 `axiom ui capabilities`; browser CSS should not be assumed portable.
 
+
 ### Responsive layouts
+
+For a scrollable body below a heading, let it use the remaining space inside a
+column with an explicit screen height. A fixed body height can extend beyond
+the visible screen and clip its last controls on smaller devices:
+
+```acore
+styles {
+  .screen {height: 100vh; display: flex; flex-direction: column}
+  .body {height: 0px; flex-grow: 1; flex-shrink: 1; min-height: 0px; width: 100%}
+}
+```
+
+Apply `.screen` to the outer container and `.body` to its `ScrollView` child.
+The scroll viewport then fits the space left by the heading and insets.
 
 Acore uses three target-neutral viewport classes measured in logical pixels:
 
@@ -387,7 +410,10 @@ axiom package \
 ```
 
 Target-specific builds are deterministic `.axiomapp` artifacts. Packaging
-combines intact target builds; it does not perform app-store signing.
+combines intact target builds; it does not perform app-store signing. Android host
+release builds verify their generated compiler configuration. Native release
+packages are inspected for local source paths. Android renderer diagnostics retain file basenames
+and line numbers; full machine-specific paths belong only in private build evidence.
 
 Continue with the [Acore UI application lifecycle](/workflows/acore-ui-application-lifecycle).
 
@@ -441,6 +467,8 @@ and form workflows are part of the application profile below.
 ## Shared state, routes and forms
 
 The source-checkout application profile adds explicit app/session/route/component stores, typed path/query navigation, nested layouts with `Outlet`, guarded destinations, and declared discovery/sign-in/sign-out workflows. Unknown and malformed URLs have defined results. Each navigation entry owns its draft; app preferences survive navigation, while session/route/component state clears at its ownership boundary. Versioned preferences/drafts hydrate through bounded platform adapters, expose readiness/failure, and support typed pure migrations and explicit reset. Credentials remain at the transport/secure-store boundary.
+
+On native hosts, mounting an owner publishes the current session snapshot, including discovery updates that completed before the owner subscribed. A session change resets mounted route pages and layouts, releases child component owners, and clears the previous principal's drafts before new component owners mount. These lifecycle rules use the declared owner kind; generated route identifiers do not change ownership semantics.
 
 `form_model` binds typed structured values and a locked mutation. It exposes typed defaults/result, touched/dirty/status, field and summary errors; separates parsing from pure field/cross-field validation; owns debounced declared async validation; and supports stable keyed arrays and typed server-error mapping. Pending submissions dispatch once, failures retain drafts, stale replies cannot overwrite newer input, and route disposal cancels owned work. Controls associate labels/errors, submit on Enter/confirm, focus the first error and announce failures. Native generated-adapter behavior is tested separately from physical keyboard/accessibility certification.
 

@@ -2895,6 +2895,7 @@ fn build_verified_runtime_config_value(
                 "kind": match &operation.kind { UiOperationKind::Query => "query", UiOperationKind::Mutation => "mutation", UiOperationKind::Stream => "stream" },
                 "cacheIdentity": operation.cache_identity,
                 "schema": operation.schema,
+                "requestProjection": operation.request_projection,
                 "invalidates": operation.invalidates,
             })).collect::<Vec<_>>();
             contracts.push(serde_json::json!({
@@ -5381,6 +5382,35 @@ mod tests {
         )
         .expect("contract-free delivery must not read a missing lock");
         assert!(android_loopback_base_urls(&config_value).is_empty());
+    }
+
+    #[test]
+    fn verified_delivery_preserves_projected_request_bodies_on_every_target() {
+        let corpus = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../axiom-ui-host/qualification/corpus");
+        let source = std::fs::read_to_string(corpus.join("dashboard.acore")).unwrap();
+        let lock_path = corpus.join("axiom.ui.lock.json");
+        let lock = axiom_lib::ui_contract::read_lock(&lock_path).unwrap();
+        for target in [UiTarget::Web, UiTarget::Ios, UiTarget::Android] {
+            let compilation = compile_ui_source(&source, &UiCompileOptions {
+                target,
+                lock_path: lock_path.clone(),
+                asset_root: None,
+            });
+            assert!(compilation.is_valid(), "{:?}", compilation.diagnostics);
+            let config = build_verified_runtime_config_value(&compilation, &lock_path).unwrap();
+            let operations = config["contracts"][0]["operations"].as_array().unwrap();
+            for surface in &lock.contracts["tasks"].operations {
+                let delivered = operations.iter().find(|op| op["name"] == surface.name).unwrap();
+                assert_eq!(delivered["requestProjection"], serde_json::json!(surface.request_projection));
+            }
+            let update = operations.iter().find(|op| op["name"] == "update_task").unwrap();
+            assert_eq!(update["requestProjection"], "taskUpdate");
+            assert_eq!(update["schema"]["request"]["completed"]["source"], "body");
+            let build = compilation.virtual_build.unwrap();
+            assert!(build.files["virtual/axiom-facade.ts"].content
+                .contains("requestProjection: \"taskUpdate\""));
+        }
     }
 
     #[test]

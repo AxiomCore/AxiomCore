@@ -68,7 +68,7 @@ fn prepare(
     if !ir.assets.is_empty() || !ir.extension_imports.is_empty() {
         bail!("External assets and extensions are unavailable in portable playground exports");
     }
-    let lock_path = root.join("axiom.ui.lock.json");
+    let lock_path = axiom_lib::project_state::ui_lock(&root);
     write_lock(&lock_path, &lock)?;
     let source_path = root.join("main.acore");
     std::fs::write(&source_path, source)?;

@@ -102,71 +102,25 @@ contract snapshots cannot use the backend Cloud release path.
 `axiom-benchmark.json`. Results describe that machine and checkout; use the
 same inputs and environment when comparing reports.
 
-## Database contracts and inspection
+## Database developer commands
 
-SQLite uses the ordinary offline authoring commands and a separate native family:
-`axiom database sqlite binding-check`, `inspect-live`, `plan`, `sign`,
-`release-verify`, `register`, `apply`, `status`, `verify` and `reconcile`.
-See [SQLite contracts](/acore-language/sqlite-contracts) for private binding,
-external library and complete-prefix requirements. PostgreSQL deployment/history
-formats do not authorize these operations.
-
-Database authoring and experimental lifecycle paths run locally without a Cloud
-session. The exact D9 PostgreSQL production profile adds separately reviewed
-recovery and admission; see [production fleets](/acore-language/database-fleets#named-postgresql-production-admission).
+CLI 0.149.0 detects PostgreSQL/SQLite database contracts through their manifest or typed artifact. Source declares `project(id: "…", version: "1.0.0")`. Use the connection directly; private validation, signing and bookkeeping are internal.
 
 | Command | Purpose |
 | --- | --- |
-| `axiom database check SOURCE` | Validate the explicit database entry and its owning manifest offline. |
-| `axiom database build SOURCE [--out FILE.axiom]` | Build a canonical server-only schema package; default output is `database.axiom` beside SOURCE. |
-| `axiom database inspect SOURCE_OR_PACKAGE` | Inspect declarative schema data without a connection. |
-| `axiom database diff BEFORE AFTER` | Compare desired typed contracts and schema dependencies. |
-| `axiom database fmt SOURCE [--write]` / `catalog` | Format source or describe supported primitives. |
-| `axiom database binding-check DEPLOYMENT` | Validate private connection fields without resolving providers. |
-| `axiom database inspect-live --deployment FILE [--source ENTRY]` | Explicit read-only PostgreSQL catalog observation and optional physical comparison. |
-| `axiom database import-sql INPUT --namespace NAME --database NAME --schema SCHEMA [--out NEW_DIR]` | Prepare reviewable Acore source from bounded static SQL; execute nothing. |
-| `axiom database import-hcl INPUT --namespace NAME --database NAME --schema SCHEMA [--out NEW_DIR]` | Import a static Atlas schema HCL subset without evaluation. |
-| `axiom database adopt --deployment FILE [--source ENTRY] [--out NEW_DIR]` | Prepare source and proposed ownership; register no baseline or ledger. |
-| `axiom database verify-isolation --deployment FILE [--source ENTRY]` | Observe target/dev identities and reject overlapping databases; no mutation. |
-| `axiom database graph INPUT` / `explain INPUT ID` | Show source/package or sanitized inspection dependencies and impact. |
-| `axiom database plan SOURCE --deployment FILE --dev-profile FILE [--baseline empty\|adoption] [--parent DIGEST] [--tests FILE] [--evolution FILE] [--checkpoint BUNDLE]` | Validate a private typed transition on an empty disposable pinned dev database; the target stays read-only. First use requires an explicit baseline; later use defaults to the local candidate head. |
-| `axiom database evolution-check SOURCE --evolution FILE [--previous SOURCE]` | Check bounded typed evolution offline against exact snapshots; emit IDs/counts with no row values or authority. |
-| `axiom database history checkpoint SOURCE --out NEW_DIR [--head DIGEST]` | Export complete schema/data lineage. A separate empty target can use `plan --baseline empty --checkpoint BUNDLE`; retain original history and seed resolved reference data. |
-| `axiom database history export SOURCE --out NEW_DIR [--head DIGEST]` | Export the complete verified private candidate prefix for offline CI without overwriting an existing directory. |
-| `axiom database history verify BUNDLE` | Verify private checksums, canonical bytes, typed statements and chain/state/context bindings offline; grant no apply authority. |
-| `axiom database history import BUNDLE --source SOURCE` | Extend exact local candidate history for the compiled desired package offline; never import an accepted target head. |
-| `axiom database history import-atlas BUNDLE --directory DIR --deployment FILE --revision-schema SCHEMA [--revision-table TABLE] --legacy-stopped` | Verify a read-only Atlas handoff to an unsigned zero-change adoption bundle; preserve exact SQL/checksums/revisions as private signed provenance. |
-| `axiom database release keygen --out NEW_FILE` | Generate a private owner-only Ed25519 key without overwriting a file; print only its public key. |
-| `axiom database release sign BUNDLE --key-file FILE [--allow-destructive] [--allow-data-dependent]` | Sign a complete regenerated prefix after explicit review of required risk findings. |
-| `axiom database release repair-index BUNDLE --deployment FILE --index-id ID --index-oid OID --strategy drop-rebuild-concurrently\|accept-valid --key-file FILE --out NEW_FILE` | Sign an exact pending index-incarnation repair offline. |
-| `axiom database release verify BUNDLE --trusted-key PUBLIC_KEY` | Verify exact prefix/signature against independently configured public trust offline. |
-| `axiom database target binding-check FILE` | Validate the private execution target without resolving providers. |
-| `axiom database target register BUNDLE --deployment FILE` | Enroll a signed empty or no-change adoption baseline; return the incarnation to pin before apply. |
-| `axiom database apply BUNDLE --deployment FILE` | Apply a signed prefix to an explicitly enrolled owned PostgreSQL local/staging target with fresh identity/history/state/ownership checks. |
-| `axiom database target status BUNDLE --deployment FILE` | Observe durable pending/partial/unverified/accepted state and drift without acceptance. |
-| `axiom database target verify BUNDLE --deployment FILE` | Verify that the requested head is accepted and fresh schema/ownership agree; never acknowledge a pending release. |
-| `axiom database target reconcile BUNDLE --deployment FILE [--repair PERMIT]` | Inspect a fresh durable checkpoint and explicitly resume/acknowledge one pending revision; no automatic retry. |
+| `axiom run SOURCE --database-url URL` | Migrate and verify before opening the native SQL console. |
+| `axiom run SOURCE --database-file FILE` | The same workflow for SQLite. |
+| `axiom database migrate SOURCE [--to VERSION]` | Apply pending immutable forward versions. |
+| `axiom database rollback SOURCE --steps 1` | Publish a compensating version restoring an earlier state. |
+| `axiom database rollback SOURCE --to VERSION` | Restore a retained version; `empty` selects the empty baseline. |
+| `axiom database status SOURCE [--check] [--watch]` | Inspect applied/working versions, pending changes and drift. |
+| `axiom database history SOURCE [--watch]` | Inspect version changes, rollbacks and failed attempts. |
+| `axiom database diff SOURCE --from VERSION --to VERSION\|working` | Compare archived or working desired states. |
+| `axiom check SOURCE`, `axiom build SOURCE` | Offline checks and hidden default build artifacts. |
 
-Static imports accept repeated `--schema` and `--postgres-major` (default 17).
-Incomplete coverage cannot emit an adoption project. See
-[Database contracts](/acore-language/database-contracts) for private provider
-shapes, TLS, coverage and the later migration/runtime boundaries.
+Connections accept `--database-url`, or PostgreSQL `--host --port --database --username` with a masked password prompt/`PGPASSWORD`. SQLite accepts `--database-file` or a SQLite URL. In CI use `--non-interactive`; `--auto-version` opts into source version allocation during preparation. Export a complete release with `--export FILE`, then promote it with `--frozen`. `--dry-run` previews; scoped risk flags are `--allow-destructive`, `--allow-data-dependent`, `--allow-security-changes`. `--json` is optional stdout integration.
 
-The advanced PostgreSQL profile uses the same commands and private v3 release
-format. Catalog/graph include typed object interfaces and definition digests;
-generated SQL, routine bodies and foreign endpoint options stay private. Instance
-roles, hooks, casts, extensions and servers require exact private `postgres` scope.
-Role replay requires a separate disposable instance; credential slots resolve only
-at replay/apply/reconcile. Retained partition attachment uses a separate checkpoint
-and explicit reconciliation. Advanced SQL/HCL text and advanced package imports,
-mixed D5 evolution/advanced transitions, tenant fleets and backend queries remain
-outside this profile.
-
-| Command | Purpose |
-| --- | --- |
-| `axiom database fleet recovery-check ARTIFACT --member ID --restored-binding FILE --providers DIR --provider-evidence FILE --trusted-policy-sha256 DIGEST --key-file FILE --out FILE` | Read-only comparison of a populated isolated physical restore and clean enrolled checkpoint; sign a private recovery receipt. |
-| `axiom database fleet admit-production ARTIFACT --recovery FILE [--recovery FILE] --trusted-policy-sha256 DIGEST --key-file FILE --out FILE` | Sign one-hour exact-build admission with a current distinct recovery receipt per production member. |
-| `axiom database fleet run ARTIFACT --inventory FILE --providers DIR --journal DIR --stage production --promotion FILE --production-admission FILE --receipt-key FILE --trusted-policy-sha256 DIGEST` | Execute the named D9 PostgreSQL profile under current reviews, promotion, recovery and live durability gates. |
+`run --no-shell --execute 'SQL'` supports scripts. Console commands are `\dt`, `\d TABLE`, `\conninfo`, `\q`; Ctrl+C cancels input/query and Ctrl+D exits. Default source-owned build state lives under `.axiom/`. Existing advanced plan/apply/signing/recovery subcommands remain callable for retained certified/operator profiles but are hidden from ordinary help. See [Database contracts](/acore-language/database-contracts), [SQLite](/acore-language/sqlite-contracts) and [persistence](/acore-language/database-persistence).
 
 ## Axiom Inspector
 
@@ -455,17 +409,6 @@ Verification, execution and promotion require `--trusted-policy-sha256`; live
 operations require an explicit inventory, private provider root, journal and
 receipt key. See [Database fleets](/acore-language/database-fleets).
 
-## Schema-derived database application operations
+## Source-owned database application operations
 
-`database runtime derive` imports a typed schema offline and emits only explicit `--field API=storage` selections; `--entity` adds an optional domain entity annotation. `prepare` validates a program specification against the schema and public backend/resource interface and writes a private runtime server plan. `impact` follows consumed columns through backend actions/endpoints; `--application` compiles actual UI consumers, while `--application-evidence` reads a matching canonical evidence graph. Missing graphs and opaque native effects remain unknown.
-
-```sh
-axiom database runtime derive --schema database/schema.acore --table app.tasks \
-  --model Task --entity --field id=id --field title=title --field completed=completed --out backend/Task.acore
-axiom database runtime prepare --schema database/schema.acore --contract backend/backend.axiom \
-  --plan backend/axiom.server.json --resource tasks --spec backend/runtime-spec.json --out backend/runtime.server.json
-axiom database runtime impact --plan backend/runtime.server.json --resource tasks \
-  --before database/schema.acore --after database/after.acore --application frontend
-```
-
-See [Database persistence](/acore-language/database-persistence) for private native bindings, exact profile, transaction/tenant/recovery semantics and unsupported operations. None of these offline commands connects to a database or grants migration authority.
+Declare `storage` beside backend resources and start with `axiom run backend/main.acore --database-url "$DATABASE_URL"`. SQLite uses its variant entry and file/default connection. The CLI compiles private plans/bindings internally; frontend artifacts contain the public API. Advanced private transaction fixtures use typed Acore storage documents and retain their qualified operator workflow. See [Database persistence](/acore-language/database-persistence).

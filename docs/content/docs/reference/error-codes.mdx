@@ -99,3 +99,24 @@ field projection are explicit. Unknown/malformed cases are sanitized; execution
 aborts (cancelled, deadline, budget, host fault and indeterminate outcome) remain
 separate from recoverable business cases. New payload contracts require the
 version-2 reader. See [typed outcomes](/acore-language/managed-language).
+
+## Database developer lifecycle
+
+| Code | Meaning and next action |
+| --- | --- |
+| ADB1100 | Declare source `project(id: ..., version: ...)`; remove conflicting duplicate manifest metadata. |
+| ADB1101 | Invalid/tampered artifact, source snapshot or ledger; restore verified history rather than editing internal files. |
+| ADB1102 | Requested migration version/baseline is unavailable; retain the complete catalog or exported prefix. |
+| ADB1103 | Used/nonincreasing contract version; accept the suggestion, update source, or opt into CI `--auto-version`. |
+| ADB1104 | Concurrent publisher, changed parent, or interrupted source edit; inspect/retry against the accepted state. |
+| ADB1105 | Drift, overlapping ownership or unreviewed existing scope; inspect and establish an exact baseline. |
+| ADB1106 | Unsupported engine capability, unavailable/tampered validator runtime, or replay mismatch; no candidate is accepted. |
+| ADB1107 | Invalid/unavailable connection or wrong engine; supply the URL/fields/file for the declared engine. |
+| ADB1108 | Database execution/transport failure; inspect the reported transaction outcome before retrying. |
+| ADB1109 | Missing/different signer; restore the enrolled private signing provider. |
+| ADB1110 | Password required; use the masked terminal prompt or CI secret input. |
+| ADB1111 | Risk category needs approval; use the specific reviewed risk flag in CI. |
+| ADB1112 | Populated rows have no value for a required new column; declare nullable/default/backfill intent. |
+| ADB1113 | Rollback crosses an unrecoverable data overwrite; define compensation or restore a backup. |
+| ADB1120 | Invalid typed backend storage mapping; check exact fields, values and resource signatures. |
+| ADB1121 | Invalid/unsupported bounded typed evolution; use the supported atomic subset or its qualified adapter. |

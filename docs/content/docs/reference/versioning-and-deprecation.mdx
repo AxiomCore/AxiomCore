@@ -125,3 +125,9 @@ this optional envelope remain readable. A compiler smoke report with zero
 application assertions cannot qualify a behavior scenario, guest, durable
 provider or mounted target. Native scenarios accept the explicitly supported
 development fixture profiles and reject unavailable controls.
+
+## Database contract versions
+
+CLI 0.149.0 database migrations use explicit Acore `project(id: "…", version: "1.0.0")`. The version is a numeric three-part value and is declared in the source project block. Database contracts need no profile header; the manifest selects the contract type. Every managed transition binds an immutable identity/version/content/parent definition; schema, private typed data intent and provenance have distinct digests. Reused changed content receives a source-linked conflict and a numeric suggestion; unchanged content is current. Metadata-only releases are shown explicitly.
+
+Interactive Enter acceptance changes the source version literal. CI auto-versioning is explicit during preparation, then frozen promotion preserves the exact release/version across targets. Compensating rollback allocates a new version and retains older history. Backend/project release syntax outside this database migration profile keeps its existing version rules. See [Database contracts](/acore-language/database-contracts).

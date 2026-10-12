@@ -6,6 +6,7 @@ pub mod contract;
 pub mod contract_build;
 pub mod dependencies;
 pub mod database;
+pub mod database_dev;
 pub mod database_runtime;
 pub mod database_sqlite;
 pub mod database_fleet;

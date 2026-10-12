@@ -13,7 +13,7 @@ pub async fn handle_diff(
     let (old_file, new_file) = match file2 {
         Some(f2) => (file1, f2),
         None => {
-            let lockfile = super::backend::baseline_path(&file1, variant_name);
+            let lockfile = super::backend::read_baseline_path(&file1, variant_name);
 
             if !lockfile.exists() {
                 return Err(anyhow!(

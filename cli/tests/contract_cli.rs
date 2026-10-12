@@ -45,7 +45,7 @@ fn project(root: &Path, kind: &str, text: &str) -> std::path::PathBuf {
 }
 
 #[test]
-fn all_contracts_check_without_outputs_and_build_beside_the_input() {
+fn all_contracts_check_without_outputs_and_build_under_the_owning_manifest() {
     let root = tempfile::tempdir().unwrap();
     for (kind, text) in [
         ("backend", BACKEND),
@@ -73,11 +73,11 @@ fn all_contracts_check_without_outputs_and_build_beside_the_input() {
             .join(".axiom")
             .exists());
         success(&run(root.path(), &["build", file]));
-        let output = source.parent().unwrap().join(format!("{kind}.axiom"));
+        let output = source.parent().unwrap().parent().unwrap().join(format!(".axiom/contracts/{kind}.axiom"));
         let before = std::fs::read(&output).unwrap();
         assert!(!before.is_empty());
         assert!(!root.path().join(format!("{kind}.axiom")).exists());
-        assert!(!source
+        assert!(source
             .parent()
             .unwrap()
             .parent()
@@ -201,8 +201,8 @@ fn output_overrides_targets_and_profile_specific_flags_are_enforced() {
         root.path(),
         &["database", "build", database.to_str().unwrap()],
     ));
-    assert!(database.parent().unwrap().join("database.axiom").is_file());
-    assert!(!root.path().join("database project/.axiom").exists());
+    assert!(root.path().join("database project/.axiom/contracts/database.axiom").is_file());
+    assert!(!database.parent().unwrap().join("database.axiom").exists());
 }
 
 #[test]
@@ -242,7 +242,7 @@ fn backend_companion_plan_and_baseline_follow_custom_output_without_stale_plans(
     success(&run(root.path(), &args));
     let artifact = root.path().join("custom/api.axiom");
     let plan = root.path().join("custom/api.server.json");
-    let baseline = source.with_extension("acore.lockfile");
+    let baseline = source.parent().unwrap().parent().unwrap().join(".axiom/baselines/src/main.acore.lockfile");
     let preserved = [&artifact, &plan, &baseline].map(|p| std::fs::read(p).unwrap());
     success(&run(
         root.path(),
@@ -496,7 +496,7 @@ model Task { id: String title: String completed: Bool } also entity
 "#).unwrap();
     let file = source.to_str().unwrap();
     success(&run(root.path(), &["check", file]));
-    let artifact = source.parent().unwrap().join("backend.axiom");
+    let artifact = source.parent().unwrap().parent().unwrap().join(".axiom/contracts/backend.axiom");
     assert!(!artifact.exists());
     success(&run(root.path(), &["build", file]));
     let before = std::fs::read(&artifact).unwrap();

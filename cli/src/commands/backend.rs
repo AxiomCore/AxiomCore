@@ -6,6 +6,12 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 pub fn baseline_path(source: &Path, variant: &str) -> PathBuf {
+    let root=axiom_lib::project_state::root(source);
+    let relative = source.strip_prefix(&root).unwrap_or(source);
+    baseline_variant_path(&root.join(".axiom/baselines").join(relative), variant)
+}
+
+fn baseline_variant_path(source: &Path, variant: &str) -> PathBuf {
     let mut path = source.as_os_str().to_os_string();
     if variant != "default" {
         // Variant names are configuration keys, not filesystem paths.
@@ -22,6 +28,12 @@ pub fn baseline_path(source: &Path, variant: &str) -> PathBuf {
     PathBuf::from(path)
 }
 
+pub fn read_baseline_path(source: &Path, variant: &str) -> PathBuf {
+    let hidden = baseline_path(source, variant);
+    let legacy = baseline_variant_path(source, variant);
+    if hidden.is_file() || !legacy.is_file() { hidden } else { legacy }
+}
+
 pub fn write_baseline(source: &Path, variant: &str, json: &str) -> Result<()> {
     // Reject invalid baselines before touching the previous successful snapshot.
     serde_json::from_str::<serde_json::Value>(json).context("invalid JSON build baseline")?;
@@ -30,6 +42,7 @@ pub fn write_baseline(source: &Path, variant: &str, json: &str) -> Result<()> {
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
+    std::fs::create_dir_all(parent)?;
     let mut temporary = tempfile::NamedTempFile::new_in(parent)
         .with_context(|| format!("create baseline beside {}", path.display()))?;
     temporary.write_all(json.as_bytes())?;
@@ -68,6 +81,7 @@ pub async fn build_to(
     output: &Path,
 ) -> Result<String> {
     super::contract_build::validate_output(output)?;
+    axiom_lib::project_state::import_legacy(source)?;
     dotenvy::dotenv().ok();
     let emit = |status, message| {
         if let Some(tx) = &tx {
@@ -111,6 +125,27 @@ pub async fn build_to(
     }
     let staged_plan = staged.with_extension("server.json");
     if staged_plan.is_file() {
+        let mut private: axiom_lib::backend::ServerPlan=serde_json::from_slice(&std::fs::read(&staged_plan)?)?;
+        if !private.storage.is_empty() {
+            let public: axiom_lib::contract::AxiomFile=serde_json::from_slice(&std::fs::read(&staged)?)?;
+            for storage in private.storage.clone().values() {
+                if let Some(resource)=&storage.resource {
+                    let schema_path=source.parent().unwrap_or(std::path::Path::new(".")).join(&storage.schema);
+                    let (_,schema)=super::database::source(&schema_path)?;
+                    let runtime=axiom_lib::database::runtime::RuntimePlan {
+                        format:axiom_lib::database::runtime::FORMAT.into(),
+                        profile:axiom_lib::database::runtime::DEVELOPMENT_PROFILE.into(),
+                        schema:schema.contract,source_origins:Default::default(),
+                        tenant_claim:storage.tenant_claim.clone(),tenant_column:storage.tenant_column.clone(),operations:storage.operations.clone(),
+                    };
+                    runtime.validate(&public,&private,resource)?;
+                    private.persistence.insert(resource.clone(),runtime);
+                }
+            }
+            if !private.persistence.is_empty() {private.required_capabilities.insert(axiom_lib::backend::Capability::DatabasePersistence);}
+            private.validate(&public)?;
+            std::fs::write(&staged_plan,serde_json::to_vec(&private)?)?;
+        }
         super::contract_build::atomic_write(&plan, &std::fs::read(staged_plan)?)?;
     } else if plan.is_file() {
         let generated = std::fs::File::open(&plan)
@@ -216,7 +251,8 @@ pub fn migrate(source: &Path, output: &Path) -> Result<()> {
     if output.extension().and_then(|extension| extension.to_str()) != Some("acore") {
         bail!("Migration output must use the .acore extension");
     }
-    let sidecar = PathBuf::from(format!("{}.identities.json", output.display()));
+    let sidecar = axiom_lib::project_state::identities(&output);
+    std::fs::create_dir_all(sidecar.parent().unwrap())?;
     if output.exists() || sidecar.exists() {
         bail!(
             "Migration output or its identity sidecar already exists; choose a new output filename"
@@ -433,7 +469,7 @@ mod tests {
         );
         assert_eq!(
             baseline_path(Path::new("contract.acore"), "default"),
-            Path::new("contract.acore.lockfile")
+            Path::new(".axiom/baselines/contract.acore.lockfile")
         );
     }
 
@@ -468,7 +504,7 @@ mod tests {
     fn backend_variant_names_cannot_escape_baseline_directory() {
         let source = Path::new("/tmp/contract.acore");
         let baseline = baseline_path(source, "../../other/mobile");
-        assert_eq!(baseline.parent(), source.parent());
+        assert_eq!(baseline.parent(), Some(Path::new("/tmp/.axiom/baselines")));
         assert!(baseline
             .file_name()
             .unwrap()

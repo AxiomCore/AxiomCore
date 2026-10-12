@@ -28,6 +28,7 @@ pub enum RunMode {
 pub enum AcoreSourceKind {
     Frontend,
     Backend,
+    Database,
 }
 
 #[derive(Debug, Deserialize)]
@@ -47,6 +48,18 @@ fn default_application_version() -> String {
 }
 
 pub fn classify_acore_source(source: &Path) -> Result<AcoreSourceKind> {
+    if source.extension().is_some_and(|e| e == "axiom") {
+        if axiom_database::developer::read_release(source).is_ok() || axiom_database::developer::read_bundle(source).is_ok() {
+            return Ok(AcoreSourceKind::Database);
+        }
+        if let Ok(axiom_lib::package::DecodedAxiomPackage::Package(package)) =
+            axiom_lib::package::decode_axiom_package(&fs::read(source)?)
+        {
+            if axiom_lib::database::contract_from_package(&package).is_ok() {
+                return Ok(AcoreSourceKind::Database);
+            }
+        }
+    }
     let uri = reqwest::Url::from_file_path(source.canonicalize()?)
         .map_err(|_| anyhow::anyhow!("invalid Acore source path"))?;
     if let Some((_, manifest)) =
@@ -55,7 +68,7 @@ pub fn classify_acore_source(source: &Path) -> Result<AcoreSourceKind> {
         if axiom_lib::deps_manifest::authored_contract_type(&manifest)?.as_deref()
             == Some("database")
         {
-            bail!("ADB158: database contracts use axiom database check/build; axiom run cannot execute them");
+            return Ok(AcoreSourceKind::Database);
         }
     }
     if source.extension().and_then(|value| value.to_str()) != Some("acore") {
@@ -249,9 +262,9 @@ pub async fn prepare_frontend(
 ) -> Result<PathBuf> {
     let source = fs::canonicalize(source)
         .with_context(|| format!("resolve frontend source {}", source.display()))?;
-    let root = source
-        .parent()
-        .context("frontend source has no containing directory")?;
+    let owner = axiom_lib::project_state::root(&source);
+    let root = owner.as_path();
+    axiom_lib::project_state::import_legacy(&source)?;
 
     if let Some(lock) = explicit_lock {
         let lock = if lock.is_absolute() {
@@ -269,7 +282,7 @@ pub async fn prepare_frontend(
     let development_root = root.join(".axiom").join("dev");
     fs::create_dir_all(&development_root)?;
     let lock = if frozen {
-        root.join("axiom.ui.lock.json")
+        axiom_lib::project_state::ui_lock(root)
     } else {
         development_root.join("axiom.ui.lock.json")
     };
@@ -319,11 +332,32 @@ pub async fn prepare_frontend(
     Ok(lock)
 }
 
+pub fn frontend_target(source: &Path, explicit: Option<&str>) -> Result<String> {
+    if let Some(target) = explicit {
+        return Ok(target.into());
+    }
+    let root = axiom_lib::project_state::root(source);
+    let configuration = root.join("AcoreUI.json");
+    let targets = if configuration.is_file() {
+        let manifest: axiom_ui::project::Manifest =
+            serde_json::from_slice(&fs::read(configuration)?)?;
+        manifest.targets.iter().map(|t| t.as_str().to_string()).collect::<Vec<_>>()
+    } else if root.join("AxiomDeps.toml").is_file() {
+        axiom_lib::deps_manifest::parse_axiom_deps_v2(&fs::read_to_string(root.join("AxiomDeps.toml"))?)?
+            .targets.iter().map(|t| t.as_str().to_string()).collect::<Vec<_>>()
+    } else { vec![] };
+    Ok(if targets.iter().any(|t| t == "web") {
+        "web".into()
+    } else if let Some(target) = targets.first() {
+        target.clone()
+    } else { "ios".into() })
+}
+
 /// Runtime lock inputs are deliberately confined beneath the lock directory.
 /// A development manifest may reference a sibling backend with `..`, so copy
 /// the already-resolved and verified bytes into the compiler-owned development
 /// directory and make the generated lock point at that safe snapshot.
-fn stage_development_contracts(
+pub(crate) fn stage_development_contracts(
     manifest: &Path,
     lock: &Path,
     resolved: &mut UiContractLock,
@@ -447,6 +481,10 @@ async fn prepare_local_contracts(manifest: &Path) -> Result<()> {
 }
 
 fn local_contract_source(artifact: &Path) -> PathBuf {
+    if artifact.parent().is_some_and(|p|p.ends_with(".axiom/contracts")){
+        let owner=axiom_lib::project_state::root(artifact);
+        for name in ["main.acore","backend.acore","axiom.acore"]{let source=owner.join(name);if source.is_file(){return source;}}
+    }
     if matches!(
         artifact.file_name().and_then(|value| value.to_str()),
         Some("axiom.axiom" | "backend.axiom")
@@ -473,23 +511,11 @@ fn newer_than(source: &Path, artifact: &Path) -> Result<bool> {
 
 async fn build_local_contract(source: &Path, artifact: &Path) -> Result<()> {
     let source = fs::canonicalize(source)?;
-    let root = source.parent().context("contract source has no parent")?;
-    let original = std::env::current_dir()?;
-    std::env::set_current_dir(root)?;
-    let source_name = source
-        .file_name()
-        .and_then(|value| value.to_str())
-        .context("contract source filename is not valid UTF-8")?;
-    let result = axiom_build::core::build::handle_build(source_name, "default", "", "", None).await;
-    std::env::set_current_dir(&original)?;
-    let generated = root.join(result?);
+    if let Some(parent) = artifact.parent() { fs::create_dir_all(parent)?; }
     let artifact = normalized_destination(artifact)?;
-    if generated != artifact {
-        if let Some(parent) = artifact.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::copy(&generated, &artifact)?;
-    }
+    // Compile directly to the owning artifact and private companion. The legacy
+    // builder emitted axiom.axiom/axiom.server.json in the source directory.
+    super::backend::build_to(&source, "default", None, None, &artifact).await?;
     Ok(())
 }
 

@@ -6,7 +6,11 @@ use axiom_lib::ui_contract::{
 use std::path::PathBuf;
 
 pub async fn handle_resolve(deps: PathBuf, lock: PathBuf) -> Result<()> {
-    let next = resolve_manifest(&deps)?;
+    let lock=if lock==std::path::Path::new(".axiom/axiom.ui.lock.json"){deps.parent().unwrap_or(std::path::Path::new(".")).join(&lock)}else{lock};
+    let mut next = resolve_manifest(&deps)?;
+    if lock.parent().is_some_and(|p|p.ends_with(".axiom")){
+       super::run::stage_development_contracts(&deps,&lock,&mut next)?;
+    }
     if lock.is_file() {
         let previous = read_lock(&lock)?;
         let diff = diff_locks(&previous, &next);
@@ -25,6 +29,10 @@ pub async fn handle_resolve(deps: PathBuf, lock: PathBuf) -> Result<()> {
 }
 
 pub async fn handle_verify(deps: PathBuf, lock: PathBuf) -> Result<()> {
+    let lock = if lock == std::path::Path::new(".axiom/axiom.ui.lock.json") {
+        axiom_lib::project_state::read_path(
+            deps.parent().unwrap_or(std::path::Path::new(".")), "axiom.ui.lock.json")
+    } else { lock };
     let lockfile = read_lock(&lock)?;
     verify_lock(&deps, &lockfile)?;
     print_unsigned_warnings(&lockfile);

@@ -39,10 +39,11 @@ pub fn build(path: &Path, out: Option<&Path>) -> Result<()> {
     Ok(())
 }
 pub(super) fn build_artifact(path: &Path, out: Option<&Path>) -> Result<serde_json::Value> {
-    let (_, compiled) = source(path)?;
+    let (root, input) = acore::database::project::load(path, &HashMap::new()).map_err(anyhow::Error::msg)?;
+    let compiled = acore::database::compile(&input).map_err(|e| anyhow::anyhow!(serde_json::to_string_pretty(&e).unwrap_or_default()))?;
     let encoded = axiom_build::core::database::prepare(&compiled.contract, compiled.identity)?;
     let path = out.map(Path::to_path_buf).unwrap_or_else(|| {
-        path.parent().unwrap_or(Path::new(".")).join("database.axiom")
+        root.join(".axiom/contracts/database.axiom")
     });
     if path.extension().is_none_or(|e| e != "axiom") {
         bail!("ADB160: schema output must use .axiom");
@@ -61,6 +62,11 @@ pub(super) fn build_artifact(path: &Path, out: Option<&Path>) -> Result<serde_js
     temp.as_file().sync_all()?;
     temp.persist(&path)
         .map_err(|e| anyhow::anyhow!("write schema artifact: {}", e.error))?;
+    let capsule = path.with_extension("sources.axiom");
+    let mut temp = tempfile::NamedTempFile::new_in(parent)?;
+    temp.write_all(&serde_json::to_vec(&serde_json::json!({"format":"axiom-database-source/v1","sha256":encoded.sha256,"input":input}))?)?;
+    temp.as_file().sync_all()?;
+    temp.persist(&capsule)?;
     Ok(serde_json::json!({"format":"axiom-database-build/v1","profile":database::PROFILE,"artifact":path,"sha256":encoded.sha256,"effects":"offline-only","migrationAuthority":false}))
 }
 pub fn inspect(path: &Path) -> Result<()> {

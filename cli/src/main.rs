@@ -34,7 +34,7 @@ use std::time::Instant;
 )]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Box<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -196,7 +196,7 @@ enum Commands {
         #[arg(long)]
         version: bool,
     },
-    /// Build frontend.axiom, backend.axiom, or database.axiom beside the source
+    /// Build a contract under .axiom/contracts, or export with --out
     Build {
         /// The Acore file to build (defaults to axiom.acore if not provided)
         #[arg(default_value = "axiom.acore")]
@@ -320,7 +320,7 @@ enum Commands {
         #[command(subcommand)]
         action: PackagesAction,
     },
-    /// Author database contracts and explicitly inspect PostgreSQL read-only
+    /// Run and migrate versioned PostgreSQL and SQLite database contracts
     Database {
         #[command(subcommand)]
         action: DatabaseAction,
@@ -340,7 +340,7 @@ enum Commands {
         #[command(subcommand)]
         action: UiAction,
     },
-    /// Run a backend service/mock, frontend UI session, or packaged .axiomapp
+    /// Run a backend, frontend, database SQL console, or packaged .axiomapp
     Run {
         /// Backend/frontend .acore source or a packaged .axiomapp
         source: PathBuf,
@@ -353,12 +353,16 @@ enum Commands {
         /// Backend execution mode; defaults to service for backend sources
         #[arg(long, value_enum)]
         mode: Option<commands::run::RunMode>,
-        /// Backend host address
-        #[arg(long, default_value = "127.0.0.1")]
-        host: String,
-        /// Backend service or mock port
-        #[arg(short, long, default_value = "8080")]
-        port: u16,
+        #[command(flatten)]
+        connection: commands::database_dev::ConnectionArgs,
+        #[command(flatten)]
+        database_policy: commands::database_dev::Policy,
+        /// Apply and verify database migrations without opening the SQL console
+        #[arg(long)]
+        no_shell: bool,
+        /// SQL statement or script to execute after database synchronization
+        #[arg(long)]
+        execute: Option<String>,
         /// Backend contract variant
         #[arg(long)]
         variant: Option<String>,
@@ -444,14 +448,14 @@ enum ContractAction {
     Resolve {
         #[arg(long, default_value = "AxiomDeps.toml")]
         deps: PathBuf,
-        #[arg(long, default_value = "axiom.ui.lock.json")]
+        #[arg(long, default_value = ".axiom/axiom.ui.lock.json")]
         lock: PathBuf,
     },
     /// Recompute and check every AxiomDeps.toml lock input without changing files
     Verify {
         #[arg(long, default_value = "AxiomDeps.toml")]
         deps: PathBuf,
-        #[arg(long, default_value = "axiom.ui.lock.json")]
+        #[arg(long, default_value = ".axiom/axiom.ui.lock.json")]
         lock: PathBuf,
     },
     /// Show semantic changes between two UI contract locks
@@ -459,30 +463,39 @@ enum ContractAction {
     /// Print read-only metadata for one future virtual facade
     Facade {
         alias: String,
-        #[arg(long, default_value = "axiom.ui.lock.json")]
+        #[arg(long, default_value = ".axiom/axiom.ui.lock.json")]
         lock: PathBuf,
     },
     /// Validate `use contract` declarations against only a committed lock
     CheckSource {
         source: PathBuf,
-        #[arg(long, default_value = "axiom.ui.lock.json")]
+        #[arg(long, default_value = ".axiom/axiom.ui.lock.json")]
         lock: PathBuf,
     },
 }
 
 #[derive(Subcommand)]
 enum DatabaseAction {
+    /// Apply pending versioned migrations using a URL or connection fields
+    Migrate(commands::database_dev::MigrateArgs),
+    /// Restore a recorded schema through a new versioned compensating migration
+    Rollback(commands::database_dev::RollbackArgs),
+    /// Inspect applied version, pending changes and drift without migrating
+    Status(commands::database_dev::ReadArgs),
     /// Schema-derived private backend operations and database-to-API impact
+    #[command(hide = true)]
     Runtime {
         #[command(subcommand)]
         command: commands::database_runtime::Action,
     },
     /// Frozen tenant fleets, policy review, offline delivery and drift monitoring
+    #[command(hide = true)]
     Fleet {
         #[command(subcommand)]
         command: commands::database_fleet::Action,
     },
     /// Independently scoped SQLite lifecycle; requires an external engine library
+    #[command(hide = true)]
     Sqlite {
         #[command(subcommand)]
         command: commands::database_sqlite::Action,
@@ -498,7 +511,17 @@ enum DatabaseAction {
     /// Inspect a source contract or schema package without connecting
     Inspect { source: PathBuf },
     /// Compare two source contracts or typed schema packages
-    Diff { before: PathBuf, after: PathBuf },
+    Diff {
+        #[arg(value_name = "CONTRACT")]
+        before: PathBuf,
+        after: Option<PathBuf>,
+        #[arg(long)]
+        from: Option<String>,
+        #[arg(long)]
+        to: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
     /// Format database source; prints to stdout unless --write is supplied
     Fmt {
         source: PathBuf,
@@ -506,10 +529,13 @@ enum DatabaseAction {
         write: bool,
     },
     /// Describe supported offline declaration/type signatures
+    #[command(hide = true)]
     Catalog,
     /// Validate private deployment fields without resolving providers or connecting
+    #[command(hide = true)]
     BindingCheck { deployment: PathBuf },
     /// Explicit read-only PostgreSQL catalog observation (private binding required)
+    #[command(hide = true)]
     InspectLive {
         #[arg(long)]
         deployment: PathBuf,
@@ -517,6 +543,7 @@ enum DatabaseAction {
         source: Option<PathBuf>,
     },
     /// Prepare Acore source from a static SQL schema; never execute SQL
+    #[command(hide = true)]
     ImportSql {
         input: PathBuf,
         #[arg(long)]
@@ -531,6 +558,7 @@ enum DatabaseAction {
         out: Option<PathBuf>,
     },
     /// Prepare Acore source from static Atlas schema HCL; never evaluate HCL
+    #[command(hide = true)]
     ImportHcl {
         input: PathBuf,
         #[arg(long)]
@@ -545,6 +573,7 @@ enum DatabaseAction {
         out: Option<PathBuf>,
     },
     /// Prepare adoption source; does not accept ownership or register a baseline
+    #[command(hide = true)]
     Adopt {
         #[arg(long)]
         deployment: PathBuf,
@@ -554,6 +583,7 @@ enum DatabaseAction {
         out: Option<PathBuf>,
     },
     /// Observe target/dev separation without modifying either database
+    #[command(hide = true)]
     VerifyIsolation {
         #[arg(long)]
         deployment: PathBuf,
@@ -561,10 +591,13 @@ enum DatabaseAction {
         source: Option<PathBuf>,
     },
     /// Show the contract graph or sanitized D2 inspection graph
+    #[command(hide = true)]
     Graph { input: PathBuf },
     /// Explain one contract or catalog object and its dependency impact
+    #[command(hide = true)]
     Explain { input: PathBuf, id: String },
     /// Pure typed evolution checking against selected contract snapshots
+    #[command(hide = true)]
     EvolutionCheck {
         source: PathBuf,
         #[arg(long)]
@@ -573,6 +606,7 @@ enum DatabaseAction {
         evolution: PathBuf,
     },
     /// Generate hidden candidate history after replay on an isolated pinned dev DB
+    #[command(hide = true)]
     Plan {
         source: PathBuf,
         #[arg(long)]
@@ -590,22 +624,32 @@ enum DatabaseAction {
         #[arg(long, conflicts_with = "evolution", requires = "baseline")]
         checkpoint: Option<PathBuf>,
     },
-    /// Export or verify private candidate history without database I/O
+    /// Display version history; advanced legacy subcommands remain available
     History {
         #[command(subcommand)]
-        action: DatabaseHistoryAction,
+        action: Option<DatabaseHistoryAction>,
+        source: Option<PathBuf>,
+        #[command(flatten)]
+        connection: commands::database_dev::ConnectionArgs,
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        watch: bool,
     },
     /// Sign or verify an exact private candidate prefix offline
+    #[command(hide = true)]
     Release {
         #[command(subcommand)]
         action: DatabaseReleaseAction,
     },
     /// Explicit enrollment, status, verification and bounded reconciliation
+    #[command(hide = true)]
     Target {
         #[command(subcommand)]
         action: DatabaseTargetAction,
     },
     /// Apply an authorized prefix to an explicitly enrolled local/staging target
+    #[command(hide = true)]
     Apply {
         bundle: PathBuf,
         #[arg(long)]
@@ -737,20 +781,20 @@ enum PackagesAction {
     Resolve {
         #[arg(long, default_value = "AxiomDeps.toml")]
         deps: PathBuf,
-        #[arg(long, default_value = "AxiomPackages.lock")]
+        #[arg(long, default_value = ".axiom/AxiomPackages.lock")]
         lock: PathBuf,
     },
     /// Re-resolve and verify all locked package bytes and proofs
     Verify {
         #[arg(long, default_value = "AxiomDeps.toml")]
         deps: PathBuf,
-        #[arg(long, default_value = "AxiomPackages.lock")]
+        #[arg(long, default_value = ".axiom/AxiomPackages.lock")]
         lock: PathBuf,
     },
     /// Print one verified locked package envelope
     Inspect {
         alias: String,
-        #[arg(long, default_value = "AxiomPackages.lock")]
+        #[arg(long, default_value = ".axiom/AxiomPackages.lock")]
         lock: PathBuf,
     },
     /// Print a semantic package diff and enforce explicit review approvals
@@ -763,9 +807,9 @@ enum PackagesAction {
     /// Validate package imports and compile the unchanged source for one target
     CheckSource {
         source: PathBuf,
-        #[arg(long, default_value = "AxiomPackages.lock")]
+        #[arg(long, default_value = ".axiom/AxiomPackages.lock")]
         package_lock: PathBuf,
-        #[arg(long, default_value = "axiom.ui.lock.json")]
+        #[arg(long, default_value = ".axiom/axiom.ui.lock.json")]
         ui_lock: PathBuf,
         #[arg(long, default_value = "ios")]
         target: String,
@@ -773,9 +817,9 @@ enum PackagesAction {
     /// Run the package-backed source through the normal target host/session
     Run {
         source: PathBuf,
-        #[arg(long, default_value = "AxiomPackages.lock")]
+        #[arg(long, default_value = ".axiom/AxiomPackages.lock")]
         package_lock: PathBuf,
-        #[arg(long, default_value = "axiom.ui.lock.json")]
+        #[arg(long, default_value = ".axiom/axiom.ui.lock.json")]
         ui_lock: PathBuf,
         #[arg(long, default_value = "ios")]
         target: String,
@@ -925,7 +969,7 @@ enum ExtensionsAction {
     Resolve {
         #[arg(long, default_value = "AxiomDeps.toml")]
         deps: PathBuf,
-        #[arg(long, default_value = "AxiomPackages.lock")]
+        #[arg(long, default_value = ".axiom/AxiomPackages.lock")]
         lock: PathBuf,
     },
     /// Verify signed packages, authority inputs, locks, targets, and provenance offline
@@ -1036,7 +1080,7 @@ enum DependenciesAction {
     Resolve {
         #[arg(long, default_value = "AxiomDeps.toml")]
         deps: PathBuf,
-        #[arg(long, default_value = "AxiomDeps.lock")]
+        #[arg(long, default_value = ".axiom/AxiomDeps.lock")]
         lock: PathBuf,
         #[arg(long)]
         cache: Option<PathBuf>,
@@ -1053,7 +1097,7 @@ enum DependenciesAction {
     },
     /// Validate the canonical lock and every referenced cached byte
     Verify {
-        #[arg(long, default_value = "AxiomDeps.lock")]
+        #[arg(long, default_value = ".axiom/AxiomDeps.lock")]
         lock: PathBuf,
         #[arg(long)]
         cache: Option<PathBuf>,
@@ -1062,7 +1106,7 @@ enum DependenciesAction {
     },
     /// Explain environments, provenance, licenses, advisories, and package scripts
     Inspect {
-        #[arg(long, default_value = "AxiomDeps.lock")]
+        #[arg(long, default_value = ".axiom/AxiomDeps.lock")]
         lock: PathBuf,
         #[arg(long)]
         json: bool,
@@ -1092,7 +1136,7 @@ enum DependencyCacheAction {
         json: bool,
     },
     Recover {
-        #[arg(long, default_value = "AxiomDeps.lock")]
+        #[arg(long, default_value = ".axiom/AxiomDeps.lock")]
         lock: PathBuf,
         #[arg(long)]
         cache: Option<PathBuf>,
@@ -1118,7 +1162,7 @@ enum UiAction {
     /// Parse, validate, and virtually lower a UI module without writing generated source
     Check {
         source: PathBuf,
-        #[arg(long, default_value = "axiom.ui.lock.json")]
+        #[arg(long, default_value = ".axiom/axiom.ui.lock.json")]
         lock: PathBuf,
         #[arg(long, default_value = "ios")]
         target: String,
@@ -1126,7 +1170,7 @@ enum UiAction {
     /// Start the virtual compiler/watch loop. A native transport is required for device rendering.
     Run {
         source: PathBuf,
-        #[arg(long, default_value = "axiom.ui.lock.json")]
+        #[arg(long, default_value = ".axiom/axiom.ui.lock.json")]
         lock: PathBuf,
         #[arg(long, default_value = "ios")]
         target: String,
@@ -1140,7 +1184,7 @@ enum UiAction {
         #[arg(value_enum)]
         view: commands::ui::UiInspectView,
         source: PathBuf,
-        #[arg(long, default_value = "axiom.ui.lock.json")]
+        #[arg(long, default_value = ".axiom/axiom.ui.lock.json")]
         lock: PathBuf,
         #[arg(long, default_value = "ios")]
         target: String,
@@ -1151,7 +1195,7 @@ enum UiAction {
     /// Return compiler-checked compact, redacted semantic context for AI tooling
     Context {
         source: PathBuf,
-        #[arg(long, default_value = "axiom.ui.lock.json")]
+        #[arg(long, default_value = ".axiom/axiom.ui.lock.json")]
         lock: PathBuf,
         #[arg(long, default_value = "ios")]
         target: String,
@@ -1165,7 +1209,7 @@ enum UiAction {
         /// Graph revision on which the proposal was based
         #[arg(long)]
         base: String,
-        #[arg(long, default_value = "axiom.ui.lock.json")]
+        #[arg(long, default_value = ".axiom/axiom.ui.lock.json")]
         lock: PathBuf,
         #[arg(long, default_value = "ios")]
         target: String,
@@ -1192,7 +1236,7 @@ enum UiAction {
     /// Run compiler-session smoke, or an explicit application interaction suite
     Test {
         source: PathBuf,
-        #[arg(long, default_value = "axiom.ui.lock.json")]
+        #[arg(long, default_value = ".axiom/axiom.ui.lock.json")]
         lock: PathBuf,
         #[arg(long, default_value = "ios")]
         target: String,
@@ -1209,7 +1253,7 @@ enum UiAction {
     /// Build a deterministic, target-specific Axiom application artifact
     Build {
         source: PathBuf,
-        #[arg(long, default_value = "axiom.ui.lock.json")]
+        #[arg(long, default_value = ".axiom/axiom.ui.lock.json")]
         lock: PathBuf,
         #[arg(long, default_value = "ios")]
         target: String,
@@ -1322,7 +1366,7 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let start_time = Instant::now();
     // Mode/input errors must precede cloud credentials, registration and I/O.
-    match &cli.command {
+    match &*cli.command {
         Commands::Serve(input) => {
             input.resolve(&std::env::current_dir()?)?;
         }
@@ -1371,7 +1415,7 @@ async fn main() -> anyhow::Result<()> {
     // -------------------------------------------------------------------------
 
     // Allow 'join' command to pass through without a referral code
-    if let Commands::Join { email } = &cli.command {
+    if let Commands::Join { email } = &*cli.command {
         return commands::join::handle_join(email.clone()).await;
     }
 
@@ -1386,7 +1430,7 @@ async fn main() -> anyhow::Result<()> {
     let active_config = if local_cloud
         || local_application_command
         || matches!(
-            &cli.command,
+            &*cli.command,
             Commands::Doctor { .. }
                 | Commands::Benchmark { .. }
                 // Acore UI development is local compiler work. It must not
@@ -1482,7 +1526,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // Extract command name for logging
-    let cmd_name = match &cli.command {
+    let cmd_name = match &*cli.command {
         Commands::Editor { .. } => "editor",
         Commands::Init { .. } => "init",
         Commands::Doctor { .. } => "doctor",
@@ -1990,6 +2034,9 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             },
         },
         Commands::Database { action } => match action {
+            DatabaseAction::Migrate(args) => commands::database_dev::migrate(args, false, None).await,
+            DatabaseAction::Rollback(args) => commands::database_dev::rollback(args).await,
+            DatabaseAction::Status(args) => commands::database_dev::read(args, false).await,
             DatabaseAction::Runtime { command } => commands::database_runtime::run(command),
             DatabaseAction::Sqlite { command } => commands::database_sqlite::run(command),
             DatabaseAction::Fleet { command } => commands::database_fleet::run(command).await,
@@ -1998,7 +2045,13 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                 commands::database::build(source, out.as_deref())
             }
             DatabaseAction::Inspect { source } => commands::database::inspect(source),
-            DatabaseAction::Diff { before, after } => commands::database::diff(before, after),
+            DatabaseAction::Diff { before, after, from, to, json } => {
+                if let Some(after) = after {
+                    commands::database::diff(before, after)
+                } else {
+                    commands::database_dev::diff(before, from.as_deref().ok_or_else(||anyhow::anyhow!("provide --from VERSION"))?, to.as_deref().unwrap_or("working"), *json)
+                }
+            },
             DatabaseAction::Fmt { source, write } => commands::database::format(source, *write),
             DatabaseAction::Catalog => commands::database::catalog(),
             DatabaseAction::BindingCheck { deployment } => {
@@ -2079,27 +2132,31 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                 )
                 .await
             }
-            DatabaseAction::History { action } => match action {
-                DatabaseHistoryAction::Export { source, head, out } => {
+            DatabaseAction::History { action, source, connection, json, watch } => match action {
+                None => commands::database_dev::read(&commands::database_dev::ReadArgs {
+                    source: source.clone().ok_or_else(||anyhow::anyhow!("provide a database contract path"))?,
+                    connection: connection.clone(), json: *json, watch: *watch, check: false,
+                }, true).await,
+                Some(DatabaseHistoryAction::Export { source, head, out }) => {
                     commands::database::history_export(source, head.as_deref(), out)
                 }
-                DatabaseHistoryAction::Checkpoint { source, head, out } => {
+                Some(DatabaseHistoryAction::Checkpoint { source, head, out }) => {
                     commands::database::history_checkpoint(source, head.as_deref(), out)
                 }
-                DatabaseHistoryAction::Verify { bundle } => {
+                Some(DatabaseHistoryAction::Verify { bundle }) => {
                     commands::database::history_verify(bundle)
                 }
-                DatabaseHistoryAction::Import { bundle, source } => {
+                Some(DatabaseHistoryAction::Import { bundle, source }) => {
                     commands::database::history_import(bundle, source)
                 }
-                DatabaseHistoryAction::ImportAtlas {
+                Some(DatabaseHistoryAction::ImportAtlas {
                     bundle,
                     directory,
                     deployment,
                     revision_schema,
                     revision_table,
                     legacy_stopped,
-                } => {
+                }) => {
                     commands::database::history_import_atlas(
                         bundle,
                         directory,
@@ -2332,8 +2389,10 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             lock,
             target,
             mode,
-            host,
-            port,
+            connection,
+            database_policy,
+            no_shell,
+            execute,
             debug,
             frozen,
             once,
@@ -2364,6 +2423,12 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                 commands::app::handle_run(source.clone(), target.clone(), *launch).await
             } else {
                 match commands::run::classify_acore_source(source)? {
+                    commands::run::AcoreSourceKind::Database => {
+                        if target.is_some() || mode.is_some() || *launch || *watch {
+                            anyhow::bail!("database run accepts connection, migration and SQL options; use database status --watch to monitor changes");
+                        }
+                        commands::database_dev::run(source, connection, database_policy, *frozen, *no_shell || *once, execute.as_deref()).await
+                    }
                     commands::run::AcoreSourceKind::Backend => {
                         if target.is_some() {
                             anyhow::bail!("--target applies to frontend .acore sources, not backend execution");
@@ -2376,11 +2441,13 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                         if *launch {
                             anyhow::bail!("--launch applies to frontend .acore sources, not backend execution");
                         }
-                        commands::run::handle_backend(
+                        if commands::database_dev::has_storage(source) && deployment.is_none() && mode.unwrap_or(commands::run::RunMode::Service)==commands::run::RunMode::Service {
+                            commands::database_dev::run_backend(source,connection,database_policy,variant.as_deref(),connection.host.as_deref().unwrap_or("127.0.0.1"),connection.port.unwrap_or(8080),*debug).await
+                        } else { commands::run::handle_backend(
                             source.clone(),
                             mode.unwrap_or(commands::run::RunMode::Service),
-                            host.clone(),
-                            *port,
+                            connection.host.clone().unwrap_or_else(||"127.0.0.1".into()),
+                            connection.port.unwrap_or(8080),
                             *debug,
                             variant.clone(),
                             deployment.clone(),
@@ -2391,6 +2458,7 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                             *watch,
                         )
                         .await
+                        }
                     }
                     commands::run::AcoreSourceKind::Frontend => {
                         if mode.is_some()
@@ -2409,10 +2477,16 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                         let prepared_lock =
                             commands::run::prepare_frontend(source, lock.as_deref(), *frozen)
                                 .await?;
+                        let selected_target = commands::run::frontend_target(source, target.as_deref())?;
+                        if selected_target == "web" {
+                            if let Some(port) = connection.port {
+                                std::env::set_var("AXIOM_UI_WEB_PORT", port.to_string());
+                            }
+                        }
                         commands::ui::handle_run(
                             source.clone(),
                             prepared_lock,
-                            target.clone().unwrap_or_else(|| "ios".to_string()),
+                            selected_target,
                             *once,
                             *launch,
                         )
@@ -3214,14 +3288,14 @@ mod launch_tests {
         let default =
             Cli::try_parse_from(["axiom", "run", "main.acore", "--target", "web"]).unwrap();
         assert!(matches!(
-            default.command,
+            *default.command,
             Commands::Run { launch: false, .. }
         ));
         let explicit =
             Cli::try_parse_from(["axiom", "run", "main.acore", "--target", "web", "--launch"])
                 .unwrap();
         assert!(matches!(
-            explicit.command,
+            *explicit.command,
             Commands::Run { launch: true, .. }
         ));
         assert!(Cli::try_parse_from(["axiom", "run", "main.acore", "--once", "--launch"]).is_err());

@@ -1,6 +1,6 @@
 [package]
 name = "axiom-cli"
-version = "0.148.2"
+version = "0.149.0"
 edition = "2021"
 
 [dependencies]
@@ -68,3 +68,8 @@ mime_guess = "2"
 zip = "0.6"
 tempfile = "3.8"
 dotenvy = "0.15"
+
+# The large derived command tree otherwise retains oversized temporary builder
+# frames in unoptimized test code. Exercise the parser with release-like frames.
+[profile.test.package.axiom-cli]
+opt-level = 1

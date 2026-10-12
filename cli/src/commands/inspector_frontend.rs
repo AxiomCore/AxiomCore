@@ -88,10 +88,10 @@ fn compile_source(root: &Path, path: &Path, evidence: &mut ApplicationEvidence) 
     let source = fs::read_to_string(path)?;
     let relative = slash(path.strip_prefix(root)?);
     let parent = path.parent().context("Acore source has no parent")?;
-    let lock = parent.join("axiom.ui.lock.json");
+    let lock = axiom_lib::project_state::ui_lock(parent);
     let generated_lock = parent.join(".axiom/dev/axiom.ui.lock.json");
     let lock = if lock.is_file() { lock } else { generated_lock };
-    let package_lock = parent.join("AxiomPackages.lock");
+    let package_lock = axiom_lib::project_state::read_path(parent,"AxiomPackages.lock");
     let reference = EvidenceReference {
         kind: "source-span".into(),
         path: Some(relative.clone()),

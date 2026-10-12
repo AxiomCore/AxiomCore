@@ -2307,6 +2307,7 @@ fn compile_path(source: &Path, lock: PathBuf, target: UiTarget) -> Result<UiComp
 }
 
 fn compile_path_unchecked(source: &Path, lock: PathBuf, target: UiTarget) -> Result<UiCompilation> {
+    let lock=if lock==Path::new(".axiom/axiom.ui.lock.json"){axiom_lib::project_state::ui_lock(&axiom_lib::project_state::root(source))}else{lock};
     let text = read_ui_source(source)?;
     let result = compile_ui_source_at_path(
         &text,
@@ -2819,6 +2820,7 @@ fn axiom_ui_cache_base() -> Result<PathBuf> {
         }
         return Ok(root);
     }
+    if let Ok(exe)=std::env::current_exe(){if let Some(parent)=exe.parent(){let bundled=parent.join("ui-cache");if bundled.is_dir(){return Ok(bundled);}}}
     Ok(dirs::cache_dir()
         .ok_or_else(|| anyhow::anyhow!("cannot determine local cache directory"))?
         .join("axiom"))
@@ -3177,6 +3179,30 @@ fn development_runtime_config_value(
     target: UiTarget,
 ) -> Result<serde_json::Value> {
     let mut config = build_application_runtime_config_value(compilation, lock_path, assembly)?;
+    if target == UiTarget::Web {
+        use ed25519_dalek::Signer;
+        static KEY: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();
+        let seed = match KEY.get() {
+            Some(seed) => *seed,
+            None => {
+                let seed = axiom_database::developer::ephemeral_signing_seed()?;
+                let _ = KEY.set(seed);
+                *KEY.get().unwrap()
+            }
+        };
+        let key = ed25519_dalek::SigningKey::from_bytes(&seed);
+        for contract in config["contracts"].as_array_mut().into_iter().flatten() {
+            if contract["verified"] == false {
+                let bytes = BASE64.decode(contract["artifactBase64"].as_str()
+                    .context("local development artifact bytes unavailable")?)?;
+                contract["signature"] = BASE64.encode(key.sign(&Sha256::digest(&bytes)).to_bytes()).into();
+                contract["publicKey"] = BASE64.encode(key.verifying_key().to_bytes()).into();
+                contract["signatureAuthority"] = "local-development".into();
+                // Keep verified=false. This authenticates local bytes for
+                // the decoder without claiming published release authority.
+            }
+        }
+    }
     let mut directory = source
         .parent()
         .filter(|value| !value.as_os_str().is_empty())
@@ -5160,8 +5186,10 @@ mod tests {
     fn host_metadata_reader_rejects_partial_or_unknown_legacy_release() {
         let mut release = manifest(vec![asset("web", "browser", "host.zip")]);
         select_release_asset(&release, UiTarget::Web, None, true).unwrap();
-        release.version = "0.6.11".into();
+        release.toolchain = None;
         assert!(select_release_asset(&release, UiTarget::Web, None, true).unwrap_err().to_string().contains("LYNX_BUNDLE_INCOMPATIBLE"));
+        release.assets[0].compatibility = None;
+        assert!(select_release_asset(&release, UiTarget::Web, None, true).is_err());
         release.toolchain = Some(frontend_toolchain::supported_metadata());
         assert!(select_release_asset(&release, UiTarget::Web, None, true).is_err());
     }
@@ -5249,22 +5277,39 @@ mod tests {
     }
 
     fn asset(target: &str, variant: &str, file: &str) -> UiHostReleaseAsset {
+        let metadata = frontend_toolchain::supported_metadata();
+        let native = target != "web";
         UiHostReleaseAsset {
             target: target.to_string(),
             variant: variant.to_string(),
             file: file.to_string(),
             sha256: "a".repeat(64),
-            compatibility: None,
+            compatibility: Some(HostCompatibility {
+                format: "axiom-ui-host-compatibility/v1".into(),
+                target: target.into(),
+                rendering_backend: if native { "lynx-native" } else { "acore-dom" }.into(),
+                artifact: frontend_toolchain::ArtifactIdentity {
+                    path: file.into(), sha256: format!("sha256:{}", "a".repeat(64)),
+                    media_type: if target == "android" { "application/vnd.android.package-archive" }
+                        else { "application/zip" }.into(),
+                },
+                frontend_toolchain_id: metadata.frontend_toolchain_id.clone(),
+                engine_commit: native.then_some(metadata.engine_commit.clone()),
+                engine_version: native.then_some(metadata.engine_version.clone()),
+                accepted_bundle_toolchain_ids: vec![metadata.frontend_toolchain_id.clone()],
+                compatibility: metadata.compatibility,
+                minimum_bundle_reader: 1,
+            }),
         }
     }
 
     fn manifest(assets: Vec<UiHostReleaseAsset>) -> UiHostReleaseManifest {
         UiHostReleaseManifest {
             format: "axiom-ui-host-release/v1".to_string(),
-            version: "0.6.10".to_string(),
+            version: "0.6.11".to_string(),
             assets,
             engine: Some(UiHostEngine { commit: LYNX_ENGINE_COMMIT.into() }),
-            toolchain: None,
+            toolchain: Some(frontend_toolchain::supported_metadata()),
         }
     }
 
@@ -5568,6 +5613,8 @@ page Home { view { Page { Card() } } }
             ("host.css".to_string(), b"body{}".to_vec()),
             ("host.js".to_string(), b"// static host".to_vec()),
             ("acore-pure.js".to_string(), b"export {}".to_vec()),
+            ("acore-schema.js".to_string(), b"export {}".to_vec()),
+            ("acore-observation.js".to_string(), b"export {}".to_vec()),
             ("acore-dom.js".to_string(), b"export {}".to_vec()),
             ("acore-reactive.js".to_string(), b"export {}".to_vec()),
             ("acore-components.js".to_string(), b"export {}".to_vec()),

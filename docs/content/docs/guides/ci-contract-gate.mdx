@@ -69,3 +69,17 @@ Retain:
 Do not publish credentials, raw authorization headers, cookies, sandbox keys,
 private source, or developer home-directory paths as CI artifacts. Release to
 Cloud in a distinct authorized job after the local gate has passed.
+
+## Versioned database preparation and promotion
+
+Pin CLI 0.149.0 and its matching runtime assets. Serialize contract publication in one authoring job. Source declares its database ID/version; Axiom manages isolated validation and hidden state.
+
+```sh
+axiom database migrate database/schema.acore --database-url "$CI_DATABASE_URL" \
+  --auto-version --non-interactive --export release.axiom
+axiom database migrate release.axiom --database-url "$STAGING_DATABASE_URL" \
+  --frozen --non-interactive
+axiom database status release.axiom --database-url "$STAGING_DATABASE_URL" --check
+```
+
+Use `--allow-destructive`, `--allow-data-dependent` and `--allow-security-changes` only for reviewed categories. CI never prompts or waits for missing credentials/version approval. Unchanged source does not bump; frozen promotion never allocates independently in each environment. Retain the source edit/non-secret hidden migration catalog or exact exported bundle. Inject signing authorization through the CI secret provider and retain enrolled trust; do not commit keys or connection bindings. PostgreSQL production delivery continues to require its separately qualified admission/recovery policy.

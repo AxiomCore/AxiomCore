@@ -162,7 +162,10 @@ pub fn run(a: &Action) -> Result<()> {
             let public: AxiomFile = axiom_server::serve::read_json(contract, 16_777_216)?;
             let mut server: ServerPlan = axiom_server::serve::read_json(plan, 16_777_216)?;
             server.validate(&public)?;
-            let mut spec: serde_json::Value = axiom_server::serve::read_json(spec, 4_194_304)?;
+            let mut spec:serde_json::Value=if spec.extension().is_some_and(|e|e=="acore"){
+                let storage=acore::backend::storage::compile(&std::fs::read_to_string(&spec)?)?;
+                serde_json::json!({"format":axiom_lib::database::runtime::FORMAT,"profile":axiom_lib::database::runtime::PROFILE,"tenantClaim":storage.tenant_claim,"tenantColumn":storage.tenant_column,"operations":storage.operations})
+            }else{axiom_server::serve::read_json(spec,4_194_304)?};
             if spec.get("schema").is_some() {
                 bail!("ADB1000: schema authority must come from --schema");
             }

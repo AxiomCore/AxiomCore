@@ -191,7 +191,7 @@ fn compile_frontend(
     targets.sort_by_key(|target| target.as_str());
     targets.dedup();
     let lock = options.lock.map(Path::to_path_buf).unwrap_or_else(|| {
-        let committed = source.root.join("axiom.ui.lock.json");
+        let committed = axiom_lib::project_state::ui_lock(&source.root);
         let development = source.root.join(".axiom/dev/axiom.ui.lock.json");
         if !committed.is_file() && development.is_file() {
             development
@@ -282,9 +282,10 @@ pub fn validate_output(path: &Path) -> Result<()> {
 pub async fn build(file: &Path, output: Option<&Path>, options: Options<'_>) -> Result<PathBuf> {
     let source = source(file)?;
     validate_options(source.kind, options)?;
+    axiom_lib::project_state::import_legacy(&source.path)?;
     let output = output
         .map(Path::to_path_buf)
-        .unwrap_or_else(|| parent(file).join(format!("{}.axiom", source.kind.name())));
+        .unwrap_or_else(|| source.root.join(".axiom/contracts").join(format!("{}.axiom", source.kind.name())));
     validate_output(&output)?;
     match source.kind {
         Kind::Backend => {
@@ -369,7 +370,8 @@ pub fn inspect(path: &Path) -> Result<bool> {
                 || contract
                     .targets
                     .iter()
-                    .any(|ir| ir.format != axiom_ui::UI_IR_FORMAT || ir.module != contract.module)
+                    .any(|ir| ![axiom_ui::UI_IR_FORMAT, axiom_ui::LEGACY_UI_IR_FORMAT]
+                        .contains(&ir.format.as_str()) || ir.module != contract.module)
             {
                 bail!("Unsupported or inconsistent frontend contract snapshot");
             }

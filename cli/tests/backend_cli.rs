@@ -66,7 +66,7 @@ endpoint list(method: GET, path: "/tasks") {
     )
     .unwrap();
     success(&cli(directory.path(), &["build", "axiom.acore"], true));
-    std::fs::write(directory.path().join("AxiomDeps.toml"), "type = \"backend\"\naudiences = [\"mobile\"]\n[contracts.tasks]\nartifact = \"backend.axiom\"\nbaseUrl = \"http://localhost:8080\"\n").unwrap();
+    std::fs::write(directory.path().join("AxiomDeps.toml"), "type = \"backend\"\naudiences = [\"mobile\"]\n[contracts.tasks]\nartifact = \".axiom/contracts/backend.axiom\"\nbaseUrl = \"http://localhost:8080\"\n").unwrap();
     for action in ["resolve", "verify"] {
         let result = Command::new(env!("CARGO_BIN_EXE_axiom-cli"))
             .current_dir(directory.path())
@@ -79,7 +79,7 @@ endpoint list(method: GET, path: "/tasks") {
         success(&result);
     }
     let lock: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(directory.path().join("axiom.ui.lock.json")).unwrap(),
+        &std::fs::read_to_string(directory.path().join(".axiom/axiom.ui.lock.json")).unwrap(),
     )
     .unwrap();
     assert_eq!(lock["contracts"]["tasks"]["audience"], "mobile");
@@ -225,7 +225,7 @@ fn ci_and_nonterminal_builds_write_json_and_diff_without_cloud_access() {
         let source = directory.path().join("axiom.acore");
         std::fs::write(&source, SOURCE).unwrap();
         success(&cli(directory.path(), &["build"], ci));
-        let original = std::fs::read(source.with_extension("acore.lockfile")).unwrap();
+        let original = std::fs::read(directory.path().join(".axiom/baselines/axiom.acore.lockfile")).unwrap();
         let json: serde_json::Value = serde_json::from_slice(&original).unwrap();
         assert_eq!(json["endpoints"].as_object().unwrap().len(), 2);
 
@@ -235,13 +235,13 @@ fn ci_and_nonterminal_builds_write_json_and_diff_without_cloud_access() {
             ci,
         ));
         let mobile: serde_json::Value = serde_json::from_slice(
-            &std::fs::read(directory.path().join("axiom.acore.mobile.lockfile")).unwrap(),
+            &std::fs::read(directory.path().join(".axiom/baselines/axiom.acore.mobile.lockfile")).unwrap(),
         )
         .unwrap();
         assert_eq!(mobile["endpoints"].as_object().unwrap().len(), 1);
         assert!(mobile["endpoints"].get("getProject").is_some());
         assert_eq!(
-            std::fs::read(source.with_extension("acore.lockfile")).unwrap(),
+            std::fs::read(directory.path().join(".axiom/baselines/axiom.acore.lockfile")).unwrap(),
             original
         );
         for variant in ["default", "mobile"] {
@@ -269,7 +269,7 @@ fn ci_and_nonterminal_builds_write_json_and_diff_without_cloud_access() {
         let failure = cli(directory.path(), &["build"], ci);
         assert!(!failure.status.success());
         assert_eq!(
-            std::fs::read(source.with_extension("acore.lockfile")).unwrap(),
+            std::fs::read(directory.path().join(".axiom/baselines/axiom.acore.lockfile")).unwrap(),
             original
         );
     }
@@ -402,7 +402,7 @@ fn migration_preserves_explicit_identity_and_checks_all_variants_before_writing(
     );
     assert!(!new.contains("id: 91"));
     let identities: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(directory.path().join("new.acore.identities.json")).unwrap(),
+        &std::fs::read(directory.path().join(".axiom/identities/new.acore.identities.json")).unwrap(),
     )
     .unwrap();
     assert_eq!(identities["endpoints"]["GetProject"]["id"], 91);
@@ -443,7 +443,7 @@ fn unsupported_migration_never_writes_partial_source_or_identity_files() {
     );
     assert!(!migrated.status.success());
     assert!(!directory.path().join("new.acore").exists());
-    assert!(!directory.path().join("new.acore.identities.json").exists());
+    assert!(!directory.path().join(".axiom/identities/new.acore.identities.json").exists());
 }
 
 #[tokio::test]

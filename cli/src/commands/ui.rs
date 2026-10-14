@@ -44,6 +44,9 @@ use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, mpsc};
 
+#[path = "ui_host_lifecycle.rs"]
+mod host_lifecycle;
+
 const UI_HOST_GITHUB_REPOSITORY: &str = "AxiomCore/AxiomCore";
 const UI_HOST_RELEASE_TAG_PREFIX: &str = "ui-host-v";
 // Exact pin data and complete npm inputs are generated from the host authority.
@@ -330,6 +333,8 @@ struct UiHostReleaseManifest {
     engine: Option<UiHostEngine>,
     #[serde(default)]
     toolchain: Option<FrontendMetadata>,
+    #[serde(default)]
+    lynx_qualification: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -351,6 +356,8 @@ struct UiHostReleaseAsset {
 #[derive(Debug, Deserialize)]
 struct GitHubRelease {
     tag_name: String,
+    draft: bool,
+    prerelease: bool,
     assets: Vec<GitHubReleaseAsset>,
 }
 
@@ -361,7 +368,11 @@ struct GitHubReleaseAsset {
 }
 
 fn ui_host_release_version(tag: &str) -> Option<[u64; 3]> {
-    let mut parts = tag.strip_prefix(UI_HOST_RELEASE_TAG_PREFIX)?.split('.');
+    let text = tag.strip_prefix(UI_HOST_RELEASE_TAG_PREFIX)?;
+    if text.split('.').any(|part| part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit()) || part.len() > 1 && part.starts_with('0')) {
+        return None;
+    }
+    let mut parts = text.split('.');
     let version = [
         parts.next()?.parse().ok()?,
         parts.next()?.parse().ok()?,
@@ -370,8 +381,8 @@ fn ui_host_release_version(tag: &str) -> Option<[u64; 3]> {
     parts.next().is_none().then_some(version)
 }
 
-async fn latest_ui_host_release(client: &reqwest::Client) -> Result<GitHubRelease> {
-    let mut latest: Option<([u64; 3], GitHubRelease)> = None;
+async fn ui_host_releases(client: &reqwest::Client) -> Result<Vec<GitHubRelease>> {
+    let mut available = Vec::new();
     for page in 1..=20 {
         let response = client
             .get(format!(
@@ -388,13 +399,8 @@ async fn latest_ui_host_release(client: &reqwest::Client) -> Result<GitHubReleas
             .context("AxiomCore release metadata is invalid")?;
         let count = releases.len();
         for release in releases {
-            if let Some(version) = ui_host_release_version(&release.tag_name) {
-                if latest
-                    .as_ref()
-                    .is_none_or(|(current, _)| version > *current)
-                {
-                    latest = Some((version, release));
-                }
+            if !release.draft && !release.prerelease && ui_host_release_version(&release.tag_name).is_some() {
+                available.push(release);
             }
         }
         if count < 100 {
@@ -404,11 +410,57 @@ async fn latest_ui_host_release(client: &reqwest::Client) -> Result<GitHubReleas
             bail!("too many AxiomCore releases to locate the latest UI Host safely");
         }
     }
-    latest.map(|(_, release)| release).ok_or_else(|| {
-        anyhow::anyhow!(
-            "no public UI Host release was found in {UI_HOST_GITHUB_REPOSITORY}; publish a signed ui-host-v* release before installing"
-        )
-    })
+    available.sort_by_key(|release| std::cmp::Reverse(ui_host_release_version(&release.tag_name)));
+    Ok(available)
+}
+
+async fn signed_ui_host_metadata(client: &reqwest::Client, release: &GitHubRelease, target: UiTarget)
+    -> Result<(PathBuf, UiHostReleaseManifest)> {
+    if release.draft || release.prerelease || ui_host_release_version(&release.tag_name).is_none() {
+        bail!("AXIOM_UI_HOST_RELEASE_INVALID: select a published stable host tag");
+    }
+    let directory = ui_host_record_path(target)?.parent().context("host record has no parent")?
+        .join("downloads").join(&release.tag_name);
+    std::fs::create_dir_all(&directory)?;
+    let temporary = tempfile::Builder::new().prefix(".metadata-").tempdir_in(&directory)?;
+    let path = temporary.path().join("host-manifest.json");
+    for name in ["host-manifest.json", "host-manifest.json.sig"] {
+        let asset = release.assets.iter().find(|asset| asset.name == name)
+            .with_context(|| format!("{} is missing {name}", release.tag_name))?;
+        std::fs::write(temporary.path().join(name), download_release_asset(client, asset).await?)?;
+    }
+    verify_release_manifest_signature(&path)?;
+    let manifest: UiHostReleaseManifest = serde_json::from_slice(&std::fs::read(&path)?)?;
+    if ui_host_release_version(&release.tag_name) != ui_host_release_version(&format!("{UI_HOST_RELEASE_TAG_PREFIX}{}",manifest.version)) {
+        bail!("AXIOM_UI_HOST_RELEASE_CHANGED: signed manifest version differs from its published tag");
+    }
+    for name in ["host-manifest.json", "host-manifest.json.sig"] {
+        let saved = directory.join(name);
+        if saved.exists() && std::fs::read(&saved)? != std::fs::read(temporary.path().join(name))? {
+            bail!("AXIOM_UI_HOST_RELEASE_CHANGED: previously observed signed metadata changed");
+        }
+        if !saved.exists() { std::fs::copy(temporary.path().join(name), &saved)?; }
+    }
+    Ok((directory.join("host-manifest.json"),manifest))
+}
+
+async fn compatible_ui_host_release(client: &reqwest::Client, target: UiTarget, variant: Option<&str>) -> Result<GitHubRelease> {
+    let mut rejected = Vec::new();
+    for release in ui_host_releases(client).await? {
+        if host_lifecycle::is_quarantined(target,release.tag_name.trim_start_matches(UI_HOST_RELEASE_TAG_PREFIX))? {
+            rejected.push(release.tag_name);continue;
+        }
+        let (_, manifest) = signed_ui_host_metadata(client,&release,target).await
+            .with_context(|| format!("AXIOM_UI_HOST_RELEASE_UNVERIFIED: {} metadata could not be authenticated",release.tag_name))?;
+        if manifest.lynx_qualification.is_none() || !version_at_least(&manifest.version,host_protocol_minimum(target)) {
+            rejected.push(release.tag_name); continue;
+        }
+        match select_release_asset(&manifest,target,variant,true) {
+            Ok(_) => return Ok(release),
+            Err(_) => rejected.push(release.tag_name),
+        }
+    }
+    bail!("LYNX_BUNDLE_INCOMPATIBLE: no qualified signed {} host supports this CLI's toolchain {} and IR/helpers. Reviewed {} release(s). Select an exact compatible --version or install its matching CLI; published hosts are at https://github.com/{UI_HOST_GITHUB_REPOSITORY}/releases",target.as_str(),frontend_toolchain::supported_metadata().frontend_toolchain_id,rejected.len())
 }
 
 fn ui_host_spinner(message: impl Into<String>) -> ProgressBar {
@@ -1368,8 +1420,21 @@ pub async fn handle_host_install(
     variant: Option<String>,
     host_root: Option<PathBuf>,
     non_interactive: bool,
+    version: Option<String>,
+    offline: bool,
 ) -> Result<()> {
     let target = parse_target(&target)?;
+    if offline && release_manifest.is_none() {
+        let version = version.context("--offline requires --version or --release-manifest")?;
+        let manifest = host_lifecycle::cached_manifest(target, &version, variant.as_deref())?;
+        return install_released_ui_host(target, &manifest, variant, true);
+    }
+    if let Some(version) = version {
+        if release_manifest.is_some() || host_root.is_some() {
+            bail!("--version cannot be combined with --release-manifest or --host-root");
+        }
+        return install_selected_released_ui_host(target, variant, Some(version)).await;
+    }
     install_ui_host(
         target,
         release_manifest,
@@ -1378,6 +1443,14 @@ pub async fn handle_host_install(
         non_interactive,
     )
     .await
+}
+
+pub async fn handle_host_rollback(target: String, version: Option<String>, variant: Option<String>) -> Result<()> {
+    host_lifecycle::rollback(parse_target(&target)?, version, variant)
+}
+
+pub async fn handle_host_quarantine(target: String, version: String, incident: String) -> Result<()> {
+    host_lifecycle::quarantine(parse_target(&target)?,version,incident)
 }
 
 pub async fn handle_host_status(target: String) -> Result<()> {
@@ -1397,6 +1470,12 @@ pub async fn handle_host_status(target: String) -> Result<()> {
                 if artifact.version == "0.0.0-validation" {
                     println!("Installed release is a legacy validation fixture. Run `axiom ui host install --target {}` to replace it with the latest verified release.", target.as_str());
                 }
+                if let Some(metadata) = &host.toolchain {
+                    println!("Frontend toolchain: {}", metadata.frontend_toolchain_id);
+                    println!("Renderer engine: {} ({})", metadata.engine_version, metadata.engine_commit);
+                    println!("Compatibility: verified for this compiler's IR and helpers");
+                }
+                println!("Compatible retained releases: {}", host_lifecycle::history(target)?.len());
             } else {
                 println!("Installed host: local development source");
             }
@@ -1410,6 +1489,13 @@ pub async fn handle_host_status(target: String) -> Result<()> {
             }
         }
         None => println!("UI Host for {} is not installed.", target.as_str()),
+    }
+    let client = reqwest::Client::builder().timeout(Duration::from_secs(30))
+        .user_agent(format!("axiom-cli/{}",env!("CARGO_PKG_VERSION"))).build()?;
+    match compatible_ui_host_release(&client,target,None).await {
+        Ok(release) => println!("Available qualified compatible release: {}. Select with `axiom ui host install --target {} --version {}`.",
+            release.tag_name,target.as_str(),release.tag_name.trim_start_matches(UI_HOST_RELEASE_TAG_PREFIX)),
+        Err(error) => println!("Available qualified updates: unavailable ({error}). Compatible retained releases remain available with --offline --version."),
     }
     Ok(())
 }
@@ -4648,6 +4734,14 @@ async fn install_latest_released_ui_host(
     target: UiTarget,
     requested_variant: Option<String>,
 ) -> Result<()> {
+    install_selected_released_ui_host(target, requested_variant, None).await
+}
+
+async fn install_selected_released_ui_host(
+    target: UiTarget,
+    requested_variant: Option<String>,
+    requested_version: Option<String>,
+) -> Result<()> {
     if target == UiTarget::Ios && std::env::consts::ARCH != "aarch64" {
         bail!("the current Axiom iOS Simulator host release supports Apple Silicon Macs only; an x86_64 simulator host release is required for this machine");
     }
@@ -4659,55 +4753,17 @@ async fn install_latest_released_ui_host(
         "Checking the latest verified {} UI Host release...",
         target.as_str()
     ));
-    let release = latest_ui_host_release(&client).await;
+    let release = if let Some(version) = &requested_version {
+        if ui_host_release_version(&format!("{UI_HOST_RELEASE_TAG_PREFIX}{version}")).is_none() {
+            bail!("UI Host version must be an exact stable X.Y.Z");
+        }
+        client.get(format!("https://api.github.com/repos/{UI_HOST_GITHUB_REPOSITORY}/releases/tags/{UI_HOST_RELEASE_TAG_PREFIX}{version}"))
+            .send().await?.error_for_status()?.json::<GitHubRelease>().await.map_err(Into::into)
+    } else { compatible_ui_host_release(&client,target,requested_variant.as_deref()).await };
     release_progress.finish_and_clear();
     let release = release?;
-    let manifest_asset = release
-        .assets
-        .iter()
-        .find(|asset| asset.name == "host-manifest.json")
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Axiom UI Host release {} has no host-manifest.json asset",
-                release.tag_name
-            )
-        })?;
-    let signature_asset = release
-        .assets
-        .iter()
-        .find(|asset| asset.name == "host-manifest.json.sig")
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Axiom UI Host release {} has no host-manifest.json.sig asset",
-                release.tag_name
-            )
-        })?;
-
-    let download_dir = ui_host_record_path(target)?
-        .parent()
-        .expect("host record has parent")
-        .join("downloads")
-        .join("latest");
-    std::fs::create_dir_all(&download_dir)?;
-    let manifest_path = download_dir.join("host-manifest.json");
-    std::fs::write(
-        &manifest_path,
-        download_release_asset(&client, manifest_asset).await?,
-    )?;
-    std::fs::write(
-        PathBuf::from(format!("{}.sig", manifest_path.display())),
-        download_release_asset(&client, signature_asset).await?,
-    )?;
-
-    // Authenticate manifest metadata before using its asset name or URL.
-    let verification_progress = ui_host_spinner("Verifying the signed UI Host manifest...");
-    let manifest = (|| {
-        verify_release_manifest_signature(&manifest_path)?;
-        serde_json::from_str::<UiHostReleaseManifest>(&std::fs::read_to_string(&manifest_path)?)
-            .context("verified Axiom UI Host manifest is not valid JSON")
-    })();
-    verification_progress.finish_and_clear();
-    let manifest = manifest?;
+    let (manifest_path,manifest) = signed_ui_host_metadata(&client,&release,target).await?;
+    let download_dir = manifest_path.parent().context("manifest has no directory")?.to_path_buf();
     // Do this before downloading the target artifact or replacing an installed
     // record. Otherwise a developer is prompted to "install the latest" and
     // ends up repeatedly downloading the same legacy release that the active
@@ -4825,20 +4881,9 @@ fn install_released_ui_host(
             source.display()
         );
     }
-    let host_root = ui_host_record_path(target)?
-        .parent()
-        .expect("host record has parent")
-        .join("artifacts")
-        .join(&version);
-    std::fs::create_dir_all(&host_root)?;
-    let installed_asset = host_root.join(&asset.file);
     progress.set_message(format!("Installing {} UI Host archive...", target.as_str()));
-    std::fs::copy(&source, &installed_asset).with_context(|| {
-        format!(
-            "cannot install UI Host asset to {}",
-            installed_asset.display()
-        )
-    })?;
+    let host_root = host_lifecycle::retain(target, &manifest_path, &source, &version, &asset.variant, &actual)?;
+    let installed_asset = host_root.join(&asset.file);
     let record = UiHostInstallation {
         format: "axiom-ui-host/v1".to_string(),
         target: target.as_str().to_string(),
@@ -4853,12 +4898,7 @@ fn install_released_ui_host(
         toolchain: manifest.toolchain.clone(),
         compatibility: asset.compatibility.clone(),
     };
-    let path = ui_host_record_path(target)?;
-    std::fs::create_dir_all(path.parent().expect("host record has parent"))?;
-    std::fs::write(
-        &path,
-        format!("{}\n", serde_json::to_string_pretty(&record)?),
-    )?;
+    host_lifecycle::commit(target, &record)?;
     progress.finish_and_clear();
     println!(
         "Verified and installed Axiom UI Host {} ({}) for {}.",
@@ -4952,6 +4992,27 @@ fn check_release_frontend(
 ) -> Result<()> {
     if manifest.format != "axiom-ui-host-release/v1" {
         bail!("LYNX_BUNDLE_INCOMPATIBLE: unsupported host manifest reader version");
+    }
+    if let Some(qualification) = &manifest.lynx_qualification {
+        let metadata = manifest.toolchain.as_ref().context("LYNX_BUNDLE_INCOMPATIBLE: qualification requires signed toolchain metadata")?;
+        let targets = qualification["requiredTargets"].as_array().context("LYNX_BUNDLE_INCOMPATIBLE: missing qualified target matrix")?;
+        let actual: BTreeSet<&str> = targets.iter().filter_map(|v| v.as_str()).collect();
+        let required = BTreeSet::from(["compiler", "browser", "ios-simulator", "android-emulator"]);
+        if qualification["format"] != "axiom-lynx-public-qualification/v1"
+            || qualification["result"] != "passed"
+            || qualification["frontendToolchainId"].as_str() != Some(metadata.frontend_toolchain_id.as_str())
+            || actual != required || targets.len() != required.len()
+            || qualification["authentication"] != "authenticated-local-producer"
+            || ["candidateId", "sourceManifestId", "policyId", "qualificationId", "attachmentId", "priorBaselineToolchainId"].iter()
+                .any(|key| qualification[*key].as_str().is_none_or(|value| !value.starts_with("sha256:") || !is_sha256(&value[7..]))) {
+            bail!("LYNX_BUNDLE_INCOMPATIBLE: signed host qualification is incomplete or bound to a different toolchain");
+        }
+        let approved=BTreeSet::from([metadata.frontend_toolchain_id.as_str(),qualification["priorBaselineToolchainId"].as_str().unwrap()]);
+        let accepted=asset.compatibility.as_ref().context("LYNX_BUNDLE_INCOMPATIBLE: qualification requires target compatibility")?
+            .accepted_bundle_toolchain_ids.iter().map(String::as_str).collect::<BTreeSet<_>>();
+        if accepted!=approved {
+            bail!("LYNX_BUNDLE_INCOMPATIBLE: signed accepted compiler IDs differ from the qualified compatibility matrix");
+        }
     }
     match (&manifest.toolchain, &asset.compatibility) {
         (Some(metadata), Some(compatibility)) => {
@@ -5071,6 +5132,28 @@ fn read_ui_host(target: UiTarget) -> Result<Option<UiHostInstallation>> {
         return Ok(None);
     }
     check_installed_frontend(&host, target)?;
+    if let Some(artifact) = &host.artifact {
+        let controlled = std::env::var("AXIOM_UI_ALLOW_UNSIGNED_QUALIFICATION").as_deref() == Ok("1")
+            && std::env::var_os("AXIOM_UI_CACHE_ROOT").is_some()
+            && host.host_root == ui_host_record_path(target)?.parent().unwrap().join("qualification");
+        if controlled {
+            let provenance = axiom_ui_cache_base()?.join(format!("{}-fixture-provenance.json", target.as_str()));
+            let recorded:serde_json::Value = serde_json::from_slice(&std::fs::read(provenance)
+                .context("LYNX_BUNDLE_INCOMPATIBLE: unsigned qualification fixture lacks its private provenance")?)?;
+            if recorded["record"] != serde_json::to_value(&host)?
+                || recorded["actualArchiveSha256"].as_str() != Some(format!("sha256:{}",artifact.sha256).as_str())
+                || sha256_file(&host.host_root.join(&artifact.file))? != artifact.sha256 {
+                bail!("LYNX_BUNDLE_INCOMPATIBLE: private qualification fixture record or archive changed");
+            }
+        } else if host.toolchain.is_none() && frontend_toolchain::allows_legacy_host(&artifact.version,None) {
+            if sha256_file(&host.host_root.join(&artifact.file))? != artifact.sha256 {
+                bail!("LYNX_BUNDLE_INCOMPATIBLE: historical transition host bytes changed");
+            }
+        } else {
+            host_lifecycle::validate_record(target,&host).context(
+                "LYNX_BUNDLE_INCOMPATIBLE: installed host lacks valid retained signed provenance; reinstall an exact compatible signed release")?;
+        }
+    }
     Ok(Some(host))
 }
 
@@ -5310,6 +5393,7 @@ mod tests {
             assets,
             engine: Some(UiHostEngine { commit: LYNX_ENGINE_COMMIT.into() }),
             toolchain: Some(frontend_toolchain::supported_metadata()),
+            lynx_qualification: None,
         }
     }
 

@@ -1,0 +1,189 @@
+---
+title: Authoring ergonomics
+description: Infer redundant endpoint types and failure sets, derive selected database models, and use bounded immutable expressions.
+---
+
+These forms are implemented in the current source candidate and require a
+matching compiler, CLI/LSP, playground engine and host cohort. They do not
+change older explicit source or authorize additional provider operations.
+Public package publication and target qualification follow the release process.
+
+## Infer transport types from a reusable action
+
+Keep the action's input/output signature and each transport location explicit.
+The compiler derives a missing response type and parameter types from the
+resolved `handle` mapping, after imports and amendments.
+
+```acore
+project(id: "typed-route", version: "1.0.0")
+model Selector { id: Int32(min: 1) }
+model Task { title: String }
+
+action read(kind: ActionKind.query, input: Models.Selector, output: Models.Task) {
+  native(symbol: "tasks.read")
+}
+endpoint readTask(method: GET, path: "/tasks/{id}") {
+  request { path("id") }
+  handle(action: Actions.read, input: {id: Input.path.id})
+}
+```
+
+This has an Int32 path parameter and a Task response. Model input validation
+remains authoritative. Explicit annotations are still checked. Ambiguous
+bindings, unknown actions, missing fields and optional path inputs reject.
+Optionality remains explicit; a query/header/body field is not guessed from its
+name. Native actions still need a registered trusted implementation.
+
+A response can retain its projection/status/media type while omitting only the
+redundant type. Endpoints without an action retain explicit response types.
+Inference never selects a larger public projection or audience.
+
+## Infer closed business failures
+
+Opt in with `errors(infer)` on a managed action or handled endpoint. Existing
+omission means no declared cases, and explicit lists remain allowlists.
+
+```acore
+project(id: "inferred-failure", version: "1.0.0")
+model Rename { title: String }
+model Task { id: String title: String }
+model Problem { message: String }
+failure invalidTitle(payload: Models.Problem, status: 422)
+pure fn normalize(value: String): String = value.trim()
+
+action rename(kind: ActionKind.command, input: Models.Rename, output: Models.Task) {
+  errors(infer)
+  managed {
+    let title = normalize(Input.title)
+    guard title.length > 0 else fail Failures.invalidTitle({message: "Enter a title"})
+    let current = {id: "example", title: Input.title}
+    return {current with title: title}
+  }
+}
+endpoint renameTask(method: POST, path: "/tasks/rename") {
+  request { body("title") }
+  handle(action: Actions.rename, input: {title: Input.body.title})
+  errors(infer)
+  exposeFailure(failure: Failures.invalidTitle, fields: [.message], audiences: ["web"])
+}
+```
+
+Declare `type = "backend"` and `audiences = ["web"]` in the owning AxiomDeps.toml.
+Failures union across awaited actions/resources and all branches. Exhaustive
+terminal handlers consume their cases; re-failing or translating contributes the
+resulting case. Collected parallel outcomes stay values until explicitly failed.
+Native/sandbox/resource implementations retain explicit failure signatures.
+Recursive inference, mixed infer/explicit lists and incomplete handlers reject.
+
+Public case sets close before the ordinary contract and plan validators run.
+Payload fields/audiences remain selected by `exposeFailure`. The failure's
+declared status supplies the default; `failureStatus` remains an override.
+Cancellation, budget exhaustion and host faults are execution aborts rather than
+recoverable business failures.
+
+### Freeze the approved public interface
+
+```sh
+axiom check backend/main.acore --frozen-interface approved/backend.axiom
+axiom build backend/main.acore --frozen-interface approved/backend.axiom
+```
+
+The caller chooses the approved artifact. The check compares public interface
+semantics, including types, cases and selected failure metadata. Changes reject
+until the owner reviews the semantic diff and explicitly replaces the approved
+baseline. Rejection precedes project output replacement. This option does not
+authenticate a publisher on its own; use verified release artifacts in CI.
+It is distinct from FlatBuffers slot compatibility and disposable local baselines.
+
+## Derive an API model from an offline schema
+
+```acore
+derive model Task(
+  schema: "../database/schema.acore",
+  table: "app.tasks",
+  fields: {id: "id", title: "title"}
+) also entity
+```
+
+The owning database manifest selects database/server, and its source declares a
+numeric semantic version. The compiler reads an immutable captured source
+snapshot and creates a virtual model. No Task.acore snapshot is generated.
+Only listed columns participate; new private/tenant columns do not widen the API.
+
+PostgreSQL and SQLite share the checked database/API representation mapping.
+String bounds and Int16 limits are retained. UUID fields use a checked canonical
+text pattern. Exact PostgreSQL Int64 and SQLite integer representations use
+bounded canonical strings. Decimal, date and enum derivations require an
+explicit reviewed model/codec. Nullable columns and unsupported vendor/codec mappings
+require an explicit reviewed model rather than silently becoming optional fields.
+Database defaults do not become API defaults.
+
+Entity keys and audience projections still follow the existing rules. The source
+does not infer SQL queries, grants, tenant claims or migration authorization.
+Continue using [typed storage and readiness](/acore-language/database-persistence)
+and the existing versioned migration workflow. The derive CLI remains available
+for intentional materialized exports.
+
+## Immutable record updates and interpolation
+
+```acore
+let updated = {task with title: normalized}
+let message = $"Task {task.id}: {updated.title} {{ready}}"
+```
+
+Record updates evaluate the base once, then replacements in source order. They
+are shallow and immutable, preserve omitted optional fields, and reject unknown,
+duplicate or differently typed fields. Arbitrary JSON spreading and capability
+handles are outside this form.
+
+Prefixed strings check placeholders as pure expressions. Literal braces use
+`{{` and `}}`; ordinary JSON string escapes remain supported. The shared initial
+formatting subset is String, Int and Bool. Optional/null and other representations
+need explicit handling/formatting. Backend integers retain exact Int64 behavior;
+frontend integers retain the portable safe range. Output and work remain bounded.
+
+Ordinary strings keep their meaning. Legacy evaluator interpolation and the
+frontend's existing `interpolate`/`to_string` APIs remain separate compatible
+forms. Interpolation is text formatting, not HTML escaping or SQL construction.
+
+## Share a bounded pure library
+
+Store the common source inside the frontend workspace so its explicit local
+import remains within that workspace:
+
+```acore title="frontend/shared/title.acore"
+pure fn normalize(value: String): String = value.trim()
+```
+
+```acore title="backend/main.acore"
+use function normalize from "../frontend/shared/title.acore"
+```
+
+```acore title="frontend/main.acore"
+use function normalize from "./shared/title.acore"
+```
+
+The backend import parses a profile-neutral library without executing it. It
+selects the function and its bounded same-library pure dependencies. Libraries
+contain pure functions only; missing exports, resource declarations, ambient
+calls and recursion reject. Each consumer checks the library against its own
+type/numeric profile. Share selected models/validators/codecs through the existing
+verified contract descriptors when their visibility or representation matters.
+
+## Editing and runtime requirements
+
+The matching shared LSP shows resolved endpoint/action signatures, closed failure
+sets, inferred resources, selected codecs and schema-field navigation. VS Code
+and Zed provide `acore-derive-model`, `acore-errors-infer`, `acore-record-update` and
+`acore-interpolate` starters. Editing never resolves credentials or runs providers.
+
+Resource inference describes requirements; private bindings, typed factory
+compatibility and grants still control substitution and execution. Finite
+transaction providers/locals cannot escape their supported block. Immutable
+result data may leave it. Runtime deadlines, budgets, cancellation, cleanup and
+commit recovery remain necessary.
+
+Default generated output stays under the nearest manifest's `.axiom/`. Exact
+dependency locks, stable identity and immutable migration history retain their
+own preservation/version-control policies. Explicit exports can include private
+companions; keep those out of client distribution.

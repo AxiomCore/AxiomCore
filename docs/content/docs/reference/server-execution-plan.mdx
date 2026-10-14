@@ -10,6 +10,11 @@ executes native framework handlers. `axiom_server::host::ActionHost` executes
 authored native, managed and verified sandbox actions. A validated plan alone does not start a service or
 prove that a handler enforces its requirements.
 
+For ordinary source-driven development, use `axiom build` and `axiom run`.
+Generated plans/bindings are discovered under the owning `.axiom/` directory.
+Explicit JSON-plan commands below describe advanced/operator and compatibility
+workflows. See [authoring ergonomics](/acore-language/authoring-ergonomics).
+
 ## Public contract and private execution
 
 Legacy `axiom-server-plan/v1` and advanced `axiom-server-plan/v2` are separate canonical JSON documents. It binds to the

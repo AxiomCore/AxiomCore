@@ -143,6 +143,9 @@ enum Commands {
         /// Existing frontend contract lock; never resolved or modified by check
         #[arg(long)]
         lock: Option<PathBuf>,
+        /// Reject public interface drift from an explicitly approved backend artifact
+        #[arg(long)]
+        frozen_interface: Option<PathBuf>,
     },
     /// Print expanded backend JSON or the machine-readable declaration catalog
     Explain {
@@ -221,6 +224,9 @@ enum Commands {
         /// Existing artifact whose FlatBuffers field slots must remain compatible
         #[arg(long)]
         compatibility_baseline: Option<PathBuf>,
+        /// Reject public interface drift before replacing any backend output
+        #[arg(long)]
+        frozen_interface: Option<PathBuf>,
 
         /// Release the compiled backend contract to Axiom Cloud
         #[arg(long)]
@@ -1275,6 +1281,12 @@ enum UiHostAction {
         /// Axiom UI Host release manifest produced by the Axiom-owned host pipeline
         #[arg(long)]
         release_manifest: Option<PathBuf>,
+        /// Select an exact signed UI Host release version
+        #[arg(long, conflicts_with_all = ["release_manifest", "host_root"])]
+        version: Option<String>,
+        /// Install only from a signed local manifest or retained exact version
+        #[arg(long, conflicts_with = "host_root")]
+        offline: bool,
         /// Platform variant from the release manifest (for example `simulator` or `device`)
         #[arg(long)]
         variant: Option<String>,
@@ -1294,6 +1306,24 @@ enum UiHostAction {
     Recover {
         #[arg(long, default_value = "ios")]
         target: String,
+    },
+    /// Restore a retained signed host compatible with the current CLI and bundles
+    Rollback {
+        #[arg(long, default_value = "ios")]
+        target: String,
+        #[arg(long)]
+        version: Option<String>,
+        #[arg(long)]
+        variant: Option<String>,
+    },
+    /// Exclude a rendering regression from local installation and automatic selection
+    Quarantine {
+        #[arg(long, default_value = "ios")]
+        target: String,
+        #[arg(long)]
+        version: String,
+        #[arg(long)]
+        incident: String,
     },
 }
 
@@ -1393,6 +1423,7 @@ async fn main() -> anyhow::Result<()> {
             lock,
             variant,
             compatibility_baseline,
+            frozen_interface,
             release,
             ..
         } if Path::new(file).is_file() => {
@@ -1404,6 +1435,7 @@ async fn main() -> anyhow::Result<()> {
                     target: target.as_deref(),
                     lock: lock.as_deref(),
                     compatibility_baseline: compatibility_baseline.as_deref(),
+                    frozen_interface: frozen_interface.as_deref(),
                     release: *release,
                 },
             )?;
@@ -1642,12 +1674,14 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             json,
             target,
             lock,
+            frozen_interface,
         } => commands::contract_build::check(
             file,
             commands::contract_build::Options {
                 variant: variant.as_deref(),
                 target: target.as_deref(),
                 lock: lock.as_deref(),
+                frozen_interface: frozen_interface.as_deref(),
                 ..Default::default()
             },
             *json,
@@ -2248,6 +2282,8 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                 UiHostAction::Install {
                     target,
                     release_manifest,
+                    version,
+                    offline,
                     variant,
                     host_root,
                     non_interactive,
@@ -2258,6 +2294,8 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                         variant.clone(),
                         host_root.clone(),
                         *non_interactive,
+                        version.clone(),
+                        *offline,
                     )
                     .await
                 }
@@ -2266,6 +2304,12 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                 }
                 UiHostAction::Recover { target } => {
                     commands::ui::handle_host_recover(target.clone()).await
+                }
+                UiHostAction::Rollback { target, version, variant } => {
+                    commands::ui::handle_host_rollback(target.clone(), version.clone(), variant.clone()).await
+                }
+                UiHostAction::Quarantine { target, version, incident } => {
+                    commands::ui::handle_host_quarantine(target.clone(),version.clone(),incident.clone()).await
                 }
             },
             UiAction::Init { directory, target } => {
@@ -2593,6 +2637,7 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             lock,
             variant,
             compatibility_baseline,
+            frozen_interface,
             release,
             project,
             version,
@@ -2605,6 +2650,7 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                     target: target.as_deref(),
                     lock: lock.as_deref(),
                     compatibility_baseline: compatibility_baseline.as_deref(),
+                    frozen_interface: frozen_interface.as_deref(),
                     release: *release,
                 },
             )

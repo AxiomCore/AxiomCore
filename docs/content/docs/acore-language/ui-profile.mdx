@@ -67,7 +67,7 @@ page Search {
 }
 ```
 
-The source-checkout profile is `acore-ui/v6` and emits UI IR v10. State
+The source-checkout profile is `acore-ui/v6` and emits UI IR v11. State
 initializers use deterministic pure expressions matching their resolved types.
 Generic Acore `Int` remains i64; the portable UI profile explicitly rejects
 values outside −9,007,199,254,740,991…9,007,199,254,740,991. Integer arithmetic
@@ -505,3 +505,8 @@ A private backend [`batchPolicy`](/reference/typed-request-batching) does not me
 frontend HTTP requests. Call an explicitly declared, locked public batch endpoint
 if one is available. Query coalescing shares identical reads; batching combines
 distinct logical items through a declared interface and retains each outcome.
+
+
+## Shared pure authoring
+
+The current source candidate adds [authoring ergonomics](/acore-language/authoring-ergonomics): resolved endpoint types, explicit failure inference, selected offline model derivation and immutable expressions. Existing explicit forms remain supported; matching compiler/host/editor bytes are required. Public release and target qualification remain separate.

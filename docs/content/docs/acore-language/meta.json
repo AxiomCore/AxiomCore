@@ -4,6 +4,7 @@
     "index",
     "backend-profile",
     "managed-language",
+    "authoring-ergonomics",
     "owned-operations",
     "database-contracts",
     "sqlite-contracts",

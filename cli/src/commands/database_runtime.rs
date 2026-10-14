@@ -3,8 +3,7 @@ use anyhow::{bail, Context, Result};
 use axiom_lib::{
     backend::{Capability, ServerPlan},
     contract::AxiomFile,
-    database::{runtime::*, PgType},
-    ir::TypeRef,
+    database::runtime::*,
 };
 use clap::Subcommand;
 use std::{
@@ -83,51 +82,14 @@ pub fn run(a: &Action) -> Result<()> {
         } => {
             let schema = super::database::contract(schema)?;
             axiom_lib::database::identifier(model)?;
-            let (s, t) = table
-                .split_once('.')
-                .context("ADB1000: use logical schema.table")?;
-            let t = schema
-                .schemas
-                .iter()
-                .find(|v| v.name == s)
-                .and_then(|s| s.tables.iter().find(|v| v.name == t))
-                .context("ADB1000: unknown derived table")?;
             let mut selected = BTreeMap::new();
             for field in fields {
-                let (alias, name) = field
-                    .split_once('=')
-                    .context("ADB1000: field syntax is APIField=storageField")?;
-                axiom_lib::database::identifier(alias)?;
-                let c = t
-                    .columns
-                    .iter()
-                    .find(|c| c.name == name)
-                    .context("ADB1000: unknown derived column")?;
-                if selected.insert(alias, c).is_some() {
-                    bail!("ADB1000: duplicate API field");
-                }
+                let (alias,column)=field.split_once('=').context("ADB1000: field syntax is APIField=storageField")?;
+                if selected.insert(alias.to_string(),column.to_string()).is_some() { bail!("ADB1000: duplicate API field"); }
             }
+            let declarations=axiom_lib::database::mapping::derived_fields(&schema,table,&selected)?;
             let mut source=format!("// Schema-derived explicit projection; regenerate after schema changes.\nmodel {model} {{\n");
-            for (alias, c) in selected {
-                if c.nullable {
-                    bail!("ADB1000: nullable fields require an explicit reviewed model rule; the initial source generator handles nonnull projections");
-                }
-                let ty = match backend_type(&c.storage_type)? {
-                    TypeRef::String => "String",
-                    TypeRef::Int32 => "Int32",
-                    TypeRef::Bool => "Bool",
-                    TypeRef::Bytes => "Bytes",
-                    TypeRef::DateTime => "DateTime",
-                    TypeRef::Json => "Json",
-                    _ => bail!("ADB1000: derived codec unavailable"),
-                };
-                let declaration = match c.storage_type {
-                    PgType::Int64 => "String(pattern: \"^(0|-?[1-9][0-9]*)$\")".into(),
-                    PgType::VarChar { length } => format!("String(maxLength: {length})"),
-                    _ => ty.into(),
-                };
-                source.push_str(&format!("  {alias}: {declaration}\n"));
-            }
+            for (alias,declaration) in declarations { source.push_str(&format!("  {alias}: {declaration}\n")); }
             source.push_str(if *entity { "} also entity\n" } else { "}\n" });
             write(out, source.as_bytes())?;
             println!(

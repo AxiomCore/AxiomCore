@@ -412,3 +412,12 @@ receipt key. See [Database fleets](/acore-language/database-fleets).
 ## Source-owned database application operations
 
 Declare `storage` beside backend resources and start with `axiom run backend/main.acore --database-url "$DATABASE_URL"`. SQLite uses its variant entry and file/default connection. The CLI compiles private plans/bindings internally; frontend artifacts contain the public API. Advanced private transaction fixtures use typed Acore storage documents and retain their qualified operator workflow. See [Database persistence](/acore-language/database-persistence).
+
+
+## Approved backend interfaces
+
+The current source candidate supports `axiom check SOURCE --frozen-interface APPROVED.axiom`
+and the same option on `axiom build`. It compares the public interface before
+replacing outputs; an inferred new failure/type/projection requires an explicitly
+reviewed baseline update. This is separate from FlatBuffers slot compatibility.
+See [authoring ergonomics](/acore-language/authoring-ergonomics).

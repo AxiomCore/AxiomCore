@@ -120,6 +120,7 @@ pub struct Options<'a> {
     pub target: Option<&'a str>,
     pub lock: Option<&'a Path>,
     pub compatibility_baseline: Option<&'a Path>,
+    pub frozen_interface: Option<&'a Path>,
     pub release: bool,
 }
 
@@ -127,9 +128,10 @@ pub fn validate_options(kind: Kind, options: Options<'_>) -> Result<()> {
     if kind != Kind::Backend
         && (options.variant.is_some()
             || options.compatibility_baseline.is_some()
+            || options.frozen_interface.is_some()
             || options.release)
     {
-        bail!("--variant, --compatibility-baseline and --release are backend-only options; this is a {} contract", kind.name());
+        bail!("--variant, --compatibility-baseline, --frozen-interface and --release are backend-only options; this is a {} contract", kind.name());
     }
     if kind != Kind::Frontend && (options.target.is_some() || options.lock.is_some()) {
         bail!(
@@ -282,6 +284,7 @@ pub fn validate_output(path: &Path) -> Result<()> {
 pub async fn build(file: &Path, output: Option<&Path>, options: Options<'_>) -> Result<PathBuf> {
     let source = source(file)?;
     validate_options(source.kind, options)?;
+    if let Some(baseline) = options.frozen_interface { verify_frozen_interface(file, options.variant, baseline)?; }
     axiom_lib::project_state::import_legacy(&source.path)?;
     let output = output
         .map(Path::to_path_buf)
@@ -325,7 +328,8 @@ pub fn check(file: &Path, options: Options<'_>, json: bool) -> Result<()> {
         validate_options(source.kind, options)?;
         match source.kind {
             Kind::Backend => {
-                super::backend::validate(file, options.variant)?;
+                if let Some(baseline) = options.frozen_interface { verify_frozen_interface(file, options.variant, baseline)?; }
+                else { super::backend::validate(file, options.variant)?; }
                 Ok(serde_json::json!([]))
             }
             Kind::Database => {
@@ -418,4 +422,27 @@ mod tests {
             Kind::Frontend
         );
     }
+}
+
+/// Compare the public interface against the caller-selected approved artifact.
+/// This is read-only and never treats a generated local baseline as approval.
+fn verify_frozen_interface(file: &Path, variant: Option<&str>, baseline: &Path) -> Result<()> {
+    let approved: axiom_lib::contract::AxiomFile = serde_json::from_slice(&std::fs::read(baseline)?).context("Read approved interface artifact")?;
+    let config = axiom_extractor::evaluate_acore_config(file.to_str().context("Source path must be UTF-8")?, variant)?;
+    let staging = tempfile::tempdir()?;
+    let candidate_path = staging.path().join("candidate.axiom");
+    axiom_build::core::build::build_evaluated_config(config, variant.unwrap_or("default"), None, &candidate_path)?;
+    let candidate: axiom_lib::contract::AxiomFile = serde_json::from_slice(&std::fs::read(candidate_path)?)?;
+    let projection = |contract: &axiom_lib::contract::AxiomFile| -> Result<serde_json::Value> {
+        let json = serde_json::to_value(contract)?;
+        Ok(serde_json::json!({
+            "projectId":json["project"]["project_id"], "variant":json["project"]["variant"],
+            "codec":json["project"]["codec"], "reader":json["header"],
+            "ir":json["ir"], "endpoints":json["endpoints"], "policies":json["policies"],
+            "domain":json["domain_manifest"], "language":json["language"],
+            "failures":json["failure_contracts"], "ui":json["ui_contract_metadata"]
+        }))
+    };
+    anyhow::ensure!(projection(&candidate)? == projection(&approved)?, "AXINTERFACE001: public interface differs from the approved artifact; review the semantic diff and explicitly update the approved baseline");
+    Ok(())
 }

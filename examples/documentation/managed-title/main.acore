@@ -1,0 +1,23 @@
+project(id: "managed-quickstart", version: "1")
+variant default(include: ["*"])
+model Create { title: String(minLength: 1, maxLength: 200) }
+model Task { id: Int32 title: String }
+model Problem { message: String }
+failure invalidTitle(payload: Models.Problem, status: 422)
+pure fn normalizeTitle(value: String): String = value.trim()
+
+action create(kind: ActionKind.command, input: Models.Create, output: Models.Task) {
+  errors(Failures.invalidTitle)
+  managed {
+    let title = normalizeTitle(Input.title)
+    guard title.length > 0 else fail Failures.invalidTitle({message: "Title is required"})
+    return {id: 1, title: title}
+  }
+}
+endpoint create(method: POST, path: "/tasks") {
+  request { body("title", type: String) }
+  handle(action: Actions.create, input: {title: Input.body.title})
+  response(type: Models.Task)
+  errors(Failures.invalidTitle)
+  exposeFailure(failure: Failures.invalidTitle, fields: [.message], audiences: ["web"])
+}

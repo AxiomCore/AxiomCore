@@ -1,6 +1,7 @@
 ---
 title: Adoption measurement
 description: The metrics AxiomCore collects, excludes, and uses to validate its contract-runtime wedge.
+pageType: reference
 ---
 
 AxiomCore adoption should be judged by evidence of reduced integration work, not by raw
@@ -30,7 +31,7 @@ The wire-compatible `args` field contains only `{"schema_version":1}`.
 
 Developers can disable this collection for the CLI process:
 
-```bash
+```bash title="Terminal"
 AXIOM_TELEMETRY=0 axiom build
 ```
 
@@ -40,7 +41,7 @@ CLI installation analytics.
 
 ## Adoption scorecard
 
-Publish the following only after defining the date range, cohort, and exclusion
+Publish the following only after defining the date range, toolchain, and exclusion
 rules:
 
 1. **Activation:** percentage of new installations completing a successful

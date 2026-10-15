@@ -1,6 +1,7 @@
 ---
 title: Inspect an application
 description: Explore frontend, backend, state, styles, operations, data, accessibility, exposure, and cache behavior from one workspace.
+pageType: guide
 ---
 
 Use the high-level Inspector commands to learn the shape of a project before
@@ -8,7 +9,7 @@ following individual relationships.
 
 ## Begin with the overview
 
-```bash
+```bash title="Terminal"
 axiom inspect overview .
 ```
 
@@ -18,13 +19,13 @@ rather than treating every workspace as a full-stack application.
 
 Use a machine format when another tool consumes the result:
 
-```bash
+```bash title="Terminal"
 axiom inspect overview . --format json
 ```
 
 ## Frontend views
 
-```bash
+```bash title="Terminal"
 axiom inspect frontend .
 axiom inspect ui .
 axiom inspect state .
@@ -45,7 +46,7 @@ Inspector does not derive behavior from visual similarity or DOM conventions.
 
 ## Backend views
 
-```bash
+```bash title="Terminal"
 axiom inspect backend .
 axiom inspect operation list_products .
 axiom inspect data .
@@ -69,7 +70,7 @@ binding without claiming to know arbitrary external code behind it.
 
 Use a unique label or semantic ID:
 
-```bash
+```bash title="Terminal"
 axiom inspect data . --lineage Product.price_label
 axiom inspect lineage Product.price_label .
 ```
@@ -82,7 +83,7 @@ step remains a typed relationship with its own evidence.
 
 Target comparison shows how the selected fact's verified neighborhood differs:
 
-```bash
+```bash title="Terminal"
 axiom inspect target-compare Home \
   . --targets web,ios,android
 ```
@@ -104,7 +105,7 @@ application grows.
 
 Where documented, Inspector supports:
 
-```bash
+```bash title="Terminal"
 --format human
 --format json
 --format jsonl

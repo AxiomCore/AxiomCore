@@ -1,0 +1,10 @@
+{
+  "title": "Delivery",
+  "pages": [
+    "index",
+    "security-review",
+    "contract-pull-requests",
+    "releases",
+    "production-readiness"
+  ]
+}

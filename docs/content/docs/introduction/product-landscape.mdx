@@ -1,6 +1,7 @@
 ---
 title: Product landscape
 description: How the implemented AxiomCore tools and planned product experiences fit together.
+pageType: concept
 ---
 
 The AxiomCore name covers a language, local toolchain, runtime ecosystem, and
@@ -9,16 +10,14 @@ collaborative applications that are not yet available.
 
 ## Available and testable today
 
-<CapabilityTable
-  rows={[
-    { capability: 'Acore', status: 'alpha', scope: 'Declarative language, evaluator, standard library, diagnostics, and language-server foundations.' },
-    { capability: 'Axiom CLI', status: 'alpha', scope: 'Local authoring, build, inspection, diff, testing, mocking, package, UI/app, security, and connected cloud commands.' },
-    { capability: 'Axiom contracts and runtime', status: 'alpha', scope: 'Canonical packages, resolution locks, semantic checks, native/web runtime paths, and framework integrations.' },
-    { capability: 'Acore UI and application artifacts', status: 'alpha', scope: 'Declarative frontend authoring and .axiomapp builds validated on browser, Android Emulator, and iOS Simulator paths.' },
-    { capability: 'Axiom Inspector', status: 'alpha', scope: 'CLI and secure local dashboard over canonical application evidence, including relationships, authority, runtime sessions, impact, and optional bounded Jev question planning.' },
-    { capability: 'Axiom Cloud Dashboard', status: 'alpha', scope: 'Implemented account, project, and release control-plane experiences. It is not yet the full collaborative software workspace described below.' },
-  ]}
-/>
+| Capability | Status | Supported scope |
+| --- | --- | --- |
+| Acore | **Alpha** | Declarative language, evaluator, standard library, diagnostics, and language-server foundations. |
+| Axiom CLI | **Alpha** | Local authoring, build, inspection, diff, testing, mocking, package, UI/app, security, and connected cloud commands. |
+| Axiom contracts and runtime | **Alpha** | Canonical packages, resolution locks, semantic checks, native/web runtime paths, and framework integrations. |
+| Acore UI and application artifacts | **Alpha** | Declarative frontend authoring and .axiomapp builds validated on browser, Android Emulator, and iOS Simulator paths. |
+| Axiom Inspector | **Alpha** | CLI and secure local dashboard over canonical application evidence, including relationships, authority, runtime sessions, impact, and optional bounded Jev question planning. |
+| Axiom Cloud Dashboard | **Alpha** | Implemented account, project, and release control-plane experiences. It is not yet the full collaborative software workspace described below. |
 
 ## Product direction
 
@@ -44,7 +43,7 @@ collaborative applications that are not yet available.
 
 ## Intended relationship
 
-```text
+```text title="Conceptual example"
                          ┌─────────────────────────┐
                          │ Axiom Cloud Dashboard   │
                          │ projects and releases   │

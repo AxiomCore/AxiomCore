@@ -1,6 +1,7 @@
 ---
 title: Choose an adoption path
 description: Match AxiomCore's implemented entry points to the software you already have.
+pageType: guide
 ---
 
 | Starting point | First supported path | You keep |
@@ -14,14 +15,14 @@ description: Match AxiomCore's implemented entry points to the software you alre
 
 Run the non-mutating diagnostic and onboarding planner first:
 
-```bash
+```bash title="Terminal"
 axiom doctor
 axiom onboard
 ```
 
 Use explicit flags in automation:
 
-```bash
+```bash title="Terminal"
 axiom onboard --role backend --entrypoint main.py:app --module axiom-fastapi
 axiom onboard --role frontend --contract organization/project --framework atmx-web
 ```
@@ -40,6 +41,6 @@ Onboarding does not silently release a contract.
 - **Maturity:** add an end-to-end test for every alpha or experimental path in
   your own CI.
 
-For a backend, continue with [Backend contract lifecycle](/workflows/backend-contract-lifecycle).
-For an existing UI, use [Existing frontend integration](/workflows/existing-frontend-integration).
+For a backend, continue with [Backend contract lifecycle](/backend/contract-lifecycle).
+For an existing UI, use [Existing frontend integration](/frontend/integration-workflow).
 

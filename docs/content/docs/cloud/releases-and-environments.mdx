@@ -1,6 +1,7 @@
 ---
 title: Releases and environments
 description: Immutable artifacts, durable release evidence, latest-channel activation, rollback, sandboxes, and tests.
+pageType: guide
 ---
 
 <StatusNote status="alpha" title="Release control plane">
@@ -16,14 +17,14 @@ pair is immutable: retrying the exact bytes can resolve to the existing
 artifact, while different bytes under the same version are rejected. A source
 URL is provenance metadata, not the stored artifact itself.
 
-```bash
-axiom build axiom.acore
+```bash title="Terminal"
+axiom build axiom.acore --out backend.axiom
 axiom release backend.axiom --version 1.2.0
 ```
 
 ## Durable pipeline
 
-```text
+```text title="Conceptual example"
 uploaded -> verifying -> verified -> testing -> deployable
     \            \           \           \          \
      +------------+-----------+-----------+--------> failed
@@ -73,6 +74,6 @@ is recorded as skipped; project policy decides whether that is allowed.
 | Risky or breaking semantic change | Warning by default; owner acknowledgement required for activation |
 | All required evidence passes | Eligible for automatic or explicit latest-channel activation |
 
-Use [Testing contracts](/workflows/testing-contracts) for authoring and local
-test guidance, and [Contract pull requests](/workflows/contract-pull-requests)
+Use [Testing contracts](/testing/contracts) for authoring and local
+test guidance, and [Contract pull requests](/delivery/contract-pull-requests)
 for review workflow.

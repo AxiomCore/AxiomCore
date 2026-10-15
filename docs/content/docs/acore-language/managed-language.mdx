@@ -1,13 +1,14 @@
 ---
 title: Managed language foundations
 description: Shared validation, typed failure contracts, bounded business logic and private typed setup in the working compiler and matching hosts.
+pageType: reference
 ---
 
 These features use the working compiler and matching hosts. New executable
 metadata requires reader version 2 and `axiom-server-plan/v2`. Released v1
 artifacts keep their existing interpretation. A host checks the required
 capability set before activation; a parsed declaration does not establish host
-support. The native ActionHost executes the managed-flow and typed-configuration
+support. The native server runtime executes the managed-flow and typed-configuration
 profiles described here. A Worker profile without those capabilities rejects
 them before activation.
 
@@ -33,7 +34,7 @@ An action declares a failure's full payload. An endpoint selects the fields and
 audiences it may expose, and maps a status separately. The audience selects
 locked artifacts; a caller header cannot select a larger payload.
 
-```acore
+```acore title="Acore excerpt"
 project(id: "failure-example", version: "1")
 model Selector { id: Int32 }
 model Problem { message: String internalReason: String }
@@ -79,7 +80,7 @@ fail generation. Private payload fields are absent from the generated source.
 This offline generation supplies typing and validation; deployment still grants
 calls separately. Rust guests enable the matching workspace SDK's optional
 `schema` feature for the same checked descriptors and exact backend Int64
-conversion. This helper belongs to the M1 workspace cohort; published SDKs keep
+conversion. This helper belongs to the workspace toolchain; published SDKs keep
 their declared APIs. Validate the exact Wasm artifact against its host limits,
 including first-use initialization and conversion fuel, before activation.
 
@@ -90,7 +91,7 @@ exhaustive enum/optional matches, `fail` and `return` run without a native callb
 Effects occur only at explicit `await` calls. Every branch contributes to inferred
 requirements, including branches not taken during a particular request.
 
-```acore
+```acore title="Acore excerpt"
 project(id: "managed-example", version: "1")
 model Rename { title: String }
 model Task { title: String }
@@ -138,7 +139,7 @@ providers or guests.
 
 ## Typed private setup and purpose-bound secrets
 
-```acore
+```acore title="Acore excerpt"
 project(id: "configuration-example", version: "1")
 configuration billingSettings(public: [.maxConnections], audiences: ["web"]) {
   origin: String(format: "https-origin")
@@ -188,7 +189,7 @@ its deadline, cancellation, generation and remaining budgets; a child cannot
 reset its caller's allowance. Immutable values can leave a block, while a
 transaction-scoped provider name cannot.
 
-```acore
+```acore title="Acore excerpt"
 project(id: "transaction-example", version: "1")
 model Create { title: String eventId: String idempotencyKey: String }
 model Insert { title: String idempotencyKey: String }
@@ -233,7 +234,7 @@ application-lifetime PostgreSQL 17.11 provider. Inputs are explicit records of
 scalar input fields, prior result fields and literals. Selected component
 isolation and receipt contracts must agree. HTTP calls, guest execution,
 unrelated resources, branch/loop bodies and mixed write/delete programs are
-rejected. See [database persistence](/acore-language/database-persistence) for
+rejected. See [database persistence](/database/persistence) for
 preparation, tenant enforcement, commit recovery and durable outbox semantics.
 
 Owned providers release once in reverse acquisition order, including after a

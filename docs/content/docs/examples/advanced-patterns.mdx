@@ -1,0 +1,55 @@
+---
+title: Advanced application patterns
+description: Connect shared forms, typed failures, read caching, bounded streams, transactions, and sandboxed computation.
+pageType: reference
+---
+
+<StatusNote status="experimental" title="Verify the complete target path">
+  These patterns require compatible compilers, selected contracts, SDKs, hosts,
+  and provider capabilities. A generated adapter check does not certify a
+  mounted mobile app or a durable database deployment.
+</StatusNote>
+
+Use the [task app](/examples/task-app) or [exam app](/examples/exam-app) for a
+small, complete runnable starting point. Add the following patterns only after
+verifying their requirements on your chosen target.
+
+| Pattern | Behavior | Boundary to verify |
+| --- | --- | --- |
+| Shared form rules | Inherit selected validation, parse drafts, and map approved failures to fields | Private rules and payload fields stay outside the selected contract |
+| Logical submission identity | Retain one runtime-owned key for a dispatched submission and its resolution | Do not store the key as a preference or invent a second body key |
+| Authenticated read caching | Reuse bounded reads within the declared authority partition | Permissions, tenant/principal identity, invalidation, and provider replay safety |
+| Managed persistence | Write business data, a submission receipt, and an outbox event in one supported transaction | Qualified PostgreSQL profile, readiness, explicit grants, and least-privilege tenant policies |
+| Signed sandbox normalization | Pass only a title to a typed TypeScript, Rust, or Python guest | Exact signed module/interface/authority; no implicit I/O, credentials, snapshots, or host handles |
+| Bounded snapshot streams | Read an authenticated complete snapshot, reduce it, then close the subscription | A finite snapshot is not a continuous change feed or resumable event history |
+| Typed read batching | Combine distinct authorized reads through a declared batch provider | Per-item outcomes and one physical dispatch; no implicit frontend HTTP merging |
+| Receipt-backed archive batches | Persist a bounded event batch with a stable receipt | Database commit and Redis delivery acknowledgment have separate recovery boundaries |
+
+## Compose the application explicitly
+
+Keep backend, frontend, and database manifests separate. Select the public
+contract and approved failure fields for each audience. Keep preference state
+apart from form drafts, submission identity, and credentials. A successful
+mutation should invalidate the queries that depend on it.
+
+For receipt-backed PostgreSQL task data, IDs can use positive canonical decimal
+strings with the supported signed 64-bit storage range. Shared regex rules must
+stay within the portable subset. Browser preview checks do not establish
+native receipt/outbox atomicity, Redis admission durability, or row-policy
+readiness. Those need real provider and recovery tests.
+
+## Verify each execution layer
+
+| Check | What it establishes |
+| --- | --- |
+| Compiler/contract check | Accepted syntax, types, selected rules and artifact compatibility |
+| Reference or generated-adapter scenario | Scripted transport, ownership, assertions and cleanup on that runner |
+| Mounted web/native application | Actual target interaction and lifecycle behavior |
+| Real provider integration | Persisted writes, replay/rollback behavior and configured isolation |
+
+Preparation alone must not activate a provider, grant authority, or contact a
+deployment. Explicitly review signed database readiness, credentials, sandbox
+bindings and grants before real serving. Read [managed logic](/acore-language/managed-language),
+[submission lifecycle](/frontend/application-lifecycle), [typed batching](/backend/request-batching),
+[streaming](/acore-language/streaming-and-websockets), and
+[frontend tests](/testing/frontend-applications) for exact limits.

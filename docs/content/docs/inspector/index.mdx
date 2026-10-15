@@ -1,6 +1,7 @@
 ---
 title: Axiom Inspector
 description: Understand what an Axiom application declares, resolves, can access, executes, and changes.
+pageType: overview
 ---
 
 <StatusNote status="alpha" title="Queryable application evidence">
@@ -31,7 +32,7 @@ new source of application facts.
 
 From the application workspace:
 
-```bash
+```bash title="Terminal"
 axiom inspect overview .
 axiom inspect serve .
 ```
@@ -41,7 +42,7 @@ loopback dashboard on an available port.
 
 For an agent or CI job, request a machine format:
 
-```bash
+```bash title="Terminal"
 axiom inspect overview . --format json
 axiom inspect dependencies . --format json
 axiom inspect security . --format json

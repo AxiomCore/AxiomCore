@@ -1,0 +1,8 @@
+type = "frontend"
+targets = ["web"]
+
+[contracts.tasks]
+artifact = "../backend/.axiom/contracts/backend.axiom"
+baseUrl = "http://127.0.0.1:8080"
+audience = "web"
+operations = ["create_task", "delete_task", "list_tasks", "update_task"]

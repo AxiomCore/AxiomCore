@@ -1,0 +1,84 @@
+---
+title: Release and upgrade
+description: Promote immutable contracts and applications without losing semantic review evidence.
+pageType: guide
+---
+
+## Contract release
+
+1. Build and inspect the local `.axiom`.
+2. Run contract, domain, and security checks applicable to the project.
+3. Review the semantic diff from the previous immutable version.
+4. Release a new version with `axiom build --release --version …` or
+   `axiom release backend.axiom --version …`.
+5. Open a contract review in the Cloud control plane when team approval is
+   required.
+
+## Consumer upgrade
+
+1. Change the contract/package source to the exact candidate version.
+2. Resolve a new lock.
+3. Inspect and diff the locked artifact.
+4. Run the existing frontend or Acore UI consumer suite.
+5. Commit source intent and the lock atomically.
+
+## Application release
+
+Build `.axiomapp` once per target, inspect each artifact, and package them only
+after target validation. Current application artifacts do not imply Apple or
+Google signing, store submission, or physical-device certification.
+
+## Rollback
+
+Rollback means selecting a previously reviewed immutable release or rebuilding
+from a reviewed source/lock pair. Never rewrite an existing artifact version:
+that would detach audit evidence from the bytes it approved.
+
+See [Contract pull requests](/delivery/contract-pull-requests) for the Cloud
+review record and [Security review and release gates](/delivery/security-review)
+for security-specific evidence.
+
+<span id="advanced-language-cohort-upgrades" />
+
+## Advanced language toolchain upgrades
+
+Retain the old source, public contracts, private plans, locks, SDK source/build
+receipts and compatible host before selecting the advanced application advanced language toolchain.
+Rebuild and inspect the selected public contract, prepare its exact private
+resources, then run the application and provider suites for each enabled target.
+Matching generated mobile tests and mounted web tests are separate evidence.
+
+Use `axiom migrate OLD.acore --output NEW.acore` to create a verified sibling
+source without overwriting the original. A supported finite legacy action rewrite
+can preserve endpoint identities and public codecs while introducing checked
+managed execution. Review both the public contract diff and private behavior:
+
+```bash title="Terminal"
+axiom server diff old.axiom old.server.json new.axiom new.server.json
+```
+
+The private report separates a verified representation change from a behavior
+change. New validation, failure exposure, authority, batch/cache policy or stream
+semantics require consumer review. Unsupported computed rewrites retain their
+legacy representation; migration never invents an equivalent managed body.
+
+Development reload keeps the last good application after an invalid edit.
+Compatible replacement rechecks artifacts and ownership before transferring
+eligible logical-submission state. Incompatible contracts, descriptors or
+session identities reject transfer. Rollback uses retained immutable inputs;
+it does not reuse stale grants or claim an unknown write was rolled back.
+
+The toolchain also adds classified application telemetry and an explicit
+development-only expiry environment. Rebuild the native CLI/LSP and playground
+compiler from the same compiler input closure. A telemetry policy is private;
+changing it never adds user values to metric labels. Scenario environment files
+are test inputs bound into the scenario identity, and cannot enable logical
+credential expiry in a deployed server. See [Trace and explain](/inspector/trace-and-explain)
+and [Test runner](/testing/test-runner) for the complete examples.
+
+The playground includes task and inventory database examples in the same
+application editor. Their database contract, dependency manifest, bindings,
+live table preview, Changes and Impact ship together with the static site.
+The browser store demonstrates the documented checked preview profile;
+production database preparation, migrations and recovery retain their separate
+provider gates. See [Frontend quickstart](/getting-started/quickstart-frontend).

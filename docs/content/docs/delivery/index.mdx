@@ -1,0 +1,22 @@
+---
+title: Review and deliver changes
+description: Review contract changes, permissions, releases, upgrades, and deployment readiness.
+pageType: overview
+---
+
+Deliver a reviewed artifact with compatible consumers and a recovery path.
+Publishing a contract and deploying an application are separate operations.
+
+| Task | Guide |
+| --- | --- |
+| Review security and authority | [Security review](/delivery/security-review) |
+| Propose an API change | [Contract pull requests](/delivery/contract-pull-requests) |
+| Release and upgrade dependencies | [Release workflow](/delivery/releases) |
+| Assess a production rollout | [Readiness checklist](/delivery/production-readiness) |
+| Package a server for a target | [Server releases](/backend/release-workflow) |
+| Coordinate database versions | [Migration promotion](/database/contracts#ci-prepare-once-promote-unchanged) |
+
+Before promotion, verify the exact target, artifact, authentication, permissions,
+consumer behavior, observability, and rollback limits. Use the
+[support matrix](/introduction/support-matrix) rather than treating local
+success as certification for other environments.

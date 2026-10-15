@@ -1,6 +1,7 @@
 ---
 title: Owned concurrency, policies, and timing
 description: Finite parallel reads, host-owned operation policies, typed durable enqueue, and foreground UI timing.
+pageType: reference
 ---
 
 Acore describes the work and its bounds. The host owns admission, physical dispatch, cancellation, timers, and joining. Pure functions remain deterministic and have no thread, sleep, clock, or enqueue authority.
@@ -9,7 +10,7 @@ Acore describes the work and its bounds. The host owns admission, physical dispa
 
 A managed action can join a finite set of independent reads:
 
-```acore
+```acore title="Acore excerpt"
 let summary = await parallel(limit: 2) {
   first = Actions.find(input: Input)
   second = Resources.tasks.lookup(input: Input)
@@ -25,7 +26,7 @@ Fail-fast is the default. A branch failure signals sibling cancellation, stops q
 
 Collect mode returns a checked outcome for each branch. Match success and all declared ordinary failures exhaustively:
 
-```acore
+```acore title="Acore excerpt"
 let sections = await parallel(mode: ParallelMode.collect, limit: 2) {
   first = Actions.find(input: Input)
   second = Actions.find(input: Input)
@@ -42,7 +43,7 @@ A propagated fail-fast failure must appear in the enclosing action's `errors` de
 
 An `operationPolicy` applies to a named resource call. `serverPolicy` retains its existing action ceilings, and client retry policies retain their existing meaning.
 
-```acore
+```acore title="Acore excerpt"
 operationPolicy taskRead(
   totalTimeout: 2s,
   attemptTimeout: 500ms,
@@ -80,7 +81,7 @@ Children share invocation work accounting. A new HTTP request and a worker's nex
 
 Only a managed command can enqueue a declared job:
 
-```acore
+```acore title="Acore excerpt"
 let receipt = await Jobs.remindTask.enqueue(
   input: Input,
   key: Input.producerId,
@@ -95,13 +96,13 @@ The receipt confirms durable submission. Producer identity and payload/delay fin
 
 Native CLI invoke, validate, run, serve, and development watch accept an explicit `--delivery /absolute/path/delivery.json` alongside the reviewed server deployment. The configuration stays private. Watch reload prepares a new exact-plan configuration from the captured inputs; it retains the reviewed grants and credential references. A durable namespace is bound to its plan. Changing that plan requires an explicitly reviewed new namespace or migration; otherwise reload rejects and the last validated service stays active. Queued work for an old plan still needs its original qualified worker. Starting a development server does not start a durable worker. Container and Workers delivery packaging require their own qualified controller/worker integration.
 
-Existing schedules keep their timezone, overlap, missed-run, bounded catch-up, lease, fencing, dead-letter, cancellation, and explicit redrive semantics. See [server delivery](/reference/server-delivery) for the reviewed private configuration and worker workflow.
+Existing schedules keep their timezone, overlap, missed-run, bounded catch-up, lease, fencing, dead-letter, cancellation, and explicit redrive semantics. See [server delivery](/backend/events-and-jobs) for the reviewed private configuration and worker workflow.
 
 ## Frontend groups and foreground timers
 
 A frontend action joins declared query operations with their captured arguments:
 
-```acore
+```acore title="Acore excerpt"
 let sections = await parallel(limit: 2) {
   taskList = tasks.run()
   taskCounts = counts.run()
@@ -112,7 +113,7 @@ The group requires enabled, finite, nonpaginated query operations. It does not u
 
 Duration aliases keep timing intent readable:
 
-```acore
+```acore title="Acore excerpt"
 query tasks = Tasks.list_tasks() options(
   debounce: 150ms,
   poll: 30s,
@@ -137,6 +138,6 @@ Guest scheduling uses existing granted host queue operations. It does not introd
 
 Use the shared LSP for group signatures, inferred record/outcome hovers, physical branch and policy navigation, job input signatures, and compiler diagnostics in unsaved buffers. VS Code and Zed include `acore-parallel`, `acore-operation-policy`, `acore-enqueue`, and `acore-poll` starters. A policy hover describes a declaration; provider attestation remains a runtime activation check.
 
-Build compiler, LSP, UI helper, host, SDK, and grammar from a compatible cohort. Owned frontend operations require IR reader 12 and `acore-owned-operations/v1`; existing programs retain their older reader requirements when they do not use these features. Use explicit saved-input scenarios and host observations to inspect execution. Editing or completing source never dispatches work.
+Build compiler, LSP, UI helper, host, SDK, and grammar from a compatible toolchain. Owned frontend operations require IR reader 12 and `acore-owned-operations/v1`; existing programs retain their older reader requirements when they do not use these features. Use explicit saved-input scenarios and host observations to inspect execution. Editing or completing source never dispatches work.
 
 Tests must prove real overlap and retain active work through cancellation, with controlled barriers and adapter futures. Timer tests advance a virtual clock and assert one owner timer, foreground pause, session invalidation, and no late publication. Durable recovery is tested separately against Redis and real worker processes; a timer test cannot qualify job recovery.

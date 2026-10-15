@@ -1,0 +1,3 @@
+amends "axiom-go:main.go"
+
+project(id: "docs.go.greeting", version: "1.0.0")

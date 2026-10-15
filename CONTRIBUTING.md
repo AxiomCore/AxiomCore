@@ -17,8 +17,9 @@ Cloud service.
 ## Documentation
 
 The public site lives in `docs/content/docs`. Keep capability status accurate in
-the public support matrix. Maintainers keep editorial evidence and deployment
-records in the private `AxiomCore/axiom-internal-docs` repository.
+the public support matrix. Read the [public documentation guardrails](docs/AGENTS.md)
+before changing the site or its content. Maintainers keep editorial evidence
+and deployment records in the private `AxiomCore/axiom-internal-docs` repository.
 
 Run the complete gate:
 
@@ -32,7 +33,7 @@ pnpm check
 The gate checks page metadata, navigation coverage, links, forbidden internal
 terminology, unsafe example values and paths, MDX/TypeScript, the production
 build, and public route responses. If a page changes layout, also inspect it at
-a narrow viewport and in light and dark appearance.
+a narrow viewport and in the approved dark theme appearance.
 
 ## Examples
 

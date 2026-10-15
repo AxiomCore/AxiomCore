@@ -1,10 +1,11 @@
 ---
 title: Sandboxed executable extensions
 description: Add bounded Rust, TypeScript, or Python behavior to an AxiomCore application without handing it ambient application authority.
+pageType: concept
 ---
 
 Executable extensions let an application use imperative logic for work that is
-not practical to express declaratively—for example, a bounded pricing rule,
+not practical to express declaratively, for example, a bounded pricing rule,
 format conversion, or a domain workflow step. They are an **Experimental**
 source-level capability. Rust, a restricted TypeScript profile, and a
 restricted Python profile all lower to the same WebAssembly ABI and broker.
@@ -16,7 +17,7 @@ limits.
 
 ## Where an extension fits
 
-```text
+```text title="Conceptual example"
 signed extension package + exact Wasm bytes
                     |
          authority request, application grant,

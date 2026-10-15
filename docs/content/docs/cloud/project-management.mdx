@@ -1,6 +1,7 @@
 ---
 title: Workspaces and projects
 description: Identity, roles, project links, signing keys, and the local-to-Cloud boundary.
+pageType: guide
 ---
 
 A workspace groups members and projects. A project owns contracts, signing-key
@@ -15,7 +16,7 @@ evidence.
 - Runtime ingestion and managed sandboxes use narrowly scoped credentials,
   not browser or CLI tokens.
 
-```bash
+```bash title="Terminal"
 axiom login
 axiom project list
 ```
@@ -25,7 +26,7 @@ contract.
 
 ## Create and link
 
-```bash
+```bash title="Terminal"
 axiom project create --name "Payments API" --slug payments-api
 axiom project link
 ```
@@ -53,7 +54,7 @@ valid browser session alone does not grant project access.
 
 ## Rotate a signing key
 
-```bash
+```bash title="Terminal"
 axiom project rotate-key --project payments-api
 ```
 

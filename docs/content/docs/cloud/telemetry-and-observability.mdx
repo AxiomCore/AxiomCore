@@ -1,6 +1,7 @@
 ---
 title: Observability and telemetry
 description: Runtime traces and project evidence, plus the separate CLI adoption telemetry boundary.
+pageType: guide
 ---
 
 AxiomCore has two different telemetry surfaces. Runtime observability carries
@@ -21,7 +22,7 @@ The connected project can create an OTLP source and produce an Acore
 `x-axiom-telemetry-dsn`. Store that DSN as a secret and rotate or revoke it
 through the project controls.
 
-```acore
+```acore title="Acore excerpt"
 observability(
   enabled: true,
   telemetryUrl: "https://collector.example.com/v1/traces",
@@ -63,7 +64,7 @@ into CLI telemetry.
 
 Disable this adoption event for the current process or environment with:
 
-```bash
+```bash title="Terminal"
 AXIOM_TELEMETRY=0 axiom build
 ```
 

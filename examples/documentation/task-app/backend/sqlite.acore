@@ -1,0 +1,10 @@
+amends "application.acore"
+
+storage tasks(schema: "../database/sqlite/schema.acore", resource: Resources.tasks) {
+  select list(table: "main.tasks", fields: {id: "id", title: "title"}, limit: 100)
+  insert create(table: "main.tasks", values: {id: Input.title, title: Input.title},
+    fields: {id: "id", title: "title"}, constraint: "tasks_pkey",
+    failure: Failures.duplicate, message: "That task already exists")
+  update update(table: "main.tasks", equals: {id: Input.id}, values: {title: Input.title}, fields: {id: "id", title: "title"})
+  delete delete(table: "main.tasks", equals: {id: Input.id}, fields: {id: "id", title: "title"})
+}

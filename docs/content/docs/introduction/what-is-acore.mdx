@@ -1,11 +1,12 @@
 ---
 title: What is Acore?
 description: The declarative, contract-oriented language at the center of AxiomCore.
+pageType: concept
 ---
 
 Acore is an independent declarative language for describing software contracts.
-Its implementation includes a lexer, parser, evaluator, standard library,
-diagnostics, and language-server support. A `.acore` file is source code; it is
+It provides typed declarations, composition, validation, a standard library,
+diagnostics, and editor support. A `.acore` file is source code; it is
 not the distributable artifact that a consumer locks and runs.
 
 <StatusNote status="alpha" title="Language maturity">
@@ -39,7 +40,7 @@ Not every kind exposes the same authoring or runtime surface yet. The
 
 ## Composition keywords
 
-```text
+```text title="Conceptual example"
 import "./shared.acore"
 amends "axiom-fastapi:./app.py:app"
 use contract Billing from "billing" audience "mobile"

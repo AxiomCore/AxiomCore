@@ -1,10 +1,11 @@
 ---
 title: Authoring ergonomics
 description: Infer redundant endpoint types and failure sets, derive selected database models, and use bounded immutable expressions.
+pageType: reference
 ---
 
 These forms are implemented in the current source candidate and require a
-matching compiler, CLI/LSP, playground engine and host cohort. They do not
+matching compiler, CLI/LSP, playground engine and host toolchain. They do not
 change older explicit source or authorize additional provider operations.
 Public package publication and target qualification follow the release process.
 
@@ -14,7 +15,7 @@ Keep the action's input/output signature and each transport location explicit.
 The compiler derives a missing response type and parameter types from the
 resolved `handle` mapping, after imports and amendments.
 
-```acore
+```acore title="Acore excerpt"
 project(id: "typed-route", version: "1.0.0")
 model Selector { id: Int32(min: 1) }
 model Task { title: String }
@@ -43,7 +44,7 @@ Inference never selects a larger public projection or audience.
 Opt in with `errors(infer)` on a managed action or handled endpoint. Existing
 omission means no declared cases, and explicit lists remain allowlists.
 
-```acore
+```acore title="Acore excerpt"
 project(id: "inferred-failure", version: "1.0.0")
 model Rename { title: String }
 model Task { id: String title: String }
@@ -83,9 +84,9 @@ recoverable business failures.
 
 ### Freeze the approved public interface
 
-```sh
+```sh title="Terminal"
 axiom check backend/main.acore --frozen-interface approved/backend.axiom
-axiom build backend/main.acore --frozen-interface approved/backend.axiom
+axiom build backend/main.acore --frozen-interface approved/backend.axiom --out backend.axiom
 ```
 
 The caller chooses the approved artifact. The check compares public interface
@@ -97,7 +98,7 @@ It is distinct from FlatBuffers slot compatibility and disposable local baseline
 
 ## Derive an API model from an offline schema
 
-```acore
+```acore title="Acore excerpt"
 derive model Task(
   schema: "../database/schema.acore",
   table: "app.tasks",
@@ -120,13 +121,13 @@ Database defaults do not become API defaults.
 
 Entity keys and audience projections still follow the existing rules. The source
 does not infer SQL queries, grants, tenant claims or migration authorization.
-Continue using [typed storage and readiness](/acore-language/database-persistence)
+Continue using [typed storage and readiness](/database/persistence)
 and the existing versioned migration workflow. The derive CLI remains available
 for intentional materialized exports.
 
 ## Immutable record updates and interpolation
 
-```acore
+```acore title="Acore excerpt"
 let updated = {task with title: normalized}
 let message = $"Task {task.id}: {updated.title} {{ready}}"
 ```

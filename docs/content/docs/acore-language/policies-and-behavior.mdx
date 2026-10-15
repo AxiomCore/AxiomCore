@@ -1,6 +1,7 @@
 ---
 title: Policies and runtime behavior
 description: Declare cache and retry intent globally or for an individual endpoint.
+pageType: reference
 ---
 
 Service contracts can declare cache and retry policy. The runtime applies only
@@ -12,11 +13,11 @@ identity includes the exact plan/schema/codec, normalized input and verified
 identity/permission partition. Each read authenticates and runs guards, even on
 a hit. A shared fill has independent waiter cancellation and a fixed action
 deadline capped at 30 seconds. `invalidateOn` observes accepted command success;
-it does not attest an external transaction commit. See [server integrations](/reference/server-integrations).
+it does not attest an external transaction commit. See [server integrations](/backend/integrations).
 
 ## Global policy
 
-```acore
+```acore title="Acore excerpt"
 policies(
   cache: CachePolicy(strategy: CacheStrategy.staleWhileRevalidate, ttlSeconds: 3600),
   retry: RetryPolicy(
@@ -32,7 +33,7 @@ policies(
 
 ## Endpoint override
 
-```acore
+```acore title="Acore excerpt"
 endpoint get_profile(method: GET, path: "/profile") {
   response(type: Json)
   cache(strategy: CacheStrategy.cacheFirst, ttl: 5m)
@@ -48,7 +49,7 @@ an override from the HTTP method.
 Use `defaults` for concise project-wide settings and `policy` for a named,
 reusable declaration:
 
-```acore
+```acore title="Acore excerpt"
 defaults {
   cache(strategy: CacheStrategy.networkFirst, ttl: 30s)
 }

@@ -1,6 +1,7 @@
 ---
 title: Support and feedback
 description: Report documentation defects, product problems, and security vulnerabilities through the appropriate channel with safe diagnostic evidence.
+pageType: reference
 ---
 
 Choose the channel by impact. Never place credentials or sensitive customer
@@ -23,7 +24,7 @@ data in a public report.
 
 Start with read-only diagnostics:
 
-```bash
+```bash title="Terminal"
 axiom --version
 axiom doctor --json --strict > axiom-doctor.json
 axiom ui doctor --target web --json > axiom-ui-web.json

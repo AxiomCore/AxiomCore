@@ -1,6 +1,7 @@
 ---
 title: Runtime errors
 description: Structured failure stages, categories, symbolic codes, retryability, and safe handling.
+pageType: reference
 ---
 
 The Axiom Runtime represents a failed operation as a structured `AxiomError`.
@@ -67,7 +68,7 @@ error emitted by its binding rather than copying a numeric table.
 
 ## Handling pattern
 
-```ts
+```ts title="TypeScript excerpt"
 function messageFor(error: AxiomError): string {
   if (error.category === 'Auth') return 'Please sign in again.';
   if (error.retryable) return 'Request failed. Try again.';

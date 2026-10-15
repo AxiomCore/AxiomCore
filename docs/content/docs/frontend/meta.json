@@ -1,0 +1,13 @@
+{
+  "title": "Frontend",
+  "pages": [
+    "index",
+    "web",
+    "react",
+    "flutter-dart",
+    "swift",
+    "integration-workflow",
+    "acore-ui",
+    "application-lifecycle"
+  ]
+}

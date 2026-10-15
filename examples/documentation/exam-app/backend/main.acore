@@ -1,0 +1,13 @@
+amends "application.acore"
+
+storage submissions(schema: "../database/schema.acore", resource: Resources.submissions) {
+  select list(table: "main.submissions", fields: {
+    id: "id", name: "name", first: "first", second: "second", score: "score", total: "total"
+  }, limit: 100)
+  insert create(table: "main.submissions", values: {
+    id: Input.id, name: Input.name, first: Input.first, second: Input.second,
+    score: Input.score, total: Input.total
+  }, fields: {id: "id", name: "name", first: "first", second: "second", score: "score", total: "total"},
+    constraint: "submissions_pkey", failure: Failures.duplicate,
+    message: "This attempt is already submitted. Use a new attempt ID to try again.")
+}

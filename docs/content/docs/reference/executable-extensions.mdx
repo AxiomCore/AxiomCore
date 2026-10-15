@@ -1,6 +1,7 @@
 ---
 title: Executable extensions reference
 description: Experimental ABI, language SDKs, dependencies, authority, lifecycle, security, host support, and performance evidence for AxiomCore executable extensions.
+pageType: reference
 ---
 
 ## Status and compatibility
@@ -26,7 +27,7 @@ the ABI version and one typed message. The host validates frame size, magic,
 canonical encoding, request IDs, pointer ranges, and state transitions before
 accepting a message.
 
-```text
+```text title="Conceptual example"
 host: Negotiate -> Initialize -> Invoke
 guest: Negotiated -> Initialized -> Completed | Yielded | Failed
 host: Resume | Cancel -> Drain -> Shutdown
@@ -41,7 +42,7 @@ messages, and duplicate terminal replies fail closed.
 
 Generated guests export memory and four core-Wasm functions:
 
-```text
+```text title="Conceptual example"
 axiom_extension_abi_version() -> i32
 axiom_extension_alloc(length) -> pointer
 axiom_extension_dispatch(pointer, length) -> packed length/pointer
@@ -61,7 +62,7 @@ cancellation, and shutdown. `UiSelector`, `UiPatchBuilder`, `StoreSelector`,
 and `StoreTransactionBuilder` construct typed wire proposals; they do not
 mutate host state directly.
 
-```rust
+```rust title="Rust excerpt"
 // Axiom generates this readable selector from AxiomDeps.toml.
 let discount = axiom_bindings::ui_checkout_write_discount_selector::<()>();
 
@@ -140,7 +141,7 @@ An application author maintains one Acore UI, one permission/dependency file,
 and normal Rust, TypeScript, or Python source in any safe project-relative
 folder:
 
-```text
+```text title="Conceptual example"
 main.acore
 AxiomDeps.toml
 logic/pricing.rs                 # or pricing.ts / pricing.py
@@ -153,7 +154,7 @@ package lock, authority lock, and target policies. Local signing keys are
 Axiom-managed, ignored, stored with restrictive permissions, and reused so an
 unchanged release is stable.
 
-```bash
+```bash title="Terminal"
 axiom extensions source-release checkout \
   --deps AxiomDeps.toml \
   --application example.extensions.checkout
@@ -175,7 +176,7 @@ environments.
 The repository includes a repeatable, generated acceptance fixture for the
 current signed extension host. From the repository root:
 
-```bash
+```bash title="Terminal"
 cd examples/extension-sandbox
 just release
 just check
@@ -211,7 +212,7 @@ opaque secret handles are never guest values.
 The versioned named guest group descriptor has an explicit adapter capability and initially accepts granted contract queries. Ordered effect plans retain their sequential meaning. Group cancellation drains started work before resume; guests cannot expand root budgets or retry/scheduling authority. See [sandboxed owned operations](/acore-language/owned-operations#sandboxed-extensions).
 
 
-Backend [`batchPolicy`](/reference/typed-request-batching) aggregation is a host
+Backend [`batchPolicy`](/backend/request-batching) aggregation is a host
 facility under explicit deployment grants and owned operation context. Existing
 `Batch` capability declarations alone do not implement aggregation or grant a
 private batch operation. A guest receives only selected generated or explicit
@@ -242,7 +243,7 @@ host operation, permission or target. The sealed output uses
 `axiom-sdk-interface-ir/v2` and `axiom-sdk-interface-artifact/v2`; existing
 unselected interfaces retain their v1 representation.
 
-```toml
+```toml title="AxiomDeps.toml"
 [extensions.tools]
 language = "rust"
 source = "logic/tools.rs"
@@ -253,7 +254,7 @@ targets = ["server"]
 
 `tools.interface.json` can select this complete pure value boundary:
 
-```json
+```json title="Configuration excerpt"
 {
   "format": "axiom-extension-selection/v1",
   "types": {
@@ -276,7 +277,7 @@ targets = ["server"]
 Generated Rust adapters provide records, variants, checked ABI codecs and an
 export trait. A normalizer uses ordinary typed fields:
 
-```rust
+```rust title="Rust excerpt"
 use crate::axiom_bindings::selected::{
     SelectedExports, SelectedExtension, Type_Draft as Draft,
 };
@@ -296,7 +297,7 @@ pub fn axiom_extension() -> Box<dyn Extension> {
 
 The generated TypeScript bindings expose a checked immediate-export wrapper:
 
-```typescript
+```typescript title="TypeScript excerpt"
 import { defineSelectedExtension } from "@axiomcore/extension-bindings";
 
 export default defineSelectedExtension({
@@ -310,7 +311,7 @@ The restricted Python compiler preserves the same selection while lowering the
 function into the checked managed entry point. Generated stubs describe the
 dictionary input and completion payload:
 
-```python
+```python title="Python excerpt"
 from axiom_extension_sdk import extension
 from axiom_bindings import Context_normalize
 
@@ -345,7 +346,7 @@ and named branches that refer to already requested call operations. For example,
 `load: Key -> Draft` can declare `loaded`, carry `Key` as its state and name a
 `catalog.lookup` branch `task`. The corresponding generated TypeScript entry is:
 
-```typescript
+```typescript title="TypeScript excerpt"
 import { defineSelectedExtension } from "@axiomcore/extension-bindings";
 
 export default defineSelectedExtension({

@@ -1,6 +1,7 @@
 ---
 title: Axiom Cloud
 description: Accounts, projects, immutable contracts, release evidence, managed sandboxes, and observability.
+pageType: overview
 ---
 
 <StatusNote status="alpha" title="Connected control plane">
@@ -14,7 +15,7 @@ Axiom Cloud is the connected control plane for artifacts and their operational
 evidence. It complements local Acore and CLI workflows; it is not required to
 parse Acore, run local checks, or build an unsigned development artifact.
 
-```text
+```text title="Conceptual example"
 developer / CI
   -> immutable contract upload
   -> hash + Cloud signature
@@ -26,16 +27,16 @@ developer / CI
 
 ## Current product boundary
 
-<CapabilityTable rows={[
-  { capability: 'Accounts, workspaces, and projects', status: 'alpha', scope: 'Browser sessions, CLI device login, memberships, invitations, project roles, settings, and keys.' },
-  { capability: 'Contracts and releases', status: 'alpha', scope: 'Immutable versions, manifests, verification, semantic diff, durable pipeline evidence, explicit latest channel, activation, and rollback.' },
-  { capability: 'Managed sandbox and mock', status: 'alpha', scope: 'Project-scoped synthetic environment lifecycle where the deployment enables managed environments.' },
-  { capability: 'Contract tests and delivery policy', status: 'alpha', scope: 'Declared tests against the matching sandbox with persisted results and release-policy outcomes.' },
-  { capability: 'Runtime observability', status: 'alpha', scope: 'Scoped OTLP sources, traces, traffic, logs, retention, alerts, and security posture.' },
-  { capability: 'Contract pull requests', status: 'alpha', scope: 'Proposals, semantic changes, review comments, and review-state workflow.' },
-  { capability: 'Hosted CI/CD for every repository', status: 'coming-soon', scope: 'Current release pipelines process Axiom artifacts; they are not a general replacement for arbitrary repository CI.' },
-  { capability: 'Axiom Studio, Acode, and Marketplace', status: 'coming-soon', scope: 'Planned products, not additional tabs that can be inferred from the Cloud implementation.' },
-]} />
+| Capability | Status | Supported scope |
+| --- | --- | --- |
+| Accounts, workspaces, and projects | **Alpha** | Browser sessions, CLI device login, memberships, invitations, project roles, settings, and keys. |
+| Contracts and releases | **Alpha** | Immutable versions, manifests, verification, semantic diff, durable pipeline evidence, explicit latest channel, activation, and rollback. |
+| Managed sandbox and mock | **Alpha** | Project-scoped synthetic environment lifecycle where the deployment enables managed environments. |
+| Contract tests and delivery policy | **Alpha** | Declared tests against the matching sandbox with persisted results and release-policy outcomes. |
+| Runtime observability | **Alpha** | Scoped OTLP sources, traces, traffic, logs, retention, alerts, and security posture. |
+| Contract pull requests | **Alpha** | Proposals, semantic changes, review comments, and review-state workflow. |
+| Hosted CI/CD for every repository | **Coming soon** | Current release pipelines process Axiom artifacts; they are not a general replacement for arbitrary repository CI. |
+| Axiom Studio, Acode, and Marketplace | **Coming soon** | Planned products, not additional tabs that can be inferred from the Cloud implementation. |
 
 ## Choose local or connected work
 
@@ -50,11 +51,11 @@ bounded declared checks passed against the selected environment.
 
 ## Start
 
-```bash
+```bash title="Terminal"
 axiom login
 axiom project list
 axiom project link
-axiom build --release --version 1.2.0
+axiom build --release --version 1.2.0 --out backend.axiom
 ```
 
 The CLI resolves the linked project from the current directory. In automation,

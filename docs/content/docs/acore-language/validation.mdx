@@ -1,6 +1,7 @@
 ---
 title: Validation
 description: How extracted field rules, Acore constraints, runtime validation, and domain invariants differ.
+pageType: reference
 ---
 
 AxiomCore has several validation layers. They are related but not interchangeable.
@@ -18,7 +19,7 @@ AxiomCore has several validation layers. They are related but not interchangeabl
 `ModelField.validate` carries normalized structured rules. Extractors normally
 produce it from supported source-framework metadata:
 
-```acore
+```acore title="Acore excerpt"
 model User {
   email: String(minLength: 3, maxLength: 254, format: "email")
 }
@@ -29,7 +30,7 @@ no normalized rules uses `null`.
 
 ## Type constraints
 
-```acore
+```acore title="Acore excerpt"
 sampleRate: Float(this >= 0.0 && this <= 1.0) = 0.25
 ```
 
@@ -37,7 +38,7 @@ These constraints validate Acore configuration values during evaluation.
 
 ## Domain invariants
 
-```acore
+```acore title="Acore excerpt"
 // Add to a backend profile that declares Entities.order.
 invariant nonNegativeTotal(
   scope: Entities.order,
@@ -65,7 +66,7 @@ and validation behavior. Public language metadata requires reader version 2.
 
 This complete backend module compiles with the updated compiler:
 
-```acore
+```acore title="Acore excerpt"
 project(id: "schema-example", version: "1")
 model Window {
   title: String(minLength: 1, maxLength: 200)
@@ -103,7 +104,7 @@ helpers; the broker still checks guest values and proposals independently.
 
 A native endpoint can bind a named model body and expose its approved projection:
 
-```acore
+```acore title="Acore excerpt"
 project(id: "checked-window", version: "1")
 variant default(include: ["*"])
 model Window {

@@ -1,6 +1,7 @@
 ---
 title: Imports, Contracts, and Composition
 description: Choose the Acore keyword that matches the ownership and trust boundary.
+pageType: reference
 ---
 
 Acore uses different keywords for source reuse, immutable contracts, source
@@ -16,7 +17,7 @@ composition, and value inheritance. They are deliberately not synonyms.
 
 ## Internal source modules: `import`
 
-```acore
+```acore title="Acore excerpt"
 import "./shared.acore"
 ```
 
@@ -27,7 +28,7 @@ same reviewed build boundary.
 
 ## Compiled contracts: `use contract`
 
-```acore
+```acore title="Acore excerpt"
 use contract Tasks from "tasks" audience "mobile"
 ```
 
@@ -62,7 +63,7 @@ restrictions. Select it explicitly when the diagnostic lists multiple choices.
 The source's `audience "mobile"` must agree with the resolved lock. New
 manifests need neither `format` nor an `operations` list.
 
-```bash
+```bash title="Terminal"
 # Run in the frontend directory after building the backend contract.
 axiom contract resolve
 axiom ui check frontend.acore --target web
@@ -75,7 +76,7 @@ shows both editable manifests and how its local `tasks` import is resolved.
 
 Theme and component-library packages use kind-specific declarations:
 
-```acore
+```acore title="Acore excerpt"
 use theme Material from "material-theme" export "default" appearance "light"
 use component Controls from "controls" export "PrimaryButton"
 ```
@@ -88,7 +89,7 @@ consumer.
 
 ## Backend composition: `amends`
 
-```acore
+```acore title="Acore excerpt"
 amends "./base.acore"
 amends "axiom-openapi:./openapi.yaml"
 amends "axiom-fastapi:./app.py:app"
@@ -105,7 +106,7 @@ composition.
 
 ## Promote a backend model
 
-```acore
+```acore title="Acore excerpt"
 // In a backend project with Models.Task available.
 entity task(model: Models.Task)
 ```
@@ -120,7 +121,7 @@ retain `extend` for value inheritance, and classes may use the conventional
 
 ## Contract build flow
 
-```text
+```text title="Conceptual example"
 backend source/OpenAPI -- amends/import --> build --> .axiom
                                             local: unsigned + warning
                                             Cloud release: signed

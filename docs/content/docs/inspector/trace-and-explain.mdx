@@ -1,6 +1,7 @@
 ---
 title: Trace and explain relationships
 description: Use graph, trace, why, access, reachability, lineage, evidence, and target comparison to answer focused application questions.
+pageType: guide
 ---
 
 Start from one semantic fact and choose the question you want Inspector to
@@ -8,7 +9,7 @@ answer.
 
 ## Inspect one fact
 
-```bash
+```bash title="Terminal"
 axiom inspect node Home.total_label .
 axiom inspect evidence Home.total_label .
 ```
@@ -18,7 +19,7 @@ the source, artifact, lock, or runtime references supporting that fact.
 
 ## Trace upstream or downstream
 
-```bash
+```bash title="Terminal"
 axiom inspect trace Home.total_label . --direction upstream
 axiom inspect trace Home.apply_member_price . --direction downstream
 axiom inspect trace pricing . --direction both --max-depth 6
@@ -30,7 +31,7 @@ are bounded and report truncation.
 
 For the shopping example, an upstream state trace can connect:
 
-```text
+```text title="Conceptual example"
 Apply member price button
         -> action
         -> pricing extension export
@@ -54,7 +55,7 @@ keys, inputs, credentials and verified principal values.
 
 Applications can opt in to a small, typed field catalog in the private plan:
 
-```acore
+```acore title="Acore excerpt"
 serverTelemetry(maxSeries: 32, maxEvents: 128, applicationFields: {
   stage: {type: "enum", classification: "public", values: ["started", "complete"]},
   count: {type: "int32", classification: "public"},
@@ -63,9 +64,8 @@ serverTelemetry(maxSeries: 32, maxEvents: 128, applicationFields: {
 })
 ```
 
-The trusted native host producer calls
-`ActionHost::record_application_telemetry(action, fields, trace)` for a compiled
-action. This explicit API checks every field before emitting an event. Public
+The trusted native telemetry producer checks the compiled action and field
+catalog before emitting an event. Public
 values support Boolean, Int32 and finite enums; arbitrary public strings are
 rejected. Private and secret values become the literal `[redacted]` before
 collection. At most 16 fields and 32 enum cases are permitted. Unknown fields,
@@ -79,8 +79,8 @@ remain host-owned. Passive editor analysis checks the catalog and cannot emit
 telemetry. Existing declarations without `applicationFields` retain their
 default payload-free behavior.
 
-The candidate native host exposes a local `axiom-observation/v2` snapshot through
-`ActionHost::observations()`. Its identity contains the exact compiled contract
+A compatible server can export a local `axiom-observation/v2` snapshot.
+Its identity contains the exact compiled contract
 and private plan digests, plus the execution layer (`native-host` or
 `scripted-provider`). This is a trusted host API; a static Inspector trace does
 not fetch it or start application work.
@@ -129,7 +129,7 @@ distinct execution layers. See [frontend owner observations](/inspector/runtime-
 
 ## Ask why
 
-```bash
+```bash title="Terminal"
 axiom inspect why Home.total_label .
 axiom inspect why pricing .
 ```
@@ -140,7 +140,7 @@ policy, effective authorization, and declaration evidence.
 
 ## Inspect access
 
-```bash
+```bash title="Terminal"
 axiom inspect access Home.total_label .
 axiom inspect access pricing .
 ```
@@ -155,7 +155,7 @@ Use `access` to separate:
 
 ## Prove reachability
 
-```bash
+```bash title="Terminal"
 axiom inspect reachability \
   Home.apply_member_price \
   Home.total_label .
@@ -167,7 +167,7 @@ does not prove that unavailable external implementation code has no path.
 
 ## Follow lineage
 
-```bash
+```bash title="Terminal"
 axiom inspect lineage Product.price_label .
 ```
 
@@ -181,7 +181,7 @@ Lineage is useful for data questions such as:
 
 ## Query a neighborhood
 
-```bash
+```bash title="Terminal"
 axiom inspect graph . \
   --root Shop.list_products \
   --direction both \
@@ -192,7 +192,7 @@ axiom inspect graph . \
 Use `graph` when you want a broader neighborhood rather than complete paths.
 For repeatable agent queries, submit a versioned query document:
 
-```bash
+```bash title="Terminal"
 axiom inspect query question.json . --format json
 ```
 
@@ -201,7 +201,7 @@ requests fail validation.
 
 ## Compare target neighborhoods
 
-```bash
+```bash title="Terminal"
 axiom inspect target-compare pricing \
   . --targets web,ios,android
 ```

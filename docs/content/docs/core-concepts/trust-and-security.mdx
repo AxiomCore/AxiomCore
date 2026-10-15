@@ -1,6 +1,7 @@
 ---
 title: Artifact trust
 description: Hashes, detached signatures, locks, provenance, and runtime verification boundaries.
+pageType: concept
 ---
 
 AxiomCore separates artifact integrity from release provenance. A SHA-256
@@ -8,11 +9,17 @@ digest identifies exact bytes. A detached Ed25519 signature, verified with its
 paired public key, can prove that the digest was signed by the expected
 boundary.
 
-```text
-.axiom bytes ──SHA-256──► digest ──Ed25519 signature
-     │                       │              │
-     └──── lock hash ────────┘        retained public key
+```mermaid title="Integrity and provenance are separate checks"
+flowchart TD
+  A[Contract bytes] --> B[Compute SHA-256]
+  B --> C[Compare with lock digest]
+  B --> D[Verify Ed25519 signature]
+  E[Signature and expected public key] --> D
 ```
+
+The lock identifies the expected bytes. A paired signature and trusted public
+key establish provenance for that digest.
+
 
 The signature and public key are proof material associated with an artifact;
 they are not described as executable content embedded inside the contract.
@@ -42,7 +49,7 @@ step fails:
 4. verify the Ed25519 signature over the artifact digest; and
 5. only then expose contract endpoints to the runtime.
 
-```bash
+```bash title="Terminal"
 axiom contract verify --deps AxiomDeps.toml --lock axiom.ui.lock.json
 ```
 

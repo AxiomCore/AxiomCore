@@ -1,0 +1,89 @@
+---
+title: Detailed capability boundaries
+description: Exact target, runtime, framework, database, and distribution limits behind the support matrix.
+pageType: reference
+---
+
+Use this reference when a feature's exact support boundary affects your
+application. The [support matrix](/introduction/support-matrix) is the short
+entry point; the entries below retain the detailed qualifications.
+
+The general support baseline was reviewed on September 22, 2026, database
+qualifications on October 5, and advanced language qualifications on October
+7-8. These historical qualifications are not a statement that every feature
+ships in the newest public binary. The first-app walkthrough separately tests
+published CLI 0.149.0 and signed web host 0.6.12 on macOS arm64.
+
+## Language, contracts, and packages
+
+| Capability | Status | Exact boundary |
+| --- | --- | --- |
+| Acore language toolchain | **Alpha** | Parser, evaluator, standard library, diagnostics, and language-server foundations. |
+| managed language foundations | **Experimental** | Compatible compiler and matching native server runtime: bounded shared validation/codecs, selected typed failures, finite managed branches/await, private typed configuration and purpose-bound secrets, owned cleanup and explicitly prepared PostgreSQL transactions. Web owners and verified Rust/Wasm guests use selected checked helpers. Worker, generated mobile readers, editor versions and distribution retain their separate capability gates. |
+| owned concurrency, operation policies and timing | **Experimental** | Compatible compiler/native host: finite named read groups, typed collected outcomes, cancellation/drain, root budgets, provider-attested retry policies and typed durable enqueue through an explicit reviewed controller. Redis recovery and composed job/provider attempt bounds have separate native fixture evidence. Web and generated mobile owners support bounded foreground polling/debounce; mobile activation requires the explicit foreground-events host capability. Compiled lifecycle queues and generated owner tests do not certify a mounted mobile application. Rust/Wasm query groups require a group-capable trusted broker adapter; other SDK/host profiles reject unsupported groups. Installed editor and public binary publication retain exact-toolchain gates. |
+| .axiom service contracts | **Alpha** | Build, inspect, semantic diff, local test/mock, release, pull, and runtime workflows. |
+| advanced application candidate | **Experimental** | Matching source compiler/native host: bounded authority-partitioned read caching, typed read batches, managed finite snapshot streams, qualified receipt-backed archive batches, inherited form rules and selected failures, runtime-owned submission identity, and generated selected Rust/TypeScript/Python codecs with finite named reentry. The complete task source combines signed pure guest computation, managed PostgreSQL receipt/outbox writes, cache invalidation and bounded snapshot reduction. Reports bind actual execution level, artifact hashes, assertions and cleanup. Actual durable-provider and mounted web fixtures remain distinct from scripted/generated mobile adapters; exact installed editor delivery, wider target qualification and public artifact promotion retain separate gates. |
+| observability, scenarios and delivery | **Experimental** | Exact source-linked private observations; opt-in typed public/private/secret telemetry fields with redaction; strict artifact-bound native scenarios with logical retry and batch-window barriers, cancellation and cleanup; explicit synthetic credential/provider expiry environments that cannot activate in production. Reference frontend scenarios virtualize polling and stream windows; native OS containment and actual provider recovery retain distinct real-time gates. The playground task/inventory examples include editable database contracts/manifests and live checked table previews. Matching CLI/LSP, VS Code/Zed adapters, compiler and host readers are required. |
+| Typed package envelope | **Alpha** | Service, theme, component-library, database-schema, extension, and application-policy kinds with canonical encoding and validation. |
+| Theme and component packages | **Alpha** | Typed exports, targets, roles/props/slots/composition constraints, lock resolution, and semantic change classification. |
+| Executable extensions | **Experimental** | Typed Rust, managed TypeScript/Javy, and restricted Python AOT source profiles lower to one WebAssembly ABI, signed authority locks, and bounded broker. Supported third-party package forms are deliberately narrow and pre-stable. |
+| Axiom Inspector | **Alpha** | Canonical application evidence, semantic graph queries, authority and security review, normalized runtime sessions, snapshot/diff/impact, agent output, and a secure local dashboard. |
+| Jev question planner | **Experimental** | Opt-in bounded intent and selector planning through Vercel AI Gateway. Local Inspector evidence remains authoritative; remote planning can abstain. |
+
+## Backend and schema inputs
+
+| Capability | Status | Exact boundary |
+| --- | --- | --- |
+| Python / FastAPI | **Available** | Primary extraction and local contract-build path. The service dependencies must be installed in the build environment. |
+| Go | **Alpha** | Route and type extraction exists; review the extracted surface before release. |
+| OpenAPI input | **Experimental** | Bounded composition/domain bootstrap path. It is not full parity with every Acore behavior. |
+| SQL schema input | **Experimental** | Bounded domain bootstrap path, not a complete database runtime or management UI. |
+| Acore database contracts | **Experimental** | Offline PostgreSQL authoring, typed server-only schema packages, semantic comparison, editor services and WebAssembly preview. Legacy v1 remains data-only; separately qualified private persistence mappings use the named PostgreSQL application profile. |
+| Schema-derived PostgreSQL persistence | **Experimental** | Private typed native operations, pools, primary readiness, tenant transactions, codecs, bounded retry/cancel, atomic outbox/idempotency and compiler-linked API/UI impact. Exact PG17.11/Darwin25.2 arm64/loopback TLS/file profile; other runtimes, replicas and general ORM remain gated. |
+| PostgreSQL inspection and adoption preparation | **Experimental** | Explicit private bindings, verified native Rust TLS, read-only scoped catalogs, static SQL/HCL imports, physical comparison and sanitized dependency graphs. Native fixture validation: PostgreSQL 17.5/macOS arm64. No baseline registration or backend query provider. |
+| PostgreSQL isolated planning and private history | **Experimental** | Rust typed transitions, disposable pinned dev replay, source-linked risks/impacts, typed fixture tests and checksummed offline candidate history. Native acceptance: PostgreSQL 17.5/macOS arm64. Target history remains unregistered; no production data-safety claim. |
+| PostgreSQL controlled local/staging application | **Experimental** | Rust signed private prefixes, explicit target/role/incarnation bindings, owned revision ledger, locks, fresh drift/ownership checks, empty or no-change baseline registration, explicit Atlas adoption provenance, atomic group outcomes and bounded status/verify/reconcile. Native fault acceptance: PostgreSQL 17.5/macOS arm64. No production data or online-workload certification. |
+| PostgreSQL data evolution | **Experimental** | Exact Acore intent, stable physical renames, bounded resumable transforms, fenced catch-up/enforcement, scoped insert/upsert/synchronize, explicit scalar/finite-enum conversion, simple concurrent btree indexes with signed OID repair, data-retaining checkpoints and new fresh-target roots. PostgreSQL 17.5/macOS arm64 local/staging; application dual writes, general cursors/SQL and production workload compatibility remain unproved. |
+| PostgreSQL advanced objects and security | **Experimental** | Selected domains/composites/ranges/sequences, views/materialized refresh, SQL/PLpgSQL routines, triggers/event hooks, aggregates/casts, libc collations and pgcrypto/postgres_fdw; exact scoped roles/memberships/ACLs/default privileges/RLS, private runtime credentials and security impact. Native PostgreSQL 17.5/macOS arm64; opaque/dynamic effects stay unknown and unmodeled properties block coverage. |
+| PostgreSQL partitions, storage and foreign objects | **Experimental** | Finite range/list/hash/default bounds, retained detach, separately checkpointed attach/recovery, selected ordinary heap storage/tablespace/owner/options and secret-safe postgres_fdw server/table/mapping. Native writer/placement/foreign tests on PostgreSQL 17.5/macOS arm64; repartitioning, parent storage, inherited CHECK/FK and remote compatibility/availability remain unproved. |
+| Frozen database fleet delivery | **Experimental** | Enrolled PostgreSQL/SQLite targets, bounded frozen inventories, source/security/operations review with an independent policy digest, serial canary groups, native checkpoint reruns, immutable offline promotion, masked monitoring and typed column/impact dashboard. CI/Axiom-operator/Terraform CLI protocol; production execution requires exact qualified PostgreSQL profile admission. |
+| Named PostgreSQL production management | **Available** | qualified PostgreSQL profile: PostgreSQL 17.11, Darwin 25.2 arm64, Rust 1.93 native release digest, verified TLS and private file providers. Reviewed exact-build admission requires actual populated physical backup/PITR and native data/history comparison; fenced failover/rotation and retained feature drills. Bounded measured workloads only; other engines/platforms/providers, full property coverage, unsupported mixed transitions and backend runtime remain separate gates. |
+| SQLite contracts and local lifecycle | **Experimental** | Separate SQLite authoring, private views/triggers, populated rebuild validation, signed prefixes, owned empty enrollment and atomic schema/revision recovery. CLI 0.149.0 resolves SQLite automatically, provides versioned migrate/rollback/status/history/run and bounded typed application persistence. Selected macOS arm64 and Linux arm64 acceptance; attached databases, unsupported conversions and production data safety retain separate gates. MySQL/MariaDB and other adapters remain deferred. |
+| Other backend languages | **Coming soon** | No supported first-party extractor is documented today. Custom integration work is required. |
+
+See [Database contracts](/database/contracts) for the current
+authoring, explicit inspection and adoption workflows, and later impact boundaries.
+
+## Frontend and application targets
+
+| Capability | Status | Exact boundary |
+| --- | --- | --- |
+| Vanilla web / ATMX | **Available** | Generated client and web runtime path. Validate target browsers and application CORS policy. |
+| React / ATMX | **Alpha** | Bindings exist; validate bundler integration and application boot order. |
+| Flutter / Dart | **Alpha** | Bindings and runtime path exist; validate platform storage and consumer release builds. |
+| Swift / Apple platforms | **Experimental** | Runtime distribution exists; full binding and lifecycle parity is not claimed. |
+| Acore UI hosts | **Alpha** | Browser, Android Emulator, and iOS Simulator development paths, including assets, interaction, diagnostics, and hot reload. |
+| Extension hosts | **Experimental** | Server/headless, Chromium Worker, Android Emulator, and iOS Simulator conformance. Physical-device, durable-store, and broad browser-engine certification are not claimed. |
+| Runtime-dependent foreign UI islands | **Experimental** | Sandboxed, visibly foreign Web iframe with typed bridge. Android and iOS are deliberately unsupported. |
+| .axiomapp | **Alpha** | Target-specific and multi-target builds plus inspect/install/package/run workflows. App-store signing and publishing are outside this boundary. |
+| Physical-device certification | **Coming soon** | Current documentation does not claim a certified physical-device or store-distribution matrix. |
+
+## Cloud and applications
+
+| Capability | Status | Exact boundary |
+| --- | --- | --- |
+| Cloud accounts, projects, releases, and pull | **Alpha** | Connected workflows require a live account and configured control plane. |
+| Axiom Cloud Dashboard | **Alpha** | Implemented control-plane views; the broader collaborative vision is not all shipped. |
+| Axiom Studio | **Coming soon** | Planned visual and collaborative software workspace; not installable today. |
+| Acode | **Coming soon** | Planned contract-aware IDE; existing language-server/editor foundations are not the product. |
+| Axiom Marketplace | **Coming soon** | The package format exists, but catalog browsing and supported installation do not. |
+
+Before adopting an alpha or experimental path, add an end-to-end example for
+your application, run the owning repositories' checks in CI, and inspect the
+semantic diff for every contract or package upgrade.
+
+## Database developer workflow
+
+CLI 0.149.0 adds explicit Acore contract identity/version, native PostgreSQL/SQLite connections, atomic versioned migration/compensation, status/history/comparison, noninteractive preparation/frozen promotion, a native SQL console and source-owned private mappings. Default Axiom-generated artifacts/locks/reports are hidden. The playground compiles matching metadata and simulates versioned transitions with retained valid rows and clean downloads.
+
+The developer adapter accepts PostgreSQL 17/18 and SQLite 3.37+ on declared Unix platforms. A distribution must include a validator for the target PostgreSQL major or find a matching qualified installation internally. A PostgreSQL distribution needs its accepted validator assets for the selected major and platform. Windows, generic hosted-provider capabilities, nontransactional stages and advanced application codecs/receipts retain their own qualification gates. Historical certified recovery/production profiles remain unchanged.

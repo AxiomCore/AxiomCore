@@ -1,0 +1,101 @@
+module docs.tasks.ui
+use contract Tasks from "tasks" audience "web"
+
+model Selector { id: String }
+model Draft { title: String }
+model Task { id: String; title: String }
+component TaskRow(task: Task) {
+  event remove(payload: Selector)
+  action deleteRow() { emit remove({id: task.id}) }
+  view {
+    View(class: "task") {
+      Text(task.title)
+      Button(label: "Delete", on_press: deleteRow, class: "secondary")
+    }
+  }
+}
+app TasksApp { route "/" => Home }
+
+page Home {
+  state enteredKey: String = ""
+  state apiKey: String = ""
+  state draft: Draft = {title: ""}
+  query tasks = Tasks.list_tasks(apiKey: apiKey) when apiKey.length > 0
+  state selectedId: String = ""
+  state message: String = ""
+  mutation deletion = Tasks.delete_task(apiKey: apiKey, id: selectedId)
+  action remove(payload: Selector) { selectedId = payload.id; await deletion.run() on_error problem { message = problem.message } }
+  mutation create = Tasks.create_task(apiKey: apiKey, task: draft)
+
+  form_model composer(values: draft, submit: create, validation: FormValidation.contract) {
+    field title(parse: raw.trim(), timing: "submit", message: "Enter a task title")
+    server Tasks.Failures.duplicate(field: .title, message: server_error.payload.message)
+  }
+
+  action connect() { apiKey = enteredKey.trim() }
+  action add() { form composer.submit() }
+  action refresh() { tasks.refresh() }
+
+  view {
+    SafeArea {
+      View(class: "workspace") {
+        Text("TASKS", class: "eyebrow")
+        Text("One thing at a time.", class: "heading")
+        Text("A small list for what matters today.", class: "description")
+
+        View(class: "connection") {
+          Input(value: enteredKey, input_type: "password", placeholder: "Local development API key",
+            accessibility_label: "API key", class: "input")
+          Button(label: "Connect", disabled: enteredKey.trim().length == 0,
+            on_press: connect, class: "secondary")
+        }
+
+        View(class: "composer") {
+          Input(value: composer.fields.title.raw, placeholder: "What needs doing?",
+            accessibility_label: "Task title", class: "input")
+          Button(label: "Add task", disabled: composer.pending || apiKey.length == 0,
+            on_press: add, class: "primary")
+        }
+        Text(composer.fields.title.error ?? "", class: "error")
+
+        View(class: "listHeader") {
+          Text("Your list", class: "label")
+          Button(label: "Refresh", disabled: apiKey.length == 0, on_press: refresh, class: "secondary")
+        }
+        if apiKey.length == 0 { Text("Paste the key from your terminal and connect.", class: "description") }
+        else if tasks.pending { Text("Loading tasks…", class: "description") }
+        else if tasks.error { Text("Could not load tasks. Try Refresh.", class: "error") }
+        else {
+          if tasks.data.length == 0 { Text("Your list is clear. Add your first task.", class: "description") }
+          List(items: tasks.data, key: |task| task.id, class: "tasks",
+            list_type: "single", span_count: 1, scroll_orientation: "vertical") { task =>
+            TaskRow(task: task, on_remove: remove)
+          }
+        }
+      }
+    }
+  }
+}
+
+styles {
+  .workspace { padding: 40px; gap: 12px; background-color: #f8faf9 }
+  .eyebrow { font-size: 11px; color: #64746c; font-weight: 600 }
+  .heading { font-size: 32px; color: #17251e; font-weight: 600 }
+  .description { font-size: 14px; color: #64746c }
+  .connection { flex-direction: row; gap: 8px; margin-top: 12px }
+  .composer { flex-direction: row; gap: 8px; margin-top: 20px }
+  .input { flex: 1; padding: 12px; background-color: #ffffff; color: #17251e; border-width: 1px; border-color: #d8e1db; border-radius: 8px }
+  .primary { padding: 12px; background-color: #246448; color: #ffffff; border-radius: 8px }
+  .error { font-size: 13px; color: #a33d36 }
+  .listHeader { flex-direction: row; justify-content: space-between; align-items: center; margin-top: 16px }
+  .label { font-size: 14px; color: #17251e; font-weight: 600 }
+  .secondary { padding: 8px; background-color: #e8efea; color: #246448; border-radius: 8px }
+  .tasks { gap: 8px }
+  .task { padding: 16px; background-color: #ffffff; border-width: 1px; border-color: #e1e8e3; border-radius: 8px }
+  .taskTitle { font-size: 16px; color: #17251e }
+  viewport compact {
+    .workspace { padding: 20px }
+    .heading { font-size: 28px }
+    .composer { flex-direction: column }
+  }
+}

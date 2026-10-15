@@ -1,6 +1,7 @@
 ---
 title: Backend extraction
 description: What AxiomCore reads, what it executes, and how to review an extracted contract.
+pageType: concept
 ---
 
 Backend extraction converts a supported service surface into declarations that
@@ -10,18 +11,18 @@ assume that extraction is universally static or side-effect free.
 
 ## Current inputs
 
-<CapabilityTable rows={[
-  { capability: 'FastAPI', status: 'available', scope: 'Loads the selected Python module, locates the FastAPI application, and extracts routes and models. The service environment must be importable.' },
-  { capability: 'Go services', status: 'alpha', scope: 'Extracts supported route and type patterns. Review output for framework-specific constructs.' },
-  { capability: 'OpenAPI JSON', status: 'experimental', scope: 'Bootstraps bounded domain suggestions for review; it is not a complete import of every vendor extension or Acore behavior.' },
-  { capability: 'SQL DDL', status: 'experimental', scope: 'Bootstraps bounded domain suggestions from an exported schema; it does not connect to or manage a live database.' },
-]} />
+| Capability | Status | Supported scope |
+| --- | --- | --- |
+| FastAPI | **Available** | Loads the selected Python module, locates the FastAPI application, and extracts routes and models. The service environment must be importable. |
+| Go services | **Alpha** | Extracts supported route and type patterns. Review output for framework-specific constructs. |
+| OpenAPI JSON | **Experimental** | Bootstraps bounded domain suggestions for review; it is not a complete import of every vendor extension or Acore behavior. |
+| SQL DDL | **Experimental** | Bootstraps bounded domain suggestions from an exported schema; it does not connect to or manage a live database. |
 
 ## FastAPI execution boundary
 
-The FastAPI extractor installs import shims for some dependencies and also
-uses AST analysis for security evidence. It nevertheless imports and executes
-the selected module's top-level initialization to obtain the FastAPI instance.
+FastAPI extraction imports and executes the selected module's top-level
+initialization to obtain the application instance. Extraction helpers do not
+make that module safe to execute.
 That means the extraction environment needs the application's relevant Python
 dependencies, and import-time code must not require production credentials or
 a live database.
@@ -30,7 +31,7 @@ Prefer an application factory or module whose import performs declaration
 only. Move migrations, worker startup, external connections, and destructive
 setup behind explicit process entry points.
 
-```python
+```python title="Python excerpt"
 from fastapi import FastAPI
 
 app = FastAPI()
@@ -40,13 +41,12 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 ```
 
-Then initialize Acore against that module using the CLI workflow supported by
-your checkout:
+Save the excerpt as `src/main.py`, then initialize its contract:
 
-```bash
+```bash title="Terminal"
 axiom install axiom-fastapi --module
 axiom init ./src/main.py:app --module axiom-fastapi
-axiom build axiom.acore
+axiom build axiom.acore --out backend.axiom
 ```
 
 ## Review is part of extraction

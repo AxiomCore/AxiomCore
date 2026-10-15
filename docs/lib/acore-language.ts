@@ -29,6 +29,15 @@ export const acoreLanguage: LanguageRegistration = {
     strings: {
       patterns: [
         {
+          name: 'string.interpolated.acore',
+          begin: '\\$"',
+          end: '"',
+          patterns: [
+            { name: 'constant.character.escape.acore', match: '\\\\.' },
+            { name: 'meta.interpolation.acore', begin: '(?<!\\{)\\{(?!\\{)', end: '\\}', patterns: [{ include: '$self' }] },
+          ],
+        },
+        {
           name: 'string.quoted.triple.acore',
           begin: '"""',
           end: '"""',
@@ -60,6 +69,7 @@ export const acoreLanguage: LanguageRegistration = {
     },
     numbers: {
       patterns: [
+        { name: 'constant.numeric.duration.acore', match: '\\b\\d+(?:ms|s|m|h|d)\\b' },
         { name: 'constant.numeric.float.acore', match: '\\b-?\\d+\\.\\d+\\b' },
         { name: 'constant.numeric.integer.acore', match: '\\b-?\\d+\\b' },
       ],
@@ -77,7 +87,15 @@ export const acoreLanguage: LanguageRegistration = {
     declarations: {
       patterns: [
         {
-          match: '\\b(module|class|typealias|function|app|page|state|action|query|mutation|model|endpoint|entity|projection|variant|policy|relationship|invariant)\\s+([A-Za-z_][A-Za-z0-9_.]*)',
+          match: '\\b(pure)\\s+(fn)\\s+([A-Za-z_][A-Za-z0-9_]*)',
+          captures: {
+            1: { name: 'storage.modifier.acore' },
+            2: { name: 'keyword.declaration.acore' },
+            3: { name: 'entity.name.function.acore' },
+          },
+        },
+        {
+          match: '\\b(module|class|typealias|function|app|page|state|action|query|mutation|model|endpoint|entity|projection|variant|policy|relationship|invariant|failure|validator|resource|operation|permission|guard|configuration|secret|serverPolicy|operationPolicy|interceptor|service|group|database|schema|table|index|trigger|form_model|store|transaction)\\s+([A-Za-z_][A-Za-z0-9_.]*)',
           captures: {
             1: { name: 'keyword.declaration.acore' },
             2: { name: 'entity.name.type.acore' },
@@ -89,7 +107,7 @@ export const acoreLanguage: LanguageRegistration = {
       patterns: [
         {
           name: 'keyword.control.acore',
-          match: '\\b(?:if|else|for|when|let|throw|trace|is|as)\\b',
+          match: '\\b(?:if|else|for|when|let|throw|trace|is|as|await|return|fail|match|case|try|catch|finally|managed|perform|invoke|result|parallel|enqueue)\\b',
         },
         {
           name: 'keyword.other.acore',

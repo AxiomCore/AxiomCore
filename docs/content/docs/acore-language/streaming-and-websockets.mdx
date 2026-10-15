@@ -1,17 +1,18 @@
 ---
 title: Streaming and WebSockets
 description: Contract types for HTTP streams, server-sent events, WebSockets, and files.
+pageType: reference
 ---
 
 Attach one `StreamingDef` subtype to an endpoint. The executable action host
 supports typed SSE, JSON/message HTTP streams and bidirectional JSON WebSockets
 with explicit limits and per-message authorization. See
-[server integrations](/reference/server-integrations) for source policies,
+[server integrations](/backend/integrations) for source policies,
 provider bindings and supported transport boundaries.
 
 ## HTTP and server-sent streams
 
-```acore
+```acore title="Acore excerpt"
 // Inside an endpoint declaration; Models.Event is an authored or extracted model.
 streaming(HttpStreamDef(responseType: Models.Event, framing: "event", encoding: "json"))
 ```
@@ -22,7 +23,7 @@ response type with its fixed `sse` kind.
 
 ## WebSockets
 
-```acore
+```acore title="Acore excerpt"
 // Inside an endpoint declaration.
 streaming(WebSocketDef(
   direction: "bidirectional",
@@ -38,7 +39,7 @@ Directions are `server_to_client` and `bidirectional`. Reconnect intent is
 
 ## File streams
 
-```acore
+```acore title="Acore excerpt"
 // Inside an endpoint declaration.
 streaming(FileStreamDef(
   contentType: "application/pdf", filename: "report.pdf", disposition: "attachment"
@@ -58,7 +59,7 @@ Disposition is `attachment` or `inline`.
 The source toolchain adds `overflow`, `max_bytes`, `idle_timeout`, and
 `sequence` to frontend stream options. Compiler, SDK and installed-editor
 qualification is still in progress. Use a matching compiler and host; the
-public installation cohort is qualified separately.
+public installation toolchain is qualified separately.
 
 A bounded view can select `overflow: "error"` to stop before exceeding its
 item capacity. `max_bytes` bounds the UTF-8 JSON representation of retained
@@ -87,22 +88,19 @@ They receive explicit event values, with the normal pure evaluator's fuel and
 value limits. Sequence and source cursor progress follow the original event even
 when a filter excludes it; a map cannot rewrite transport progress.
 
-The owned-runtime cases are executable with:
+Test subscription ordering, overflow, cancellation, reconnect, and disposal
+against your selected transport. Synthetic transport checks do not establish
+mounted native delivery or durable provider behavior.
 
-```sh
-node --test axiom-ui-host/tests/m3-stream-ownership.test.mjs
-```
+<span id="candidate-bounded-pure-folds-and-windows" />
 
-Those cases qualify helper semantics with synthetic transport callbacks. They do
-not establish mounted native delivery or durable provider behavior.
-
-### Candidate bounded pure folds and windows
+### Bounded pure folds and windows
 
 The source toolchain also supports a pure fold over an explicitly supplied current
 view and ordered event batch. The initial view is an empty typed list. A fold
 returns the same event-list type; it cannot capture page, session or store state.
 
-```acore
+```acore title="Acore excerpt"
 module advanced.windows.ui
 use contract Workflow from "workflow" audience "mobile"
 model Change { id: Int; title: String; cursor: String }
@@ -121,11 +119,10 @@ page Home {
 }
 ```
 
-This complete source is compiled and executed with the selected development
-`updates(after: String?) -> Change` contract in
-`axiom-ui/tests/frontend_data.rs`. Its `id` is a synthetic contiguous sequence
-in that fixture. Select a real transport sequence field in an application; an
-ordinary entity ID does not establish stream ordering.
+This excerpt requires an `updates(after: String?) -> Change` operation. Its
+`id` represents a contiguous transport sequence for the example. In your
+application, select a real transport sequence field; an ordinary entity ID
+does not establish stream ordering.
 
 A count window flushes at `window_items` (1–256). An optional `window_time`
 (10ms–1m) starts when the first item enters an empty window and remains fixed as
@@ -148,7 +145,7 @@ the database, public endpoint, validation, transaction, outbox, publisher and
 consumer. Its batch has one to 32 items and each title has a 200-character bound.
 The private runtime specification binds `writeBatch` to two checked `insertBatch`
 steps and one receipt in the same serializable transaction. See
-[server integrations](/reference/server-integrations#transactional-batch-writes)
+[server integrations](/backend/integrations#transactional-batch-writes)
 for the private provider contract.
 
 A worker acknowledges the queue only after the action succeeds. If the process

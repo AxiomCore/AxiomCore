@@ -1,6 +1,7 @@
 ---
 title: Contract runtime
 description: Native and browser execution, request lifecycle, caching, authentication, and events.
+pageType: concept
 ---
 
 The Axiom Runtime consumes compiled contract data and executes declared client
@@ -18,7 +19,7 @@ returns structured events or errors to the framework binding.
 
 | Target | Engine and bridge | Network | Local cache boundary |
 | --- | --- | --- | --- |
-| Flutter/Dart | Rust runtime through native bindings | Native HTTP client | Optional Sled database configured by the application |
+| Flutter/Dart | Rust runtime through native bindings | Native HTTP client | Optional persistent cache configured by the application |
 | Browser/ATMX | Rust compiled to Wasm plus the ATMX JavaScript layer | Browser fetch and WebSocket facilities | ATMX query snapshots in `sessionStorage` for the current browser session |
 | Swift/Apple | Native runtime distribution foundations | Native runtime transport | Experimental binding and lifecycle surface |
 
@@ -27,17 +28,21 @@ the native cache is not automatically shared with a browser or another app.
 
 ## Request lifecycle
 
-```text
-generated call
-  -> contract and endpoint lookup
-  -> request construction
-  -> request validation
-  -> optional cache read
-  -> authentication and transport
-  -> response validation and decoding
-  -> optional cache write
-  -> framework state/event
+```mermaid title="A contract-backed request and response"
+flowchart TD
+  A[Generated call] --> B[Look up contract and endpoint]
+  B --> C[Build and validate request]
+  C --> D[Apply cache policy]
+  D --> E[Authenticate and send]
+  E --> F[Validate and decode response]
+  F --> G[Update cache and framework state]
 ```
+
+The runtime resolves endpoint identity, constructs and validates input, applies
+cache policy, and performs authenticated transport. It validates the response
+before updating cache and framework state. Cache hits can be published while
+a network refresh continues.
+
 
 Failures retain their stage, category, symbolic code, retryability, and safe
 details when available. This lets an application distinguish a missing

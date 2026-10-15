@@ -1,6 +1,7 @@
 ---
 title: Backend authoring profile
 description: Declare backend models, operations, and policies with typed arguments and inspect the same contract JSON.
+pageType: reference
 ---
 
 Set `type = "backend"` in the nearest `AxiomDeps.toml`. Acore files start directly with declarations. The language provides named
@@ -32,7 +33,7 @@ for the explanation and valid choices, or open Problems with Ctrl/⌘ + Shift + 
 
 ## A complete contract
 
-```acore
+```acore title="Acore excerpt"
 project(id: "projects-api", version: "1.0.0")
 variant default(include: ["*"])
 
@@ -65,7 +66,7 @@ contract development.
 Route groups compose literal path prefixes while keeping endpoint names and
 compiler-owned IDs at module scope:
 
-```acore
+```acore title="Acore excerpt"
 group api(prefix: "/api") {
   group v1(prefix: "/v1") {
     endpoint health(method: HEAD, path: "/health") {
@@ -79,7 +80,7 @@ This expands to `HEAD /api/v1/health`. A group contains endpoints or nested
 groups. Prefixes have no trailing slash or path parameters. `HEAD` describes a
 bodyless response, so server bindings require `Void`. Server plans reject
 ambiguous route templates before starting an adapter. See the
-[HTTP server adapters](/reference/server-adapters) for incoming request
+[HTTP server adapters](/backend/adapters) for incoming request
 validation and native handler integration.
 
 ## Types and collections
@@ -87,7 +88,7 @@ validation and native handler integration.
 Models use a familiar `field: Type` form. `List<T>` describes a response or
 field containing items of one type. `Map<K, V>` describes key/value types:
 
-```acore
+```acore title="Acore excerpt"
 model ProjectIndex {
   names: List<String>
   counts: Map<String, Int64>
@@ -98,7 +99,7 @@ model ProjectIndex {
 `Optional<T>` makes a model field omittable. A required field that accepts a
 JSON `null` uses an explicit nullable validation rule:
 
-```acore
+```acore title="Acore excerpt"
 model ProjectDetails {
   subtitle: Optional<String>
   description: Field(type: String, validate: {
@@ -123,7 +124,7 @@ declarations and indexed references such as
 
 Use `also entity` when a model and its entity share the same shape:
 
-```acore
+```acore title="Acore excerpt"
 model Task {
   id: String
   title: String(minLength: 1, maxLength: 10)
@@ -157,7 +158,7 @@ The nearest `AxiomDeps.toml`, beside the source or in a parent directory,
 defines the audience vocabulary. Contract dependency `audience` values are
 included automatically. Backend-only projects can declare audiences directly:
 
-```toml
+```toml title="AxiomDeps.toml"
 type = "backend"
 audiences = ["mobile", "web"]
 ```
@@ -210,7 +211,7 @@ imports; external packages and extensions require the CLI.
 Endpoint arguments describe the transport. A `request` block describes the
 values received over that transport:
 
-```acore
+```acore title="Acore excerpt"
 endpoint getProject(method: GET, path: "/projects/{id}") {
   request {
     path("id", type: String)
@@ -226,13 +227,13 @@ response boundary semantics.
 
 ## Inspect and validate
 
-```sh
+```sh title="Terminal"
 axiom explain --schema
 axiom eval axiom.acore --format json
 axiom explain axiom.acore
 axiom explain axiom.acore --provenance
 axiom check axiom.acore
-axiom build axiom.acore
+axiom build axiom.acore --out backend.axiom
 ```
 
 The declaration catalog describes supported names and arguments. `eval` exposes
@@ -263,9 +264,9 @@ The [runnable backend-profile example](https://github.com/AxiomCore/examples/tre
 includes reusable policies, domain projections, deterministic mock responses,
 and an executable test suite. From its directory:
 
-```sh
+```sh title="Terminal"
 axiom check axiom.acore
-axiom build axiom.acore
+axiom build axiom.acore --out backend.axiom
 axiom run axiom.acore --mode mock --port 8080
 ```
 
@@ -273,7 +274,7 @@ In another terminal in the same directory, run `axiom test axiom.acore`.
 The `mobile` variant is also available through `axiom check axiom.acore --variant mobile`.
 These local commands require neither a backend extractor nor a cloud account.
 
-Use [semantic diff](/workflows/auditing-and-diffing) to review changes before
+Use [semantic diff](/testing/semantic-diffs) to review changes before
 releasing. Source formatting and declaration syntax should not introduce an
 unrelated contract change.
 
@@ -283,7 +284,7 @@ Legacy Acore modules remain supported by the general evaluator. Migrate an
 existing backend as a deliberate source change and compare its evaluated JSON
 before and after:
 
-```sh
+```sh title="Terminal"
 axiom migrate axiom.acore --output backend.acore
 axiom eval backend.acore --format json
 axiom check backend.acore
@@ -303,8 +304,8 @@ Legacy source remains supported; migration is opt-in.
 When rebuilding a released FlatBuffers contract, provide its original artifact
 so historical table field positions remain unchanged:
 
-```sh
-axiom build backend.acore --compatibility-baseline released.axiom
+```sh title="Terminal"
+axiom build backend.acore --compatibility-baseline released.axiom --out backend.axiom
 ```
 
 The baseline must belong to the same project, variant, and codec. Keep it with
@@ -315,23 +316,19 @@ its compatibility baseline.
 Backend classes such as `MockConfig`, `TestSuite`, and `SecurityPolicy` accept
 named arguments. Their JSON shapes, ordered mock mutations, test assertions,
 and runtime enforcement boundaries remain the same. See
-[mocking APIs](/workflows/mocking-apis),
-[testing contracts](/workflows/testing-contracts), and
+[mocking APIs](/testing/mocks),
+[testing contracts](/testing/contracts), and
 [security declarations](/acore-language/security-model-v1) for examples.
 
 ## Compatibility and corrected examples
 
-The syntax migration preserves the contract schema and the existing build,
-semantic diff, mock, test, and client-generation paths. Repository checks compare
-normalized JSON and endpoint identities; the generated Stripe contract retains
-all 589 endpoints and 1,440 models unchanged.
+Syntax migration preserves the contract schema and the build, semantic diff,
+mock, test, and client-generation paths. Compare the output against your
+released artifact; source conversion does not authorize a behavior change.
+Explicit model declarations must retain every field and endpoint identity.
 
-The migration also exposed pre-existing fixture and extraction defects. These
-are deliberate contract corrections, separate from source-format conversion:
+When reviewing extraction, check these boundaries:
 
-- The management API's compact legacy model entries silently lost their field
-  definitions. Explicit model declarations restore fields on 38 models while
-  preserving all endpoint identities.
 - Extracted Python collection responses now retain their referenced models.
   Extracted enums and root authentication, offline, service-name, and test
   settings are forwarded into the compiled contract. Backend language and the
@@ -376,7 +373,9 @@ Cancellation prevents later dispatch and publication; it does not undo an earlie
 committed provider call. Use a qualified persistence program for an atomic
 database boundary.
 
-## M1 bounded business logic
+<span id="m1-bounded-business-logic" />
+
+## bounded business logic
 
 The matching working compiler supports immutable locals, pure normalization,
 `await`, branches, guards, exhaustive matches and terminal `return`/`fail` in

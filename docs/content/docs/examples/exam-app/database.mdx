@@ -1,0 +1,75 @@
+---
+title: "Exam app: define the data"
+description: Model persisted exam submissions and evolve the SQLite schema without changing the public API unnecessarily.
+pageType: tutorial
+---
+
+`database/schema.acore` owns the schema identity and version. Each submission
+stores the candidate's answers together with the backend-calculated result.
+The two question definitions live in backend Acore source for this small lesson.
+
+## Submission table
+
+| Field | Meaning |
+| --- | --- |
+| `tenant` | Trusted development tenant supplied by the backend |
+| `id` | Candidate-entered attempt ID, unique within the tenant |
+| `name` | Normalized display name |
+| `first`, `second` | Validated A/B choices |
+| `score`, `total` | Portable decimal strings calculated by the backend |
+
+```acore title="database/schema.acore: table excerpt"
+table submissions(strict: true) {
+  tenant: Sqlite.Text()
+  id: Sqlite.Text()
+  name: Sqlite.Text()
+  first: Sqlite.Text()
+  second: Sqlite.Text()
+  score: Sqlite.Text()
+  total: Sqlite.Text()
+  primaryKey(columns: [.tenant, .id], sqlName: "submissions_pkey") // [!code highlight]
+}
+```
+
+The key prevents a second stored result for the same tenant/attempt pair.
+This is a uniqueness rule, not a complete resumable or exactly-once submission
+protocol. SQLite tenant scoping is enforced by the typed application operations;
+it is not PostgreSQL row-level security.
+
+## Inspect the database
+
+From the example root:
+
+```bash title="Terminal"
+axiom database status database/schema.acore
+axiom database history database/schema.acore
+axiom run database/schema.acore
+```
+
+In the SQL console:
+
+```sql title="Axiom SQL console"
+SELECT id, name, score, total FROM submissions;
+```
+
+Exit with `\q`. The console prints the SQLite file location if you want to
+open it in another local database viewer.
+
+## Make a compatible change
+
+Add an optional `note` column, change the project version to `1.0.1`, and run:
+
+```bash title="Example root; backend stopped"
+axiom database migrate database/schema.acore
+axiom database diff database/schema.acore --from 1.0.0 --to 1.0.1
+```
+
+The public API need not expose that column. Its explicit model and response
+projection continue selecting only the declared fields. Restart the backend
+against the accepted schema before testing the app again.
+
+For multi-exam applications, add versioned exam/question relationships and
+application-owned candidate identities. Keep historical question versions so a
+stored score remains meaningful after an exam changes. Follow the
+[database reference](/database/contracts) for migration and rollback limits,
+then continue with the [backend](/examples/exam-app/backend).

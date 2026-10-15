@@ -1,6 +1,7 @@
 ---
 title: Contracts and dependency closure
 description: Review imported contracts, transitive packages, executable extensions, provenance, and effective application authority.
+pageType: guide
 ---
 
 An imported contract can bring more than operation signatures. It can depend on
@@ -9,7 +10,7 @@ context of the consuming application.
 
 ## List the dependency graph
 
-```bash
+```bash title="Terminal"
 axiom inspect dependencies .
 ```
 
@@ -22,7 +23,7 @@ Axiom dependencies.
 
 Use the manifest alias that the application imports:
 
-```bash
+```bash title="Terminal"
 axiom inspect contract shop .
 axiom inspect contract shop . --closure
 ```
@@ -42,7 +43,7 @@ Review:
 
 ## Find executable code behind a dependency
 
-```bash
+```bash title="Terminal"
 axiom inspect executable-closure shop .
 axiom inspect executable-closure shop . --target web
 ```
@@ -53,7 +54,7 @@ selected target.
 
 The important calculation is:
 
-```text
+```text title="Conceptual example"
 package maximum request
         ∩ application grant
         ∩ target policy
@@ -66,7 +67,7 @@ grant, and an effective permission is not described as observed usage.
 
 ## Inspect provenance
 
-```bash
+```bash title="Terminal"
 axiom inspect provenance pricing .
 ```
 
@@ -103,14 +104,14 @@ source must not be reconstructed or described as audited source code.
 
 ## Trace a contract operation
 
-```bash
+```bash title="Terminal"
 axiom inspect operation Shop.list_products .
 axiom inspect trace Shop.list_products . --direction both
 ```
 
 Where verified identities match, a path can connect:
 
-```text
+```text title="Conceptual example"
 UI query
   -> imported contract operation
   -> backend endpoint

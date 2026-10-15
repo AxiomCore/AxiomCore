@@ -1,6 +1,7 @@
 ---
 title: Security Model v1
 description: Opt-in deterministic security declarations compiled into a signed security manifest.
+pageType: reference
 ---
 
 Security Model v1 is an optional Acore layer for authorization, authentication,
@@ -21,7 +22,7 @@ contains a token, cookie value, API key, or request payload.
 - Structural errors, such as an unknown policy reference, always stop
   compilation because the declaration would be ambiguous.
 
-```acore
+```acore title="Acore excerpt"
 // Add to a contract declaring Entities.document and UpdateDocument.
 security(
   mode: "audit",
@@ -88,7 +89,7 @@ Use `classifications` to label extracted model fields without repeating
 schemas. `audiences` is optional, but required when a projection intentionally
 exposes classified data.
 
-```acore
+```acore title="Acore excerpt"
 // Include classifications in the contract's security(...) declaration.
 security(classifications: {
   accountEmail: SensitiveData(
@@ -107,7 +108,7 @@ boundary, not runtime response inspection.
 
 Effects make sensitive sinks reviewable without embedding imperative code:
 
-```acore
+```acore title="Acore excerpt"
 // Include these arguments in the contract's security(...) declaration.
 security(
   services: { billing: NetworkService(origin: "https://api.example.com") },

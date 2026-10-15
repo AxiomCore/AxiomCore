@@ -1,6 +1,7 @@
 ---
 title: CLI reference
 description: Public Axiom CLI commands for contracts, packages, clients, applications, and Cloud projects.
+pageType: reference
 ---
 
 <StatusNote status="alpha" title="Axiom CLI">
@@ -24,32 +25,31 @@ description: Public Axiom CLI commands for contracts, packages, clients, applica
 `doctor` does not log in, pull a contract, or edit the workspace. Prefer its
 JSON form in CI and support reports:
 
-```bash
+```bash title="Terminal"
 axiom doctor --json --strict
 ```
 
 ## Check and build any contract
 
-The public executable is `axiom`. A local alias such as `laxiom` accepts the
-same commands. Both `check` and `build` select the frontend, backend, or database
+The public executable is `axiom`. Both `check` and `build` select the frontend, backend, or database
 compiler using the nearest `AxiomDeps.toml` and its `type` field. Legacy sources
 without a declared type retain their profile/module-based selection.
 
-```bash
+```bash title="Terminal"
 axiom check frontend/main.acore
 axiom check backend/axiom.acore --json
 axiom check database/schema.acore
 
-axiom build frontend/main.acore     # frontend/frontend.axiom
-axiom build backend/axiom.acore     # backend/backend.axiom
-axiom build database/schema.acore   # database/database.axiom
+axiom build frontend/main.acore     # frontend/.axiom/contracts/frontend.axiom
+axiom build backend/axiom.acore     # backend/.axiom/contracts/backend.axiom
+axiom build database/schema.acore   # database/.axiom/contracts/database.axiom
 axiom build database/schema.acore --out dist/schema.axiom
 ```
 
-Default outputs are placed **beside the input file**, including when the command
-runs from another directory. `--out` / `-o` selects a `.axiom` path relative to the
+With CLI 0.149.0, default outputs live under the owning project's
+**`.axiom/contracts/`** directory, including when the command runs elsewhere. `--out` / `-o` selects a `.axiom` path relative to the
 current directory, or an absolute path. It creates missing output directories.
-Database build does not create a hidden contracts hierarchy.
+Use an explicit export path when distributing a schema package.
 
 `check` prints diagnostics and exits non-zero on an error. `--json` emits an
 `axiom-contract-check/v1` report with `valid`, `profile`, and `diagnostics`, including
@@ -120,14 +120,14 @@ CLI 0.149.0 detects PostgreSQL/SQLite database contracts through their manifest 
 
 Connections accept `--database-url`, or PostgreSQL `--host --port --database --username` with a masked password prompt/`PGPASSWORD`. SQLite accepts `--database-file` or a SQLite URL. In CI use `--non-interactive`; `--auto-version` opts into source version allocation during preparation. Export a complete release with `--export FILE`, then promote it with `--frozen`. `--dry-run` previews; scoped risk flags are `--allow-destructive`, `--allow-data-dependent`, `--allow-security-changes`. `--json` is optional stdout integration.
 
-`run --no-shell --execute 'SQL'` supports scripts. Console commands are `\dt`, `\d TABLE`, `\conninfo`, `\q`; Ctrl+C cancels input/query and Ctrl+D exits. Default source-owned build state lives under `.axiom/`. Existing advanced plan/apply/signing/recovery subcommands remain callable for retained certified/operator profiles but are hidden from ordinary help. See [Database contracts](/acore-language/database-contracts), [SQLite](/acore-language/sqlite-contracts) and [persistence](/acore-language/database-persistence).
+`run --no-shell --execute 'SQL'` supports scripts. Console commands are `\dt`, `\d TABLE`, `\conninfo`, `\q`; Ctrl+C cancels input/query and Ctrl+D exits. Default source-owned build state lives under `.axiom/`. Existing advanced plan/apply/signing/recovery subcommands remain callable for retained certified/operator profiles but are hidden from ordinary help. See [Database contracts](/database/contracts), [SQLite](/database/sqlite) and [persistence](/database/persistence).
 
 ## Axiom Inspector
 
 The `axiom inspect` namespace can analyze a frontend, backend, or combined
 workspace as a semantic application rather than as isolated files:
 
-```bash
+```bash title="Terminal"
 axiom inspect overview .
 axiom inspect dependencies .
 axiom inspect trace Home.total_label . --direction upstream
@@ -146,7 +146,7 @@ the local dashboard. See the complete [Inspector CLI reference](/inspector/cli-r
 | --- | --- |
 | `axiom run BACKEND.acore [--mode service\|mock]` | Run backend source. Service is the default and shares real `serve` preparation for managed/sandbox actions or declared Python/Go entrypoints. Missing executable configuration fails; service mode never falls back to mocks. Mock mode selects a server or contract profile from compiled plan presence. |
 | `axiom serve [INPUT] [--plan FILE] [--deployment FILE] [--bindings FILE] [--variant NAME] [--watch] [--host 127.0.0.1] [--port 8080] [--debug]` | Run the real local API. INPUT defaults to local `axiom.acore`; `.axiom` artifacts require a matching private plan. Managed/sandbox serving needs reviewed configuration. Debug prints redacted startup diagnostics. |
-| `axiom serve INPUT --mock --fixtures FILE [--identities FILE]` | Full server simulation through the real ActionHost boundaries; no production bodies/providers. |
+| `axiom serve INPUT --mock --fixtures FILE [--identities FILE]` | Full server simulation through the real server runtime boundaries; no production bodies/providers. |
 | `axiom mock [INPUT] [--profile auto\|server\|contract] [--fixtures FILE] [--identities FILE]` | Auto follows compiled plan presence; server requires exact private fixtures, contract retains endpoint scenarios. |
 | `axiom inspect server CONTRACT PLAN [--session FILE] [--format human\|json\|jsonl]` | Inspect bound private plan facts and optional redacted startup mode/provider observations; no request capture. |
 | `axiom mock --cloud` | Explicit Cloud contract mocks with cache/ETag retrieval; requires a linked project and Cloud session. |
@@ -160,15 +160,15 @@ the local dashboard. See the complete [Inspector CLI reference](/inspector/cli-r
 options, plus mock `--fixtures` and `--identities`, are rejected for frontend/package execution. `run --mode mock` accepts these companions and source `--watch`. `--watch` requires
 source-owned managed/sandbox plans and a fixed loopback port; external services
 use their own reload tooling. Native symbols need a registered application
-host; Python/Go applications need the [server adapter](/reference/server-adapters)
+host; Python/Go applications need the [server adapter](/backend/adapters)
 for contract enforcement.
 
 Use `axiom mock FILE.acore --profile contract` for endpoint scenarios. Full
 `serve --mock` and `mock --profile server` retain action guards and supported
 transport enforcement, require private typed fixtures and reject production
 configuration. Local source mock watch uses compatible, validated snapshots and retains the last valid session on rejection. Successful reload resets simulation state and issues fresh credentials. See
-[full simulation](/reference/server-simulation) and
-[real serving](/reference/server-workflow) for source/artifact examples. See the [command migration guide](/reference/server-cli-migration) for the former `serve` behavior.
+[full simulation](/testing/server-simulation) and
+[real serving](/backend/local-development) for source/artifact examples. See the [command migration guide](/backend/cli-migration) for the former `serve` behavior.
 
 The current watcher is not a general recursive source watcher. Confirm that
 your extractor entrypoint is among the watched paths; use the explicit build
@@ -189,13 +189,13 @@ and test commands in CI.
 
 Native releases cover macOS `aarch64` and Linux `aarch64`/`x86_64`.
 `container-amd64` and `container-arm64` require `--runtime-source` and produce
-reviewed Linux build contexts; see [Linux containers](/reference/server-containers).
+reviewed Linux build contexts; see [Linux containers](/backend/containers).
 `cloudflare-workers-local` packages the pinned portable managed runtime; see
-[local Workers](/reference/server-workers). Hosted Cloudflare, Lambda and generic
+[local Workers](/backend/workers). Hosted Cloudflare, Lambda and generic
 edge profiles remain unavailable. Legacy v1
 bundles require repackaging before verification, activation or rollback. See
-[target and release verification](/reference/server-targets-and-releases) and
-[the complete release workflow](/reference/server-release-workflow).
+[target and release verification](/backend/targets-and-releases) and
+[the complete release workflow](/backend/release-workflow).
 
 ## Pull a client
 
@@ -203,7 +203,7 @@ bundles require repackaging before verification, activation or rollback. See
 `--contract`: a local `.axiom`, dependency config, AxiomCore URL, or
 `organization/project[/version]` reference.
 
-```bash
+```bash title="Terminal"
 axiom pull ../backend/backend.axiom --framework atmx-web
 axiom pull organization/project/1.2.0 --framework flutter --out lib/axiom
 axiom pull --contract-config AxiomDeps.toml --framework atmx-react
@@ -278,7 +278,7 @@ by the current development workflow.
 
 ### Application artifacts
 
-```bash
+```bash title="Terminal"
 axiom ui build main.acore --target web --development
 axiom inspect dist/my-app-web.axiomapp
 axiom install dist/my-app-web.axiomapp
@@ -296,7 +296,7 @@ of this CLI contract today.
 
 Build locally before publishing, then link the backend directory and release:
 
-```bash
+```bash title="Terminal"
 axiom check axiom.acore
 axiom build axiom.acore
 axiom login
@@ -333,7 +333,7 @@ outcome.
 
 CLI 0.148.0 adds a bundled offline installer:
 
-```bash
+```bash title="Terminal"
 axiom install lsp-server
 # macOS/Linux:
 ~/.axiom/bin/acore-lsp --version-json
@@ -356,9 +356,9 @@ The executable uses stdio LSP and implements `--version` and `--version-json`.
 Install the Acore editor adapter separately. For **VS Code**, set these in User
 settings, replacing the path with the installer's printed path:
 
-```json
+```json title="Configuration excerpt"
 {
-  "axiom.server.path": "/absolute/home/.axiom/bin/acore-lsp"
+  "axiom.server.path": "/path/to/acore-lsp"
 }
 ```
 
@@ -369,11 +369,11 @@ extension server and disables custom executable overrides.
 
 For **Zed**, use:
 
-```json
+```json title="Configuration excerpt"
 {
   "lsp": {
     "acore-lsp": {
-      "binary": { "path": "/absolute/home/.axiom/bin/acore-lsp" }
+      "binary": { "path": "/path/to/acore-lsp" }
     }
   }
 }
@@ -407,11 +407,11 @@ Database fleets use `axiom database fleet prepare`, `inspect`, `approve`,
 `terraform-plan`. `ci`, `operator` and `terraform-apply` share the `run` protocol.
 Verification, execution and promotion require `--trusted-policy-sha256`; live
 operations require an explicit inventory, private provider root, journal and
-receipt key. See [Database fleets](/acore-language/database-fleets).
+receipt key. See [Database fleets](/database/fleets).
 
 ## Source-owned database application operations
 
-Declare `storage` beside backend resources and start with `axiom run backend/main.acore --database-url "$DATABASE_URL"`. SQLite uses its variant entry and file/default connection. The CLI compiles private plans/bindings internally; frontend artifacts contain the public API. Advanced private transaction fixtures use typed Acore storage documents and retain their qualified operator workflow. See [Database persistence](/acore-language/database-persistence).
+Declare `storage` beside backend resources and start with `axiom run backend/main.acore --database-url "$DATABASE_URL"`. SQLite uses its variant entry and file/default connection. The CLI compiles private plans/bindings internally; frontend artifacts contain the public API. Advanced private transaction fixtures use typed Acore storage documents and retain their qualified operator workflow. See [Database persistence](/database/persistence).
 
 
 ## Approved backend interfaces

@@ -1,0 +1,10 @@
+project(id: "docs.hello", version: "1.0.0")
+variant default(include: ["*"])
+model Greeting { message: String }
+action hello(kind: ActionKind.query, output: Models.Greeting) {
+  managed { return {message: "Hello from Acore"} }
+}
+endpoint hello(method: GET, path: "/hello") {
+  handle(action: Actions.hello)
+  response(type: Models.Greeting)
+}

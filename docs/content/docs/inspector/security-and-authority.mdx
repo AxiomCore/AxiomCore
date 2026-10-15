@@ -1,6 +1,7 @@
 ---
 title: Security, authority, and readiness
 description: Review endpoint exposure, extension capabilities, deterministic findings, and release readiness without an opaque score.
+pageType: guide
 ---
 
 Axiom Inspector presents concrete security facts and their evidence. It does
@@ -8,7 +9,7 @@ not produce an unexplained security score.
 
 ## Start with four views
 
-```bash
+```bash title="Terminal"
 axiom inspect security .
 axiom inspect authority .
 axiom inspect exposure .
@@ -24,7 +25,7 @@ axiom inspect readiness .
 
 Use JSON for CI or agents:
 
-```bash
+```bash title="Terminal"
 axiom inspect security . --format json
 axiom inspect authority . --format json
 axiom inspect readiness . --format json
@@ -34,7 +35,7 @@ axiom inspect readiness . --format json
 
 For sandboxed extensions, review each stage:
 
-```text
+```text title="Conceptual example"
 requested by package or local source
             ↓ intersect
 granted by the application
@@ -50,7 +51,7 @@ The extension still cannot receive direct application memory, a native pointer,
 a database connection, or ambient network access. It receives typed host
 services, snapshots, handles, and limits associated with effective authority.
 
-```bash
+```bash title="Terminal"
 axiom inspect access pricing .
 axiom inspect executable-closure shop . --target ios
 axiom inspect provenance pricing .
@@ -60,7 +61,7 @@ axiom inspect provenance pricing .
 
 List findings through `security` or open one selector directly:
 
-```bash
+```bash title="Terminal"
 axiom inspect finding FINDING_ID .
 ```
 
@@ -81,7 +82,7 @@ converted into a blocker, and a blocker is not hidden inside a numeric score.
 
 These commands answer related but different questions:
 
-```bash
+```bash title="Terminal"
 axiom security check axiom.acore
 axiom inspect security .
 ```
@@ -119,7 +120,7 @@ evidence graph.
 ## Typed setup is separate from authority
 
 Configuration/interface digests establish compatible wiring. Inferred dependencies
-and successfully resolved secret references do not grant operations. The M1
+and successfully resolved secret references do not grant operations. The
 `signRequest` binding exposes a purpose-specific operation to a trusted provider,
 not secret bytes to authored or guest code. Passive inspection reads references
 and schema identities; it never resolves credentials or starts providers.

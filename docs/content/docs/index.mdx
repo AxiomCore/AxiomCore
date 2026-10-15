@@ -1,60 +1,50 @@
 ---
-title: Software built around contracts
-description: Build, connect, test, and evolve software through typed, auditable contracts.
+title: Build and connect with AxiomCore
+description: Keep your stack or build with Acore. Connect frontend, backend, and data through typed contracts.
+pageType: overview
 ---
 
 import { Card, Cards } from 'fumadocs-ui/components/card';
-import { Blocks, Braces, Cloud, Compass, Route, ScanSearch, TestTube2, Workflow } from 'lucide-react';
 
-AxiomCore is a contract platform for describing and connecting software across
-backend services, user interfaces, runtimes, tests, security policy, packages,
-and delivery workflows. Its authoring language is **Acore**.
+**AxiomCore connects the parts of an application through typed, versioned
+contracts.** Keep a supported backend and frontend, or use **Acore** to author
+your API, UI, and database schema.
 
-You can adopt the platform incrementally. A Python or Go service can remain
-imperative. A Flutter, web, or Swift application can remain in its native
-framework. AxiomCore provides the versioned contract boundary between those
-parts—and Acore can also describe more of the application when that is useful.
+A contract describes the operations, data, validation, and behavior a consumer
+can rely on. Build it, review changes, and use it from a compatible client.
 
-<StatusNote status="alpha" title="Current release maturity">
-  AxiomCore is an alpha ecosystem. Several local development paths are usable
-  today, but APIs and workflows can change. Every documentation section states
-  its narrower availability boundary.
+<StatusNote status="alpha" title="Check the path you plan to use">
+  Availability varies by framework, database, and target. Start with the
+  [support matrix](/introduction/support-matrix).
 </StatusNote>
 
 ## Choose your path
 
 <Cards>
-  <Card icon={<Route />} title="Understand AxiomCore" href="/introduction" description="See how contracts connect source, artifacts, runtimes, packages, and cloud workflows." />
-  <Card icon={<Braces />} title="Learn Acore" href="/introduction/what-is-acore" description="Learn what the language describes, how composition works, and where its boundary ends." />
-  <Card icon={<Workflow />} title="Build your first contract" href="/getting-started/installation" description="Install the CLI and follow the current local development path." />
-  <Card icon={<Compass />} title="Adopt in an existing system" href="/guides" description="Follow end-to-end guides for incremental adoption, CI, and release readiness." />
-  <Card icon={<ScanSearch />} title="Inspect an application" href="/inspector" description="Query architecture, relationships, authority, runtime evidence, and semantic change from the CLI or local dashboard." />
-  <Card icon={<Blocks />} title="Browse platform capabilities" href="/introduction/product-landscape" description="Separate what is available now from alpha, experimental, and coming-soon work." />
+  <Card title="Run your first app" href="/getting-started/quickstart" description="Start an Acore frontend and backend with a real SQLite database." />
+  <Card title="Connect your existing stack" href="/guides" description="Keep FastAPI, Go, web, React, or Flutter and add a contract boundary." />
+  <Card title="Learn Acore" href="/acore-language" description="Learn the language, then build an API, UI, and data model." />
 </Cards>
 
 ## One contract path, multiple adoption models
 
 <ConceptDiagram kind="contract" />
 
-The platform does not require a single language or framework on both sides of
-the contract. Start at the boundary that reduces the most integration risk for
-your team.
+Start with existing code or Acore source. Review the resulting `.axiom`
+contract, test it, and connect it to the application's consumers.
 
 ## What exists today
 
-<CapabilityTable
-  rows={[
-    { capability: 'Acore language and tooling', status: 'alpha', scope: 'Independent parser, evaluator, standard library, language server, and contract-oriented authoring.' },
-    { capability: 'Contract and package lifecycle', status: 'alpha', scope: 'Canonical .axiom packages, locks, semantic diffing, local tests, mocks, and runtime consumption.' },
-    { capability: 'Backend integration', status: 'available', scope: 'FastAPI is the primary path; Go is alpha. OpenAPI and SQL currently provide bounded domain bootstrap workflows.' },
-    { capability: 'Frontend and UI', status: 'alpha', scope: 'Vanilla web, React, Flutter, Swift distribution, and Acore-authored UI have different maturity boundaries.' },
-    { capability: 'Axiom Inspector', status: 'alpha', scope: 'Queryable application facts and relationships, security and authority review, runtime evidence, semantic change analysis, and a secure local dashboard.' },
-    { capability: 'Cloud control plane', status: 'alpha', scope: 'Implemented account, project, and release workflows. Broader collaboration and automation remain in development.' },
-    { capability: 'Studio, Acode, and Marketplace', status: 'coming-soon', scope: 'Planned product experiences; they are not installable or supported workflows today.' },
-  ]}
-/>
+| Work | Start here |
+| --- | --- |
+| Understand the product and its scope | [Introduction](/introduction) and [product landscape](/introduction/product-landscape) |
+| Build or connect an API | [Backend](/backend) |
+| Use an existing client or author a UI | [Frontend](/frontend) |
+| Define data and manage schema changes | [Databases](/database) |
+| Learn from working applications | [Examples](/examples) |
+| Inspect relationships and changes | [Inspector](/inspector) |
+| Find exact commands, syntax, or errors | [Reference](/reference) |
+| Work with an AI coding agent | [Agent workflow](/guides/using-ai-agents) |
 
-<Cards>
-  <Card icon={<TestTube2 />} title="Check current support" href="/introduction/support-matrix" description="Read exact framework, target, and distribution boundaries before adopting." />
-  <Card icon={<Cloud />} title="Use the reference" href="/reference" description="Find language schemas, errors, security rules, benchmarks, and terminology." />
-</Cards>
+Cloud account, project, and release workflows are available in alpha.
+Axiom Studio, Acode, and Axiom Marketplace are **Coming soon**.

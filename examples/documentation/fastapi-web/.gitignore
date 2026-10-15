@@ -1,0 +1,9 @@
+.venv/
+.axiom/
+__pycache__/
+node_modules/
+dist/
+backend/backend.axiom
+backend/backend.server.json
+frontend/generated/
+frontend/public/contracts/

@@ -1,6 +1,7 @@
 ---
 title: Adopt AxiomCore incrementally
 description: Introduce a typed contract boundary into an existing backend or frontend while preserving its language and framework.
+pageType: guide
 ---
 
 AxiomCore does not require a rewrite. The safest adoption unit is one service,
@@ -24,7 +25,7 @@ facts that Acore is intended to own.
 
 ## 2. Diagnose without changing the project
 
-```bash
+```bash title="Terminal"
 axiom doctor
 axiom onboard
 ```
@@ -37,12 +38,12 @@ allowing a file write.
 
 For a configured `axiom.acore`:
 
-```bash
+```bash title="Terminal"
 axiom eval axiom.acore
 axiom domain validate axiom.acore
 axiom security check axiom.acore
 axiom test axiom.acore
-axiom build axiom.acore
+axiom build axiom.acore --out backend.axiom
 axiom inspect backend.axiom
 ```
 
@@ -54,7 +55,7 @@ it does not prove production backend behavior.
 
 Pull from the immutable local artifact first:
 
-```bash
+```bash title="Terminal"
 axiom pull ./backend.axiom --framework atmx-web --out ./web/axiom
 ```
 
@@ -67,7 +68,7 @@ mapping, cache behavior, and one representative success and failure.
 Commit source and the lock that belongs to it. Compare the release candidate
 with the previous accepted input:
 
-```bash
+```bash title="Terminal"
 axiom diff previous.acore axiom.acore --format semantic
 ```
 

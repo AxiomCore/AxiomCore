@@ -1,0 +1,108 @@
+amends "Task.acore"
+project(id: "docs.tasks", version: "1.0.0")
+variant default(include: ["*"])
+
+model Empty {}
+model Access { apiKey: String }
+model NewTask { title: String(minLength: 1, maxLength: 120) }
+model Submission { apiKey: String task: Models.NewTask }
+model RecordId { id: String }
+model Selection { apiKey: String id: String }
+model Rename { id: String title: String(minLength: 1, maxLength: 120) }
+model RenameCommand { apiKey: String id: String title: String(minLength: 1, maxLength: 120) }
+model Problem { message: String }
+failure duplicate(payload: Models.Problem, status: 409)
+failure unavailable(payload: Models.Problem, status: 503)
+
+validator taskTitle(input: Models.NewTask) {
+  check(condition: Input.title.trim().length > 0, field: .title,
+    code: "empty_title", message: "Enter a task title")
+}
+validation(model: Models.NewTask, rules: [Validators.taskTitle], expose: true)
+
+guard signedIn(kind: GuardKind.authenticated)
+serverPolicy bounded(timeout: 10s)
+serverDefaults(policy: ServerPolicies.bounded)
+cors(origins: ["http://127.0.0.1:5173", "http://localhost:5173"],
+  methods: [GET, POST, PATCH, DELETE], headers: ["content-type", "apikey", "traceparent", "x-axiom-cache-mode"],
+  credentials: false, maxAge: 1m)
+
+resource tasks(lifetime: ProviderLifetime.application) {
+  operation list(input: Models.Empty, output: List<Models.Task>, effect: EffectKind.read)
+  operation create(input: Models.NewTask, output: Models.Task, effect: EffectKind.write,
+    errors: [Failures.duplicate])
+  operation update(input: Models.Rename, output: Models.Task, effect: EffectKind.write)
+  operation delete(input: Models.RecordId, output: Models.Task, effect: EffectKind.delete)
+}
+
+action listTasks(kind: ActionKind.query, input: Models.Access, output: List<Models.Task>) {
+  require(guard: Guards.signedIn)
+  errors(Failures.unavailable)
+  managed {
+    let rows = await Resources.tasks.list(input: {})
+    return rows
+  }
+}
+
+action createTask(kind: ActionKind.command, input: Models.Submission, output: Models.Task) {
+  require(guard: Guards.signedIn)
+  errors(Failures.duplicate)
+  managed {
+    let task = await Resources.tasks.create(input: {title: Input.task.title.trim()})
+    return task
+  }
+}
+
+projection taskPublic(entity: Entities.task, fields: [.id, .title], audience: Audience.web)
+
+endpoint list_tasks(method: GET, path: "/tasks") {
+  request { header("apiKey", type: String) }
+  handle(action: Actions.listTasks, input: {apiKey: Input.header.apiKey})
+  response(type: List<Models.Task>, projection: Projections.taskPublic)
+  errors(Failures.unavailable)
+  cacheIdentity("tasks:list")
+}
+
+endpoint create_task(method: POST, path: "/tasks") {
+  request {
+    header("apiKey", type: String)
+    body("task", type: Models.NewTask)
+  }
+  handle(action: Actions.createTask, input: {apiKey: Input.header.apiKey, task: Input.body.task})
+  response(type: Models.Task, projection: Projections.taskPublic)
+  errors(Failures.duplicate)
+  exposeFailure(failure: Failures.duplicate, fields: [.message], audiences: ["web"])
+  invalidates("tasks:list")
+}
+
+// Endpoint -> managed action -> resource -> typed storage operation.
+action updateTask(kind: ActionKind.command, input: Models.RenameCommand, output: Models.Task) {
+  require(guard: Guards.signedIn)
+  errors(Failures.unavailable)
+  managed {
+    let task = await Resources.tasks.update(input: {id: Input.id, title: Input.title.trim()})
+    return task
+  }
+}
+action deleteTask(kind: ActionKind.command, input: Models.Selection, output: Models.Task) {
+  require(guard: Guards.signedIn)
+  errors(Failures.unavailable)
+  managed {
+    let task = await Resources.tasks.delete(input: {id: Input.id})
+    return task
+  }
+}
+endpoint update_task(method: PATCH, path: "/tasks/{id}") {
+  request { header("apiKey", type: String) path("id", type: String) body("title", type: String) }
+  handle(action: Actions.updateTask, input: {apiKey: Input.header.apiKey, id: Input.path.id, title: Input.body.title})
+  response(type: Entities.task, projection: Projections.taskPublic)
+  errors(Failures.unavailable)
+  invalidates("tasks:list")
+}
+endpoint delete_task(method: DELETE, path: "/tasks/{id}") {
+  request { header("apiKey", type: String) path("id", type: String) }
+  handle(action: Actions.deleteTask, input: {apiKey: Input.header.apiKey, id: Input.path.id})
+  response(type: Entities.task, projection: Projections.taskPublic)
+  errors(Failures.unavailable)
+  invalidates("tasks:list")
+}

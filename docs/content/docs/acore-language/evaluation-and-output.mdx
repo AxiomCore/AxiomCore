@@ -1,6 +1,7 @@
 ---
 title: Evaluation and output
 description: How Acore resolves modules, evaluates values, renders output, and constrains external access.
+pageType: reference
 ---
 
 ## Evaluation model
@@ -9,7 +10,7 @@ Acore parses source into a spanned syntax tree, evaluates properties lazily in a
 lexical environment, then materializes the resulting value for the active
 compiler profile. Source order is not an imperative execution order.
 
-```text
+```text title="Conceptual example"
 source → tokens → syntax tree → lazy evaluation → profile validation → output
 ```
 
@@ -23,7 +24,7 @@ local paths and explicitly authorized package/network forms. `read()` returns
 data rather than a module. Both operations pass through the active security
 manager.
 
-```acore
+```acore title="Acore excerpt"
 import "./shared/policy.acore"
 message = read("./fixtures/message.txt")
 ```
@@ -34,7 +35,7 @@ through a manifest, committed lock, and the appropriate `use` declaration.
 ## Authority boundary
 
 The evaluator's security manager controls file, network, environment, and
-package access. A path in source is a request for access—not proof of authority.
+package access. A path in source is a request for access, not proof of authority.
 Build tooling should grant the minimum roots and hosts required for the task.
 
 Declarative `.axiom` packages do not gain package-author execution authority.
@@ -63,8 +64,8 @@ Materialization can apply one named service variant before output. Variant
 rules select endpoint and model names using include/exclude patterns, then
 prune unselected values from the rendered contract.
 
-```bash
-axiom build axiom.acore --variant mobile
+```bash title="Terminal"
+axiom build axiom.acore --variant mobile --out backend.axiom
 ```
 
 Variant behavior is documented in [Variants and filtering](/acore-language/variants-and-filtering).
@@ -78,7 +79,7 @@ runtime, UI, package, and cloud boundaries.
 
 Use the narrowest non-mutating check before building:
 
-```bash
+```bash title="Terminal"
 axiom doctor --json
 axiom domain validate axiom.acore --json
 axiom security check axiom.acore --json

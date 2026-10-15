@@ -1,6 +1,7 @@
 ---
 title: Runtime evidence and audits
 description: Capture, normalize, inspect, import, export, and interpret redacted runtime sessions without mixing them with static reachability.
+pageType: guide
 ---
 
 Static evidence answers what an application declares or can reach. Runtime
@@ -10,13 +11,13 @@ evidence answers what a particular captured session observed.
 
 Create a bounded session for a target:
 
-```bash
+```bash title="Terminal"
 axiom inspect record . --target web --session demo
 ```
 
 Normalize an existing supported audit export:
 
-```bash
+```bash title="Terminal"
 axiom inspect record . \
   --target server \
   --input extension-audit.json \
@@ -26,7 +27,7 @@ axiom inspect record . \
 If capture was intentionally unavailable, record that explicitly rather than
 presenting an empty session as proof of no activity:
 
-```bash
+```bash title="Terminal"
 axiom inspect record . --target ios --session release-check --disabled
 ```
 
@@ -43,7 +44,7 @@ Matching names in another plan cannot establish that relationship.
 
 The native HTTP host can export its bounded observations after owned shutdown:
 
-```bash
+```bash title="Terminal"
 axiom server run backend.axiom prepared.server.json \
   --deployment deployment.json --bindings bindings.json \
   --observations actual.observation.json
@@ -61,10 +62,10 @@ arguments, results, credentials and submission keys. Native observations do
 not establish unobserved provider or guest internals. Capturing and importing
 the file are explicit actions.
 
-The complete [deterministic scenario example](/tooling/axiom-test-runner)
+The complete [deterministic scenario example](/testing/test-runner)
 can export actual host boundaries with synthetic read providers:
 
-```bash
+```bash title="Terminal"
 axiom scenario run axiom.axiom \
   --plan axiom.server.json --deployment deployment.json \
   --scenario retry.scenario.json --report retry.report.json \
@@ -95,7 +96,7 @@ The candidate browser host offers explicit bounded capture through its developer
 console. Start recording before the interaction to diagnose, then stop and save
 the returned JSON object as `frontend.observation.json`:
 
-```javascript
+```javascript title="JavaScript excerpt"
 window.__axiomObservations.start({ maximumEvents: 512 });
 // Perform the interaction in the mounted application.
 window.__axiomObservations.stop();
@@ -109,7 +110,7 @@ At most 1,024 events can be retained; replaced records remain counted as dropped
 
 Import against the same compiled frontend workspace:
 
-```bash
+```bash title="Terminal"
 axiom inspect record . --target web \
   --input frontend.observation.json --session frontend-observed
 axiom inspect runtime . --session frontend-observed --format json
@@ -122,12 +123,12 @@ unknown fields and invalid source order. Portable owner tests label their layer
 label establishes provider internals. Transport dispatch carries a secure trace
 parent when the host supports it, including a physical-dispatch link for shared
 queries. Cross-host events keep their producer order; a common trace does not
-establish a total order. Browser delivery and the final installed editor cohort
+establish a total order. Browser delivery and the final installed editor toolchain
 remain under qualification.
 
 ## Inspect a session
 
-```bash
+```bash title="Terminal"
 axiom inspect runtime . --session latest
 axiom inspect runtime . --session checkout-review --format json
 ```
@@ -151,7 +152,7 @@ event without turning Inspector into a secret or production-data viewer.
 
 Export one canonical redacted runtime session:
 
-```bash
+```bash title="Terminal"
 axiom inspect export-audit . \
   --session checkout-review \
   --output checkout-review.audit.json
@@ -159,7 +160,7 @@ axiom inspect export-audit . \
 
 Import a supported offline runtime or extension audit export:
 
-```bash
+```bash title="Terminal"
 axiom inspect import-audit checkout-review.audit.json . \
   --session imported-checkout
 ```
@@ -172,7 +173,7 @@ review or incident record.
 
 Start the dashboard before the target application:
 
-```bash
+```bash title="Terminal"
 axiom inspect serve .
 axiom run frontend/main.acore --target web
 ```
@@ -202,7 +203,7 @@ A runtime audit bundle contains a session. A signed Inspector exchange can
 carry a complete application snapshot plus optional matching runtime and change
 evidence:
 
-```bash
+```bash title="Terminal"
 chmod 600 inspector-signing-key
 
 axiom inspect export-inspector . \

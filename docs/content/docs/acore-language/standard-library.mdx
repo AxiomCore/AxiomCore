@@ -1,12 +1,13 @@
 ---
 title: Standard library
 description: Modules, types, and native intrinsics exposed by the current Acore evaluator.
+pageType: reference
 ---
 
 The embedded resolver currently exposes a deliberately small standard library.
 Import a module with its `acore:` URI:
 
-```acore
+```acore title="Acore excerpt"
 import "acore:math"
 largest = math.max(12, 20)
 ```
@@ -60,7 +61,7 @@ largest = math.max(12, 20)
 Both expose `length`, `isEmpty`, `contains`, `map`, `filter`, `flatMap`,
 `fold`, and `join`. `List` also exposes `first` and `last`.
 
-```acore
+```acore title="Acore excerpt"
 labels = ["one", "two"].map((value) -> value.toUpperCase())
 csv = labels.join(",")
 ```
@@ -74,7 +75,7 @@ csv = labels.join(",")
 `Regex(pattern)` creates a compiled regular expression. A regex exposes its
 `pattern`, `findMatchesIn(input)`, and `matchEntire(input)`.
 
-```acore
+```acore title="Acore excerpt"
 identifier = Regex("^[a-z][a-z0-9-]+$")
 valid = identifier.matchEntire("tasks-api")
 ```
@@ -83,7 +84,7 @@ Invalid patterns fail evaluation.
 
 ## JSON and YAML parsing
 
-```acore
+```acore title="Acore excerpt"
 import "acore:json"
 import "acore:yaml"
 

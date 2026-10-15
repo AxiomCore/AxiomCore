@@ -1,0 +1,14 @@
+project(id: "docs.tasks.sqlite", version: "1.0.0")
+module docs.tasks.sqlite
+
+database tasks(engine: DatabaseEngine.sqlite) {
+  manage(schemas: [Schemas.main], mode: ManagementMode.ownedObjects)
+  schema main {
+    table tasks(strict: true) {
+      tenant: Sqlite.Text()
+      id: Sqlite.Text()
+      title: Sqlite.Text()
+      primaryKey(columns: [.tenant, .id], sqlName: "tasks_pkey")
+    }
+  }
+}

@@ -1,6 +1,7 @@
 ---
 title: Local dashboard
 description: Launch and use the secure local Axiom Inspector dashboard for graphs, source, authority, runtime evidence, live targets, and changes.
+pageType: guide
 ---
 
 The Axiom Inspector dashboard is packaged with the CLI. It is a local visual
@@ -10,7 +11,7 @@ client for the same evidence and query engine used by `axiom inspect` commands.
 
 From a frontend, backend, or combined application workspace:
 
-```bash
+```bash title="Terminal"
 axiom inspect serve .
 ```
 
@@ -18,7 +19,7 @@ Inspector binds to loopback, selects an available port, creates a random
 per-session capability token, opens the browser, and watches the workspace. To
 control startup:
 
-```bash
+```bash title="Terminal"
 axiom inspect serve . --port 61993 --no-open
 axiom inspect serve . --api-only --no-open
 ```
@@ -66,7 +67,7 @@ evidence.
 Keep the dashboard running, then launch an Acore UI through its normal
 development command:
 
-```bash
+```bash title="Terminal"
 axiom run frontend/main.acore --target web
 ```
 
@@ -113,7 +114,7 @@ normal shutdown.
 Remote planning is disabled by default. Enable it for one session only when the
 Gateway key is already available through your local secret environment:
 
-```bash
+```bash title="Terminal"
 infisical run --env=dev -- \
   axiom inspect serve . --allow-remote-planner
 ```

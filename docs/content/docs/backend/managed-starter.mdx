@@ -1,0 +1,59 @@
+---
+title: Add managed validation and typed failures
+description: Normalize a task title in Acore, reject blank input, and return a checked result.
+pageType: tutorial
+testedWith: Published CLI 0.149.0; real normalization and 422 response on macOS arm64
+---
+
+This small backend performs normalization and validation in Acore. It returns a
+value; it does not persist a task. For a real database write, use the
+[task app](/examples/task-app).
+
+## Source
+
+Create `AxiomDeps.toml` with `type = "backend"`, `targets = ["server"]`, and
+`audiences = ["web"]`, then save this complete source:
+
+```acore title="main.acore"
+project(id: "managed-quickstart", version: "1")
+variant default(include: ["*"])
+model Create { title: String(minLength: 1, maxLength: 200) }
+model Task { id: Int32 title: String }
+model Problem { message: String }
+failure invalidTitle(payload: Models.Problem, status: 422)
+pure fn normalizeTitle(value: String): String = value.trim()
+
+action create(kind: ActionKind.command, input: Models.Create, output: Models.Task) {
+  errors(Failures.invalidTitle)
+  managed {
+    let title = normalizeTitle(Input.title)
+    guard title.length > 0 else fail Failures.invalidTitle({message: "Title is required"})
+    return {id: 1, title: title}
+  }
+}
+endpoint create(method: POST, path: "/tasks") {
+  request { body("title", type: String) }
+  handle(action: Actions.create, input: {title: Input.body.title})
+  response(type: Models.Task)
+  errors(Failures.invalidTitle)
+  exposeFailure(failure: Failures.invalidTitle, fields: [.message], audiences: ["web"])
+}
+```
+
+The pure function trims the title. The managed action rejects an empty
+normalized value using the declared 422 failure. The endpoint exposes only the
+approved failure message to the web audience.
+
+## Run and verify
+
+Follow the [backend quickstart](/getting-started/quickstart-backend) to build,
+inspect, scaffold the deployment, and run the source. Call `POST /tasks` with
+a JSON string body such as `"  Read the guide  "`. The response contains ID 1
+and the normalized title. Sending `"   "` returns the declared failure.
+
+Persistent creation needs a declared storage resource and a reviewed operation
+grant. [Managed language](/acore-language/managed-language) covers shared rules,
+codecs, configuration, typed errors, and explicit transactions. Execution has
+finite work limits; awaited calls retain cancellation, ownership, deadlines,
+and the original action budget. Host capability requirements are checked before
+activation. A Worker without the required flow capability cannot run the plan.

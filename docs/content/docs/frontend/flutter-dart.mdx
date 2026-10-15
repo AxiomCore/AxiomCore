@@ -1,0 +1,107 @@
+---
+title: Flutter and Dart
+description: Initialize the native runtime and bind generated queries and mutations to Flutter UI.
+pageType: guide
+---
+
+<StatusNote status="alpha" title="Flutter client">
+  Generated Dart bindings and the native runtime path are implemented. Validate
+  asset packaging, cache storage, native libraries, and release builds for every
+  platform your application ships.
+</StatusNote>
+
+## Generate and package the contract
+
+Run `axiom pull` for the Flutter target, then follow the emitted asset path and
+package instructions. The generated `AxiomDefaultConfig` maps each contract
+namespace to a backend `baseUrl` and an application `assetPath`.
+
+```bash title="Terminal"
+axiom pull --contract organization/project/1.2.0 --framework flutter
+```
+
+## Initialize once
+
+Create the generated SDK before mounting widgets that execute queries. The
+generated `AxiomSdk.create()` initializes the runtime and loads each contract
+from Flutter's `rootBundle`.
+
+```dart title="Dart excerpt"
+import 'package:flutter/widgets.dart';
+import 'package:axiom_flutter/axiom_flutter.dart';
+import 'package:my_app/axiom_generated/axiom_sdk.dart';
+
+late final AxiomSdk sdk;
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  sdk = await AxiomSdk.create();
+  runApp(const MyApp());
+}
+```
+
+For a persistent native cache, pass an application-owned path rather than
+assuming a default:
+
+```dart title="Dart excerpt"
+final config = AxiomConfig(
+  contracts: AxiomDefaultConfig.config.contracts,
+  dbPath: applicationCachePath,
+  debug: false,
+);
+
+sdk = await AxiomSdk.create(config: config);
+```
+
+Choose a path appropriate for cached, recoverable data. Do not treat it as a
+secure credential store.
+
+## Render a query
+
+Generated endpoint names and argument types come from your contract. A query
+exposes an `AxiomState`: loading, data source, background-fetch state, or a
+structured error.
+
+```dart title="Dart excerpt"
+AxiomBuilder<User, User>(
+  query: sdk.users.getUser(id: 42),
+  loading: (context) => const Text('Loading…'),
+  error: (context, error) => Text(error.message),
+  builder: (context, state, user) => Column(
+    children: [
+      Text(user.name),
+      if (state.isFetching) const Text('Refreshing…'),
+    ],
+  ),
+)
+```
+
+`AxiomBuilder` is one integration option, not a ban on Flutter's other async
+patterns. It manages the Axiom query subscription and preserves previously
+rendered data where the state supports it. Its optional `transform` and
+`selector` callbacks can reduce view-model and rebuild work.
+
+## Execute a mutation
+
+```dart title="Dart excerpt"
+AxiomMutationBuilder<User, UpdateUserArgs>(
+  mutation: sdk.users.updateUser,
+  builder: (context, state, execute) => TextButton(
+    onPressed: state.isMutating
+        ? null
+        : () => execute(UpdateUserArgs(name: 'Ada')),
+    child: Text(state.isMutating ? 'Saving…' : 'Save'),
+  ),
+)
+```
+
+Confirm the actual generated argument type and decide explicitly which queries
+to refresh or invalidate after success.
+
+## Authentication and shutdown
+
+Restore credentials from the platform's secure storage and provide them to the
+runtime binding at application startup. Clear both runtime authentication and
+sensitive cached application data on logout. Also dispose subscriptions owned
+outside the supplied widgets; generated runtime lifecycle APIs may change
+while this client remains alpha.

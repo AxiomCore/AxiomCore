@@ -1,0 +1,36 @@
+---
+title: Build and connect a backend
+description: Choose existing service extraction or Acore-authored APIs, then run, test, and release the service.
+pageType: overview
+---
+
+Keep an existing service or author a backend in Acore. Both paths produce a
+contract that clients, tests, and Inspector can read.
+
+| Start from | First guide | What remains yours |
+| --- | --- | --- |
+| FastAPI | [FastAPI to web](/guides/fastapi-to-web) | Python application and business logic |
+| Go | [Go to web](/guides/go-to-web) | Go application and selected router |
+| Acore | [Backend quickstart](/getting-started/quickstart-backend) | Authored models, actions, policies, and deployment choices |
+| A database-backed app | [First app](/getting-started/quickstart) | Database contract and typed storage mappings |
+
+## Develop in order
+
+1. [Define the contract](/acore-language/backend-profile).
+2. [Run the real service](/backend/local-development), or choose an explicit [mock](/testing/mocks).
+3. Add [identity and policies](/backend/policies), [provider integrations](/backend/integrations), and [persistence](/database/persistence).
+4. Test the contract and client before reviewing a [release](/backend/release-workflow).
+
+## Reference by task
+
+| Task | Reference |
+| --- | --- |
+| Enforce a contract around a framework | [HTTP adapters](/backend/adapters) |
+| Configure executable actions | [Execution](/backend/execution) |
+| Combine reads | [Request batching](/backend/request-batching) |
+| Deliver asynchronous work | [Events, jobs, schedules, webhooks](/backend/events-and-jobs) |
+| Select a deployment | [Targets](/backend/targets-and-releases), [containers](/backend/containers), [Workers](/backend/workers) |
+| Upgrade older commands | [CLI migration](/backend/cli-migration) |
+
+Use the [support matrix](/introduction/support-matrix) for exact framework and
+target limits. A contract artifact does not start or deploy the service.

@@ -1,0 +1,116 @@
+module docs.exam.ui
+use contract Exam from "exam" audience "web"
+
+model Question { id: String; prompt: String; optionA: String; optionB: String }
+model Selection { id: String; choice: String }
+model Result { id: String; name: String; first: String; second: String; score: String; total: String }
+component QuestionCard(question: Question) {
+  event choose(payload: Selection)
+  action chooseA() { emit choose({id: question.id, choice: "A"}) }
+  action chooseB() { emit choose({id: question.id, choice: "B"}) }
+  view {
+    View(class: "card") {
+      Text(question.prompt, class: "question")
+      View(class: "options") {
+        Button(label: $"A · {question.optionA}", on_press: chooseA, class: "option")
+        Button(label: $"B · {question.optionB}", on_press: chooseB, class: "option")
+      }
+    }
+  }
+}
+component ResultRow(result: Result) {
+  view {
+    View(class: "result") {
+      Text($"{result.id} · {result.name}", class: "label")
+      Text($"{result.score} / {result.total}", class: "score")
+    }
+  }
+}
+app ExamApp { route "/" => Home }
+page Home {
+  state enteredKey: String = ""
+  state apiKey: String = ""
+  state name: String = ""
+  state attemptId: String = "attempt-001"
+  state first: String = ""
+  state second: String = ""
+  state message: String = ""
+  query questions = Exam.questions(apiKey: apiKey) when apiKey.length > 0
+  query results = Exam.results(apiKey: apiKey) when apiKey.length > 0
+  mutation submission = Exam.submit(apiKey: apiKey, answers: {attemptId: attemptId, name: name, first: first, second: second})
+  action connect() { apiKey = enteredKey.trim() }
+  action choose(payload: Selection) {
+    if payload.id == "1" { first = payload.choice }
+    else { second = payload.choice }
+    message = ""
+  }
+  action submit() {
+    await submission.run() on_error problem { message = problem.message }
+  }
+  view {
+    SafeArea {
+      View(class: "workspace") {
+        Text("ACORE · LEARNING APPLICATION", class: "eyebrow")
+        Text("Acore foundations", class: "heading")
+        Text("Two questions. One contract. A result that stays.", class: "description")
+        View(class: "connection") {
+          Input(value: enteredKey, input_type: "password", placeholder: "Development API key", accessibility_label: "API key", class: "input")
+          Button(label: "Connect", disabled: enteredKey.trim().length == 0, on_press: connect, class: "secondary")
+        }
+        if apiKey.length > 0 {
+          View(class: "identity") {
+            Input(value: name, placeholder: "Your name", accessibility_label: "Candidate name", class: "input")
+            Input(value: attemptId, placeholder: "Unique attempt ID", accessibility_label: "Attempt ID", class: "input")
+          }
+          if questions.pending { Text("Loading questions...", class: "description") }
+          else if questions.error { Text("Could not load questions. Check your development key.", class: "error") }
+          else {
+            List(items: questions.data, key: |question| question.id, list_type: "single", span_count: 1, scroll_orientation: "vertical", class: "questions") { question =>
+              QuestionCard(question: question, on_choose: choose)
+            }
+          }
+          Text($"Your choices: {first} / {second}", class: "description")
+          Button(label: "Submit exam", disabled: submission.pending || name.trim().length == 0 || attemptId.trim().length == 0 || first.length == 0 || second.length == 0, on_press: submit, class: "primary")
+          Text(message, class: "error")
+          Text("Submitted attempts", class: "sectionTitle")
+          if results.pending { Text("Loading results...", class: "description") }
+          else if results.error { Text("Could not load results.", class: "error") }
+          else {
+            List(items: results.data, key: |result| result.id, list_type: "single", span_count: 1, scroll_orientation: "vertical", class: "results") { result =>
+              ResultRow(result: result)
+            }
+          }
+        }
+        else { Text("Start the backend, paste its local key, and connect.", class: "description") }
+      }
+    }
+  }
+}
+styles {
+  .workspace { padding: 32px; gap: 12px; background-color: #0a0a0a }
+  .eyebrow { font-size: 11px; color: #ff6a3d; font-weight: 600 }
+  .heading { font-size: 32px; color: #f5f5f5; font-weight: 600 }
+  .description { font-size: 14px; color: #b3b3b3 }
+  .connection { flex-direction: row; gap: 8px; margin-top: 8px }
+  .identity { flex-direction: row; gap: 8px; margin-top: 8px }
+  .input { flex: 1; padding: 10px; background-color: #171717; color: #f5f5f5; border-width: 1px; border-color: #505050 }
+  .questions { gap: 12px }
+  .card { padding: 16px; gap: 12px; background-color: #171717; border-width: 1px; border-color: #404040 }
+  .question { font-size: 16px; color: #f5f5f5; font-weight: 600 }
+  .options { flex-direction: row; gap: 8px }
+  .option { flex: 1; padding: 10px; background-color: #292929; color: #f5f5f5 }
+  .secondary { padding: 10px; background-color: #292929; color: #f5f5f5 }
+  .primary { padding: 12px; background-color: #ff3d00; color: #ffffff; font-weight: 600 }
+  .error { font-size: 13px; color: #ffad95 }
+  .sectionTitle { font-size: 18px; color: #f5f5f5; font-weight: 600; margin-top: 12px }
+  .results { gap: 8px }
+  .result { padding: 12px; flex-direction: row; justify-content: space-between; background-color: #171717 }
+  .label { font-size: 14px; color: #b3b3b3 }
+  .score { font-size: 18px; color: #ff6a3d; font-weight: 600 }
+  viewport compact {
+    .workspace { padding: 16px }
+    .heading { font-size: 26px }
+    .identity { flex-direction: column }
+    .options { flex-direction: column }
+  }
+}

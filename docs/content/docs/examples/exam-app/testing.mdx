@@ -1,0 +1,57 @@
+---
+title: "Exam app: verify behavior"
+description: Check scoring, invalid input, duplicate attempts, authentication, and persistence against the real application.
+pageType: guide
+testedWith: Published Axiom CLI 0.149.0 and signed web UI Host 0.6.12 on macOS arm64
+---
+
+Run the [complete app](/examples/exam-app/run), then verify both browser behavior
+and direct API requests. Use a fresh attempt ID for each successful submission.
+
+## Scoring and input checks
+
+| First / second answer | Expected score |
+| --- | --- |
+| A / B | 0 / 2 |
+| A / A | 1 / 2 |
+| B / B | 1 / 2 |
+| B / A | 2 / 2 |
+
+Also verify:
+
+- Reusing a submitted ID returns 409 and does not add another result.
+- An answer outside A/B returns 400.
+- A whitespace-only name returns the declared 422 failure.
+- Adding a `score` field to the JSON request returns 400.
+- A missing required key header returns 400; an invalid key returns 401.
+- Reloading the browser and restarting the backend retain accepted results.
+
+The browser can disable a button, but direct requests must enforce the same
+server rules. Inspect the SQLite rows and migration history when verifying
+persistence; an in-memory preview or mock does not prove it.
+
+## Example request
+
+Set `EXAM_API_KEY` locally to the printed development key. Do not commit it.
+
+```bash title="Terminal"
+curl -sS http://127.0.0.1:8082/submissions \
+  -H "apikey: $EXAM_API_KEY" \
+  -H 'content-type: application/json' \
+  -d '{"attemptId":"request-001","name":"Ada","first":"B","second":"A"}'
+```
+
+The result contains the stored attempt, answers, score `"2"`, and total `"2"`.
+Repeat the request to check the duplicate failure.
+
+## Extend the app deliberately
+
+This lesson does not implement timed exams, role-separated instructor access,
+production login, or multi-exam question management. Before adding them, define
+and test server-side authorization, trusted time, ownership, historical exam
+versions, and submission recovery. A browser countdown or hidden control does
+not enforce those rules.
+
+Use [security policies](/backend/policies), [managed logic](/acore-language/managed-language),
+[database contracts](/database/contracts), and [Inspector](/inspector) as the
+next references. Keep each new guarantee tied to the target you actually tested.

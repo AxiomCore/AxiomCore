@@ -1,0 +1,24 @@
+---
+title: Test contracts and applications
+description: Choose contract checks, mocks, real application tests, semantic diffs, and CI validation.
+pageType: overview
+---
+
+Choose a test that exercises the behavior you need to trust.
+
+| Need to check | Guide |
+| --- | --- |
+| Source and contract assertions | [Contract tests](/testing/contracts) and [test runner](/testing/test-runner) |
+| Frontend behavior without a live service | [API mocks](/testing/mocks) and [mock engine](/testing/mock-engine) |
+| Managed server behavior with explicit fixtures | [Server simulation](/testing/server-simulation) |
+| Acore forms, queries, state, and disposal | [Frontend application tests](/testing/frontend-applications) |
+| Consumer impact from a change | [Semantic diff](/testing/semantic-diffs) |
+| Local and CI sequence | [Validation loop](/testing/local-and-ci) and [CI contract gate](/testing/ci) |
+
+Mocks exercise declared behavior. Browser database previews exercise simulated
+storage. Generated adapter checks exercise a target's generated program. Each
+is useful, but none replaces a real request through the backend and database
+or a mounted native-target check.
+
+Retain the artifact, dependency lock, versions, assertions, and actual result
+with the change. Use synthetic data and test the relevant failure paths.

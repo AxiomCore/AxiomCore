@@ -6,7 +6,7 @@ export const dynamicParams = false;
 
 export async function GET(_req: Request, { params }: RouteContext<'/llms.mdx/docs/[...slug]'>) {
   const { slug } = await params;
-  const page = source.getPage(slug);
+  const page = source.getPage(slug.length === 1 && slug[0] === 'index' ? [] : slug);
   if (!page) notFound();
 
   return new Response(await getLLMText(page), {
@@ -25,5 +25,8 @@ export function generateStaticParams() {
     return [];
   }
 
-  return source.generateParams().filter((params) => params.slug && params.slug.length > 0);
+  return [
+    { slug: ['index'] },
+    ...source.generateParams().filter((params) => params.slug && params.slug.length > 0),
+  ];
 }

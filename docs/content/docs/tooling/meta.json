@@ -1,11 +1,9 @@
 {
-  "title": "Developer Tooling",
+  "title": "CLI and tools",
   "pages": [
-    "cli-reference",
-    "security-check",
     "doctor-and-onboarding",
+    "cli-reference",
     "interactive-dashboards",
-    "axiom-mock-engine",
-    "axiom-test-runner"
+    "security-check"
   ]
 }

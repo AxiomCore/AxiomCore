@@ -1,6 +1,7 @@
 ---
 title: Syntax overview
 description: The implemented lexical and structural rules of an Acore module.
+pageType: reference
 ---
 
 Backend contracts use `type = "backend"` in `AxiomDeps.toml` and the named declarations described
@@ -13,7 +14,7 @@ semicolons are not part of the source grammar.
 
 Use a dotted module name when a profile needs a stable source identity:
 
-```acore
+```acore title="Acore excerpt"
 module commerce.orders
 ```
 
@@ -24,7 +25,7 @@ requires it because the module identity participates in the graph and artifact.
 
 Line comments begin with `//` and continue to the end of the line.
 
-```acore
+```acore title="Acore excerpt"
 // Contract policy shared by all endpoints.
 policies(cache: CachePolicy(strategy: CacheStrategy.networkFirst, ttlSeconds: 60))
 ```
@@ -36,7 +37,7 @@ Block comments are not part of the current lexer.
 In general-purpose evaluator modules, a property can have a value, a type, or
 both:
 
-```acore
+```acore title="Acore excerpt"
 name = "orders"
 port: Int = 8080
 optionalLabel: String? = null
@@ -44,13 +45,13 @@ optionalLabel: String? = null
 
 Backend root declarations take named arguments:
 
-```acore
+```acore title="Acore excerpt"
 project(id: "orders-api", version: "1.0.0")
 ```
 
 Backend constructors also take named arguments:
 
-```acore
+```acore title="Acore excerpt"
 // The cache argument of policies(...) or variant name(...).
 CachePolicy(strategy: CacheStrategy.cacheFirst, ttlSeconds: 300)
 ```
@@ -62,7 +63,7 @@ There is no `new` keyword. Endpoint policy shorthand uses
 
 Plain braces create a dynamic object. Bracketed keys are evaluated at runtime:
 
-```acore
+```acore title="Acore excerpt"
 headers = {
   contentType = "application/json"
   ["x-request-id"] = "example"
@@ -71,7 +72,7 @@ headers = {
 
 Backend variants use declarations and ordinary list values:
 
-```acore
+```acore title="Acore excerpt"
 variant mobile(include: ["public_*"])
 ```
 
@@ -80,7 +81,7 @@ variant mobile(include: ["public_*"])
 Square brackets create a list expression. Backend profile values require commas
 between elements; general evaluator modules also accept whitespace separation:
 
-```acore
+```acore title="Acore excerpt"
 codes = [502, 503, 504]
 names = ["tasks", "users"]
 ```
@@ -88,7 +89,7 @@ names = ["tasks", "users"]
 Backend types use `List<T>` and `Map<K, V>`. Collection values remain ordinary
 bracketed arrays and colon-separated objects:
 
-```acore
+```acore title="Acore excerpt"
 model Index {
   names: List<String>
   counts: Map<String, Int64>
@@ -100,7 +101,7 @@ model Index {
 The current parser accepts double-quoted strings, signed integers, and decimal
 floats:
 
-```acore
+```acore title="Acore excerpt"
 message = "contract ready"
 attempts = 3
 sampleRate = 0.25
@@ -115,7 +116,7 @@ surface yet; use ordinary strings in portable source.
 Annotations precede a member and may carry an object body. Modifiers precede
 properties, classes, type aliases, functions, or modules where supported:
 
-```acore
+```acore title="Acore excerpt"
 @deprecated { reason = "Use currentEndpoint" }
 hidden oldEndpoint = "legacy"
 

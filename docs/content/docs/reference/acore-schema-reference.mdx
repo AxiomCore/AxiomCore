@@ -1,6 +1,7 @@
 ---
 title: Acore base schema reference
 description: Implemented contract, behavior, domain, security, mock, and test classes exposed by acore.base.
+pageType: reference
 ---
 
 This page describes the existing contract data model and its standard-library
@@ -10,8 +11,8 @@ declarations, typed model fields, `List<T>`, and `Map<K, V>` lower to these same
 JSON fields. Generated identity metadata preserves historical endpoint IDs
 and names; developers do not repeat them in endpoint declarations.
 
-This page maps the public configuration surface declared in
-`acore/src/stdlib/base.acore`. It complements the [language manual](/acore-language):
+This page defines the public configuration surface exposed by `acore.base`.
+It complements the [language manual](/acore-language):
 the manual explains syntax and evaluation, while this reference describes the
 contract schema consumed by AxiomCore.
 
@@ -143,7 +144,7 @@ evaluation; they do not create a runtime feature flag. See
 
 | Class | Required members | Defaults / optional members |
 | --- | --- | --- |
-| `DomainModel` | — | format, empty entities, relationships, invariants, projections |
+| `DomainModel` | ,  | format, empty entities, relationships, invariants, projections |
 | `DomainEntity` | `model` (injected by `extend`) | key list, nullable doc; do not author model/ID manually |
 | `DomainRelationship` | `from`, `to` | cardinality, ownership, via, inverse, required, inferred, doc |
 | `DomainInvariant` | `scope` | expression, fields, nullable rules, severity, inferred, doc |
@@ -194,7 +195,7 @@ and release paths. Declarations do not replace trusted runtime authorization.
 | State | initial store, mutations, emitted events, and reset behavior |
 | `MockResponse` | conditions, status, headers, data, delay/jitter, weight, label |
 
-Use [Mocking APIs](/workflows/mocking-apis) for a supported lifecycle. Mock
+Use [Mocking APIs](/testing/mocks) for a supported lifecycle. Mock
 behavior is a development/test boundary, not proof of production behavior.
 
 ## Test schema

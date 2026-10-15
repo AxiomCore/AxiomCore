@@ -1,6 +1,7 @@
 ---
 title: Troubleshooting
 description: Diagnose extraction, build, pull, runtime, native host, browser, and Cloud failures.
+pageType: reference
 ---
 
 Start with the narrowest boundary and preserve the first structured error. A
@@ -9,7 +10,7 @@ condition that caused it.
 
 ## Collect a safe report
 
-```bash
+```bash title="Terminal"
 axiom doctor --json --strict > axiom-doctor.json
 axiom ui doctor --target web --json > axiom-ui-web.json
 ```
@@ -38,12 +39,12 @@ static-AST-only path.
 
 Run the checks separately:
 
-```bash
+```bash title="Terminal"
 axiom eval axiom.acore
 axiom domain validate axiom.acore --json
 axiom security check axiom.acore --json
 axiom test axiom.acore
-axiom build axiom.acore
+axiom build axiom.acore --out backend.axiom
 axiom contract verify --deps AxiomDeps.toml --lock axiom.ui.lock.json
 ```
 
@@ -88,7 +89,7 @@ establish a supported Swift package integration.
 
 ## Acore UI host problems
 
-```bash
+```bash title="Terminal"
 axiom ui doctor --target ios --json
 axiom ui host status --target ios
 axiom ui test main.acore --target ios

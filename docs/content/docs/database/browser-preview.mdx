@@ -1,0 +1,53 @@
+---
+title: Explore a database in the browser
+description: Edit Acore database examples in the playground and understand what their simulated previews prove.
+pageType: guide
+---
+
+Use the [playground](https://playground.axiomcore.dev) to explore contracts
+without installing tools. Choose **Database · tasks**, **Database · inventory**,
+or the SQLite example.
+
+## Edit all three layers
+
+The workspace exposes frontend, backend, and database source in separate tabs.
+Each has its own manifest. Database edits appear in Changes and Impact with
+the backend and frontend fields that consume them.
+
+The lower **Database** tab lists tables and their rows. Add, update, complete,
+restock, or delete a record in a supported example to see the table activity.
+The preview checks storage types, primary keys, unique keys, foreign keys,
+and supported check constraints before accepting a complete mutation.
+An invalid mutation retains the previous accepted store.
+
+## Schema versions and resets
+
+| Action | Browser behavior |
+| --- | --- |
+| Run valid source | Recompile and preserve compatible accepted rows |
+| Edit a used schema version | Suggest a fresh version; accepting it updates the source buffer |
+| Make an invalid schema change | Retain the last accepted preview |
+| Compare or roll back | Show simulated schema/history changes |
+| Reset data or history | Perform the explicitly selected session-local reset |
+| Download Source or Schema | Export source/manifests/mappings or the compiled database package |
+
+The browser's history is session-local. It does not replace native migration
+history, signing, deployment review, or backup/recovery checks.
+
+## Know the execution boundary
+
+The browser interprets supported declared backend storage operations against a
+bounded in-memory store. Endpoint mock data may supply initial fixtures; it
+does not implement the application's CRUD operations. Mapping API fields to a
+table also does not itself implement a write.
+
+Its development identity, tenant isolation, provider observations, and migration
+authority are simulations. No native PostgreSQL connection or SQLite file is
+created. A successful preview does not prove database persistence or a production
+security boundary.
+
+Download the source to run a real application with the compatible CLI. Review
+its manifests, database grants/row policies where applicable, and development
+API key setup. The [first app](/getting-started/quickstart) provides a checked
+local SQLite path. The [database guide](/database/contracts) covers native
+PostgreSQL connections and migrations.

@@ -1,6 +1,7 @@
 ---
 title: Extension dependencies
 description: Exact dependency environments, supported Rust/npm/Python package subsets, locks, policy, and offline behavior.
+pageType: reference
 ---
 
 Extension dependencies are build inputs, not runtime capabilities. Declare
@@ -9,7 +10,7 @@ once per compatible environment, verifies immutable bytes, writes canonical
 `AxiomDeps.lock`, and materializes a content-addressed build view. Sharing bytes
 does not share guest memory, instances, permissions, handles, or audit streams.
 
-```toml
+```toml title="AxiomDeps.toml"
 [dependencyEnvironments.rust-release]
 language = "rust"
 profile = "release"
@@ -51,7 +52,7 @@ not executed.
 
 ## Resolve and verify
 
-```bash
+```bash title="Terminal"
 laxiom dependencies check
 laxiom dependencies resolve
 laxiom dependencies resolve --locked
@@ -65,7 +66,7 @@ content fails closed; recovery is an explicit online command.
 
 ## Release policy and Inspector
 
-```toml
+```toml title="AxiomDeps.toml"
 [dependencyPolicy]
 approvedRegistries = ["crates", "npm", "pypi"]
 forbiddenLicenses = ["GPL-3.0-only", "AGPL-3.0-only"]
@@ -75,7 +76,7 @@ allowDuplicateVersions = false
 allowUnsupportedPackageForms = false
 ```
 
-```bash
+```bash title="Terminal"
 laxiom inspect dependencies .
 laxiom inspect security .
 laxiom inspect provenance portable-money .

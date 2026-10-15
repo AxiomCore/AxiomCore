@@ -1,6 +1,7 @@
 ---
 title: Cloud mocks and sandboxes
 description: Save authored mock configuration and run it locally or in a managed project environment.
+pageType: guide
 ---
 
 There are two connected but distinct workflows: saving a project's authored
@@ -12,7 +13,7 @@ by itself prove a Cloud Run environment is ready.
 
 From a linked project directory:
 
-```bash
+```bash title="Terminal"
 axiom deploy mock-server axiom.acore
 ```
 
@@ -30,13 +31,13 @@ boundary before running it.
 `axiom serve` now starts a real local API and no longer downloads a saved Cloud
 mock when its input is omitted. Local contract simulation remains explicit:
 
-```bash
+```bash title="Terminal"
 axiom mock axiom.acore --profile contract --port 8080
 ```
 
 Use explicit Cloud retrieval from a linked project with a Cloud session:
 
-```bash
+```bash title="Terminal"
 axiom mock --cloud --port 8080
 ```
 

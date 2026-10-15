@@ -1,7 +1,10 @@
 import { spawn } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import process from 'node:process';
-import { legacyRedirects } from '../lib/legacy-redirects.mjs';
+import { legacyRedirects, legacyReaderRedirects } from '../lib/legacy-redirects.mjs';
+
+import { join } from 'node:path';
+import { toReaderMarkdown } from '../lib/content-model.mjs';
 
 const docsRoot = new URL('../', import.meta.url).pathname;
 const host = '127.0.0.1';
@@ -18,13 +21,17 @@ let serverOutput = '';
 server.stdout.on('data', (chunk) => { serverOutput += chunk; });
 server.stderr.on('data', (chunk) => { serverOutput += chunk; });
 
+const legacyAnchors = JSON.parse(readFileSync(join(docsRoot, 'lib', 'legacy-heading-anchors.json'), 'utf8'));
+
 const routes = [
-  ['/', 'text/html', 'Software built around contracts'],
-  ['/guides', 'text/html', 'Adoption guides'],
+  ['/', 'text/html', 'Build and connect with AxiomCore'],
+  ['/guides', 'text/html', 'Integrate with your stack'],
   ['/reference/versioning-and-deprecation', 'text/html', 'Versioning and deprecation'],
   ['/reference/support-and-feedback', 'text/html', 'Support and feedback'],
   ['/reference/documentation-contributions', 'text/html', 'Documentation contributions'],
   ['/reference/documentation-site-privacy', 'text/html', 'Documentation site privacy'],
+  ['/agents.json', 'application/json', 'axiom-documentation-index/v1'],
+  ['/docs/index.mdx', 'text/markdown', 'Page type: overview'],
   ['/llms.txt', 'text/plain', 'https://docs.axiomcore.dev/reference/versioning-and-deprecation'],
   ['/llms-full.txt', 'text/plain', '# AxiomCore documentation corpus'],
   ['/docs/reference/versioning-and-deprecation.mdx', 'text/markdown', 'Source: https://docs.axiomcore.dev/reference/versioning-and-deprecation'],
@@ -118,6 +125,15 @@ try {
   if (!referenceHtml.includes('<th')) throw new Error('Versioning table did not render table headers');
   if (referenceHtml.includes('name="robots" content="noindex')) throw new Error('Public reference page is noindex');
 
+  const codeHtml = await (await fetch(`${origin}/getting-started/quickstart-backend`)).text();
+  for (const marker of ['shiki-themes github-light github-dark', 'highlighted', 'Copy Text', 'main.acore']) {
+    if (!codeHtml.includes(marker)) throw new Error(`Code presentation omitted ${marker}`);
+  }
+  const diagramHtml = await (await fetch(`${origin}/examples/task-app`)).text();
+  if (!diagramHtml.includes('data:image/svg+xml') || !diagramHtml.includes('Diagram source')) {
+    throw new Error('Mermaid did not render as an image with selectable source');
+  }
+
   const missing = await fetch(`${origin}/definitely-not-a-documentation-route`);
   if (missing.status !== 404) throw new Error(`Unknown route returned HTTP ${missing.status}, expected 404`);
   if (!(await missing.text()).includes('Documentation page not found')) throw new Error('Custom 404 content was not rendered');
@@ -163,6 +179,9 @@ try {
   const llmsText = await (await fetch(`${origin}/llms.txt`)).text();
   const llmsUrls = new Set([...llmsText.matchAll(/\]\((https:\/\/docs\.axiomcore\.dev[^)]+)\):/g)].map((match) => match[1]));
   assertSameMembers(llmsUrls, sitemapUrls, 'llms.txt URL inventory');
+  const agents = await (await fetch(`${origin}/agents.json`)).json();
+  if (agents.pageCount !== sitemapUrls.size) throw new Error('Agent page count differs from sitemap');
+  assertSameMembers(new Set(agents.pages.map((page) => page.url)), sitemapUrls, 'agents.json URL inventory');
 
   const canonicalOrigin = 'https://docs.axiomcore.dev';
   const pagePaths = [...sitemapUrls].map((url) => new URL(url).pathname).sort();
@@ -184,6 +203,10 @@ try {
       throw new Error(`Corpus page ${path} is unexpectedly noindex`);
     }
 
+    for (const anchor of legacyAnchors[path.replace(/\/$/, '') || '/'] ?? []) {
+      if (!html.includes(`id="${anchor}"`)) throw new Error(`Rendered compatibility anchor missing: ${path}#${anchor}`);
+    }
+
     const imagePath = path === '/' ? '/og/docs/image.png' : `/og/docs${path.replace(/\/$/, "")}/image.png`;
     const image = await fetch(`${origin}${imagePath}`, { signal: AbortSignal.timeout(10_000) });
     if (image.status !== 200 || !image.headers.get('content-type')?.includes('image/png')) {
@@ -193,19 +216,22 @@ try {
       throw new Error(`Open Graph image ${imagePath} is unexpectedly small`);
     }
 
-    if (path !== '/') {
-      const readerPath = `/docs${path.replace(/\/$/, "")}.mdx`;
-      const reader = await fetch(`${origin}${readerPath}`, { signal: AbortSignal.timeout(10_000) });
-      if (reader.status !== 200 || !reader.headers.get('content-type')?.includes('text/markdown')) {
-        throw new Error(`Machine-reader route ${readerPath} is unavailable`);
-      }
-      if (!(await reader.text()).includes(`Source: ${canonical}`)) {
-        throw new Error(`Machine-reader route ${readerPath} has the wrong canonical source`);
-      }
+    const slug = path.replace(/^\/|\/$/g, '') || 'index';
+    const readerPath = `/docs/${slug}.mdx`;
+    const reader = await fetch(`${origin}${readerPath}`, { signal: AbortSignal.timeout(10_000) });
+    if (reader.status !== 200 || !reader.headers.get('content-type')?.includes('text/markdown')) {
+      throw new Error(`Machine-reader route ${readerPath} is unavailable`);
     }
+    const direct = join(docsRoot, 'content', 'docs', `${slug}.mdx`);
+    const sourcePath = existsSync(direct) ? direct : join(docsRoot, 'content', 'docs', slug, 'index.mdx');
+    const expected = toReaderMarkdown(readFileSync(sourcePath, 'utf8'), {
+      canonical: `${canonicalOrigin}/${slug === 'index' ? '' : slug + '/'}`,
+    });
+    if ((await reader.text()) !== expected) throw new Error(`Reader differs from authored content: ${readerPath}`);
+
   });
 
-  for (const redirect of legacyRedirects) {
+  for (const redirect of [...legacyRedirects, ...legacyReaderRedirects]) {
     const response = await fetch(`${origin}${redirect.source}`, {
       redirect: 'manual',
       signal: AbortSignal.timeout(10_000),
@@ -220,8 +246,8 @@ try {
   }
 
   console.log(`Security, SEO, accessibility, health, 404, and release-manifest audit passed.`);
-  console.log(`Complete corpus audit passed: ${pagePaths.length} pages, ${pagePaths.length} social images, ${pagePaths.length - 1} processed MDX routes.`);
-  console.log(`Discovery parity and ${legacyRedirects.length} legacy redirect audit passed.`);
+  console.log(`Complete corpus audit passed: ${pagePaths.length} pages, ${pagePaths.length} social images, ${pagePaths.length} processed Markdown routes.`);
+  console.log(`Discovery parity and ${legacyRedirects.length + legacyReaderRedirects.length} legacy redirect audit passed.`);
   console.log(`Built-site smoke passed: ${routes.length} representative routes.`);
 } finally {
   server.kill('SIGTERM');

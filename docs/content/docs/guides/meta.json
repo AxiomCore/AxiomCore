@@ -1,12 +1,11 @@
 {
-  "title": "Guides",
-  "icon": "Compass",
+  "title": "Integrate your stack",
   "pages": [
     "index",
     "incremental-adoption",
     "fastapi-to-web",
-    "ci-contract-gate",
-    "production-readiness",
-    "example-catalog"
+    "go-to-web",
+    "existing-database",
+    "using-ai-agents"
   ]
 }

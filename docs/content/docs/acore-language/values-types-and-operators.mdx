@@ -1,6 +1,7 @@
 ---
 title: Values, types, and operators
 description: Acore literals, type expressions, null handling, operators, and expression evaluation.
+pageType: reference
 ---
 
 ## Runtime values
@@ -20,7 +21,7 @@ description: Acore literals, type expressions, null handling, operators, and exp
 
 ## Type expressions
 
-```acore
+```acore title="Acore excerpt"
 name: String = "tasks"
 attempts: Int = 3
 enabled: Boolean = true
@@ -29,14 +30,14 @@ handler: (String, Int) -> Boolean
 
 ### Nullable and union types
 
-```acore
+```acore title="Acore excerpt"
 description: String? = null
 identifier: String | Int = "task-1"
 ```
 
 ### Parameterized and constrained types
 
-```acore
+```acore title="Acore excerpt"
 tags: Listing<String> = Listing { "alpha" }
 sampleRate: Float(this >= 0.0 && this <= 1.0) = 0.5
 ```
@@ -46,7 +47,7 @@ They are not arbitrary server-side authorization rules.
 
 ### Literal types
 
-```acore
+```acore title="Acore excerpt"
 typealias Mode = "audit" | "strict"
 ```
 
@@ -71,7 +72,7 @@ path and conformance examples are covered consistently.
 
 Unary `-` negates a number and `!` negates a Boolean.
 
-```acore
+```acore title="Acore excerpt"
 timeout = baseTimeout * 2
 label = configuredLabel ?? "Untitled"
 eligible = active && attempts < 3
@@ -79,7 +80,7 @@ eligible = active && attempts < 3
 
 ## Member access and null handling
 
-```acore
+```acore title="Acore excerpt"
 length = name.length
 safeName = account?.profile?.name
 requiredName = safeName!!
@@ -91,7 +92,7 @@ requiredName = safeName!!
 
 ## Type checks and casts
 
-```acore
+```acore title="Acore excerpt"
 isText = value is String
 text = value as String
 ```
@@ -101,7 +102,7 @@ raises a type-mismatch diagnostic.
 
 ## Conditionals
 
-```acore
+```acore title="Acore excerpt"
 cacheSeconds = if (environment == "prod") 300 else 0
 ```
 
@@ -110,17 +111,17 @@ typed contract properties.
 
 ## Lambdas
 
-```acore
+```acore title="Acore excerpt"
 double = (value: Int) -> value * 2
 doubled = [1, 2, 3].map(double)
 ```
 
 Lambdas capture their lexical environment. Acore UI also supports the compact
-lambda form used by list keys; see the [UI profile](/acore-language/ui-profile).
+lambda form used by list keys; see the [UI profile](/frontend/acore-ui).
 
 ## Errors and reads
 
-```acore
+```acore title="Acore excerpt"
 required = configured ?? throw("configured is required")
 template = read("./template.txt")
 ```

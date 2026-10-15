@@ -1,6 +1,7 @@
 ---
 title: Why contract-oriented software?
 description: Reduce behavioral drift without requiring one framework across the stack.
+pageType: concept
 ---
 
 API descriptions are valuable, but software teams also coordinate behavior:
@@ -23,7 +24,7 @@ test, mock, and consume. Thin framework integrations can delegate supported
 behavior to a shared runtime, while semantic diffs make important contract and
 package changes visible before an upgrade.
 
-```text
+```text title="Conceptual example"
 scattered assumptions                 contract-oriented boundary
 
 backend ─┬─ web retry                 backend/extractor ─► .axiom

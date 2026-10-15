@@ -1,21 +1,11 @@
 {
-  "title": "Workflows",
+  "title": "Packages and workflows",
   "pages": [
     "index",
     "choose-an-adoption-path",
-    "backend-contract-lifecycle",
-    "existing-frontend-integration",
-    "acore-ui-application-lifecycle",
     "package-lifecycle",
     "executable-extension-lifecycle",
     "migrating-extension-authoring",
-    "local-validation-loop",
-    "release-and-upgrade",
-    "auditing-and-diffing",
-    "security-review-and-release-gates",
-    "contract-pull-requests",
-    "mocking-apis",
-    "testing-contracts",
     "using-the-marketplace"
   ]
 }

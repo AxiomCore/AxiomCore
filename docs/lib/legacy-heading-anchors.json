@@ -1,0 +1,871 @@
+{
+  "/acore-language/amends-and-merging": [
+    "basic-usage",
+    "deep-merging-microservices",
+    "what-amends-is-not"
+  ],
+  "/acore-language/authoring-ergonomics": [
+    "infer-transport-types-from-a-reusable-action",
+    "infer-closed-business-failures",
+    "freeze-the-approved-public-interface",
+    "derive-an-api-model-from-an-offline-schema",
+    "immutable-record-updates-and-interpolation",
+    "share-a-bounded-pure-library",
+    "editing-and-runtime-requirements"
+  ],
+  "/acore-language/backend-profile": [
+    "a-complete-contract",
+    "route-groups-and-head",
+    "types-and-collections",
+    "entities-fields-and-audiences",
+    "frontend-contract-imports",
+    "request-parameters",
+    "inspect-and-validate",
+    "existing-contracts",
+    "compatibility-and-corrected-examples",
+    "execution-boundaries",
+    "m1-bounded-business-logic",
+    "endpoint-type-inference"
+  ],
+  "/database/contracts": [
+    "declare-identity-version-and-schema",
+    "connect-and-run",
+    "migrate-inspect-and-compare",
+    "roll-back-through-a-new-version",
+    "ci-prepare-once-promote-unchanged",
+    "typed-data-changes",
+    "clean-generated-state"
+  ],
+  "/database/fleets": [
+    "named-postgresql-production-admission"
+  ],
+  "/database/persistence": [
+    "a-minimal-resource-mapping",
+    "program-rules",
+    "retained-certified-programs-without-authored-json",
+    "endpoint-wiring-and-browser-provider",
+    "virtual-selected-database-models"
+  ],
+  "/acore-language/domain-model-v1": [
+    "the-authoring-model",
+    "identity-and-model-changes",
+    "relationships-and-enums",
+    "invariants-and-rod-rules",
+    "compile-sign-and-generate",
+    "review-and-impact",
+    "bootstrap-from-an-existing-schema",
+    "runnable-fixture"
+  ],
+  "/acore-language/evaluation-and-output": [
+    "evaluation-model",
+    "module-resolution",
+    "authority-boundary",
+    "materialization-and-output-formats",
+    "variant-filtering",
+    "errors",
+    "determinism-boundary"
+  ],
+  "/testing/frontend-applications": [
+    "an-executable-counter",
+    "queries-scripts-and-time",
+    "migration-and-limits",
+    "owned-operations",
+    "interpret-execution-levels"
+  ],
+  "/acore-language/imports-and-contracts": [
+    "internal-source-modules-import",
+    "compiled-contracts-use-contract",
+    "typed-frontend-packages-use-theme-and-use-component",
+    "backend-composition-amends",
+    "promote-a-backend-model",
+    "contract-build-flow"
+  ],
+  "/acore-language": [
+    "read-the-manual-in-this-order",
+    "contract-profiles",
+    "minimal-service-source",
+    "minimal-acore-ui-source"
+  ],
+  "/acore-language/managed-language": [
+    "one-checked-data-boundary",
+    "private-outcomes-and-public-failures",
+    "bounded-business-logic",
+    "typed-private-setup-and-purpose-bound-secrets",
+    "editor-support",
+    "owned-calls-and-explicit-database-transactions",
+    "closed-failure-inference-and-bounded-expressions"
+  ],
+  "/acore-language/objects-classes-and-functions": [
+    "dynamic-and-typed-objects",
+    "class-declarations",
+    "type-aliases",
+    "dynamic-property-names",
+    "scope-this-outer-and-super",
+    "functions-and-external-members",
+    "annotations",
+    "inheritance-versus-composition",
+    "backend-pure-functions-and-managed-locals"
+  ],
+  "/acore-language/owned-operations": [
+    "named-parallel-reads",
+    "logical-resource-policies",
+    "typed-durable-enqueue",
+    "frontend-groups-and-foreground-timers",
+    "sandboxed-extensions",
+    "editor-and-validation-workflow"
+  ],
+  "/acore-language/policies-and-behavior": [
+    "global-policy",
+    "endpoint-override",
+    "reusable-policies-and-defaults",
+    "cache-strategies",
+    "retry-and-backoff",
+    "owned-operations"
+  ],
+  "/acore-language/security-model-v1": [
+    "opt-in-deliberately",
+    "authorization-and-authentication",
+    "data-and-output-boundaries",
+    "declared-side-effects",
+    "whole-application-requirements"
+  ],
+  "/database/sqlite": [
+    "author-and-run",
+    "types-and-boundaries",
+    "backend-persistence-and-playground"
+  ],
+  "/acore-language/standard-library": [
+    "resolved-modules",
+    "core-scalar-members",
+    "string",
+    "numbers-and-booleans",
+    "collections",
+    "list-and-set",
+    "map",
+    "regex",
+    "json-and-yaml-parsing",
+    "axiom-contract-schema",
+    "defined-but-not-currently-resolved"
+  ],
+  "/acore-language/streaming-and-websockets": [
+    "http-and-server-sent-streams",
+    "websockets",
+    "file-streams",
+    "bounded-frontend-views",
+    "candidate-bounded-pure-folds-and-windows",
+    "durable-batch-sinks"
+  ],
+  "/acore-language/syntax-overview": [
+    "module-declaration",
+    "comments",
+    "properties",
+    "objects-and-dynamic-keys",
+    "collections",
+    "strings-and-numbers",
+    "annotations-and-modifiers",
+    "identifiers",
+    "next"
+  ],
+  "/frontend/acore-ui": [
+    "smallest-application",
+    "page-state",
+    "locked-service-operations",
+    "actions",
+    "elements-and-components",
+    "assets-themes-and-styles",
+    "responsive-layouts",
+    "check-inspect-test-and-run",
+    "build-an-application-artifact",
+    "contract-data-orchestration",
+    "shared-state-routes-and-forms",
+    "numeric-and-owner-boundaries",
+    "selected-typed-failure-cases",
+    "owned-operations",
+    "shared-pure-authoring"
+  ],
+  "/acore-language/validation": [
+    "field-validation",
+    "type-constraints",
+    "domain-invariants",
+    "failure-behavior",
+    "shared-executable-validators-and-codecs"
+  ],
+  "/acore-language/values-types-and-operators": [
+    "runtime-values",
+    "type-expressions",
+    "nullable-and-union-types",
+    "parameterized-and-constrained-types",
+    "literal-types",
+    "operators",
+    "member-access-and-null-handling",
+    "type-checks-and-casts",
+    "conditionals",
+    "lambdas",
+    "errors-and-reads"
+  ],
+  "/frontend/flutter-dart": [
+    "generate-and-package-the-contract",
+    "initialize-once",
+    "render-a-query",
+    "execute-a-mutation",
+    "authentication-and-shutdown"
+  ],
+  "/frontend": [
+    "integration-boundary",
+    "generate-for-an-existing-frontend",
+    "use-another-framework-or-language"
+  ],
+  "/frontend/react": [
+    "generate-the-client",
+    "establish-the-runtime-boundary",
+    "query-with-a-hook",
+    "compose-query-state",
+    "browser-and-security-checks"
+  ],
+  "/frontend/swift": [
+    "what-can-be-evaluated-today",
+    "what-remains-before-a-supported-application-workflow"
+  ],
+  "/frontend/web": [
+    "start-before-mounting-application-code",
+    "configuration",
+    "imperative-operations",
+    "declarative-html",
+    "authentication-and-cache"
+  ],
+  "/cloud/deploying-mocks": [
+    "save-mock-configuration",
+    "consume-locally",
+    "provision-a-managed-environment",
+    "security-checklist"
+  ],
+  "/cloud": [
+    "current-product-boundary",
+    "choose-local-or-connected-work",
+    "start"
+  ],
+  "/cloud/project-management": [
+    "authentication-paths",
+    "create-and-link",
+    "roles",
+    "rotate-a-signing-key",
+    "project-privacy-and-pulls",
+    "release-hygiene"
+  ],
+  "/cloud/releases-and-environments": [
+    "immutable-release-identity",
+    "durable-pipeline",
+    "latest-channel",
+    "managed-sandbox",
+    "contract-tests"
+  ],
+  "/cloud/telemetry-and-observability": [
+    "runtime-observability",
+    "cli-adoption-telemetry",
+    "operational-checklist"
+  ],
+  "/core-concepts/contracts-and-artifacts": [
+    "artifact-map",
+    "acore-authoring-source",
+    "axiom-contract-and-package",
+    "manifests-and-locks",
+    "axiomapp-built-application",
+    "semantic-change-review"
+  ],
+  "/core-concepts/ghost-introspection": [
+    "current-inputs",
+    "fastapi-execution-boundary",
+    "review-is-part-of-extraction"
+  ],
+  "/core-concepts/sandboxed-extensions": [
+    "where-an-extension-fits",
+    "what-the-module-can-and-cannot-do",
+    "state-durable-store-and-streams",
+    "target-support",
+    "next-steps"
+  ],
+  "/core-concepts/the-axiom-pipeline": [
+    "1-establish-the-source-boundary",
+    "2-evaluate-and-validate-acore",
+    "3-build-the-contract-artifact",
+    "4-review-change-and-provenance",
+    "5-pull-a-client-surface",
+    "6-execute-on-the-selected-target"
+  ],
+  "/core-concepts/the-generic-runtime": [
+    "runtime-targets",
+    "request-lifecycle",
+    "cache-behavior",
+    "authentication",
+    "tracing"
+  ],
+  "/core-concepts/trust-and-security": [
+    "local-and-cloud-artifacts",
+    "verification-sequence",
+    "executable-extension-boundary",
+    "what-verification-does-not-prove",
+    "secret-boundary"
+  ],
+  "/getting-started/installation": [
+    "1-install-the-cli",
+    "2-join-the-private-alpha-for-cloud-access",
+    "3-install-backend-extractors",
+    "4-start-with-an-explicit-plan"
+  ],
+  "/getting-started/quickstart-backend": [
+    "diagnose-and-plan",
+    "build-and-inspect",
+    "exercise-the-development-boundary",
+    "add-bounded-managed-logic",
+    "build-the-complete-task-application"
+  ],
+  "/getting-started/quickstart-frontend": [
+    "existing-framework-application",
+    "authored-acore-ui",
+    "complete-candidate-task-project"
+  ],
+  "/testing/ci": [
+    "recommended-sequence",
+    "review-semantic-changes",
+    "verify-dependency-locks",
+    "preserve-evidence-safely",
+    "versioned-database-preparation-and-promotion"
+  ],
+  "/examples": [
+    "self-contained-validation",
+    "safety-and-maintenance"
+  ],
+  "/guides/fastapi-to-web": [
+    "prerequisites",
+    "create-and-review-the-contract-source",
+    "exercise-a-local-boundary",
+    "pull-the-web-client",
+    "validate-the-application"
+  ],
+  "/guides/incremental-adoption": [
+    "1-choose-authority",
+    "2-diagnose-without-changing-the-project",
+    "3-build-a-local-proof",
+    "4-prove-one-consumer",
+    "5-make-change-review-deterministic",
+    "6-expand-only-after-the-boundary-is-stable"
+  ],
+  "/delivery/production-readiness": [
+    "contract-and-provenance",
+    "behavior-and-consumers",
+    "security-and-data",
+    "operations",
+    "platform-boundary"
+  ],
+  "/": [
+    "choose-your-path",
+    "one-contract-path-multiple-adoption-models",
+    "what-exists-today"
+  ],
+  "/inspector/ask-axiom": [
+    "local-deterministic-planner",
+    "pre-plan-questions-for-agents",
+    "optional-jev-planner",
+    "safe-abstention",
+    "planning-receipts",
+    "enable-jev-in-the-dashboard",
+    "when-to-use-each-mode"
+  ],
+  "/inspector/changes-impact-and-ci": [
+    "create-canonical-snapshots",
+    "compare-semantics",
+    "calculate-impact",
+    "include-runtime-comparison",
+    "use-it-as-a-ci-gate",
+    "measure-the-inspector-release-boundary",
+    "recommended-pull-request-evidence"
+  ],
+  "/inspector/cli-reference": [
+    "application-views",
+    "contracts-packages-and-extensions",
+    "graph-and-explanation",
+    "security-and-authority",
+    "runtime-and-audit",
+    "snapshots-changes-and-impact",
+    "questions-and-agents",
+    "offline-exchange-and-hardening",
+    "machine-output-rules"
+  ],
+  "/inspector/contracts-and-dependencies": [
+    "list-the-dependency-graph",
+    "inspect-one-contract",
+    "find-executable-code-behind-a-dependency",
+    "inspect-provenance",
+    "review-a-third-party-contract",
+    "trace-a-contract-operation"
+  ],
+  "/inspector/evidence-and-relationships": [
+    "four-truth-layers",
+    "fact",
+    "relationship",
+    "upstream-and-downstream",
+    "evidence",
+    "graph-revision",
+    "completeness-and-bounds"
+  ],
+  "/inspector": [
+    "start-locally",
+    "what-you-can-inspect",
+    "inspector-is-not-a-guesser",
+    "recommended-development-loop"
+  ],
+  "/inspector/inspect-an-application": [
+    "begin-with-the-overview",
+    "frontend-views",
+    "backend-views",
+    "follow-data-lineage",
+    "compare-targets",
+    "selectors",
+    "output-formats"
+  ],
+  "/inspector/local-dashboard": [
+    "launch-it",
+    "dashboard-areas",
+    "explore-relationships",
+    "attach-a-development-application",
+    "source-refresh-and-last-good-evidence",
+    "local-security-boundary",
+    "jev-in-the-dashboard"
+  ],
+  "/inspector/runtime-and-audits": [
+    "create-or-normalize-a-session",
+    "native-managed-observations",
+    "frontend-owner-observations",
+    "inspect-a-session",
+    "import-and-export-audit-bundles",
+    "live-development-evidence",
+    "audit-interpretation-rules",
+    "signed-inspector-handoff"
+  ],
+  "/inspector/security-and-authority": [
+    "start-with-four-views",
+    "read-extension-authority-correctly",
+    "examine-one-finding",
+    "inspector-security-versus-acore-security-analysis",
+    "readiness-is-not-certification",
+    "privacy-boundary",
+    "typed-setup-is-separate-from-authority"
+  ],
+  "/inspector/trace-and-explain": [
+    "inspect-one-fact",
+    "trace-upstream-or-downstream",
+    "candidate-observation-envelopes",
+    "classified-application-fields",
+    "ask-why",
+    "inspect-access",
+    "prove-reachability",
+    "follow-lineage",
+    "query-a-neighborhood",
+    "compare-target-neighborhoods",
+    "use-the-dashboard-for-the-same-workflow"
+  ],
+  "/introduction": [
+    "the-platform-in-four-layers",
+    "acore-is-the-language-not-the-whole-platform",
+    "contracts-are-incremental",
+    "continue-reading"
+  ],
+  "/introduction/product-landscape": [
+    "available-and-testable-today",
+    "product-direction",
+    "intended-relationship"
+  ],
+  "/introduction/support-matrix": [
+    "status-definitions",
+    "language-contracts-and-packages",
+    "backend-and-schema-inputs",
+    "frontend-and-application-targets",
+    "cloud-and-applications",
+    "database-dx-delivery"
+  ],
+  "/introduction/what-is-acore": [
+    "what-acore-can-describe",
+    "source-package-and-application-are-different-artifacts",
+    "composition-keywords",
+    "acore-is-optional-at-integration-edges"
+  ],
+  "/introduction/who-is-it-for": [
+    "application-developers",
+    "backend-developers",
+    "platform-and-architecture-teams",
+    "qa-and-reliability-teams",
+    "security-and-governance-teams",
+    "humans-and-agents"
+  ],
+  "/introduction/why-axiom": [
+    "the-coordination-problem",
+    "the-axiomcore-approach",
+    "what-this-does-not-promise"
+  ],
+  "/reference/acore-schema-reference": [
+    "root-configuration",
+    "config",
+    "project-backend-and-frontend",
+    "models-and-endpoint-types",
+    "type-references",
+    "endpointdef",
+    "cache-retry-and-streaming",
+    "authentication",
+    "variants",
+    "domain-schema",
+    "security-schema",
+    "mock-schema",
+    "test-schema",
+    "source-of-truth-and-stability"
+  ],
+  "/reference/adoption-metrics": [
+    "cli-data-minimization",
+    "adoption-scorecard"
+  ],
+  "/reference/benchmarks": [
+    "run-the-local-contract-benchmark",
+    "protocol-for-published-comparisons",
+    "next-benchmark-suites"
+  ],
+  "/reference/documentation-contributions": [
+    "before-editing",
+    "local-workflow",
+    "claim-and-example-requirements",
+    "review-the-generated-surfaces"
+  ],
+  "/reference/documentation-site-privacy": [
+    "public-site-analytics",
+    "search-and-machine-readable-routes",
+    "hosting-logs",
+    "feedback-and-diagnostics",
+    "separate-telemetry-surfaces"
+  ],
+  "/reference/error-codes": [
+    "stages",
+    "categories",
+    "symbolic-codes",
+    "handling-pattern",
+    "retry-guidance",
+    "typed-domain-cases-and-execution-aborts",
+    "database-developer-lifecycle"
+  ],
+  "/reference/executable-extensions": [
+    "status-and-compatibility",
+    "abi-lifecycle",
+    "language-sdk-model",
+    "authority-surface",
+    "state-effects-and-stream-rules",
+    "security-and-lifecycle-limits",
+    "source-authored-application-flow",
+    "reproducible-acceptance-evidence",
+    "shared-data-contracts",
+    "owned-operations",
+    "bounded-stream-decoder-candidate",
+    "candidate-selected-extension-interfaces",
+    "named-continuations"
+  ],
+  "/reference/extension-dependencies": [
+    "supported-subsets",
+    "resolve-and-verify",
+    "release-policy-and-inspector"
+  ],
+  "/reference/faqs": [
+    "do-i-have-to-build-the-frontend-in-acore",
+    "do-i-have-to-write-my-backend-in-acore",
+    "does-backend-extraction-execute-my-service",
+    "are-axiom-and-axiomapp-the-same-artifact",
+    "does-a-signature-make-the-contract-secure",
+    "are-browser-and-native-requests-guaranteed-to-behave-identically",
+    "is-atmx-zero-javascript",
+    "where-should-authentication-secrets-live",
+    "can-i-use-axiomcore-in-ci",
+    "what-happens-when-the-backend-violates-a-response-contract",
+    "is-the-axiom-marketplace-available",
+    "can-cloud-replace-github-and-all-cicd-today"
+  ],
+  "/reference/glossary": [
+    "acore",
+    "axiomcore",
+    "axiom-cli",
+    "axiom-inspector",
+    "fact",
+    "relationship",
+    "graph-revision",
+    "contract",
+    "acore-1",
+    "axiom",
+    "axiomapp",
+    "artifact-lock",
+    "extractor",
+    "runtime",
+    "acore-ui",
+    "axiom-cloud-dashboard",
+    "axiom-studio",
+    "acode",
+    "axiom-marketplace",
+    "semantic-diff"
+  ],
+  "/reference/security-rules": [
+    "rule-delivery-groups",
+    "rule-catalog",
+    "extractor-evidence-without-an-sdk",
+    "enforcement-model",
+    "adoption-measurements"
+  ],
+  "/backend/adapters": [
+    "build-and-inspect-locally",
+    "request-and-response-rules",
+    "fastapi",
+    "go-chi",
+    "health-and-diagnostics",
+    "typed-native-interceptors",
+    "reproduce-the-http-gate"
+  ],
+  "/backend/containers": [
+    "build-a-release",
+    "configuration-credentials-and-readiness",
+    "shutdown-storage-and-separate-workers",
+    "fastapi-and-chi-images",
+    "promote-and-roll-back-by-digest",
+    "reproduce-the-gates"
+  ],
+  "/backend/events-and-jobs": [
+    "delivery-and-recovery",
+    "schedule-semantics",
+    "webhook-signatures-and-replay",
+    "owned-operations"
+  ],
+  "/backend/execution": [
+    "public-contract-and-private-execution",
+    "actions-and-guards",
+    "authored-actions",
+    "managed-composition",
+    "run-and-invoke",
+    "register-native-code-and-lifecycle-hooks",
+    "verified-sandbox-bindings",
+    "resources-and-deployment",
+    "effects-and-evidence",
+    "execution-and-termination",
+    "verify-the-foundation",
+    "m1-managed-flow-and-typed-outcomes",
+    "ownership-release-and-prepared-transactions",
+    "owned-operations"
+  ],
+  "/backend/integrations": [
+    "caching",
+    "typed-request-batching",
+    "transactional-batch-writes",
+    "outbound-http",
+    "multipart-uploads",
+    "sse-http-streams-and-websockets",
+    "observability-and-verification",
+    "owned-operations"
+  ],
+  "/backend/policies": [
+    "typed-policy-authoring",
+    "private-deployment-configuration",
+    "verified-identity",
+    "mandatory-guards-and-resource-lookups",
+    "invocation-admission-for-native-hosts",
+    "effect-admission-and-evidence",
+    "cors-and-server-admission",
+    "idempotency-and-uncertain-outcomes",
+    "typed-configuration-and-secret-purposes",
+    "owned-operations"
+  ],
+  "/backend/release-workflow": [
+    "choose-the-supported-workflow",
+    "build-and-review-from-a-clean-directory",
+    "exercise-full-mocks-without-provider-access",
+    "package-and-activate-the-chosen-target",
+    "rotate-credentials-promote-and-roll-back",
+    "reproduce-acceptance-and-retain-evidence",
+    "explore-and-continue"
+  ],
+  "/testing/server-simulation": [
+    "choose-a-profile",
+    "prepare-the-managed-example",
+    "private-fixture-format",
+    "bounds-time-and-lifecycle",
+    "reload-source-and-fixtures",
+    "inspect-the-selected-execution",
+    "explicit-delivery-and-evidence",
+    "logical-scenario-replay"
+  ],
+  "/backend/targets-and-releases": [
+    "available-profiles",
+    "transitive-and-opaque-requirements",
+    "offline-local-packaging",
+    "release-v2-verification",
+    "rollback-review"
+  ],
+  "/backend/workers": [
+    "build-and-verify",
+    "providers-and-unsupported-declarations",
+    "local-and-hosted-acceptance"
+  ],
+  "/backend/local-development": [
+    "real-developer-command",
+    "start-from-source",
+    "reload-and-diagnose",
+    "test-the-actual-host",
+    "python-rust-and-typescript-server-sandboxes",
+    "package-and-deploy-locally",
+    "review-a-rollback",
+    "typed-provider-setup"
+  ],
+  "/reference/support-and-feedback": [
+    "create-a-safe-diagnostic-bundle",
+    "report-a-documentation-defect",
+    "escalate-product-failures"
+  ],
+  "/reference/troubleshooting": [
+    "collect-a-safe-report",
+    "extraction-fails",
+    "build-or-lock-verification-fails",
+    "pull-or-generated-client-failure",
+    "browser-runtime-does-not-start",
+    "flutter-runtime-does-not-start",
+    "acore-ui-host-problems",
+    "cloud-release-stays-queued-or-fails",
+    "escalation-checklist"
+  ],
+  "/reference/versioning-and-deprecation": [
+    "version-boundaries",
+    "choose-release-identifiers-deliberately",
+    "deprecate-before-removing",
+    "upgrade-safely",
+    "advanced-language-metadata",
+    "database-contract-versions"
+  ],
+  "/testing/test-runner": [
+    "typed-development-scenarios",
+    "synthetic-expiry-environments"
+  ],
+  "/tooling/cli-reference": [
+    "diagnose-and-begin",
+    "check-and-build-any-contract",
+    "additional-contract-tools",
+    "database-developer-commands",
+    "axiom-inspector",
+    "local-development",
+    "server-target-and-release-tooling",
+    "pull-a-client",
+    "contract-dependency-locks",
+    "typed-frontend-packages",
+    "acore-ui-applications",
+    "ui-host-commands",
+    "application-artifacts",
+    "cloud-projects-and-releases",
+    "install-or-run-the-language-server",
+    "cli-cache",
+    "exit-behavior-and-automation",
+    "source-owned-database-application-operations",
+    "approved-backend-interfaces"
+  ],
+  "/tooling/doctor-and-onboarding": [
+    "axiom-onboard",
+    "axiom-doctor"
+  ],
+  "/tooling/interactive-dashboards": [
+    "axiom-inspector-local-dashboard",
+    "contract-inspector",
+    "watch-display",
+    "cache-explorer",
+    "login-and-project-selection"
+  ],
+  "/tooling/security-check": [
+    "exit-behavior",
+    "recommended-rollout"
+  ],
+  "/frontend/application-lifecycle": [
+    "1-create-or-inspect-a-source-only-app",
+    "2-check-target-capabilities",
+    "3-run-the-development-targets",
+    "4-validate-behavior-not-screenshots-alone",
+    "5-build-and-package",
+    "continue-a-playground-application-locally",
+    "dispose-owners-and-reject-stale-work",
+    "a12-candidate-contract-aware-forms-and-uncertain-writes",
+    "a12-candidate-logical-submission-and-resolution"
+  ],
+  "/testing/semantic-diffs": [
+    "contract-source-and-lock",
+    "locked-ui-contracts",
+    "typed-packages",
+    "review-evidence",
+    "whole-application-snapshots-and-impact"
+  ],
+  "/backend/contract-lifecycle": [
+    "1-diagnose-and-initialize",
+    "2-review-the-authoring-boundary",
+    "3-build-and-inspect",
+    "4-validate-behavior",
+    "5-review-change-impact",
+    "6-release-deliberately"
+  ],
+  "/workflows/choose-an-adoption-path": [
+    "boundaries-to-decide-early"
+  ],
+  "/delivery/contract-pull-requests": [
+    "open-a-review",
+    "review-the-evidence",
+    "discuss-and-complete",
+    "evidence-chain"
+  ],
+  "/workflows/executable-extension-lifecycle": [
+    "what-the-application-author-prepares",
+    "generated-release-inputs",
+    "verify-before-a-host-can-load-the-module",
+    "bind-and-invoke-at-a-coarse-boundary",
+    "test-the-right-host",
+    "operate-and-update-safely",
+    "checked-values-cleanup-and-conflicts"
+  ],
+  "/frontend/integration-workflow": [
+    "1-select-a-contract-source-and-target",
+    "2-commit-dependency-intent",
+    "3-integrate-the-generated-surface",
+    "4-test-the-real-application-boundary"
+  ],
+  "/testing/local-and-ci": [
+    "host-independent-ui-ci",
+    "review-artifacts"
+  ],
+  "/workflows/migrating-extension-authoring": [
+    "migrate-axiomdepstoml",
+    "migrate-low-level-rust-sdk-imports",
+    "final-review"
+  ],
+  "/testing/mocks": [
+    "declare-an-endpoint-response",
+    "conditional-selection",
+    "stateful-behavior",
+    "fault-injection",
+    "validation-checklist"
+  ],
+  "/workflows/package-lifecycle": [
+    "author-and-build",
+    "declare-and-lock-dependencies",
+    "review-an-upgrade",
+    "consume-from-acore-ui"
+  ],
+  "/delivery/releases": [
+    "contract-release",
+    "consumer-upgrade",
+    "application-release",
+    "rollback",
+    "advanced-language-cohort-upgrades"
+  ],
+  "/delivery/security-review": [
+    "review-flow",
+    "review-questions"
+  ],
+  "/testing/contracts": [
+    "minimal-suite",
+    "requests-and-expectations",
+    "capture-values",
+    "lifecycle-and-isolation",
+    "repeat-retries-and-cancellation-with-logical-time"
+  ]
+}

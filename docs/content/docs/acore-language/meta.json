@@ -1,29 +1,23 @@
 {
-  "title": "Acore Language",
+  "title": "Acore language",
   "pages": [
     "index",
-    "backend-profile",
-    "managed-language",
-    "authoring-ergonomics",
-    "owned-operations",
-    "database-contracts",
-    "sqlite-contracts",
-    "database-fleets",
-    "database-persistence",
     "syntax-overview",
     "values-types-and-operators",
     "objects-classes-and-functions",
     "imports-and-contracts",
     "amends-and-merging",
+    "validation",
     "evaluation-and-output",
     "standard-library",
-    "ui-profile",
-    "frontend-testing",
+    "backend-profile",
+    "managed-language",
+    "authoring-ergonomics",
+    "owned-operations",
+    "domain-model-v1",
+    "security-model-v1",
     "policies-and-behavior",
     "streaming-and-websockets",
-    "variants-and-filtering",
-    "validation",
-    "domain-model-v1",
-    "security-model-v1"
+    "variants-and-filtering"
   ]
 }

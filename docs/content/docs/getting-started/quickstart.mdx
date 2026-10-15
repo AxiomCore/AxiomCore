@@ -1,0 +1,97 @@
+---
+title: Run your first app
+description: Run an Acore UI and API, create tasks, and verify that SQLite retains them.
+pageType: tutorial
+testedWith: Published Axiom CLI 0.149.0 and signed web UI Host 0.6.12 on macOS arm64
+---
+
+Build a task list with an **Acore UI, Acore backend, and real SQLite database**.
+No Cloud account, extractor, or database server is required.
+
+![The running task app with two records stored in SQLite](/images/docs/task-app.png)
+
+The screenshot shows the application running against its local API. Its rows
+come from SQLite, rather than mock responses.
+
+## Prerequisites
+
+- [CLI 0.149.0](/getting-started/installation), on a supported platform.
+- Compatible web host: `axiom ui host install --target web --version 0.6.12 --non-interactive`.
+- A browser and two terminals. The example uses ports 8080 and 5173.
+
+## 1. Get the source
+
+Download the [task app source](/examples/task-app.zip) into an empty working
+directory, then extract it:
+
+```bash title="Terminal 1"
+unzip task-app.zip
+cd task-app
+```
+
+```text title="Project structure"
+task-app/
+  database/sqlite/   # Schema and database manifest
+  backend/          # Models, actions, storage mappings, backend manifest
+  frontend/         # Acore UI and frontend manifest
+```
+
+Keep each `AxiomDeps.toml` with its source. The frontend manifest selects the
+local backend contract and API base URL.
+
+## 2. Start the backend
+
+From the example root:
+
+```bash title="Terminal 1"
+unset DATABASE_URL
+axiom check backend/sqlite.acore
+axiom run backend/sqlite.acore --port 8080
+```
+
+The CLI creates SQLite storage, applies the initial schema, and prints the
+backend URL plus a **development API key**. Keep the process running.
+Unsetting `DATABASE_URL` prevents an unrelated database connection from being
+selected in your shell.
+
+## 3. Start the frontend
+
+Open a second terminal in the same example root:
+
+```bash title="Terminal 2"
+axiom run frontend/main.acore --target web --port 5173
+```
+
+Open `http://127.0.0.1:5173`. Paste the development key from Terminal 1 into
+the app and select **Connect**. Add a task. Successful mutations refresh the
+contract-backed list.
+
+## 4. Verify persistence and errors
+
+1. Add two different tasks.
+2. Add an existing title again. The app displays the declared duplicate error.
+3. Reload the page and reconnect. Both records remain.
+4. Delete a record, reload, and reconnect. The deletion remains.
+5. Stop and restart the backend. Reconnect and check the remaining record.
+
+The API also supports updates. Read the [task walkthrough](/examples/task-app)
+for exact request shapes and the source behind each operation.
+
+## Troubleshooting
+
+| Symptom | Check |
+| --- | --- |
+| Incompatible web host | Install the stated version; check `axiom ui host status --target web`. |
+| UI cannot load tasks | Check the backend process, API key, and frontend manifest's `baseUrl`. |
+| Port already in use | Change the command, manifest URL, and CORS origins together. |
+| Wrong database selected | Unset `DATABASE_URL` and restart the SQLite backend. |
+
+## Cleanup and next steps
+
+Stop both processes with Ctrl-C. SQLite data stays in this example's local
+state. Retain the example to continue, or delete this disposable directory
+when you no longer need its data.
+
+Next, try [database migrations](/getting-started/quickstart-database), read the
+[backend declarations](/acore-language/backend-profile), or build the
+[exam application](/examples/exam-app).

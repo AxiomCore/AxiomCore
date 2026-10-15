@@ -1,6 +1,7 @@
 ---
 title: Domain Model v1
 description: Add optional, signed application semantics to an endpoint-first Axiom contract without duplicating extracted models.
+pageType: reference
 ---
 
 Domain Model v1 is the optional semantic layer on top of Axiom’s extracted
@@ -20,7 +21,7 @@ release artifact.
 autocomplete-friendly vocabulary. Append `also entity` to a local model to reference the inferred entity with the model’s case (`Entities.Task`, like `Models.Task`), or promote a model with `entity name(model: Models.Name)`,
 then use the resulting `Entities.name` value in every semantic boundary.
 
-```acore
+```acore title="Acore excerpt"
 // Models and routes come from the existing service.
 amends "axiom-fastapi:./main.py:app"
 
@@ -49,7 +50,7 @@ The `model` argument supplies a resolved model reference; never repeat a model
 name as a string or assign a domain `id`. A key is inferred from `id`, `uuid`, or a case-insensitive
 equivalent. Only an unconventional durable key needs an override:
 
-```acore
+```acore title="Acore excerpt"
 // An unconventional entity key is explicit; IDs remain compiler-owned.
 entity invoice(model: Models.Invoice, key: ["invoice_number"])
 ```
@@ -67,7 +68,7 @@ entities. This avoids creating accidental domain concepts from every DTO.
 If an association cannot be inferred, use `Entities.*` and the built-in enum
 helpers rather than remembering raw wire values:
 
-```acore
+```acore title="Acore excerpt"
 relationship orderCustomer(
   from: Entities.order,
   to: Entities.customer,
@@ -84,11 +85,11 @@ migration or change runtime ownership.
 
 ### Invariants and Rod rules
 
-An invariant is evidence for review, generation, and impact analysis—not
+An invariant is evidence for review, generation, and impact analysis, not
 arbitrary executable code. It can be a bounded readable expression, a
 structured Rod validation rule, or both.
 
-```acore
+```acore title="Acore excerpt"
 invariant validShippingAddress(
   scope: Entities.order,
   fields: ["shipping_address"],
@@ -113,9 +114,9 @@ execution channel.
 canonicalized before its hash is calculated, and normal cloud release signing
 covers those exact immutable bytes.
 
-```bash
+```bash title="Terminal"
 axiom domain validate axiom.acore
-axiom build axiom.acore --variant default
+axiom build axiom.acore --variant default --out backend.axiom
 ```
 
 ATMX generated clients retain transport models and emit typed projection
@@ -132,7 +133,7 @@ for the source release.
 
 The bounded, member-only semantic endpoint is:
 
-```text
+```text title="Conceptual example"
 GET /api/v1/projects/{project_slug}/contracts/{version}/semantic-view
 ```
 
@@ -143,7 +144,7 @@ bytes, source code, credentials, and runtime payloads.
 
 OpenAPI JSON and SQL DDL can produce a reviewable promotion suggestion:
 
-```bash
+```bash title="Terminal"
 axiom domain bootstrap openapi.json --source openapi --output axiom.domain.acore
 axiom domain bootstrap schema.sql --source sql --output axiom.domain.acore
 ```

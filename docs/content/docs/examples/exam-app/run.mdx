@@ -1,0 +1,73 @@
+---
+title: "Exam app: run locally"
+description: Start the exam's real SQLite backend and Acore frontend, then submit an attempt.
+pageType: tutorial
+testedWith: Published Axiom CLI 0.149.0 and signed web UI Host 0.6.12 on macOS arm64
+---
+
+Use the [complete source](/examples/exam-app.zip). You need
+[CLI 0.149.0 and web host 0.6.12](/getting-started/installation), a browser,
+and two terminals. Ports 8082 and 5174 must be available.
+
+## 1. Start the backend
+
+Extract the downloaded archive and run from its root:
+
+```bash title="Terminal 1"
+unzip exam-app.zip
+cd exam-app
+unset DATABASE_URL
+axiom check backend/main.acore
+axiom run backend/main.acore --port 8082
+```
+
+The CLI validates the database, applies version `1.0.0`, starts the API, and
+prints a development key. No PostgreSQL server or extractor is required.
+Keep the process running.
+
+## 2. Start the frontend
+
+In another terminal in the same example root:
+
+```bash title="Terminal 2"
+axiom run frontend/main.acore --target web --port 5174
+```
+
+Open `http://127.0.0.1:5174`. Paste the development key and select **Connect**.
+The app loads its questions and previously stored results.
+
+## 3. Submit an attempt
+
+1. Enter a synthetic name, such as Ada.
+2. Keep the initial attempt ID or enter another unique ID.
+3. Choose B for the source-file question and A for the grading question.
+4. Select **Submit exam**. The results list displays `2 / 2`.
+5. Submit that ID again. The server returns the declared duplicate failure.
+
+![A server-graded attempt saved in the exam's results list](/images/docs/exam-result.png)
+
+The result in this screenshot came from the backend and was stored in SQLite.
+Try a new attempt ID with different choices to see scores of zero or one.
+
+## 4. Confirm persistence
+
+Reload the page, reconnect, and check the result. Stop the backend with Ctrl-C,
+restart it with the same command, and reconnect again. The result remains.
+
+After changing an imported backend file, stop the backend and rebuild its entry
+source with `axiom build backend/main.acore`. Restart the backend and frontend
+so the consumer uses the updated contract. Schema changes also require a new
+database version.
+
+## Troubleshooting and cleanup
+
+| Symptom | Check |
+| --- | --- |
+| Cannot load questions | Backend process, key, manifest base URL, and permitted frontend origin |
+| Incompatible host | Install the stated signed host version |
+| Attempt already submitted | Choose a new ID; a duplicate does not create another row |
+| UI source will not compile after a contract edit | Rebuild the backend entry source and check the selected operation list/projections |
+
+Stop both processes with Ctrl-C. Keep the disposable example directory and
+SQLite data for later chapters, or remove them when finished. Continue with the
+[data model](/examples/exam-app/database).

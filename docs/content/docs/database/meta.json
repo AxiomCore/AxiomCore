@@ -1,0 +1,11 @@
+{
+  "title": "Databases",
+  "pages": [
+    "index",
+    "contracts",
+    "sqlite",
+    "persistence",
+    "browser-preview",
+    "fleets"
+  ]
+}

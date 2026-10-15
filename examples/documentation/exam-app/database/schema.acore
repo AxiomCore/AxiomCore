@@ -1,0 +1,18 @@
+project(id: "docs.exam.database", version: "1.0.0")
+module docs.exam.database
+
+database exam(engine: DatabaseEngine.sqlite) {
+  manage(schemas: [Schemas.main], mode: ManagementMode.ownedObjects)
+  schema main {
+    table submissions(strict: true) {
+      tenant: Sqlite.Text()
+      id: Sqlite.Text()
+      name: Sqlite.Text()
+      first: Sqlite.Text()
+      second: Sqlite.Text()
+      score: Sqlite.Text()
+      total: Sqlite.Text()
+      primaryKey(columns: [.tenant, .id], sqlName: "submissions_pkey")
+    }
+  }
+}

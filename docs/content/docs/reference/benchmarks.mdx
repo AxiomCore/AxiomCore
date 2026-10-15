@@ -1,6 +1,7 @@
 ---
 title: Reproducible Benchmarks
 description: The reproducible benchmark protocol and report format.
+pageType: reference
 ---
 
 AxiomCore does not publish unrepeatable “typical” runtime numbers. A benchmark
@@ -11,7 +12,7 @@ class, CLI version, warm-up, sample count, and resulting report.
 
 Run from a backend directory containing `axiom.acore`:
 
-```bash
+```bash title="Terminal"
 axiom benchmark --iterations 20 --warmup 3 --output axiom-benchmark.json
 ```
 
@@ -36,7 +37,7 @@ Set thresholds only after collecting a stable baseline on dedicated hardware.
 Use `--json` for a machine-readable stdout result. The written report is better
 for a pull-request artifact:
 
-```json
+```json title="Configuration excerpt"
 {
   "schema_version": 1,
   "cli_version": "0.135.0",

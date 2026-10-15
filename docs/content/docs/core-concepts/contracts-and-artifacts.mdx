@@ -1,6 +1,7 @@
 ---
 title: Contracts and artifacts
 description: How Acore source becomes locked packages and runnable applications.
+pageType: concept
 ---
 
 AxiomCore deliberately separates editable source, distributable packages,
@@ -10,18 +11,19 @@ the consumer's build.
 
 ## Artifact map
 
-```text
-*.acore ── evaluate/build ──► *.axiom
- source                       canonical package
-                                  │
-                                  ├── resolve ──► AxiomDeps.toml + lock
-                                  │                   pinned dependency set
-                                  │
-                                  ├── inspect / diff / test / mock
-                                  │
-                                  └── consume in UI build ──► *.axiomapp
-                                                              runnable app artifact
+```mermaid title="Editable source, locked dependencies, and application artifacts"
+flowchart TD
+  A[Acore source] --> B[Canonical .axiom package]
+  B --> C[Resolve with manifest and lock]
+  B --> D[Inspect, diff, test, or mock]
+  C --> E[Existing client or Acore UI build]
+  E --> F[Framework integration or .axiomapp]
 ```
+
+A manifest declares dependency intent. Resolution pins the selected package in
+a lock. A client consumes that contract; an Acore UI build can package the
+application as `.axiomapp`.
+
 
 ## `.acore`: authoring source
 

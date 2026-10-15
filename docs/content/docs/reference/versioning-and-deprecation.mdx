@@ -1,6 +1,7 @@
 ---
 title: Versioning and deprecation
 description: Distinguish tool, source-schema, artifact, package, release, protocol, and documentation versions before upgrading an AxiomCore system.
+pageType: reference
 ---
 
 AxiomCore has several independent compatibility boundaries. A version change in
@@ -35,10 +36,10 @@ retried, while different bytes must use a different version.
 Do not overwrite an accepted artifact to make a version appear unchanged.
 Create a new version, preserve the old artifact and lock, and review:
 
-```bash
+```bash title="Terminal"
 axiom diff previous.acore candidate.acore --format semantic
 axiom test candidate.acore
-axiom build candidate.acore
+axiom build candidate.acore --out candidate.axiom
 ```
 
 The current semantic classifier is review evidence, not a universal proof of
@@ -50,7 +51,7 @@ error, stream, cache, and target behavior still require owner review.
 Acore accepts `@deprecated` metadata on supported declarations. Use it to
 record intent near the authored surface:
 
-```acore
+```acore title="Acore excerpt"
 @deprecated { replacement = "currentName" }
 legacyName = "compatibility-value"
 ```
@@ -79,7 +80,7 @@ Upgrade one boundary at a time where practical:
 5. run local contract/security tests and real consumer tests; and
 6. promote a new immutable release only after the rollback input is retained.
 
-Use the [release and upgrade workflow](/workflows/release-and-upgrade) for the
+Use the [release and upgrade workflow](/delivery/releases) for the
 artifact lifecycle and the [support matrix](/introduction/support-matrix) for
 the current maturity of each integration.
 
@@ -104,10 +105,10 @@ combination with `axiom-validation-schema/v1`. Plain legacy consumers keep IR
 10/program 1/reader 10. Host frontend compatibility metadata reader 2 advertises
 schema-helper support without changing the native bundle ABI or readiness pins.
 Hosts reject unknown pairs, missing helper capability and attempts to downgrade
-an advanced graph to the legacy pair. Use the matching compiled cohort when
+an advanced graph to the legacy pair. Use the matching toolchain when
 building and testing; no release channel is promoted by a source change alone.
 
-M3 read caches bind plan, contract, schema, codec, deployment authority and
+Read caches bind plan, contract, schema, codec, deployment authority and
 verified identity; replacing any of these creates a different cache partition.
 Batch descriptors require a provider that explicitly attests the derived
 correlation envelope and read safety. Sink mappings require their qualified
@@ -116,7 +117,7 @@ transaction/receipt profile. Unknown required features reject activation.
 Selected generated extension interfaces use the checked schema and SDK profile
 recorded in the package and build lock. A structural interface match does not
 establish module identity, grants or kernel compatibility. Keep named guest
-resume state, bounded codecs and module/authority digests in the same cohort;
+resume state, bounded codecs and module/authority digests in the same toolchain;
 TypeScript/Python live subscription handles remain unsupported.
 
 `axiom-development-execution-evidence/v1` identifies the actual runner, profile, artifact
@@ -130,4 +131,28 @@ development fixture profiles and reject unavailable controls.
 
 CLI 0.149.0 database migrations use explicit Acore `project(id: "…", version: "1.0.0")`. The version is a numeric three-part value and is declared in the source project block. Database contracts need no profile header; the manifest selects the contract type. Every managed transition binds an immutable identity/version/content/parent definition; schema, private typed data intent and provenance have distinct digests. Reused changed content receives a source-linked conflict and a numeric suggestion; unchanged content is current. Metadata-only releases are shown explicitly.
 
-Interactive Enter acceptance changes the source version literal. CI auto-versioning is explicit during preparation, then frozen promotion preserves the exact release/version across targets. Compensating rollback allocates a new version and retains older history. Backend/project release syntax outside this database migration profile keeps its existing version rules. See [Database contracts](/acore-language/database-contracts).
+Interactive Enter acceptance changes the source version literal. CI auto-versioning is explicit during preparation, then frozen promotion preserves the exact release/version across targets. Compensating rollback allocates a new version and retains older history. Backend/project release syntax outside this database migration profile keeps its existing version rules. See [Database contracts](/database/contracts).
+
+## Check editor and compiler compatibility
+
+Advanced metadata requires a compatible compiler, CLI, host, SDK, and editor
+server. Installing a grammar does not update artifact readers or runtime
+capabilities. Inspect both editor entry points when they are installed:
+
+```bash title="Terminal"
+axiom lsp --version-json
+acore-lsp --version-json
+```
+
+Their `compilerVersion` and `protocolVersion` must match. CLI and standalone
+`serverVersion` labels may differ. Select the same CLI for explicit editor
+tasks. Offline editing and tests use prepared local contracts and locks; real
+serving separately requires reviewed identities, deployment grants, database
+readiness, and compatible providers.
+
+For the published local walkthroughs, use CLI **0.149.0** and signed web host
+**0.6.12** on macOS arm64. Existing-stack samples pin `atmx-cli` **0.146.7**
+and `atmx-web` **0.147.5** because the CLI's matching automatic npm companion
+is unavailable. This combination qualifies those sample contracts, not all
+advanced metadata or other targets. See the [installation guide](/getting-started/installation)
+and [generator setup](/guides/fastapi-to-web#pull-the-web-client).

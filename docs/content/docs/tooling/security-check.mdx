@@ -1,14 +1,15 @@
 ---
 title: Security check
 description: Run deterministic AXSEC analysis locally, in CI, and before a release.
+pageType: guide
 ---
 
 Run the same compiler analysis locally and in CI:
 
-```bash
+```bash title="Terminal"
 axiom security check axiom.acore
 axiom security check axiom.acore --json > security-report.json
-axiom build axiom.acore
+axiom build axiom.acore --out backend.axiom
 ```
 
 `security check` does not write an artifact. It renders the manifest shape a build will embed: mode, findings, coverage, graph, source evidence, and canonical hash. `--json` is suitable for CI annotations.

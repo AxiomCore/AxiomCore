@@ -1,0 +1,516 @@
+---
+title: Acore UI profile
+description: Author portable UI modules, bind locked contracts, inspect capabilities, and target web, Android, and iOS.
+pageType: guide
+---
+
+<StatusNote status="alpha" title="Implemented development path">
+  The browser, Android Emulator, and iOS Simulator paths are implemented and
+  testable. Physical-device certification and store publishing are not yet a
+  supported promise.
+</StatusNote>
+
+Author the UI in `.acore` and run it on a compatible target host. Keep Acore
+as the editable application source. Generated output is managed by the tools;
+application source has no JavaScript escape hatch.
+
+## Smallest application
+
+The frontend project has its own `AxiomDeps.toml`, even when it has no backend
+imports:
+
+```toml title="AxiomDeps.toml"
+type = "frontend"
+```
+
+```acore title="Acore excerpt"
+module example.app.ui
+
+app Example { route "/" => Home }
+
+page Home {
+  state message: String = "Hello from Acore"
+
+  action reset() {
+    message = "Hello from Acore"
+  }
+
+  view {
+    SafeArea {
+      View {
+        Text(message)
+        Button(label: "Reset", on_press: reset)
+      }
+    }
+  }
+}
+```
+
+`app` maps paths to pages. A `page` owns state, operation bindings, actions,
+and a view tree. `SafeArea` applies the host's platform insets; use it at the
+outer edge of a screen that must avoid a status bar or display cutout.
+
+## Page state
+
+```acore title="Acore excerpt"
+page Search {
+  state query: String = ""
+  action clear() {
+    query = ""
+  }
+
+  view {
+    Input(value: query, placeholder: "Search")
+    Text(query)
+    Button(label: "Clear", on_press: clear)
+  }
+}
+```
+
+The source-checkout profile is `acore-ui/v6` and emits UI IR v11. State
+initializers use deterministic pure expressions matching their resolved types.
+Generic Acore `Int` remains i64; the portable UI profile explicitly rejects
+values outside −9,007,199,254,740,991…9,007,199,254,740,991. Integer arithmetic
+uses exact intermediates and checks overflow before reaching host numbers.
+
+```acore title="Acore excerpt"
+model Task { id: Int, title: String }
+pure fn normalize(value: String): String = value.trim().lower()
+
+page Counter {
+  state count: Int = 0
+  state task: Task = {id: 1, title: normalize(" Hello ")}
+  action increment() { count = count + 1 }
+  view {
+    Text(task.title)
+    Text(to_string(count))
+    Button(label: "Increment", on_press: increment)
+  }
+}
+```
+
+Pure expressions include checked arithmetic, comparisons, short-circuit
+booleans, conditional expressions, `?.`, `??`, typed records, safe String/list
+indexing and `.length`. Negative/out-of-bounds indices return null. Strings
+count Unicode scalars. `.trim()`, ASCII `.lower()`/`.upper()`, substring search,
+`interpolate`, explicit numeric conversions and typed `.map()`/`.filter()`/
+`.find()`/stable `.sort()` are allowlisted. Collection callbacks use inline
+lambdas, such as `items.map(|item| normalize(item.title))`. Pure functions cannot
+capture state, recurse, access ambient APIs or invoke operations/extensions;
+evaluation and values have explicit work/nesting limits.
+
+Models, records, enums and pure functions may be scoped to a page/component.
+Use `use model|record|enum|function Name from "./file.acore"` for explicit local
+imports. Verified contract projection types use the import namespace, such as
+`Shop.productShopper`; their private fields remain unavailable. Unknown types,
+fields, names and unsupported calls reject before artifacts are produced.
+
+Page derivations execute as typed, memoized pure values. Their dependencies are
+ordered and cycles diagnose. They can be rendered and used by actions or operation
+arguments; they cannot be assigned. Effects and lifecycle declarations preserve
+complete bodies and cleanup. Components use the same owner semantics for local state, actions, derivations, operations and cleanup.
+
+```acore title="Acore excerpt"
+page Search {
+  state draft: String = ""
+  derived normalized = draft.trim().lower()
+  derived caption = normalized + "!"
+  action changed(value: String) { let snapshot = value.trim(); draft = snapshot }
+  view {
+    Input(value: draft, on_input: changed, accessibility_label: "Search")
+    Text(caption)
+  }
+}
+```
+
+The LSP and CLI use the same project graph and target checks. Editors default
+to web and may read `AcoreUI.json` with `profile`, `entry`, and `targets`, or
+`initializationOptions.frontend`. Unsaved imported Acore files participate in
+checking. CLI `--target` selects its explicit target. IR v10 requires matching
+`acore-pure/v2`, `acore-reactive/v4` and `acore-components/v1` and `acore-data/v2` plus `acore-application/v1` hosts with exact integer support; rebuild older artifacts and
+upgrade/rebuild their host. These changes are in the source checkout, not a
+promise that an older installed CLI includes them.
+
+## Locked service operations
+
+Declare the `tasks` alias in the frontend manifest, then resolve its contract
+lock. See [imports and contracts](/acore-language/imports-and-contracts#compiled-contracts-use-contract)
+for the manifest and CLI commands. The playground exposes this manifest in the
+**AxiomDeps.toml · Frontend** tab beside Frontend.acore.
+
+```acore title="Acore excerpt"
+use contract Tasks from "tasks" audience "mobile"
+
+page Home {
+  state draft: String = ""
+  query tasks = Tasks.list_tasks()
+  mutation create = Tasks.create_task(title: draft)
+
+  action submit() {
+    create.run()
+    draft = ""
+  }
+
+  view {
+    View {
+      Input(value: draft, placeholder: "Add a task")
+      Button(label: "Add", on_press: submit)
+      if tasks.pending { Text("Loading…") }
+      else if tasks.error { Text("Could not load tasks") }
+      else {
+        List(items: tasks.data, key: |task| task.id, list_type: "single", span_count: 1, scroll_orientation: "vertical") {
+          task => Text(task.title)
+        }
+      }
+    }
+  }
+}
+```
+
+The alias, audience, operation, kind, and artifact digest must match the
+committed `axiom.ui.lock.json`. The source compiler checks argument names
+against the selected operation's request fields and explicit locked URL path
+placeholders. Schema-bearing verified locks also check argument types,
+requiredness, result projections and declared error codes. Older descriptor-free
+locks retain their explicitly bounded compatibility path. UI compilation does not discover a
+live backend as a fallback.
+
+Projected request records keep their public field envelope on web, iOS and
+Android. For example, a contract request projection exposing `completed` sends
+`{"completed": true}`, even when it is the only body field. A single
+unprojected body parameter sends its value as the whole JSON body. Path, query
+and header parameters stay in their declared transport locations. These rules
+come from the verified contract; frontend code does not need to build the HTTP
+payload manually.
+
+## Actions
+
+Actions support typed parameters, immutable `let` values, `if`/`else`, `guard`,
+exact state assignments, declared operation `.run()`/`.cancel()`, awaited typed
+results with terminal `on_error` handlers, static navigation, and supported
+element/verified extension calls. Loops, exceptions, unknown calls and unconsumed
+syntax reject before lowering. Action branches never become unconditional writes.
+
+Within a synchronous segment, reads see earlier writes. The segment commits
+atomically before an operation, element/extension call or navigation. Payloads
+and locals retain their values across awaits; resumed state reads use the current
+live owner. Failed remote calls stop or run the declared failure handler without
+undoing previously committed segments. Queries cancel superseded requests;
+actions and mutation bindings ignore duplicate invocation while pending.
+`action_status.name.pending` exposes named action concurrency.
+
+Input/TextArea/InputField `on_input` supplies String; Checkbox/Switch `on_change`
+supplies Bool; RadioGroup supplies String and ViewPager supplies Int. Other events
+currently use parameterless actions. Wrong event signatures diagnose `AUI424`.
+
+Query bindings automatically run on mount and when their canonical typed arguments
+or optional `when Bool` enablement change. Explicit reload uses fresh arguments;
+a matching refresh effect rejects to prevent a duplicate request. Operation work
+and continuations cannot publish after owner/session/request supersession.
+
+`lifecycle name { … cleanup { … } }` starts owned work once on mount. A declared
+stream can use `updates.run()` and `updates.cancel()` there. Remaining effects use
+`effect name when [dependencies] initial false { … }`; initial defaults to true.
+They run after commits, coalesce changes and wait for prior cleanup. Cleanup may
+release declared operations/extensions/elements but cannot publish state, start
+operations or navigate. Direct/transitive dependency writes diagnose, and runtime
+cross-effect cycles have a 32-flush bound. Navigation resets page state on re-entry.
+Page state and store-backed preferences have separate lifecycles. See
+[application state](/frontend/application-lifecycle) before persisting a value.
+
+## Elements and components
+
+Local and imported components preserve resolved prop types, required/nullable
+inputs and closed pure defaults. Inputs are immutable. Each invocation owns
+independent state, derived values, actions, operations and lifecycle cleanup.
+Changing a prop updates reads and query arguments without erasing local drafts;
+reset a draft explicitly or remove/remount its instance.
+
+```acore title="Acore excerpt"
+module example.components.ui
+model Task { id: Int; title: String }
+component EditableRow(task: Task, caption: String = "Save") {
+  event save(payload: Task)
+  slot trailing: Text?
+  state draft: String = task.title
+  action saveDraft() { emit save({id: task.id, title: draft.trim()}) }
+  view {
+    Input(value: draft, accessibility_label: "Task title")
+    Button(label: caption, on_press: saveDraft)
+    Slot(name: "trailing")
+  }
+}
+page Home {
+  state task: Task = {id: 1, title: "First task"}
+  state message: String = ""
+  action saved(payload: Task) { message = payload.title }
+  view {
+    EditableRow(task: task, on_save: saved) {
+      Slot(name: "trailing") { Text(message) }
+    }
+  }
+}
+```
+
+Named events pass one checked payload, or null for an empty event declaration,
+to parent actions. A parameterless handler may discard it. Supplied named slots
+resolve their expressions/actions in the caller. Slots declare allowed element
+types and cardinality: `Text`, `Text?`, `List<Element>`, or
+`[Text,Button][0..2]`. Missing/duplicate/unknown props, events, placements and
+slots diagnose. Conditional/list wrappers inside bounded supplied slots reject.
+`Action` props retain parameterless forwarding.
+
+A component accepts a String or portable Int `key`. Keyed lists preserve the
+matching instance through reorder and dispose removed instances. Nested local
+element IDs are isolated per instance. Compatible reload retains typed state;
+incompatible signatures/state schemas explicitly reset. The renderer preserves
+input focus/selection while restoring the same instance after a render.
+
+Locked `axiom-component-library/v2` packages express node property bindings,
+slot placement and bounded state/derived/action/lifecycle behavior. They use the
+same compiler as local components and expose artifact/export provenance. They
+remain data-only and cannot acquire ambient operation, extension or navigation
+authority; emit a typed event to the consuming application. V1 keeps its passive
+executable subset. V2 rejects legacy transition/accessibility/reload metadata
+and Color/Dimension refinement descriptors that cannot be represented faithfully.
+Use explicit node bindings and theme roles. Envelope validation alone is not
+consumer validation; run `axiom packages check-source` against the application.
+
+Portable primitives currently include layout and content (`View`, `Text`,
+`Image`, `Svg`, `SafeArea`), scrolling and collections (`ScrollView`, `List`,
+`ViewPager`, refresh and coordinator elements), text entry (`Input`,
+`TextArea`), media and surfaces (`Video`, `WebView`, `Overlay`, `BlurView`),
+interaction (`Button`, `Pressable`), and a larger typed component family for
+dialogs, forms, popovers, sheets, selection, swipe, sorting, and switches.
+
+Do not treat that summary as a target-compatibility guarantee. Query the
+versioned registry used by your installed CLI:
+
+```bash title="Terminal"
+axiom ui capabilities --target web
+axiom ui capabilities --target android --kind element
+axiom ui capabilities --target ios --query safe-area --json
+```
+
+The compiler rejects an unsupported capability instead of silently changing
+the view.
+
+## Assets, themes, and styles
+
+Local assets use safe paths relative to the source package, for example
+`images/mark.svg`. Absolute paths and traversal are rejected. The compiler
+records an asset digest and the CLI verifies it before copying the asset to an
+opaque cache.
+
+Theme tokens and stylesheets are parsed into typed UI records. Their supported
+properties, selectors, at-rules, and datatypes are also exposed by
+`axiom ui capabilities`; browser CSS should not be assumed portable.
+
+
+### Responsive layouts
+
+For a scrollable body below a heading, let it use the remaining space inside a
+column with an explicit screen height. A fixed body height can extend beyond
+the visible screen and clip its last controls on smaller devices:
+
+```acore title="Acore excerpt"
+styles {
+  .screen {height: 100vh; display: flex; flex-direction: column}
+  .body {height: 0px; flex-grow: 1; flex-shrink: 1; min-height: 0px; width: 100%}
+}
+```
+
+Apply `.screen` to the outer container and `.body` to its `ScrollView` child.
+The scroll viewport then fits the space left by the heading and insets.
+
+Acore uses three target-neutral viewport classes measured in logical pixels:
+
+| Class | Logical viewport width |
+| --- | --- |
+| `compact` | Below 600 |
+| `regular` | 600 through 1023 |
+| `wide` | 1024 and above |
+
+Put presentation changes inside typed `viewport` blocks. These are not raw
+CSS media queries: the compiler retains the viewport class in UI IR, and each
+host derives the same class from its logical viewport.
+
+```acore title="Acore excerpt"
+styles {
+  .catalog { gap: 12px }
+
+  viewport compact {
+    .catalog { gap: 8px }
+    .actions { flex-direction: column }
+    .primary, .secondary { width: 100% }
+  }
+
+  viewport regular {
+    .actions { flex-direction: row }
+  }
+
+  viewport wide {
+    .catalog { gap: 16px }
+  }
+}
+```
+
+Structural integer properties can use the matching typed value form. All
+three named values are required, and each value is validated against the
+property's normal range.
+
+```acore title="Acore excerpt"
+List(
+  items: products.data,
+  key: |product| product.id,
+  list_type: "flow",
+  span_count: responsive(compact: 1, regular: 2, wide: 3),
+  scroll_orientation: "vertical"
+) { product =>
+  Text(product.name)
+}
+```
+
+Viewport changes preserve normal page state. Web listens for browser resizes;
+iOS and Android consume logical dimensions from their native hosts. Arbitrary
+breakpoint expressions and target-specific media-query strings remain outside
+the portable Acore UI profile.
+
+## Check, inspect, test, and run
+
+```bash title="Terminal"
+axiom ui doctor --target web
+axiom ui check main.acore --target web
+axiom ui inspect ir main.acore --target web
+axiom ui inspect lowered main.acore --target web
+axiom ui test main.acore --target web
+axiom run main.acore --target web
+```
+
+Replace `web` with `android` or `ios`. `axiom run` starts the authored session;
+native targets require the corresponding verified UI Host. `--once` compiles
+and exits for CI without opening a host.
+
+Without `--suite`, `axiom ui test` runs compiler/session smoke checks, including
+valid and invalid edits, with zero interaction assertions. Supply a versioned
+application suite to execute click, type, submit, navigation and typed contract
+response assertions. See [Frontend application tests](/testing/frontend-applications) for
+commands, evidence layers, limits and migration guidance.
+
+## Build an application artifact
+
+```bash title="Terminal"
+axiom ui build main.acore --target web
+axiom ui build main.acore --target android
+axiom ui build main.acore --target ios
+axiom package \
+  dist/example.app.ui-web.axiomapp \
+  dist/example.app.ui-android.axiomapp \
+  dist/example.app.ui-ios.axiomapp \
+  --out dist/example.axiomapp
+```
+
+Target-specific builds are deterministic `.axiomapp` artifacts. Packaging
+combines intact target builds; it does not perform app-store signing. Android host
+release builds verify their generated compiler configuration. Native release
+packages are inspected for local source paths. Android renderer diagnostics retain file basenames
+and line numbers; full machine-specific paths belong only in private build evidence.
+
+Continue with the [Acore UI application lifecycle](/frontend/application-lifecycle).
+
+
+## Contract data orchestration
+
+Locked query declarations accept typed policy clauses before their final `when`.
+This uses the existing tasks demo contract and starts with no request:
+
+```acore title="Acore excerpt"
+use contract Tasks from "tasks" audience "mobile"
+page Home {
+  state enabled: Bool = false
+  query tasks = Tasks.list_tasks() options(debounce_ms: 100, focus: true, reconnect: true) when enabled
+  action load() { enabled = true }
+  action reload() { tasks.refresh() }
+  view {
+    Text(tasks.status)
+    Button(label: "Load", on_press: load)
+    Button(label: "Reload", on_press: reload)
+  }
+}
+```
+
+Operations distinguish disabled/debouncing/loading, success/empty, retained-data
+refresh/error, cancellation and stream states. Query `refresh()` and `retry()`
+request one fresh logical call; Rust retains the contract's HTTP retry rules.
+Declared mutation cache identities drive invalidation across active owners.
+Cursor pagination (`next()`), bounded stream reduction/reconnect/resume and typed
+optimistic patches require matching locked request/result fields; unsupported
+or ill-typed policies produce diagnostics. Session changes cancel old work and
+isolate private cache partitions. Public `session` contains identity, principal,
+roles and permissions; credentials remain in the runtime transport.
+
+Query coalescing binds the locked contract artifact/audience, endpoint and cache
+identity, canonical validated arguments, invalidation revision and session
+generation. Canceling one owner leaves other owners active. The coordinator
+admits at most 256 query flights and 128 waiters per flight. Canceled callbacks
+retain flight capacity until the transport settles; late events cannot publish
+into a completed, disposed or changed-session owner. A failed refresh retains
+the previous data with `stale` and `error` instead of discarding it. Pure derived
+memoization retains one immutable input/result pair per declaration for its
+owner; it grants no resource, clock, random or mutable-state capture authority.
+
+Contract applications require runtime data ABI 1 and the matching v6
+compiler/host/facade. These capabilities require a coordinated source build;
+older installed hosts reject the new graph. The unchanged transport ABI remains
+compatible with the certified supported runtime. Session discovery, protected routes
+and form workflows are part of the application profile below.
+
+## Shared state, routes and forms
+
+The source-checkout application profile adds explicit app/session/route/component stores, typed path/query navigation, nested layouts with `Outlet`, guarded destinations, and declared discovery/sign-in/sign-out workflows. Unknown and malformed URLs have defined results. Each navigation entry owns its draft; app preferences survive navigation, while session/route/component state clears at its ownership boundary. Versioned preferences/drafts hydrate through bounded platform adapters, expose readiness/failure, and support typed pure migrations and explicit reset. Credentials remain at the transport/secure-store boundary.
+
+On native hosts, mounting an owner publishes the current session snapshot, including discovery updates that completed before the owner subscribed. A session change resets mounted route pages and layouts, releases child component owners, and clears the previous principal's drafts before new component owners mount. These lifecycle rules use the declared owner kind; generated route identifiers do not change ownership semantics.
+
+`form_model` binds typed structured values and a locked mutation. It exposes typed defaults/result, touched/dirty/status, field and summary errors; separates parsing from pure field/cross-field validation; owns debounced declared async validation; and supports stable keyed arrays and typed server-error mapping. Pending submissions dispatch once, failures retain drafts, stale replies cannot overwrite newer input, and route disposal cancels owned work. Controls associate labels/errors, submit on Enter/confirm, focus the first error and announce failures. Native generated-adapter behavior is tested separately from physical keyboard/accessibility certification.
+
+Single-line bound native inputs default to a Done key. Done closes the keyboard after a successful form submission; validation or server errors retain error focus. Outside a form, Done ends editing. Explicit other confirm types and multiline inputs keep their declared behavior.
+
+Mapped server field errors survive focus changes and unrelated edits. Editing the rejected field clears its error; explicit retry starts fresh validation, and reset clears the form metadata.
+
+Use the [task app](/examples/task-app) for a complete web application and
+[frontend tests](/testing/frontend-applications) for supported test layers.
+Check mobile input, keyboard, and accessibility behavior on the mounted target
+you intend to ship; generated adapter checks alone are insufficient.
+
+## Numeric and owner boundaries
+
+Portable integer expressions use the exact JavaScript integer range. A backend
+64-bit integer must use a supported exact wire representation when it exceeds
+that range. Owner disposal fences late responses, while already committed state
+segments retain their meaning. Pure expressions do not acquire provider or
+extension authority.
+
+## Selected typed failure cases
+
+A version-2 selected operation schema can carry explicit public failure cases.
+Operation error state exposes optional case payloads through `error.cases`; only
+the selected fields are typed. New decoders check the envelope and case schema
+without guessing from message text. Owner disposal/cancellation still prevents
+stale completion or handler publication. See
+[public failures](/acore-language/managed-language).
+
+
+## Owned operations
+
+Frontend actions can join finite named queries. Duration-valued `debounce` and owner-scoped `poll` preserve legacy timing options and reject contradictory aliases. Polling pauses hidden owners and requires foreground events on native hosts. See [frontend groups and timing](/acore-language/owned-operations#frontend-groups-and-foreground-timers).
+
+
+A private backend [`batchPolicy`](/backend/request-batching) does not merge
+frontend HTTP requests. Call an explicitly declared, locked public batch endpoint
+if one is available. Query coalescing shares identical reads; batching combines
+distinct logical items through a declared interface and retains each outcome.
+
+
+## Shared pure authoring
+
+The current source candidate adds [authoring ergonomics](/acore-language/authoring-ergonomics): resolved endpoint types, explicit failure inference, selected offline model derivation and immutable expressions. Existing explicit forms remain supported; matching compiler/host/editor bytes are required. Public release and target qualification remain separate.

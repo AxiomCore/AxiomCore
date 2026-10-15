@@ -1,76 +1,71 @@
 ---
 title: Acore language
-description: Author typed, declarative software contracts and Acore UI applications.
+description: Learn Acore expressions, contracts, backend declarations, user interfaces, and database schemas.
+pageType: overview
 ---
 
-Acore is the declarative language at the center of AxiomCore. The implementation
-has its own lexer, parser, lazy evaluator, renderer, standard-library bridge,
-diagnostics, and language server. It is not Pkl source and does not require a
-Pkl runtime.
+**Acore is the declarative language used to author AxiomCore applications and
+contracts.** Learn expressions and types, then choose an application profile.
+Acore is an independent language and does not require a Pkl runtime.
 
-<StatusNote status="alpha" title="Language surface">
-  The documented grammar is implemented and testable, but it is pre-stable.
-  Contract-specific classes and the Acore UI profile evolve independently from
-  the core expression language. Review semantic diffs and pin artifacts when
-  upgrading.
+<StatusNote status="alpha" title="Version your source and dependencies">
+  Pin compatible tools and packages, and review semantic changes when upgrading.
+  Core language, backend, frontend, and database capabilities have separate
+  support boundaries.
 </StatusNote>
 
 ## Read the manual in this order
 
-1. [Backend authoring profile](/acore-language/backend-profile) — typed models,
-   endpoints, named arguments, and collection types.
-2. [Syntax overview](/acore-language/syntax-overview) — modules, properties,
-   typed objects, collections, and comments.
-3. [Values, types, and operators](/acore-language/values-types-and-operators) —
-   literals, nullable and union types, expressions, and precedence.
-4. [Objects, classes, and functions](/acore-language/objects-classes-and-functions)
-   — declarations, modifiers, dynamic members, lambdas, and scope.
-5. [Imports, contracts, and composition](/acore-language/imports-and-contracts)
-   — the ownership boundary between `import`, `amends`, `use`, and `extend`.
-6. [Evaluation and output](/acore-language/evaluation-and-output) — lazy
-   evaluation, security boundaries, rendering, variants, and errors.
-7. [Standard library](/acore-language/standard-library) — the modules and
-   intrinsics that the embedded resolver currently exposes.
-8. [Acore UI profile](/acore-language/ui-profile) — applications, pages, state,
-   actions, service bindings, and target compilation.
+| Learn | Topics |
+| --- | --- |
+| [Syntax](/acore-language/syntax-overview) | Modules, properties, comments, typed objects, collections |
+| [Values and types](/acore-language/values-types-and-operators) | Literals, nullable/union types, operators, precedence |
+| [Objects and functions](/acore-language/objects-classes-and-functions) | Classes, modifiers, functions, lambdas, scope |
+| [Imports and composition](/acore-language/imports-and-contracts) | `import`, `amends`, `use contract`, `extend` |
+| [Validation](/acore-language/validation) | Constraints and diagnostics |
+| [Evaluation and output](/acore-language/evaluation-and-output) | Evaluation, rendering, variants, errors |
+| [Standard library](/acore-language/standard-library) | Supported modules and functions |
 
 ## Contract profiles
 
-The language syntax is shared, but a compiler profile determines which
-top-level declarations are meaningful:
+`AxiomDeps.toml` selects the project profile. A declaration accepted by one
+profile is not automatically valid in another.
 
-| Profile | Primary declarations | Output |
+| Profile | What you author | Continue with |
 | --- | --- | --- |
-| Backend (`type = "backend"` in `AxiomDeps.toml`) | `project`, `backend`, `model`, `endpoint`, `entity`, `projection`, `policies`, `security`, `testConfig` | `.axiom` service package |
-| Declarative package | Package envelope plus kind-specific exports | `.axiom` theme, component-library, database-schema, extension-metadata, or application-policy package |
-| Acore UI | `module`, `use`, `app`, `page`, state/query/mutation/action, `view` | In-memory UI graph or `.axiomapp` |
+| Backend | Models, endpoints, actions, validation, policies | [Backend declarations](/acore-language/backend-profile) |
+| Frontend | Apps, pages, forms, state, queries, mutations, views | [Acore UI](/frontend/acore-ui) |
+| Database | Tables, keys, relationships, constraints, schema versions | [Database contracts](/database/contracts) |
+| Package | Theme, component-library, database-schema, extension, application-policy exports | [Package lifecycle](/workflows/package-lifecycle) |
 
-Do not assume that a declaration accepted by one profile is available in
-another. The CLI selects the compiler path from the command and source.
+Backend and package builds produce `.axiom` artifacts. Acore UI runs locally or
+builds a `.axiomapp` application package.
 
 ## Minimal service source
 
-```acore
+For an existing FastAPI app, extraction begins with an explicit source:
+
+```acore title="backend/axiom.acore"
 amends "axiom-fastapi:./main.py:app"
 project(id: "tasks-api", version: "0.1.0")
 policies(retry: RetryPolicy(maxAttempts: 3))
 ```
 
+Install the extractor and Python dependencies first. Follow the
+[FastAPI guide](/guides/fastapi-to-web) to run the complete integration.
+
 ## Minimal Acore UI source
 
-```acore
+```acore title="frontend/main.acore"
 module example.hello.ui
-
 app Hello { route "/" => Home }
-
 page Home {
   view {
-    SafeArea {
-      Text("Hello from Acore")
-    }
+    SafeArea { Text("Hello from Acore") }
   }
 }
 ```
 
-Use the [Acore schema reference](/reference/acore-schema-reference) for
-contract-specific classes and defaults.
+The [frontend quickstart](/getting-started/quickstart-frontend) includes the
+manifest and run command. The [base schema reference](/reference/acore-schema-reference)
+provides exact fields and defaults.

@@ -1,12 +1,13 @@
 ---
 title: Variants and filtering
 description: Produce bounded endpoint and model surfaces from one service contract source.
+pageType: reference
 ---
 
 Variants select names during contract materialization. The default base schema
 includes a `default` variant that includes `*`.
 
-```acore
+```acore title="Acore excerpt"
 variant mobile(
   include: ["public_*", "profile"],
   exclude: ["admin_*"],
@@ -22,8 +23,8 @@ variant operations(
 
 Build one selected variant:
 
-```bash
-axiom build axiom.acore --variant mobile
+```bash title="Terminal"
+axiom build axiom.acore --variant mobile --out backend.axiom
 ```
 
 `include`/`exclude` apply to endpoint names;

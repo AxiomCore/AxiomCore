@@ -1,128 +1,95 @@
 ---
 title: Backend quickstart
-description: Extract an existing service and compile a first reviewable contract.
+description: Author a typed Acore endpoint, run it locally, and verify its HTTP response.
+pageType: tutorial
+testedWith: Published Axiom CLI 0.149.0 on macOS arm64
 ---
 
-This quickstart keeps FastAPI or Go as the executable backend and adds an
-Axiom contract boundary around it.
+Run a small API authored in Acore. If you already have a service, follow the
+[FastAPI integration](/guides/fastapi-to-web) or [Go integration](/guides/go-to-web)
+instead. Those paths retain your existing backend.
 
-New backend source uses the [backend authoring profile](/acore-language/backend-profile):
-`type = "backend"` in `AxiomDeps.toml`, typed model fields, named endpoint arguments, and
-`List<T>` / `Map<K, V>` collection types. The compiler supplies endpoint names
-and IDs from their declarations and generated identity metadata.
+<span id="diagnose-and-plan" />
 
-## Diagnose and plan
+## Prerequisites
 
-```bash
-axiom doctor
-axiom onboard --role backend
+[Install CLI 0.149.0](/getting-started/installation). Create an empty `hello-api`
+directory and run the commands below from that directory. This example uses
+port 8081 and has no external providers or database.
+
+## 1. Define the project and endpoint
+
+```toml title="AxiomDeps.toml"
+type = "backend"
+targets = ["server"]
+audiences = ["web"]
 ```
 
-Review the detected entrypoint and extractor. To create source explicitly for
-a FastAPI app:
-
-```bash
-axiom init main.py:app --module axiom-fastapi
-```
-
-## Build and inspect
-
-```bash
-axiom build axiom.acore
-axiom inspect backend.axiom
-```
-
-The build evaluates Acore, invokes the configured extractor, validates the
-result, and writes a canonical `.axiom` artifact. It does not replace or deploy
-the backend.
-
-## Exercise the development boundary
-
-```bash
-axiom test axiom.acore
-axiom run axiom.acore
-axiom mock axiom.acore --profile contract --debug
-```
-
-Service mode is the default and starts the real declared Python/Go application,
-or the managed/sandbox host when the source authors a server plan and reviewed
-deployment. Contract-only source fails explicitly. `axiom serve axiom.acore`
-uses the same real execution path. Install the
-[server adapter](/reference/server-adapters) in external applications for
-contract enforcement. Explicit contract mock mode uses authored endpoint data and state without enforcing absent private actions. For managed/sandbox plans, follow the [full server simulation guide](/reference/server-simulation) to prepare typed fixtures and reviewed identities. See [command migration](/reference/server-cli-migration) for profile selection.
-
-Next, follow the full [Backend contract lifecycle](/workflows/backend-contract-lifecycle)
-for semantic review and immutable release.
-
-Follow the [server release workflow](/reference/server-release-workflow) for one
-API across real serving, full mocks, native bundles, both Linux container
-architectures and local Workers, including capability diagnostics, external
-credential rotation, promotion and compatible rollback. Hosted AWS and
-Cloudflare certification remain unavailable. The playground's **Portable ·
-deployment profiles** example exposes source-only target assessments and
-includes downloadable setup helpers.
-
-
-## Add bounded managed logic
-
-With the working compiler and matching native ActionHost, normalization and
-branching can remain in Acore. This complete starter rejects blank normalized
-titles and returns a checked task without a native callback:
-
-```acore
-project(id: "managed-quickstart", version: "1")
+```acore title="main.acore"
+project(id: "docs.hello", version: "1.0.0")
 variant default(include: ["*"])
-model Create { title: String(minLength: 1, maxLength: 200) }
-model Task { id: Int32 title: String }
-model Problem { message: String }
-failure invalidTitle(payload: Models.Problem, status: 422)
-pure fn normalizeTitle(value: String): String = value.trim()
-
-action create(kind: ActionKind.command, input: Models.Create, output: Models.Task) {
-  errors(Failures.invalidTitle)
-  managed {
-    let title = normalizeTitle(Input.title)
-    guard title.length > 0 else fail Failures.invalidTitle({message: "Title is required"})
-    return {id: 1, title: title}
-  }
+model Greeting { message: String }
+action hello(kind: ActionKind.query, output: Models.Greeting) {
+  managed { return {message: "Hello from Acore"} }
 }
-endpoint create(method: POST, path: "/tasks") {
-  request { body("title", type: String) }
-  handle(action: Actions.create, input: {title: Input.body.title})
-  response(type: Models.Task)
-  errors(Failures.invalidTitle)
-  exposeFailure(failure: Failures.invalidTitle, fields: [.message], audiences: ["web"])
+endpoint hello(method: GET, path: "/hello") {
+  handle(action: Actions.hello) // [!code highlight]
+  response(type: Models.Greeting)
 }
 ```
 
-This starter returns a value; persistent creation needs a declared provider,
-private binding, and reviewed operation grants. See
-[managed language foundations](/acore-language/managed-language) for shared
-rules, typed failure handling, exact codecs, configuration, and an explicit
-database transaction. Managed expressions have finite work limits. Each awaited
-call rechecks ownership, cancellation, deadlines and the original root budget.
-New executable metadata requires compatible version 2 readers; a Worker without
-the required flow capability rejects activation.
+The action returns a typed value. `handle` connects the public endpoint to
+that action. Request validation and response types belong to the contract.
 
-## Build the complete task application
+<span id="build-and-inspect" />
 
-The workspace example `examples/advanced-language-dx/tasks` combines shared
-draft validation, public typed failures, authenticated read caching, private
-dependency bindings, signed sandbox title normalization, and a managed
-transaction containing the task, outbox event and submission receipt. Its
-frontend consumes the selected public contract and an authenticated finite SSE
-snapshot. Each subscription closes after one complete bounded snapshot.
+## 2. Build and inspect
 
-Use the example README and shared `examples/advanced-language-dx/prepare.py`
-with the matching CLI to build contracts, private plans, locks and application
-test reports. Preparation does not start a database or contact a deployment.
-Real serving also needs the documented signed PostgreSQL schema/readiness,
-least-privilege tenant policies, Redis admission storage and explicit grants.
-Do not infer transaction durability from the frontend reference suite.
+```bash title="Terminal 1: hello-api"
+axiom check main.acore
+axiom build main.acore --out backend.axiom
+axiom inspect backend.axiom
+axiom server deployment backend.axiom backend.server.json --output deployment.json
+```
 
-The sibling `batch-dashboard` example measures three logical reads through one
-qualified native batch callback. `stream-archive` demonstrates a bounded
-receipt-backed PostgreSQL batch sink and separate Redis delivery acknowledgements.
-See [typed batching](/reference/server-integrations),
-[streaming](/acore-language/streaming-and-websockets), and
-[frontend testing](/acore-language/frontend-testing) for their boundaries.
+`--out` exports the contract to a known path. The companion server plan and
+deployment configuration stay on the backend; clients receive the public
+contract. The deployment scaffold has no provider grants. This action needs
+none. Review providers, authentication, and grants before adding real effects.
+
+<span id="exercise-the-development-boundary" />
+
+## 3. Run and verify
+
+```bash title="Terminal 1: hello-api"
+axiom run main.acore --deployment deployment.json --port 8081
+```
+
+```bash title="Terminal 2"
+curl -fsS http://127.0.0.1:8081/hello
+```
+
+```json title="Expected response"
+{"message":"Hello from Acore"}
+```
+
+This is the real action, not a mock. The example's endpoint is public and
+returns a constant. Add authentication before exposing protected data.
+Stop the process with Ctrl-C when finished.
+
+<span id="add-bounded-managed-logic" />
+
+<span id="build-the-complete-task-application" />
+
+## Next steps
+
+| Need | Continue with |
+| --- | --- |
+| Persist records | [First app](/getting-started/quickstart) and [typed persistence](/database/persistence) |
+| Add validation and typed failures | [Managed logic](/acore-language/managed-language) and [managed starter](/backend/managed-starter) |
+| Connect an existing framework | [HTTP adapters](/backend/adapters) |
+| Test a simulation | [Server simulation](/testing/server-simulation) |
+| Release a service | [Contract lifecycle](/backend/contract-lifecycle) and [server release workflow](/backend/release-workflow) |
+
+A build does not deploy a backend. Native releases, Linux containers, and local
+Workers have different support limits. See [targets](/backend/targets-and-releases).

@@ -1,83 +1,116 @@
 ---
 title: Connect FastAPI to a web client
-description: Extract a FastAPI service, build and inspect its contract, run a local mock, and generate an ATMX web client.
+description: Keep a Python API, extract its contract, and call the real service from a published ATMX browser runtime.
+pageType: tutorial
+testedWith: CLI 0.149.0; FastAPI extractor 0.1.4; FastAPI 0.123.5; atmx-cli 0.146.7; atmx-web 0.147.5; macOS arm64
 ---
 
-This path keeps FastAPI as the executable backend and the browser application
-as ordinary web code. AxiomCore owns the reviewed contract artifact between
-them.
+Keep FastAPI as the executable backend and ordinary web code as the frontend.
+AxiomCore supplies the contract between them. This guide runs a real Python
+service and browser request; it does not use mock responses.
 
 ## Prerequisites
 
-Install the CLI, create an isolated Python environment, and install every
-dependency imported by the application entrypoint:
+Use [CLI 0.149.0](/getting-started/installation), Python 3.12, Node.js 22.12+
+(or a compatible supported Node release), npm, and two terminals. Download the
+[complete FastAPI/web source](/examples/fastapi-web.zip).
 
-```bash
-axiom --version
-axiom doctor
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install fastapi pydantic
+```bash title="Terminal 1: example root"
+unzip fastapi-web.zip
+cd fastapi-web
+python3 -m venv .venv
+.venv/bin/python -m pip install -r backend/requirements.txt
 axiom install axiom-fastapi --module
 ```
 
-<StatusNote status="available" title="FastAPI extraction executes imports">
-  Extraction imports the selected module. Keep top-level initialization safe:
-  do not run migrations, start workers, connect to production resources, or
-  perform destructive operations during import.
-</StatusNote>
+FastAPI extraction imports your application. Keep imports free of migrations,
+worker startup, production connections, and destructive setup. The example
+initializes only models, routes, and local CORS configuration.
 
 ## Create and review the contract source
 
-From the backend directory, replace `main.py:app` if your module or FastAPI
-object has another name:
+The example already contains its Acore source and backend manifest. For your
+own app without an existing Acore file, run
+`axiom init main.py:app --module axiom-fastapi` from its backend directory.
+Replace `main.py:app` with the actual entrypoint.
 
-```bash
-axiom init main.py:app --module axiom-fastapi
+```bash title="Terminal 1"
+cd backend
 axiom eval axiom.acore
-axiom build axiom.acore
+axiom build axiom.acore --out backend.axiom
 axiom inspect backend.axiom
 ```
 
-Review route paths and methods, request and response shapes, required fields,
-validation, and any authored authentication or error behavior. Extraction
-cannot infer business behavior that is not present in the discoverable
-framework surface.
+Review method/path, required inputs, response models, validation, authentication,
+and errors. Extraction cannot infer every business rule in a handler. The
+example's `GET /greet/{name}` returns `{"message":"Hello, Ada!"}` for Ada;
+FastAPI rejects names longer than 40 characters with 422.
 
-## Exercise a local boundary
+## Run the real backend
 
-Run declared contract tests, then start the mock server:
-
-```bash
-axiom test axiom.acore
-axiom run axiom.acore --mode mock --port 8080 --debug
+```bash title="Terminal 1: backend"
+../.venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8083
 ```
 
-The mock follows authored contract responses and state. It is useful for
-frontend work, but does not replace a test against the real FastAPI service.
+The API remains Python. Extraction and contract construction do not deploy it
+or enforce a contract around every handler. Use an explicit
+[server adapter](/backend/adapters) when you need that boundary.
 
 ## Pull the web client
 
-In a second terminal, write the generated ATMX web surface into your frontend:
+Open a second terminal in the example root:
 
-```bash
-axiom pull ./backend.axiom --framework atmx-web --out ./web/axiom
+```bash title="Terminal 2"
+cd frontend
+npm ci
+axiom pull ../backend/backend.axiom --framework atmx-web --name greetings --out generated
+npm run dev
 ```
 
-Load the generated entry point according to its emitted README or package
-metadata and await `atmx.init(...)` before issuing imperative calls or relying
-on declarative bindings. The exact generated symbols are contract-dependent;
-inspect the generated output instead of copying a guessed operation name.
+The project pins **atmx-cli 0.146.7** before `pull`. CLI 0.149.0's automatic
+companion package is not currently published, so an unprepared project can fail
+with npm `ETARGET`. The pinned local generator above was verified with this
+contract and **atmx-web 0.147.5**. Pin and test your own contract's combination.
+
+Open `http://127.0.0.1:5175` and select **Say hello**. The page shows
+**Hello, Ada!** from the running service. The generated contract asset and
+self-hosted Wasm asset are served from the frontend origin.
+
+## Initialize before querying
+
+The complete `frontend/main.ts` configures the generated contract for port
+8083 and awaits `atmx.init`. It checks `ready.ok` before enabling calls.
+An imperative query returns a subscription handle:
+
+```ts title="frontend/main.ts: query excerpt"
+const query = atmx.query('greetings.greet', { name: 'Ada' });
+const unsubscribe = query.subscribe((state) => {
+  if (state.error) output.textContent = state.error.message;
+  else if (state.data) output.textContent = state.data.message;
+});
+// On replacement or page disposal:
+unsubscribe();
+query.dispose();
+```
+
+Use your generated operation names and types. Do not treat the query handle as
+an awaited data value. The [web integration reference](/frontend/web) covers
+cache and authentication APIs.
+
+## Exercise a local boundary
+
+Use [contract tests](/testing/contracts) and [explicit mocks](/testing/mocks)
+for declared behavior during frontend development. Those checks complement
+the real request above. A mock does not prove the FastAPI handler's behavior.
 
 ## Validate the application
 
-Before treating the integration as complete, verify:
+- Verify a successful request and the overlong-name error, including direct API calls.
+- Check missing/invalid input and browser-visible errors.
+- Verify base URL, CORS allowlist, credentials where used, loading/empty states, and cache privacy.
+- Test a fresh browser session; stored cache must not hide startup failures.
+- Retain source, contract, dependency lock, test output, and the semantic diff for release review.
 
-- one successful request and one authored error;
-- missing/invalid input and the browser-visible validation result;
-- the production base URL, CORS allowlist, cookies or authorization header;
-- loading, empty, retry, and offline/cache states; and
-- a fresh browser session so cached data does not hide startup failures.
-
-For release review, retain `axiom.acore`, `backend.axiom`, the relevant lock,
-test output, and the semantic diff from the previous accepted contract.
+This fixture is a public, stateless greeting API. Add your application's
+identity and data policies separately. Stop both servers with Ctrl-C. Remove
+the disposable directory if you no longer need its venv and generated files.

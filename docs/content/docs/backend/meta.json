@@ -1,0 +1,20 @@
+{
+  "title": "Backend",
+  "pages": [
+    "index",
+    "contract-lifecycle",
+    "managed-starter",
+    "local-development",
+    "adapters",
+    "execution",
+    "policies",
+    "integrations",
+    "request-batching",
+    "events-and-jobs",
+    "release-workflow",
+    "targets-and-releases",
+    "containers",
+    "workers",
+    "cli-migration"
+  ]
+}

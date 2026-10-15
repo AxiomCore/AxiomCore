@@ -1,7 +1,9 @@
-import { existsSync, readFileSync, statSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { join, relative, resolve } from 'node:path';
 import { createCloudflareHeaders } from '../lib/deployment-policy.mjs';
-import { legacyRedirects } from '../lib/legacy-redirects.mjs';
+import { legacyRedirects, legacyReaderRedirects } from '../lib/legacy-redirects.mjs';
+
+import { toReaderMarkdown } from '../lib/content-model.mjs';
 
 const docsRoot = resolve(import.meta.dirname, '..');
 const outputRoot = join(docsRoot, 'out');
@@ -51,10 +53,33 @@ if (headers !== createCloudflareHeaders()) throw new Error('Cloudflare _headers 
 
 const redirects = requireFile(join(outputRoot, '_redirects'));
 for (const redirect of legacyRedirects) {
-  const expected = `${redirect.source} ${redirect.destination} ${redirect.permanent ? 301 : 302}`;
-  if (!redirects.split('\n').includes(expected)) {
-    throw new Error(`Cloudflare _redirects is missing ${expected}`);
+  for (const source of [redirect.source, `${redirect.source}/`]) {
+    const expected = `${source} ${redirect.destination}/ ${redirect.permanent ? 301 : 302}`;
+    if (!redirects.split('\n').includes(expected)) throw new Error(`Missing redirect: ${expected}`);
   }
 }
+for (const redirect of legacyReaderRedirects) {
+  const expected = `${redirect.source} ${redirect.destination} 301`;
+  if (!redirects.split('\n').includes(expected)) throw new Error(`Missing reader redirect: ${expected}`);
+}
 
-console.log('Cloudflare static export verified: routes, headers, and redirects are present.');
+const contentRoot = join(docsRoot, 'content', 'docs');
+const files = readdirSync(contentRoot, { recursive: true }).filter((file) => file.endsWith('.mdx'));
+const legacyAnchors = JSON.parse(readFileSync(join(docsRoot, 'lib', 'legacy-heading-anchors.json'), 'utf8'));
+for (const [route, anchors] of Object.entries(legacyAnchors)) {
+  const html = requireFile(join(outputRoot, route === '/' ? 'index.html' : route.slice(1) + '/index.html'));
+  for (const anchor of anchors) {
+    if (!html.includes(`id="${anchor}"`)) throw new Error(`Static compatibility anchor missing: ${route}#${anchor}`);
+  }
+}
+const agents = JSON.parse(requireFile(join(outputRoot, 'agents.json')));
+if (agents.pageCount !== files.length || agents.pages.length !== files.length) throw new Error('Static agent index is incomplete');
+for (const file of files) {
+  const slug = file.replace(/\.mdx$/, '').replace(/\/index$/, '');
+  const canonical = `https://docs.axiomcore.dev/${slug === 'index' ? '' : slug + '/'}`;
+  const expected = toReaderMarkdown(readFileSync(join(contentRoot, file), 'utf8'), { canonical });
+  const reader = requireFile(join(outputRoot, 'docs', `${slug}.mdx`));
+  if (reader !== expected) throw new Error(`Static reader lost source semantics: ${file}`);
+  if (!agents.pages.some((page) => page.url === canonical)) throw new Error(`Agent index omits ${canonical}`);
+}
+console.log(`Cloudflare static export verified: routes, headers, ${legacyRedirects.length} human redirects, ${legacyReaderRedirects.length} reader redirects, and ${files.length} complete Markdown readers.`);

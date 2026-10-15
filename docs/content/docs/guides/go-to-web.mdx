@@ -1,0 +1,82 @@
+---
+title: Connect Go to a web client
+description: Extract a Go/Chi API contract and call the real service from an ATMX browser application.
+pageType: tutorial
+testedWith: CLI 0.149.0; published Go extractor 2026.10.14.2; Go 1.25.7; Chi 5.2.3; atmx-cli 0.146.7; atmx-web 0.147.5; macOS arm64
+---
+
+Keep the Go service and its router. Add an extracted contract and a compatible
+web client. This example uses **Chi 5.2.3**; it does not establish support for
+every Go router or route-construction pattern.
+
+## Prerequisites
+
+Use [CLI 0.149.0](/getting-started/installation), a compatible Go toolchain,
+Node.js 22.12+, npm, and two terminals. Download the
+[complete Go/web source](/examples/go-web.zip).
+
+```bash title="Terminal 1: example root"
+unzip go-web.zip
+cd go-web
+axiom install axiom-go-extractor --module
+cd backend
+go mod download
+axiom build axiom.acore --out backend.axiom
+axiom inspect backend.axiom
+go run .
+```
+
+The API listens at `http://127.0.0.1:8084`. Its source declares
+`GET /greet/{name}`, a JSON `Greeting` response, and local frontend CORS origins.
+Go remains responsible for executing the handler and its validation.
+
+## Add Acore to your own service
+
+For a backend without an existing Acore file, initialize with the **module
+alias** `axiom-go`:
+
+```bash title="Your Go backend directory"
+axiom init main.go --module axiom-go
+```
+
+The installable extractor package is `axiom-go-extractor`; the source module
+alias is `axiom-go`. Review extracted paths, parameters, required fields,
+response models, authentication, and unsupported dynamic route patterns before
+releasing the contract.
+
+## Start the frontend
+
+In a second terminal in the example root:
+
+```bash title="Terminal 2"
+cd frontend
+npm ci
+axiom pull ../backend/backend.axiom --framework atmx-web --name greetings --out generated
+npm run dev
+```
+
+The project installs its pinned local **atmx-cli 0.146.7** generator before
+`pull`, then uses **atmx-web 0.147.5**. See the
+[generator setup note](/guides/fastapi-to-web#pull-the-web-client) before using
+CLI 0.149.0 in a new web/React project without a local generator.
+
+Open `http://127.0.0.1:5176` and select **Say hello**. The frontend configures
+the generated contract for the Go API, awaits runtime initialization, subscribes
+to the query, and disposes the previous subscription when it is replaced.
+
+## Verify the boundary
+
+```bash title="Another terminal"
+curl -fsS http://127.0.0.1:8084/greet/Ada
+```
+
+Expected response: `{"message":"Hello, Ada!"}`. Also test an overlong name,
+CORS, startup failures, and the generated types. Extraction describes the
+supported surface; it does not prove all handler behavior or wrap the service
+with automatic server enforcement. Use [HTTP adapters](/backend/adapters) for
+that separate integration.
+
+The fixture is a public, stateless API. It does not configure application login
+or persistence. Stop both servers with Ctrl-C, then retain or remove the
+disposable example directory. Continue with [CI checks](/testing/ci) and the
+[existing-stack workflow](/frontend/integration-workflow).

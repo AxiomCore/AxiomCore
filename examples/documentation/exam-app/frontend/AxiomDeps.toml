@@ -1,0 +1,7 @@
+type = "frontend"
+targets = ["web"]
+[contracts.exam]
+artifact = "../backend/.axiom/contracts/backend.axiom"
+baseUrl = "http://127.0.0.1:8082"
+audience = "web"
+operations = ["questions", "results", "submit"]

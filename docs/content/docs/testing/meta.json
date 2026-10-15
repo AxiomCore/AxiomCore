@@ -1,0 +1,15 @@
+{
+  "title": "Testing",
+  "pages": [
+    "index",
+    "contracts",
+    "test-runner",
+    "mocks",
+    "mock-engine",
+    "server-simulation",
+    "semantic-diffs",
+    "local-and-ci",
+    "ci",
+    "frontend-applications"
+  ]
+}

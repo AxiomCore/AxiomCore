@@ -1,13 +1,14 @@
 ---
 title: Doctor and Onboarding
 description: Start a supported AxiomCore integration and diagnose it without reading source code.
+pageType: guide
 ---
 
 ## `axiom onboard`
 
 Run this from an application root before creating files:
 
-```bash
+```bash title="Terminal"
 axiom onboard
 ```
 
@@ -25,10 +26,10 @@ you explicitly supply the action that needs it.
 `--apply` only creates `axiom.acore`. It refuses to overwrite an existing
 contract source. Releasing is always an explicit later command:
 
-```bash
+```bash title="Terminal"
 axiom build
 axiom login
-axiom build --release
+axiom build --release --out backend.axiom
 ```
 
 ## `axiom doctor`
@@ -38,7 +39,7 @@ plane profile, Cloud session presence without revealing credentials, contract
 source, compiled artifact validity, dependency manifest, directory project
 link, and toolchain prerequisites relevant to the detected app.
 
-```bash
+```bash title="Terminal"
 axiom doctor
 axiom doctor --json
 axiom doctor --json --strict > axiom-doctor.json
@@ -51,7 +52,7 @@ fix when one is available.
 
 The JSON schema is intentionally small and stable:
 
-```json
+```json title="Configuration excerpt"
 {
   "schema_version": 1,
   "control_plane": "https://api.axiomcore.dev",

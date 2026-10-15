@@ -1,6 +1,6 @@
 import { createMDX } from 'fumadocs-mdx/next';
 import { createSecurityHeaders } from './lib/deployment-policy.mjs';
-import { legacyRedirects } from './lib/legacy-redirects.mjs';
+import { legacyRedirects, legacyReaderRedirects } from './lib/legacy-redirects.mjs';
 
 const withMDX = createMDX();
 
@@ -18,7 +18,7 @@ const config = {
     },
     async redirects() {
       // Next.js normalizes redirect entries in place during its build.
-      return legacyRedirects.map((redirect) => ({ ...redirect }));
+      return [...legacyRedirects, ...legacyReaderRedirects].map((redirect) => ({ ...redirect }));
     },
     async rewrites() {
       return [

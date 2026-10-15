@@ -1,0 +1,77 @@
+---
+title: Integrate an existing database
+description: Decide what AxiomCore owns before inspecting, enrolling, or changing an existing PostgreSQL or SQLite schema.
+pageType: guide
+testedWith: CLI 0.149.0; populated disposable SQLite exact-match enrollment and mismatch rejection on macOS arm64
+---
+
+Start by deciding who owns the database schema. Adopting an API contract does
+not require moving database ownership to AxiomCore.
+
+## Choose the boundary
+
+| Goal | Keep | Introduce |
+| --- | --- | --- |
+| Add a contract to an existing service | Current database, ORM and migration system | Supported backend extraction and client integration |
+| Describe an exported schema | Existing database and migration authority | Bounded SQL/domain bootstrap for review |
+| Let AxiomCore manage selected objects | Unmanaged objects outside the selected scope | Explicit Acore schema, ownership enrollment, reviewed version history |
+| Use typed Acore persistence | Database and its operational ownership | Supported schema mappings, application credentials, grants and tenant policy |
+
+SQL bootstrap does not connect to or manage a live database. Native inspection,
+adoption, migrations, and runtime persistence have separate
+[capability boundaries](/reference/capability-boundaries#backend-and-schema-inputs).
+
+## Prepare an owned disposable target
+
+For native work, use a supported PostgreSQL 17/18 target or SQLite file. Review
+the engine/platform constraints in [database contracts](/database/contracts)
+and [SQLite](/database/sqlite). PostgreSQL needs a reachable server and a matching
+validator; the CLI does not provision that server.
+
+Before enrollment, capture an inventory and backup using the tools that already
+own your database. Express the selected tables, keys, relationships, constraints,
+and ownership scope in Acore. Do not infer that an unmodeled object is safe to
+change or remove.
+
+## Compare before enrolling
+
+From the directory owning the database manifest:
+
+```bash title="Disposable target; explicit source path"
+axiom check schema.acore
+axiom database migrate schema.acore --database-file ./legacy.sqlite --adopt --dry-run
+```
+
+The commands below select an explicit disposable SQLite copy, `legacy.sqlite`.
+For PostgreSQL, replace `--database-file` with the target's `--database-url` or
+connection fields. Do not rely on a default connection when reviewing adoption.
+Review differences and capability diagnostics before authorizing changes.
+
+`--adopt` can enroll an existing scope **only when it exactly matches the
+validated source**. It records management ownership and migration history;
+it is not a shortcut for ignoring drift or overwriting a different schema.
+Names, storage types, nullability, keys, collations, and the selected physical
+definition must match. A similar-looking table can be rejected with `ADB1105`;
+inspect the difference instead of dropping data to bypass it.
+
+```bash title="After reviewing an exact-match disposable scope"
+axiom database migrate schema.acore --database-file ./legacy.sqlite --adopt
+axiom database status schema.acore --database-file ./legacy.sqlite
+axiom database history schema.acore --database-file ./legacy.sqlite
+```
+
+For qualified production or fleet operations, follow the separate
+[release and recovery workflow](/database/fleets), including its exact-profile
+admission and backup/recovery requirements. A local developer migration does
+not broaden those qualifications.
+
+## Connect the application
+
+Use [typed persistence](/database/persistence) to bind supported resource
+operations to selected tables. Preserve application authentication, least-privilege
+credentials, ownership rules and migration review. If you keep the existing
+ORM, continue using it behind the extracted backend instead.
+
+Start with a [small persisted app](/examples/task-app) before migrating a larger
+application. Compare schema and consumer impact together, and test rollback's
+data-loss limits on disposable data.

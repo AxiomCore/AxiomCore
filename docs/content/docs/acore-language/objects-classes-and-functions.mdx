@@ -1,11 +1,12 @@
 ---
 title: Objects, classes, and functions
 description: Declare reusable shapes, construct values, and understand Acore scope.
+pageType: reference
 ---
 
 ## Dynamic and typed objects
 
-```acore
+```acore title="Acore excerpt"
 metadata = {
   owner = "platform"
   ["x-contract-version"] = "1"
@@ -21,7 +22,7 @@ The class supplies defaults and constraints. Acore does not use `new`.
 
 ## Class declarations
 
-```acore
+```acore title="Acore excerpt"
 open class BaseService {
   enabled: Boolean = true
   timeoutSeconds: Int(this > 0) = 30
@@ -37,7 +38,7 @@ type. A class describes a value shape; it does not execute a constructor.
 
 ## Type aliases
 
-```acore
+```acore title="Acore excerpt"
 typealias Environment = "development" | "staging" | "production"
 typealias StringMap = Mapping<String, String>
 ```
@@ -49,7 +50,7 @@ profile-specific schema validation remains authoritative.
 
 Bracketed expressions can produce a property name:
 
-```acore
+```acore title="Acore excerpt"
 headerName = "x-contract-version"
 metadata = { [headerName] = "1" }
 ```
@@ -64,7 +65,7 @@ portable Acore source.
 - `outer` refers to the enclosing object.
 - `super` refers to inherited context where supported.
 
-```acore
+```acore title="Acore excerpt"
 service = {
   base = 10
   nested = { total = outer.base + 5 }
@@ -79,7 +80,7 @@ mutable execution.
 The standard library uses `external` declarations to bind trusted native
 implementations:
 
-```acore
+```acore title="Acore excerpt"
 external function parse(source: String): Any
 
 class Parser {
@@ -91,14 +92,14 @@ class Parser {
 native binding. For portable transformations, use lambdas and implemented
 collection intrinsics:
 
-```acore
+```acore title="Acore excerpt"
 upper = (value: String) -> value.toUpperCase()
 labels = ["one", "two"].map(upper)
 ```
 
 ## Annotations
 
-```acore
+```acore title="Acore excerpt"
 @deprecated { replacement = "currentName" }
 oldName: String = "legacy"
 ```

@@ -1,0 +1,68 @@
+---
+title: "Exam app: grade on the backend"
+description: Validate answers, calculate the score in Acore, persist it, and expose typed failures.
+pageType: tutorial
+---
+
+The backend owns grading. The browser supplies an attempt ID, name, and two
+choices. It cannot supply a score or choose a database tenant.
+
+## Public API
+
+| Endpoint | Behavior |
+| --- | --- |
+| `GET /questions` | Return the two public question prompts/options |
+| `POST /submissions` | Validate, grade, insert, and return the stored result |
+| `GET /results` | List up to 100 results in the local development tenant |
+
+Each endpoint requires the development key in `apikey`. The submit body is the
+answer model itself:
+
+```json title="POST /submissions body"
+{"attemptId":"attempt-001","name":"Ada","first":"B","second":"A"}
+```
+
+The API validates attempt ID length/format, name length, and A/B choices. A name
+containing only whitespace is rejected after normalization.
+
+## Managed grading
+
+```acore title="backend/application.acore: grading function"
+pure fn grade(first: String, second: String): String = first == "B" && second == "A" ? "2" : first == "B" || second == "A" ? "1" : "0"
+```
+
+The complete action trims the name, calls this function, and passes the derived
+score to the declared storage resource:
+
+```acore title="backend/application.acore: managed action excerpt"
+let name = Input.answers.name.trim()
+guard name.length > 0 else fail Failures.invalidName({message: "Enter your name"})
+let score = grade(Input.answers.first, Input.answers.second) // [!code highlight]
+let result = await Resources.submissions.create(input: {
+  id: Input.answers.attemptId, name: name,
+  first: Input.answers.first, second: Input.answers.second, score: score, total: "2"
+})
+return result
+```
+
+The excerpt belongs inside the `managed` block of the complete action. Its
+response projection exposes the declared result fields; the grading function
+is not a frontend request parameter.
+
+## Persistence and failures
+
+`backend/main.acore` implements the resource with a typed insert into the
+submission table. The primary-key constraint maps to the `duplicate` failure.
+Validation, grading, and a single inserted result require no user-authored SQL
+query or extra language in this example.
+
+| Result | HTTP status |
+| --- | --- |
+| Valid submission | 200 |
+| Missing required header, invalid choice, or extra score field | 400 |
+| Invalid development key | 401 |
+| Blank normalized name | 422 |
+| Existing attempt ID | 409 |
+
+A successful submission invalidates `exam:results`, which refreshes the active
+frontend query. Continue with the [UI](/examples/exam-app/frontend).

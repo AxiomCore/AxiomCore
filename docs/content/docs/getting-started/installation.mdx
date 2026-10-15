@@ -1,117 +1,105 @@
 ---
 title: Installation
-description: Install the Axiom CLI and required extractor plugins.
+description: Install a verified CLI, check your environment, and add the tools your application needs.
+pageType: guide
+testedWith: Axiom CLI 0.149.0 on macOS arm64; web UI Host 0.6.12
 ---
 
-import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
-import { Callout } from 'fumadocs-ui/components/callout';
+Install the **Axiom CLI**, then add an extractor or UI host when your chosen
+path needs one. Local authoring and testing do not require a Cloud account.
 
-The Axiom CLI is a unified binary written in Rust. It manages project initialization, contract compilation, diffing, testing, and cloud synchronization.
+## 1. Install the CLI
 
-### 1. Install the CLI
+The 0.149.0 CLI release provides a **macOS arm64** archive. Check the
+[release assets](https://github.com/AxiomCore/AxiomCore/releases/tag/cli-v0.149.0)
+before choosing a platform. Linux downloads and a native Windows installer are
+not included in this release. WSL2 still needs a compatible Linux executable.
 
-Both macOS and Linux are supported natively. Windows users should use WSL2.
+On an Apple silicon Mac, download and verify the archive:
 
-<Tabs items={['curl', 'Homebrew']}>
-  <Tab value="curl">
-    ```bash
-    curl -fsSL https://axiomcore.dev/install | bash
-    ```
-    *Note: This script places the binary in `/usr/local/bin` and may require your sudo password.*
-  </Tab>
-  <Tab value="Homebrew">
-    ```bash
-    brew install AxiomCore/tap/axiom
-    ```
-  </Tab>
-</Tabs>
-
-Verify the installation:
-```bash
+```bash title="Terminal"
+mkdir axiom-install
+cd axiom-install
+curl -fL https://github.com/AxiomCore/AxiomCore/releases/download/cli-v0.149.0/axiom-macos-arm64.tar.gz -o axiom.tar.gz
+echo '229cf5b0e6d3ff2b1dfbe7ed8138a4864eba7ddd622d9a7e97f70a1d8578a8c6  axiom.tar.gz' | shasum -a 256 -c -
+tar -xzf axiom.tar.gz
+mkdir -p "$HOME/.local/bin"
+install -m 755 axiom "$HOME/.local/bin/axiom"
+export PATH="$HOME/.local/bin:$PATH"
 axiom --version
+```
+
+```text title="Expected output"
+axiom 0.149.0
+```
+
+Add the `PATH` line to your shell configuration for future terminals. Remove
+the temporary `axiom-install` directory after installation.
+
+Homebrew is another macOS arm64 installation path:
+
+```bash title="Terminal"
+brew install AxiomCore/tap/axiom
+axiom --version
+```
+
+The general installer is `curl -fsSL https://axiomcore.dev/install | bash`.
+Its current channel selection uses older release-tag naming and may select an
+older CLI. Use the verified release above for database quickstarts, which
+require 0.149.0. The installer defaults to `/usr/local/bin` and may request sudo;
+`INSTALL_DIR` selects another directory.
+
+<span id="4-start-with-an-explicit-plan" />
+
+## 2. Check your environment
+
+```bash title="Your application directory"
 axiom doctor
-```
-
-`axiom doctor` is safe in any directory: it does not write files, log in, pull
-contracts, or expose credentials. Use `axiom doctor --json --strict` in CI or
-when attaching a machine-readable support report.
-
-The [M1 language foundations](/acore-language/managed-language) require a matching
-working compiler, CLI, host and editor server. A released installer or an older
-bundled editor server retains its existing capabilities. Check the selected
-compiler identity and artifact readers before using advanced metadata; installing
-an editor grammar alone does not update runtime support.
-
-The advanced cache, batching, stream, form, selected-extension and scenario
-features use the experimental M3 source cohort. Keep its CLI, native server,
-public SDKs and frontend host together. Verify both editor entry points:
-
-```bash
-axiom lsp --version-json
-acore-lsp --version-json
-```
-
-Their `compilerVersion` and `protocolVersion` must match; CLI and standalone
-`serverVersion` labels can differ. Select that same CLI for explicit editor
-tasks. Offline editing and tests use prepared local contracts and locks;
-production serving separately requires reviewed identities, deployment grants,
-signed database readiness and compatible providers. Follow the
-[frontend quickstart](/getting-started/quickstart-frontend) and
-[backend quickstart](/getting-started/quickstart-backend) for the complete task
-example, and the [support matrix](/introduction/support-matrix) for target scope.
-
----
-
-### 2. Join the Private Alpha for cloud access
-Local backend authoring commands (`init`, `eval`, `check`, `explain`, `migrate`,
-`build`, `diff`, and `test`) work without joining the private alpha. Cloud
-operations and release publishing require an authorized machine.
-
-```bash
-axiom join you@yourcompany.com
-```
-We will email you a referral code. A subsequent cloud command prompts for it
-to authorize the machine.
-
----
-
-### 3. Install backend extractors
-Axiom uses separately installed extractors for supported backend frameworks.
-Each extractor has its own execution boundary. The current FastAPI path imports
-the selected application module, so install its required Python dependencies
-and keep module initialization safe for a build environment.
-
-Depending on your backend language, install the required extractor plugin. Axiom will automatically download the correct binary for your OS and Architecture (e.g., `macos-arm64`) into `~/.axiom/plugins/`.
-
-<Tabs items={['FastAPI (Python)', 'Go (Native)']}>
-  <Tab value="FastAPI (Python)">
-    ```bash
-    axiom install axiom-fastapi --module
-    ```
-  </Tab>
-  <Tab value="Go (Native)">
-    ```bash
-    axiom install axiom-go-extractor --module
-    ```
-  </Tab>
-</Tabs>
-
-<Callout type="info">
-The `axiom install` command keeps extractor distribution separate from the
-main CLI. It does not make backend source static or side-effect free. Read the
-[backend extraction boundary](/core-concepts/ghost-introspection) before using
-an extractor in CI.
-</Callout>
-
-### 4. Start with an explicit plan
-
-From your application repository:
-
-```bash
 axiom onboard
 ```
 
-The command detects a backend, frontend, or full-stack repository and prints
-the shortest supported path. It makes no changes by default. For a detected
-FastAPI or Go backend, add `--apply` to create `axiom.acore`; it never logs in
-or uploads a release on your behalf.
+`doctor` reports prerequisites without writing files, logging in, pulling
+contracts, or displaying credentials. `onboard` detects the application and
+prints a plan. For a supported backend, `onboard --apply` can create source;
+it does not upload or publish a release.
+
+Use `axiom doctor --json --strict` for a machine-readable CI or support report.
+
+<span id="3-install-backend-extractors" />
+
+## 3. Add the tools your path needs
+
+| Path | Setup |
+| --- | --- |
+| Acore web UI | `axiom ui host install --target web --version 0.6.12 --non-interactive` |
+| Existing FastAPI backend | Install its Python dependencies, then `axiom install axiom-fastapi --module` |
+| Existing Go backend | `axiom install axiom-go-extractor --module` |
+| Acore backend or SQLite example | No extractor is required |
+
+The signed web host must match the CLI's supported capabilities. Host 0.6.12
+was checked with CLI 0.149.0. An older installed host can fail even when both
+commands are installed. See [versioning](/reference/versioning-and-deprecation)
+for compiler, host, SDK, and editor compatibility.
+
+Extractors install separately under `~/.axiom/plugins/`. FastAPI extraction
+imports the application module, so keep import-time initialization safe.
+Read the [extraction boundary](/core-concepts/ghost-introspection) before CI use.
+
+<span id="2-join-the-private-alpha-for-cloud-access" />
+
+## 4. Start locally or connect to Cloud
+
+Run the [first app](/getting-started/quickstart), or choose the
+[backend](/getting-started/quickstart-backend),
+[frontend](/getting-started/quickstart-frontend), or
+[database](/getting-started/quickstart-database) guide.
+
+Cloud operations and release publishing require an authorized machine:
+
+```bash title="Optional Cloud access"
+axiom join you@yourcompany.com
+```
+
+The referral flow sends a code by email; a subsequent Cloud command uses it
+to authorize the machine. Local authoring commands remain available without
+joining the private alpha.

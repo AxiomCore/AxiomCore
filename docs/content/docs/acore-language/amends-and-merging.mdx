@@ -1,6 +1,7 @@
 ---
 title: Amends & Deep Merging
 description: Compose Acore and extracted backend authoring inputs before building a contract.
+pageType: reference
 ---
 
 The `amends` keyword adds backend authoring input to the current Acore build.
@@ -8,7 +9,7 @@ The input can be another Acore source file or a supported extractor target.
 
 ### Basic Usage
 
-```acore
+```acore title="Acore excerpt"
 amends "./base.acore"
 amends "axiom-openapi:./openapi.yaml"
 amends "axiom-fastapi:./main.py:app"
@@ -17,7 +18,7 @@ amends "axiom-go:./cmd/api"
 
 Once amended, Axiom injects two global variables: `Routes` and `Models`. You can reference them to override behavior:
 
-```acore
+```acore title="Acore excerpt"
 // Override an existing extracted operation; do not redeclare its transport.
 override endpoint Routes.get_user_by_id {
   cache(strategy: CacheStrategy.cacheFirst, ttl: 5m)
@@ -28,7 +29,7 @@ override endpoint Routes.get_user_by_id {
 
 Acore uniquely supports **Multi-Amends Deep Merging**. If you have an API Gateway or multiple services, you can amend several extractors. The Acore engine will deeply merge the objects!
 
-```acore
+```acore title="Acore excerpt"
 amends "axiom-go:./billing-service/main.go"
 amends "axiom-fastapi:./auth-service/main.py:app"
 
@@ -43,4 +44,4 @@ surface.
 `amends` does not consume compiled contracts. A `.axiom` artifact must be
 selected through `AxiomDeps.toml`/the generated lock and consumed with
 `use contract`. Use `import` for trusted internal source modules and `extend`
-for value inheritance. See [Imports, Contracts, and Composition](./imports-and-contracts).
+for value inheritance. See [Imports, Contracts, and Composition](/acore-language/imports-and-contracts).

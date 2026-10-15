@@ -50,6 +50,8 @@ const siteInputs = gitFiles(
   'docs/content',
   'docs/lib',
   'docs/scripts',
+  'docs/public',
+  'examples/documentation',
   'docs/*.mjs',
   'docs/*.json',
   'docs/*.yaml',
@@ -63,6 +65,7 @@ const appRoutes = JSON.parse(readFileSync(join(nextRoot, 'app-path-routes-manife
 const packageJson = JSON.parse(readFileSync(join(docsRoot, 'package.json'), 'utf8'));
 
 const publicOutputs = [
+  'server/app/agents.json.body',
   'server/app/llms.txt.body',
   'server/app/llms-full.txt.body',
   'server/app/sitemap.xml.body',

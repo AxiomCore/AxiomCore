@@ -3,6 +3,8 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, extname, join, relative, resolve, sep } from 'node:path';
 import process from 'node:process';
 import { legacyRedirects } from '../lib/legacy-redirects.mjs';
+import { parseDocument } from '../lib/content-model.mjs';
+import { documentationIssues, resolveDocumentationReference } from '../lib/content-policy.mjs';
 
 const docsRoot = resolve(import.meta.dirname, '..');
 const repositoryRoot = resolve(docsRoot, '..');
@@ -43,6 +45,19 @@ const pages = walk(contentRoot, (path) => extname(path) === '.mdx');
 const routes = new Set(pages.map(routeFor));
 const titles = new Map();
 const descriptions = new Map();
+const documents = new Map();
+for (const page of pages) {
+  try { documents.set(routeFor(page), parseDocument(readFileSync(page, 'utf8'))); }
+  catch (error) { fail(page, `invalid MDX: ${error.message}`); }
+}
+
+const legacyAnchors = JSON.parse(readFileSync(join(docsRoot, 'lib', 'legacy-heading-anchors.json'), 'utf8'));
+for (const [route, anchors] of Object.entries(legacyAnchors)) {
+  const document = documents.get(route);
+  for (const anchor of anchors) {
+    if (!document?.anchors.has(anchor)) failures.push(`Compatibility anchor missing: ${route}#${anchor}`);
+  }
+}
 
 const redirectSources = new Set();
 for (const redirect of legacyRedirects) {
@@ -68,14 +83,17 @@ for (const redirect of legacyRedirects) {
 
 for (const page of pages) {
   const text = readFileSync(page, 'utf8');
+  const document = documents.get(routeFor(page));
+  if (!document) continue;
+  for (const issue of documentationIssues(text, document)) fail(page, issue);
   const frontmatter = text.match(/^---\n([\s\S]*?)\n---(?:\n|$)/)?.[1];
   if (!frontmatter) {
     fail(page, 'missing YAML frontmatter');
     continue;
   }
 
-  const title = frontmatter.match(/^title:\s*(.+)$/m)?.[1]?.trim();
-  const description = frontmatter.match(/^description:\s*(.+)$/m)?.[1]?.trim();
+  const title = typeof document.metadata.title === 'string' ? document.metadata.title.trim() : undefined;
+  const description = typeof document.metadata.description === 'string' ? document.metadata.description.trim() : undefined;
   if (!title) fail(page, 'missing title frontmatter');
   if (!description) fail(page, 'missing description frontmatter');
 
@@ -89,14 +107,29 @@ for (const page of pages) {
     else index.set(value, page);
   }
 
-  const links = [
-    ...text.matchAll(/\]\((\/[A-Za-z0-9_./#-]+)\)/g),
-    ...text.matchAll(/href=["'](\/[A-Za-z0-9_./#-]+)["']/g),
-  ].map((match) => match[1]);
-
-  for (const link of links) {
-    const pathname = link.split('#', 1)[0].replace(/\/$/, '') || '/';
-    if (!routes.has(pathname)) fail(page, `internal link does not resolve: ${link}`);
+  for (const link of document.references) {
+    let reference;
+    try { reference = resolveDocumentationReference(link.url, routeFor(page)); }
+    catch { fail(page, `invalid link: ${link.url}`); continue; }
+    if (!reference) continue;
+    let { pathname, fragment } = reference;
+    if (pathname.startsWith('/docs/') && pathname.endsWith('.mdx')) {
+      pathname = pathname.slice(5, -4);
+      if (pathname === '/index') pathname = '/';
+    }
+    if (routes.has(pathname)) {
+      if (fragment && !documents.get(pathname)?.anchors.has(fragment)) fail(page, `heading link does not resolve: ${link.url}`);
+      continue;
+    }
+    if (redirectSources.has(pathname)) {
+      fail(page, `use the canonical destination instead of legacy link: ${link.url}`);
+      continue;
+    }
+    const resources = new Set(['/llms.txt', '/llms-full.txt', '/agents.json', '/sitemap.xml', '/robots.txt', '/api/health', '/version.json', '/.well-known/security.txt']);
+    if (resources.has(pathname)) continue;
+    const asset = resolve(docsRoot, 'public', `.${pathname}`);
+    if (asset.startsWith(join(docsRoot, 'public') + sep) && existsSync(asset) && statSync(asset).isFile()) continue;
+    fail(page, `internal page or asset does not resolve: ${link.url}`);
   }
 }
 

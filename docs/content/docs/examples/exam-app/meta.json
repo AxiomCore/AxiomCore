@@ -1,0 +1,11 @@
+{
+  "title": "Exam application",
+  "pages": [
+    "index",
+    "run",
+    "database",
+    "backend",
+    "frontend",
+    "testing"
+  ]
+}

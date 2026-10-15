@@ -1,11 +1,12 @@
 ---
 title: Deterministic questions and Jev
 description: Ask bounded questions locally or use Jev as an optional probabilistic planner while keeping application facts deterministic.
+pageType: guide
 ---
 
 Ask Axiom separates two responsibilities:
 
-```text
+```text title="Conceptual example"
 question interpretation
           ↓
 validated typed Inspector request
@@ -22,7 +23,7 @@ answer always comes from the local evidence graph.
 
 This is the default and performs no remote model request:
 
-```bash
+```bash title="Terminal"
 axiom inspect ask "what can write Home.total_label" .
 axiom inspect ask "what executes when I press Checkout" .
 axiom inspect ask "why pricing" .
@@ -36,7 +37,7 @@ The bounded phrase planner supports:
 - why a semantic fact is connected; and
 - what changed, when supplied a canonical semantic-change report.
 
-```bash
+```bash title="Terminal"
 axiom inspect ask "what changed" . \
   --changes semantic-changes.json
 ```
@@ -49,7 +50,7 @@ when a display label is not unique.
 An agent can submit a validated `axiom-inspector-question/v1` document instead
 of relying on natural-language parsing:
 
-```bash
+```bash title="Terminal"
 axiom inspect answer question.json . --format json
 ```
 
@@ -66,7 +67,7 @@ completeness and limits, and avoid parsing human terminal output.
 Run the command through a secret environment that already provides
 `AI_GATEWAY_API_KEY`:
 
-```bash
+```bash title="Terminal"
 infisical run --env=dev -- \
   axiom inspect ask \
   "Who can modify Home.total_label?" . \
@@ -96,7 +97,7 @@ evidence validation.
 
 A precise question can resolve:
 
-```text
+```text title="Conceptual example"
 Who can modify Home.total_label?
 ```
 
@@ -112,7 +113,7 @@ then ask again.
 
 Every completed Jev decision produces an owner-only receipt under:
 
-```text
+```text title="Conceptual example"
 .axiom/inspector/planner-receipts/
 ```
 
@@ -126,7 +127,7 @@ remains a separate deterministic result.
 
 ## Enable Jev in the dashboard
 
-```bash
+```bash title="Terminal"
 infisical run --env=dev -- \
   axiom inspect serve . --allow-remote-planner
 ```

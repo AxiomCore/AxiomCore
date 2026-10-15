@@ -1,0 +1,62 @@
+---
+title: "Exam app: connect the UI"
+description: Select the exam contract, bind questions and mutations, and refresh stored results.
+pageType: tutorial
+---
+
+The frontend uses the backend contract rather than writing URLs and response
+decoders for each operation. Its manifest selects three public operations.
+
+```toml title="frontend/AxiomDeps.toml"
+type = "frontend"
+targets = ["web"]
+
+[contracts.exam]
+artifact = "../backend/.axiom/contracts/backend.axiom"
+baseUrl = "http://127.0.0.1:8082"
+audience = "web"
+operations = ["questions", "results", "submit"]
+```
+
+Keep operation selections sorted and unique. The backend's explicit response
+projections determine which fields the frontend can read.
+
+## Queries and a mutation
+
+```acore title="frontend/main.acore: operation bindings"
+use contract Exam from "exam" audience "web"
+// Inside page Home:
+query questions = Exam.questions(apiKey: apiKey) when apiKey.length > 0
+query results = Exam.results(apiKey: apiKey) when apiKey.length > 0
+mutation submission = Exam.submit(apiKey: apiKey, answers: {
+  attemptId: attemptId, name: name, first: first, second: second
+})
+```
+
+This excerpt omits the page's state declarations; use the complete downloaded
+file when running it. Queries stay disabled until the app has a development
+key. The question component emits a typed choice event, and page state retains
+the two selected answers.
+
+## Submission and error UI
+
+The submit button stays disabled while required fields are empty or a request
+is pending. A page action awaits the mutation and displays a returned error.
+The backend still validates every request; frontend button state is not an
+authorization or validation boundary.
+
+After success, the backend's `exam:results` invalidation refreshes the results
+query. The result row displays the score returned by the API. Reloading the
+page loses the unsent draft but retains stored submissions.
+
+## Lifecycle and accessibility
+
+Inputs have accessible labels, choice buttons use their visible option text,
+and pending/error states are shown as text. The layout stacks controls at a
+compact viewport. Verify keyboard and target-specific behavior before extending
+the app beyond its checked browser path.
+
+For inherited form validation, typed field failures, and richer draft behavior,
+see the [task app](/examples/task-app), [forms](/frontend/acore-ui), and
+[application lifecycle](/frontend/application-lifecycle). Continue with
+[verification](/examples/exam-app/testing).

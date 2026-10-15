@@ -2,10 +2,10 @@
   "title": "Introduction",
   "pages": [
     "index",
-    "what-is-acore",
-    "product-landscape",
     "why-axiom",
+    "what-is-acore",
     "who-is-it-for",
+    "product-landscape",
     "support-matrix"
   ]
 }

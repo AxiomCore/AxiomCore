@@ -1,4 +1,11 @@
 {
-  "title": "Getting Started",
-  "pages": ["installation", "quickstart-backend", "quickstart-frontend"]
+  "title": "Getting started",
+  "pages": [
+    "index",
+    "installation",
+    "quickstart",
+    "quickstart-backend",
+    "quickstart-frontend",
+    "quickstart-database"
+  ]
 }

@@ -1,87 +1,78 @@
 ---
 title: Frontend quickstart
-description: Pull a contract into an existing UI or start an authored Acore UI.
+description: Run a local Acore web UI or choose a client for your existing frontend.
+pageType: tutorial
+testedWith: Published Axiom CLI 0.149.0 and signed web UI Host 0.6.12 on macOS arm64
 ---
 
-You do not need to rewrite an existing frontend in Acore. Choose one of two
-paths.
+Choose an **existing frontend integration** or an **Acore-authored UI**. Both
+consume a contract; they have different setup and lifecycle requirements.
 
 ## Existing framework application
 
-```bash
+Keep your application and select its supported client:
+
+| Framework | Guide | Status |
+| --- | --- | --- |
+| Web / ATMX | [Vanilla web](/frontend/web) | Available |
+| React / ATMX | [React](/frontend/react) | Alpha |
+| Flutter / Dart | [Flutter and Dart](/frontend/flutter-dart) | Alpha |
+| Swift | [Apple platforms](/frontend/swift) | Experimental; binding parity is incomplete |
+
+For web/React, install a compatible local generator before pulling. CLI
+0.149.0 has no matching automatic npm companion; the
+[complete web example](/guides/fastapi-to-web#pull-the-web-client) pins and tests
+`atmx-cli` 0.146.7. Qualify React separately. With that preparation and a local
+contract from your backend:
+
+```bash title="Existing frontend directory"
 axiom doctor
 axiom onboard --role frontend --framework atmx-web
 axiom pull --contract ../backend/backend.axiom --framework atmx-web
 ```
 
-Use `atmx-react`, `flutter`, or `dart` only after checking the current
-[support matrix](/introduction/support-matrix). Keep the dependency declaration
-and generated lock together, then follow the integration instructions emitted
-for that target.
-
-See [Existing frontend integration](/workflows/existing-frontend-integration)
-for the runtime and test boundaries.
+Select `atmx-react`, `flutter`, or `dart` only for the matching supported path.
+Keep the dependency declaration and generated lock together. Follow the
+emitted integration instructions and the [integration workflow](/frontend/integration-workflow)
+for initialization, authentication, errors, caching, and disposal.
 
 ## Authored Acore UI
 
-```bash
-axiom ui init my-app --target web
-cd my-app
+Install the [CLI and compatible web host](/getting-started/installation), then:
+
+```bash title="Terminal"
+axiom ui init hello --target web
+cd hello
 axiom ui check src/main.acore --target web
-axiom run src/main.acore --target web
+axiom run src/main.acore --target web --port 5173
 ```
 
-The frontend owns an `AxiomDeps.toml` with `type = "frontend"`. Declare backend
-imports under `[contracts.<alias>]` in that file; keep the backend's
-`type = "backend"` manifest in its own directory. The
-[contract import guide](/acore-language/imports-and-contracts#compiled-contracts-use-contract)
-shows the `tasks` alias, artifact path, optional audience, and lock resolution.
-The playground presents both manifests as separate tabs.
+Open `http://127.0.0.1:5173`. The generated starter displays a greeting and a
+Reset button. Edit the greeting in `src/main.acore`; the running app reloads.
+This starter has no backend dependency. Stop it with Ctrl-C.
 
-Choose **Database · tasks** or **Database · inventory** in the
-[playground](https://playground.axiomcore.dev). Each example adds editable
-`Database.acore`, database `AxiomDeps.toml` and explicit table/model bindings to
-the same frontend/backend workspace. Run compiles all three contracts. Database
-edits appear in the existing Changes and Impact views with mapped backend and
-frontend consumers.
+For a full-stack UI, keep the frontend's `type = "frontend"` manifest in its
+own directory. Declare backend dependencies under `[contracts.<alias>]` in
+that manifest. A backend keeps its separate `type = "backend"` manifest.
+See [contract imports](/acore-language/imports-and-contracts#compiled-contracts-use-contract).
 
-The lower **Database** tab lists every table in its left sidebar. Creating,
-completing/restocking or deleting a record in the preview updates its rows and
-change activity live. The browser validates storage types, primary keys, unique
-keys, foreign keys and supported check constraints before publishing a complete
-mutation. Failed checks preserve the previous store. Run resets the example's
-data; Source ↓ includes the database contract, manifest and bindings, and Schema ↓
-downloads its compiled package. These examples use a bounded local browser
-simulation; PostgreSQL persistence and migrations use the separate reviewed
-native database workflow.
+`axiom run` discovers manifests, rebuilds stale local Acore dependencies, and
+maintains its development lock. Explicit lock paths are advanced overrides.
+Registered sandbox modules need their compatible toolchain and verification.
 
-The run command discovers local contract and extension manifests, builds stale
-local `.acore` contracts, maintains its development lock under `.axiom`, and
-compiles and verifies registered sandbox modules. No preparation command or
-explicit `--lock` path is required.
+<span id="complete-candidate-task-project" />
 
-Repeat checks for `android` and `ios` before claiming parity. Native development
-requires a verified UI Host and a running emulator or simulator.
+## Add data, forms, and tests
 
-See the [Acore UI profile](/acore-language/ui-profile) and
-[application lifecycle](/workflows/acore-ui-application-lifecycle).
+Run the [persisted task app](/getting-started/quickstart) to see queries,
+contract-backed form validation, mutations, typed errors, and list refresh.
+Then follow the [application lifecycle](/frontend/application-lifecycle) and
+[frontend testing guide](/testing/frontend-applications).
 
-## Complete candidate task project
+For browser-only experiments, use the playground's database task or inventory
+example. [Browser preview](/database/browser-preview) explains editable source,
+table inspection, and the limits of its simulated storage.
 
-The matching source checkout includes `examples/advanced-language-dx/tasks`:
-backend/database source, an inherited-rule form, selected public failures,
-runtime-owned submission identity, query invalidation, an app preference store,
-bounded snapshot reduction and a generated TypeScript normalization guest.
-
-```bash
-python3 examples/advanced-language-dx/prepare.py \
-  --cli /absolute/path/to/axiom-cli --example tasks \
-  --out /absolute/path/to/new-task-project --run-suites
-```
-
-Preparation checks web/iOS/Android lowering and runs 23 assertions for each
-reference and generated adapter. These suites use scripted transport and check
-disposal; they do not certify mounted mobile behavior. The project's README
-documents separate signed guest and private provider preparation. Its SSE source
-returns one authenticated complete snapshot per subscription; it does not
-promise a continuous change feed or resumable event history.
+Check `android` and `ios` separately before claiming parity. Their development
+paths require a compatible signed UI host and an emulator or simulator.
+Generated adapter tests do not prove a mounted native application.

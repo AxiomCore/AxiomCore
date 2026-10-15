@@ -1,6 +1,7 @@
 ---
 title: Executable extension lifecycle
 description: Review and release a source-authored WebAssembly extension through deterministic dependencies, signed authority, target checks, and host audit evidence.
+pageType: guide
 ---
 
 Use an executable extension only when declarative Acore behavior and ordinary
@@ -14,7 +15,7 @@ validation.
 The source-authored path starts with application files, not a handwritten Wasm
 package or host integration:
 
-```text
+```text title="Conceptual example"
 main.acore
 AxiomDeps.toml
 logic/checkout.rs      # or .ts / .py; the folder name is author-selected
@@ -27,7 +28,7 @@ language environment are declared in the same file when needed.
 
 Generate or update the complete local release workflow with:
 
-```bash
+```bash title="Terminal"
 axiom extensions source-release checkout \
   --deps AxiomDeps.toml \
   --application example.checkout
@@ -56,7 +57,7 @@ its exact SHA-256 digest and byte length must match the package and locks.
 
 After generation, ordinary commands load the verified source binding:
 
-```bash
+```bash title="Terminal"
 axiom run main.acore --target web
 axiom run main.acore --target android
 axiom run main.acore --target ios
@@ -67,7 +68,7 @@ axiom run main.acore --target ios
 From an application checkout with the experimental extension command available,
 the release-facing checks are:
 
-```bash
+```bash title="Terminal"
 axiom extensions verify --manifest AxiomExtensions.toml
 axiom extensions inspect pricing --manifest AxiomExtensions.toml
 axiom extensions permissions pricing --manifest AxiomExtensions.toml
@@ -91,7 +92,7 @@ Bind an extension to one declared frontend or backend operation. Give it one
 meaningful input and authorized snapshots. Prefer one returned result, patch,
 or transaction proposal over many tiny host calls.
 
-```text
+```text title="Conceptual example"
 UI event or backend workflow
           |
   authorized snapshots + input

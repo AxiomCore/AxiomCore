@@ -1,6 +1,7 @@
 ---
 title: Changes, impact, and CI
 description: Snapshot application evidence, compare semantic identities, calculate bounded impact, and enforce review policy in CI.
+pageType: guide
 ---
 
 Git explains which lines changed. Axiom Inspector explains which application
@@ -10,19 +11,19 @@ facts changed and what those facts can affect.
 
 Before a material change:
 
-```bash
+```bash title="Terminal"
 axiom inspect snapshot . --output before.evidence.json
 ```
 
 After the change:
 
-```bash
+```bash title="Terminal"
 axiom inspect snapshot . --output after.evidence.json
 ```
 
 Verify a stored snapshot before using it:
 
-```bash
+```bash title="Terminal"
 axiom inspect validate-snapshot before.evidence.json
 axiom inspect validate-snapshot after.evidence.json
 ```
@@ -33,7 +34,7 @@ dump.
 
 ## Compare semantics
 
-```bash
+```bash title="Terminal"
 axiom inspect diff \
   before.evidence.json \
   after.evidence.json
@@ -56,7 +57,7 @@ increases are kept distinct because they often require a security approval.
 
 Use the after snapshot as the graph against which impact is evaluated:
 
-```bash
+```bash title="Terminal"
 axiom inspect impact Product.price_label \
   . --against after.evidence.json
 ```
@@ -76,7 +77,7 @@ This is more useful than a repository-wide text search for questions such as:
 
 When both normalized sessions belong to the corresponding graphs:
 
-```bash
+```bash title="Terminal"
 axiom inspect diff \
   before.evidence.json \
   after.evidence.json \
@@ -90,7 +91,7 @@ authority, source, and redaction differences.
 
 ## Use it as a CI gate
 
-```bash
+```bash title="Terminal"
 axiom inspect diff \
   baseline.evidence.json \
   candidate.evidence.json \
@@ -111,7 +112,7 @@ team has reviewed its baseline.
 
 ## Measure the Inspector release boundary
 
-```bash
+```bash title="Terminal"
 axiom inspect release-check .
 axiom inspect release-check . --enforce --format json
 ```

@@ -1,13 +1,17 @@
 import { defineConfig, defineDocs } from 'fumadocs-mdx/config';
 import { metaSchema, pageSchema } from 'fumadocs-core/source/schema';
 import { acoreLanguage } from './lib/acore-language';
+import remarkMermaid from './lib/remark-mermaid.mjs';
 
 // You can customise Zod schemas for frontmatter and `meta.json` here
 // see https://fumadocs.dev/docs/mdx/collections
 export const docs = defineDocs({
   dir: 'content/docs',
   docs: {
-    schema: pageSchema,
+    schema: pageSchema.extend({
+      pageType: pageSchema.shape.title.default('guide'),
+      testedWith: pageSchema.shape.title.optional(),
+    }),
     postprocess: {
       includeProcessedMarkdown: true,
     },
@@ -19,6 +23,7 @@ export const docs = defineDocs({
 
 export default defineConfig({
   mdxOptions: {
+    remarkPlugins: [remarkMermaid],
     rehypeCodeOptions: {
       langs: [acoreLanguage],
       themes: {

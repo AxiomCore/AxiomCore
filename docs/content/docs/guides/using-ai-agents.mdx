@@ -1,0 +1,62 @@
+---
+title: Work with AI coding agents
+description: Give an agent current AxiomCore contracts, supported versions, exact reference, and a verifiable task.
+pageType: guide
+---
+
+Give an agent the same starting point you would give another developer: the
+current tool versions, the relevant contract, a small goal, and a way to check
+the result. Require it to report actual execution separately from assumptions.
+
+## 1. Read the right documentation
+
+| Resource | Use |
+| --- | --- |
+| `/llms.txt` | Reading paths and the full page index |
+| `/agents.json` | Structured page index, canonical URLs, page types, and declared test versions |
+| `/docs/<page>.mdx` | Plain Markdown for one page, with code, tables, status notes, and Mermaid source |
+| `/llms-full.txt` | The complete public corpus when broader context is required |
+| [Support matrix](/introduction/support-matrix) | Capability, framework, target, and distribution limits |
+
+For example, `/docs/database/contracts.mdx` is the text version of the database
+contract guide. Use canonical pages; old URLs may redirect after a reorganization.
+
+## 2. Inspect the application before changing it
+
+```bash title="Application directory"
+axiom --version
+axiom doctor --json --strict
+```
+
+Read project instructions, manifests, existing source, and dependency locks.
+Choose whether the task concerns existing-code integration, Acore authoring,
+a database change, or a deployment. Do not infer installed host or SDK support
+from a syntax example.
+
+## 3. Make the task concrete
+
+A useful task states the outcome, owned files, exact target, constraints,
+verification command, and expected result. For example:
+
+```text title="Example agent task"
+Add optional task notes to this local SQLite task application.
+Read its manifests, schema, backend models, and frontend first.
+Use the database migration and typed persistence guides.
+Preserve existing titles and endpoint identities.
+Check the contract and test create, read, and restart persistence.
+Report the exact tool versions, commands, observed results, and limitations.
+Do not publish or change a remote database.
+```
+
+## 4. Verify the change
+
+- Use the installed command's `--help` and exact language reference. Do not invent flags or API names.
+- Review the semantic diff and dependency locks. A code edit is not a verified contract change.
+- Run one successful request and relevant validation, authorization, and failure cases.
+- For database work, inspect migration risk and history on a disposable target first.
+- Use [Inspector](/inspector) for application relationships and change impact.
+- Keep credentials and private contracts out of prompts, screenshots, and logs.
+
+A compile check, a mock, a browser simulation, and a real persisted application
+prove different things. State which one ran. A **Coming soon** product has no
+supported runnable workflow, even if a model can suggest one.

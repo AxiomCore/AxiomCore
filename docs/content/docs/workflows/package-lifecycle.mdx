@@ -1,6 +1,7 @@
 ---
 title: Declarative package lifecycle
 description: Build, lock, inspect, diff, and consume independently versioned Axiom packages.
+pageType: guide
 ---
 
 Typed `.axiom` packages can represent services, themes, component libraries,
@@ -13,14 +14,14 @@ contracts and target servers only. The database compiler validates every typed
 object and verifies canonical locked imports. Legacy v1 database exports remain
 inspectable data and cannot enter typed database workflows. Neither version
 carries connection or migration authority. See
-[Database contracts](/acore-language/database-contracts).
+[Database contracts](/database/contracts).
 
 ## Author and build
 
 Create a package source envelope that conforms to the selected kind, then build
 the canonical artifact:
 
-```bash
+```bash title="Terminal"
 axiom packages build package.json --out dist/package.axiom
 ```
 
@@ -29,7 +30,7 @@ canonical encoding.
 
 ## Declare and lock dependencies
 
-```toml
+```toml title="AxiomDeps.toml"
 format = "axiom-package-deps/v1"
 targets = ["android", "ios", "web"]
 
@@ -40,7 +41,7 @@ version = "1.0.0"
 kind = "theme"
 ```
 
-```bash
+```bash title="Terminal"
 axiom packages resolve
 axiom packages verify
 axiom packages inspect theme
@@ -51,7 +52,7 @@ re-resolves bytes and proofs without silently changing the lock.
 
 ## Review an upgrade
 
-```bash
+```bash title="Terminal"
 axiom packages diff before.axiom after.axiom
 ```
 
@@ -65,7 +66,7 @@ future changes.
 Package imports are checked against the lock, and the unchanged source is
 compiled for a concrete target:
 
-```bash
+```bash title="Terminal"
 axiom packages check-source main.acore --target web
 axiom packages run main.acore --target web --once
 ```
@@ -78,7 +79,7 @@ provenance. Packages remain data-only and capability-neutral; emit typed events
 to the consumer for application operations. V1 retains its passive executable
 subset. Unsupported legacy metadata and refinement descriptors reject instead
 of disappearing during lowering. Envelope validity alone is not consumer
-validation. See the [UI profile](/acore-language/ui-profile#elements-and-components)
+validation. See the [UI profile](/frontend/acore-ui#elements-and-components)
 for the exact bounds and matching compiler/host versions; older installed CLI
 releases need the corresponding update.
 

@@ -1,6 +1,7 @@
 ---
 title: Terminal interfaces
 description: Implemented keyboard interfaces for contract inspection, cache debugging, login, and project selection.
+pageType: guide
 ---
 
 Some Axiom CLI commands use a terminal user interface when attached to an
@@ -12,7 +13,7 @@ available.
 For a whole frontend, backend, or combined application, use the browser-based
 local Inspector rather than the legacy single-artifact terminal view:
 
-```bash
+```bash title="Terminal"
 axiom inspect serve .
 ```
 
@@ -26,7 +27,7 @@ attachment, source refresh, agent/API mode, and the optional Jev planner.
 
 ## Contract inspector
 
-```bash
+```bash title="Terminal"
 axiom inspect api.axiom
 ```
 
@@ -41,7 +42,7 @@ the documented keyboard contract. Do not depend on it for validation.
 
 ## Watch display
 
-```bash
+```bash title="Terminal"
 axiom watch --build
 ```
 
@@ -53,7 +54,7 @@ development server.
 
 ## Cache explorer
 
-```bash
+```bash title="Terminal"
 axiom cache ls
 ```
 

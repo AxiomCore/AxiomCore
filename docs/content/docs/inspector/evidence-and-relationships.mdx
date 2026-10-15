@@ -1,6 +1,7 @@
 ---
 title: Evidence, facts, and relationships
 description: Read Axiom Inspector results correctly using truth layers, semantic identities, typed edges, revisions, and completeness.
+pageType: guide
 ---
 
 Axiom Inspector represents an application as semantic facts connected by typed
@@ -41,7 +42,7 @@ scope, verification state, attributes, and evidence references where available.
 Display labels are for people. Commands accept a unique label when it resolves
 unambiguously, but semantic IDs are the durable choice for automation.
 
-```bash
+```bash title="Terminal"
 axiom inspect node Home.total_label .
 axiom inspect node state:3b416d3829a8024ad025f8f5 .
 ```
@@ -81,7 +82,7 @@ For a selected fact:
 - **downstream** asks what it can call, render, mutate, return, or affect; and
 - **both** shows a bounded neighborhood in both directions.
 
-```bash
+```bash title="Terminal"
 axiom inspect trace Home.total_label . --direction upstream
 axiom inspect trace Home.apply_member_price . --direction downstream
 axiom inspect graph . --root pricing --direction both --max-depth 4
@@ -102,7 +103,7 @@ on the producer it can point to:
 - a compiler-owned source map; or
 - a normalized runtime session and trace identity.
 
-```bash
+```bash title="Terminal"
 axiom inspect evidence Home.total_label .
 axiom inspect provenance pricing .
 ```

@@ -1,0 +1,3 @@
+amends "axiom-fastapi:main.py:app"
+
+project(id: "docs.fastapi.greeting", version: "1.0.0")

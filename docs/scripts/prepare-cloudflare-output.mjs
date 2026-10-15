@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { createCloudflareHeaders } from '../lib/deployment-policy.mjs';
-import { legacyRedirects } from '../lib/legacy-redirects.mjs';
+import { legacyRedirects, legacyReaderRedirects } from '../lib/legacy-redirects.mjs';
+import { parseDocument, toReaderMarkdown } from '../lib/content-model.mjs';
 
 const docsRoot = resolve(import.meta.dirname, '..');
 const outputRoot = join(docsRoot, 'out');
@@ -12,7 +13,8 @@ if (!existsSync(outputRoot)) {
 }
 
 const redirects = legacyRedirects
-  .map(({ source, destination, permanent }) => source + ' ' + destination + ' ' + (permanent ? '301' : '302'))
+  .flatMap(({ source, destination, permanent }) => [source, `${source}/`].map((from) => `${from} ${destination}/ ${permanent ? '301' : '302'}`))
+  .concat(legacyReaderRedirects.map(({ source, destination }) => `${source} ${destination} 301`))
   .join('\n');
 
 mkdirSync(outputRoot, { recursive: true });
@@ -29,39 +31,20 @@ function walk(directory) {
   return files;
 }
 
-function frontmatterValue(frontmatter, field) {
-  const match = frontmatter.match(new RegExp('^' + field + ':\\s*(.+)\\s*$', 'm'));
-  const value = match?.[1]?.trim();
-
-  return value?.replace(/^['"]|['"]$/g, '');
-}
-
 function createReaderAsset(sourcePath) {
   const relativePath = relative(contentRoot, sourcePath);
   const routePath = relativePath.replace(/\.mdx$/, '').replace(/\/index$/, '');
   if (!routePath) return null;
 
   const source = readFileSync(sourcePath, 'utf8');
-  const frontmatterMatch = source.match(/^---\s*\n([\s\S]*?)\n---\s*\n?/);
-  const frontmatter = frontmatterMatch?.[1] ?? '';
-  const body = source.slice(frontmatterMatch?.[0].length ?? 0).trim();
-  const title = frontmatterValue(frontmatter, 'title') ?? routePath;
-  const description = frontmatterValue(frontmatter, 'description');
+  const { title, description } = parseDocument(source).metadata;
   const destination = join(outputRoot, 'docs', routePath + '.mdx');
   const sourceUrl = 'https://docs.axiomcore.dev/' + (routePath === 'index' ? '' : routePath + '/');
 
   mkdirSync(resolve(destination, '..'), { recursive: true });
   writeFileSync(
     destination,
-    [
-      '# ' + title,
-      '',
-      'Source: ' + sourceUrl,
-      ...(description ? ['', 'Description: ' + description] : []),
-      '',
-      body,
-      '',
-    ].join('\n'),
+    toReaderMarkdown(source, { canonical: sourceUrl, title, description }),
   );
 
   return destination;

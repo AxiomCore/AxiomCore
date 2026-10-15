@@ -2,6 +2,9 @@ import { docs } from 'fumadocs-mdx:collections/server';
 import { type InferPageType, loader } from 'fumadocs-core/source';
 import { lucideIconsPlugin } from 'fumadocs-core/source/lucide-icons';
 import { createElement } from 'react';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { toReaderMarkdown } from './content-model.mjs';
 import {
   BookIcon,
   RocketIcon,
@@ -41,12 +44,13 @@ export function getPageImage(page: InferPageType<typeof source>) {
 }
 
 export async function getLLMText(page: InferPageType<typeof source>) {
-  const processed = await page.data.getText('processed');
-
-  return `# ${page.data.title}
-
-Source: ${docsOrigin}${page.url === "/" ? "/" : page.url.replace(/\/$/, "") + "/"}
-Description: ${page.data.description}
-
-${processed}`;
+  const root = join(process.cwd(), 'content', 'docs');
+  const slug = page.slugs.join('/');
+  const direct = join(root, `${slug || 'index'}.mdx`);
+  const path = existsSync(direct) ? direct : join(root, slug, 'index.mdx');
+  return toReaderMarkdown(readFileSync(path, 'utf8'), {
+    canonical: `${docsOrigin}${page.url === '/' ? '/' : page.url.replace(/\/$/, '') + '/'}`,
+    title: page.data.title,
+    description: page.data.description,
+  });
 }

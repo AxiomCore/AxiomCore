@@ -1,0 +1,5 @@
+// Schema-derived explicit projection; regenerate after schema changes.
+model Task {
+  id: String
+  title: String(maxLength: 120)
+} also entity

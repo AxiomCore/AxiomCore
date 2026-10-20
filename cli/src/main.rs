@@ -490,12 +490,37 @@ enum ContractAction {
 
 #[derive(Subcommand)]
 enum DatabaseAction {
-    /// Apply pending versioned migrations using a URL or connection fields
+    /// Apply pending versioned migrations using a URL or connection fields, or a hosted environment
+    ///
+    /// With --project and --environment, the release is built and signed locally
+    /// exactly as for a local database, written to the catalog, uploaded to the
+    /// project, and applied by the hosted executor. The command waits for the
+    /// operation and prints its outcome and the new hosted head. With --dry-run it
+    /// uploads the release and runs a hosted check that changes nothing; the
+    /// catalog and source are not written.
     Migrate(commands::database_dev::MigrateArgs),
     /// Restore a recorded schema through a new versioned compensating migration
+    ///
+    /// With --project and --environment, the compensating release is prepared and
+    /// signed locally from the hosted history, written to the catalog, uploaded,
+    /// and applied by the hosted executor; the command waits and prints the
+    /// outcome and the new hosted head. With --dry-run it runs a hosted check.
     Rollback(commands::database_dev::RollbackArgs),
     /// Inspect applied version, pending changes and drift without migrating
+    ///
+    /// With --project and --environment, runs a hosted status, then compares the
+    /// hosted head with the local catalog and working contract. Drift then means
+    /// the hosted history diverges from the local catalog; the hosted executor
+    /// checks database drift itself before every apply.
     Status(commands::database_dev::ReadArgs),
+    /// Download the applied hosted history into the local catalog
+    ///
+    /// Runs a hosted status for the head, downloads every applied release,
+    /// verifies each signature, digest and parent link and that each signer is in
+    /// the project signer registry, and refuses a history that diverges from
+    /// local releases. Existing local releases are never rewritten. Nothing is
+    /// executed against the database.
+    Pull(commands::database_remote::PullArgs),
     /// Schema-derived private backend operations and database-to-API impact
     #[command(hide = true)]
     Runtime {
@@ -525,14 +550,26 @@ enum DatabaseAction {
     /// Inspect a source contract or schema package without connecting
     Inspect { source: PathBuf },
     /// Compare two source contracts or typed schema packages
+    ///
+    /// With --project and --environment, compares the hosted head release with
+    /// the working contract.
     Diff {
         #[arg(value_name = "CONTRACT")]
         before: PathBuf,
         after: Option<PathBuf>,
+        /// Catalog version to compare from
         #[arg(long)]
         from: Option<String>,
+        /// Catalog version to compare to; defaults to `working`
         #[arg(long)]
         to: Option<String>,
+        /// AxiomCore Cloud project slug. With --environment, compare the hosted head release with the working contract. Cannot be combined with a second contract, --from or --to.
+        #[arg(long, requires = "environment", conflicts_with_all = ["after", "from", "to"])]
+        project: Option<String>,
+        /// Hosted environment slug, for example `development`. Requires --project.
+        #[arg(long, requires = "project")]
+        environment: Option<String>,
+        /// Print machine-readable JSON instead of text
         #[arg(long)]
         json: bool,
     },
@@ -639,15 +676,23 @@ enum DatabaseAction {
         checkpoint: Option<PathBuf>,
     },
     /// Display version history; advanced legacy subcommands remain available
+    ///
+    /// With --project and --environment, lists the hosted applied releases and the
+    /// environment's operations, newest first, marking which releases are in the
+    /// local catalog. It only reads; nothing runs and nothing is written.
     History {
         #[command(subcommand)]
         action: Option<DatabaseHistoryAction>,
         source: Option<PathBuf>,
         #[command(flatten)]
         connection: commands::database_dev::ConnectionArgs,
+        #[command(flatten)]
+        remote: commands::database_remote::RemoteArgs,
+        /// Print machine-readable JSON instead of text
         #[arg(long)]
         json: bool,
-        #[arg(long)]
+        /// Refresh every two seconds until interrupted; local connections only
+        #[arg(long, conflicts_with = "project")]
         watch: bool,
     },
     /// Sign or verify an exact private candidate prefix offline
@@ -669,6 +714,21 @@ enum DatabaseAction {
         #[arg(long)]
         deployment: PathBuf,
     },
+}
+
+impl DatabaseAction {
+    /// Hosted database commands use the control plane like `project resources`.
+    fn hosted(&self) -> bool {
+        match self {
+            DatabaseAction::Migrate(args) => args.remote.target().is_some(),
+            DatabaseAction::Rollback(args) => args.remote.target().is_some(),
+            DatabaseAction::Status(args) => args.remote.target().is_some(),
+            DatabaseAction::History { remote, .. } => remote.target().is_some(),
+            DatabaseAction::Diff { project, .. } => project.is_some(),
+            DatabaseAction::Pull(_) => true,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -1432,6 +1492,11 @@ enum ProjectAction {
         #[command(subcommand)]
         action: Option<commands::resources::Action>,
     },
+    /// Manage the keys allowed to sign hosted database releases
+    Signers {
+        #[command(subcommand)]
+        action: commands::signers::Action,
+    },
     Create {
         #[arg(long)]
         name: Option<String>,
@@ -1731,7 +1796,6 @@ fn is_local_command(command: &Commands) -> bool {
         Commands::Scenario { .. } => true,
         Commands::Package { .. }
         | Commands::Packages { .. }
-        | Commands::Database { .. }
         | Commands::Inspect { .. }
         | Commands::Eval { .. }
         | Commands::Check { .. }
@@ -1751,6 +1815,7 @@ fn is_local_command(command: &Commands) -> bool {
         | Commands::Build { release: false, .. }
         | Commands::Serve(..)
         | Commands::Watch { build: true, .. } => true,
+        Commands::Database { action } => !action.hosted(),
         Commands::Mock(input) => !input.cloud,
         Commands::Pull {
             source,
@@ -2251,11 +2316,21 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             },
         },
         Commands::Database { action } => match action {
+            DatabaseAction::Migrate(args) if args.remote.target().is_some() => {
+                commands::database_remote::migrate(args).await
+            }
             DatabaseAction::Migrate(args) => {
                 commands::database_dev::migrate(args, false, None).await
             }
+            DatabaseAction::Rollback(args) if args.remote.target().is_some() => {
+                commands::database_remote::rollback(args).await
+            }
             DatabaseAction::Rollback(args) => commands::database_dev::rollback(args).await,
+            DatabaseAction::Status(args) if args.remote.target().is_some() => {
+                commands::database_remote::status(args).await
+            }
             DatabaseAction::Status(args) => commands::database_dev::read(args, false).await,
+            DatabaseAction::Pull(args) => commands::database_remote::pull(args).await,
             DatabaseAction::Runtime { command } => commands::database_runtime::run(command),
             DatabaseAction::Sqlite { command } => commands::database_sqlite::run(command),
             DatabaseAction::Fleet { command } => commands::database_fleet::run(command).await,
@@ -2269,9 +2344,13 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                 after,
                 from,
                 to,
+                project,
+                environment,
                 json,
             } => {
-                if let Some(after) = after {
+                if let (Some(project), Some(environment)) = (project, environment) {
+                    commands::database_remote::diff(before, project, environment, *json).await
+                } else if let Some(after) = after {
                     commands::database::diff(before, after)
                 } else {
                     commands::database_dev::diff(
@@ -2367,9 +2446,23 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                 action,
                 source,
                 connection,
+                remote,
                 json,
                 watch,
             } => match action {
+                _ if remote.target().is_some() && action.is_some() => {
+                    anyhow::bail!("--project and --environment apply to `database history CONTRACT`, not to its subcommands")
+                }
+                None if remote.target().is_some() => {
+                    commands::database_remote::history(
+                        source.as_deref().ok_or_else(|| {
+                            anyhow::anyhow!("provide a database contract path")
+                        })?,
+                        remote,
+                        *json,
+                    )
+                    .await
+                }
                 None => {
                     commands::database_dev::read(
                         &commands::database_dev::ReadArgs {
@@ -2377,6 +2470,7 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                                 anyhow::anyhow!("provide a database contract path")
                             })?,
                             connection: connection.clone(),
+                            remote: Default::default(),
                             json: *json,
                             watch: *watch,
                             check: false,
@@ -2987,6 +3081,7 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             ProjectAction::Resources { project, action } => {
                 commands::resources::handle(&project, action.as_ref()).await
             }
+            ProjectAction::Signers { action } => commands::signers::handle(action).await,
             ProjectAction::Create {
                 name,
                 slug,
@@ -3301,6 +3396,55 @@ pub async fn handle_inspect(file_path: &Path) -> anyhow::Result<()> {
 #[cfg(test)]
 mod launch_tests {
     use super::*;
+
+    #[test]
+    fn hosted_database_flags_pair_and_refuse_local_connections_while_parsing() {
+        use clap::error::ErrorKind;
+        let kind = |args: &[&str]| Cli::try_parse_from(args).err().map(|e| e.kind());
+        let hosted = ["--project", "acme", "--environment", "development"];
+        for command in ["migrate", "status", "rollback", "history"] {
+            let base = ["axiom", "database", command, "schema.acore"];
+            let cli = Cli::try_parse_from(base.iter().chain(&hosted)).unwrap();
+            assert!(!is_local_command(&cli.command), "{command} is hosted");
+            assert!(is_local_command(&Cli::try_parse_from(base).unwrap().command));
+            for half in [&hosted[..2], &hosted[2..]] {
+                let args = base.iter().chain(half).copied().collect::<Vec<_>>();
+                assert_eq!(kind(&args), Some(ErrorKind::MissingRequiredArgument), "{args:?}");
+            }
+            for local in [
+                ["--database-url", "postgres://localhost/db"],
+                ["--host", "localhost"],
+                ["--port", "5432"],
+                ["--database", "db"],
+                ["--username", "user"],
+                ["--password", "secret"],
+                ["--database-file", "db.sqlite"],
+                ["--ssl-mode", "require"],
+                ["--tls-ca", "ca.pem"],
+            ] {
+                let args = base.iter().chain(&hosted).chain(&local).copied().collect::<Vec<_>>();
+                assert_eq!(kind(&args), Some(ErrorKind::ArgumentConflict), "{args:?}");
+            }
+        }
+        for command in ["status", "history"] {
+            let args = ["axiom", "database", command, "schema.acore", "--watch"];
+            let args = args.iter().chain(&hosted).copied().collect::<Vec<_>>();
+            assert_eq!(kind(&args), Some(ErrorKind::ArgumentConflict));
+        }
+        let diff = ["axiom", "database", "diff", "schema.acore"];
+        let cli = Cli::try_parse_from(diff.iter().chain(&hosted)).unwrap();
+        assert!(!is_local_command(&cli.command));
+        for extra in [&["other.acore"][..], &["--from", "1.0.0"], &["--to", "1.0.0"]] {
+            let args = diff.iter().chain(&hosted).chain(extra).copied().collect::<Vec<_>>();
+            assert_eq!(kind(&args), Some(ErrorKind::ArgumentConflict), "{args:?}");
+        }
+        let pull = ["axiom", "database", "pull", "schema.acore"];
+        assert!(!is_local_command(&Cli::try_parse_from(pull.iter().chain(&hosted)).unwrap().command));
+        assert_eq!(kind(&pull), Some(ErrorKind::MissingRequiredArgument));
+        assert!(Cli::try_parse_from(["axiom", "project", "signers", "list", "--project", "acme"]).is_ok());
+        assert!(Cli::try_parse_from(["axiom", "project", "signers", "add", "--project", "acme", "--label", "ci", "--schema", "schema.acore"]).is_ok());
+        assert!(Cli::try_parse_from(["axiom", "project", "signers", "revoke", "--project", "acme"]).is_err());
+    }
 
     #[test]
     fn database_controlled_execution_requires_a_bundle_and_explicit_binding() {

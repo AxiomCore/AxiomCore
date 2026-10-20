@@ -7,6 +7,7 @@ pub mod contract_build;
 pub mod database;
 pub mod database_dev;
 pub mod database_fleet;
+pub mod database_remote;
 pub mod database_runtime;
 pub mod database_sqlite;
 pub mod dependencies;
@@ -55,3 +56,4 @@ mod editor_schema_parity;
 pub mod secret_development;
 
 pub mod resources;
+pub mod signers;

@@ -84,12 +84,22 @@ pub fn run(a: &Action) -> Result<()> {
             axiom_lib::database::identifier(model)?;
             let mut selected = BTreeMap::new();
             for field in fields {
-                let (alias,column)=field.split_once('=').context("ADB1000: field syntax is APIField=storageField")?;
-                if selected.insert(alias.to_string(),column.to_string()).is_some() { bail!("ADB1000: duplicate API field"); }
+                let (alias, column) = field
+                    .split_once('=')
+                    .context("ADB1000: field syntax is APIField=storageField")?;
+                if selected
+                    .insert(alias.to_string(), column.to_string())
+                    .is_some()
+                {
+                    bail!("ADB1000: duplicate API field");
+                }
             }
-            let declarations=axiom_lib::database::mapping::derived_fields(&schema,table,&selected)?;
+            let declarations =
+                axiom_lib::database::mapping::derived_fields(&schema, table, &selected)?;
             let mut source=format!("// Schema-derived explicit projection; regenerate after schema changes.\nmodel {model} {{\n");
-            for (alias,declaration) in declarations { source.push_str(&format!("  {alias}: {declaration}\n")); }
+            for (alias, declaration) in declarations {
+                source.push_str(&format!("  {alias}: {declaration}\n"));
+            }
             source.push_str(if *entity { "} also entity\n" } else { "}\n" });
             write(out, source.as_bytes())?;
             println!(
@@ -124,10 +134,12 @@ pub fn run(a: &Action) -> Result<()> {
             let public: AxiomFile = axiom_server::serve::read_json(contract, 16_777_216)?;
             let mut server: ServerPlan = axiom_server::serve::read_json(plan, 16_777_216)?;
             server.validate(&public)?;
-            let mut spec:serde_json::Value=if spec.extension().is_some_and(|e|e=="acore"){
-                let storage=acore::backend::storage::compile(&std::fs::read_to_string(&spec)?)?;
+            let mut spec: serde_json::Value = if spec.extension().is_some_and(|e| e == "acore") {
+                let storage = acore::backend::storage::compile(&std::fs::read_to_string(&spec)?)?;
                 serde_json::json!({"format":axiom_lib::database::runtime::FORMAT,"profile":axiom_lib::database::runtime::PROFILE,"tenantClaim":storage.tenant_claim,"tenantColumn":storage.tenant_column,"operations":storage.operations})
-            }else{axiom_server::serve::read_json(spec,4_194_304)?};
+            } else {
+                axiom_server::serve::read_json(spec, 4_194_304)?
+            };
             if spec.get("schema").is_some() {
                 bail!("ADB1000: schema authority must come from --schema");
             }

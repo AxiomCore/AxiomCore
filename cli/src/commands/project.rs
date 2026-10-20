@@ -34,6 +34,7 @@ pub async fn handle_project_create(
     slug: Option<String>,
     description: Option<String>,
     path: Option<PathBuf>,
+    selection: axiom_cloud::resources::ResourceSelection,
 ) -> Result<()> {
     let client = authenticated_client()?;
     let suggested_slug = artifact_slug_hint(path.as_deref()).unwrap_or_else(directory_slug_hint);
@@ -43,6 +44,7 @@ pub async fn handle_project_create(
         slug.as_deref(),
         description.as_deref(),
         &suggested_slug,
+        Some(selection),
     )
     .await?;
     link_current_directory(&project)?;
@@ -173,7 +175,7 @@ async fn choose_or_create_project(
         .ok_or_else(|| anyhow!("Project selection cancelled."))?;
 
     if selected == 0 {
-        return create_project_interactively(client, None, None, None, suggested_slug).await;
+        return create_project_interactively(client, None, None, None, suggested_slug, None).await;
     }
 
     Ok(projects[selected - 1].clone())
@@ -185,8 +187,12 @@ async fn create_project_interactively(
     slug_override: Option<&str>,
     description_override: Option<&str>,
     suggested_slug: &str,
+    selection: Option<axiom_cloud::resources::ResourceSelection>,
 ) -> Result<Project> {
-    ensure_interactive("Creating a project")?;
+    let interactive = std::io::stdin().is_terminal() && std::env::var_os("CI").is_none();
+    if !interactive && (name_override.is_none() || slug_override.is_none()) {
+        anyhow::bail!("Non-interactive project creation requires --name and --slug");
+    }
     let default_name = display_name_from_slug(suggested_slug);
     let name = prompt_required("Project name", name_override, &default_name)?;
     let slug_default = normalize_slug(slug_override.unwrap_or(&name));
@@ -199,6 +205,7 @@ async fn create_project_interactively(
 
     let description = match description_override {
         Some(value) => value.trim().to_string(),
+        None if !interactive => String::new(),
         None => Input::<String>::with_theme(&ColorfulTheme::default())
             .with_prompt("Project description (optional)")
             .allow_empty(true)
@@ -208,8 +215,37 @@ async fn create_project_interactively(
             .to_string(),
     };
 
+    let selection = match selection {
+        Some(v) => v,
+        None => {
+            let tier = Select::with_theme(&ColorfulTheme::default())
+                .with_prompt("Project plan")
+                .items(&[
+                    "Free (SQLite)",
+                    "Pro (PostgreSQL, subscription required before hosting)",
+                ])
+                .default(0)
+                .interact()?;
+            let database = if tier == 0 {
+                "sqlite"
+            } else {
+                let choice = Select::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Database")
+                    .items(&["PostgreSQL", "SQLite"])
+                    .default(0)
+                    .interact()?;
+                if choice == 0 { "postgres" } else { "sqlite" }
+            };
+            axiom_cloud::resources::ResourceSelection::new(
+                if tier == 0 { "free" } else { "pro" },
+                Some(database),
+                None,
+                "development",
+            )?
+        }
+    };
     client
-        .create_project(&name, &slug, &description)
+        .create_project_with_resources(&name, &slug, &description, &selection)
         .await
         .map_err(|error| anyhow!("Could not create project `{slug}`: {error}"))
 }

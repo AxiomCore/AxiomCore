@@ -51,6 +51,9 @@ fn files(root: &Path, directory: &Path, out: &mut Vec<PathBuf>, depth: usize) ->
             }
         } else if kind.is_file() {
             let path = entry.path();
+            if acore::security::secret_path(&path) {
+                continue;
+            }
             let extension = path.extension().and_then(|s| s.to_str()).unwrap_or("");
             if !name.ends_with(".server.json")
                 && !name.ends_with("release.json")
@@ -101,6 +104,12 @@ pub(super) fn collect_inputs(
 ) -> Result<(Vec<(PathBuf, Vec<u8>)>, Vec<Vec<u8>>, String)> {
     let mut paths = vec![];
     files(root, root, &mut paths, 0)?;
+    let private = axiom_lib::compiler_sandbox::private_source_paths(root)?;
+    paths.retain(|path| {
+        !private
+            .iter()
+            .any(|private| path.canonicalize().unwrap_or_else(|_| path.clone()) == *private)
+    });
     paths.sort();
     let mut collected = vec![];
     let mut hash = Sha256::new();
@@ -121,6 +130,7 @@ pub(super) fn collect_inputs(
     }
     let mut captured = vec![];
     for path in auxiliary {
+        axiom_lib::compiler_sandbox::check_source_path(root, path)?;
         // Reuse the captured file when it belongs to the source snapshot.
         let data = match path
             .strip_prefix(root)
@@ -143,7 +153,8 @@ pub(super) fn collect_inputs(
     }
     Ok((collected, captured, hex::encode(hash.finalize())))
 }
-async fn compile(
+pub(super) async fn compile(
+    source_root: &Path,
     source_name: &Path,
     _deployment: &Path,
     bindings: Option<&Path>,
@@ -163,15 +174,18 @@ async fn compile(
     }
     let result = tokio::time::timeout(
         Duration::from_secs(30),
-        Command::new(std::env::current_exe()?)
-            .current_dir(directory.path())
-            .arg("build")
-            .arg(source_name)
-            .args(["--out", "axiom.axiom"])
-            .args(variant.map(|v| vec!["--variant", v]).unwrap_or_default())
-            .env("CI", "true")
-            .kill_on_drop(true)
-            .status(),
+        Command::from(axiom_lib::compiler_sandbox::command(
+            std::env::current_exe()?,
+            source_root,
+        )?)
+        .current_dir(directory.path())
+        .arg("build")
+        .arg(source_name)
+        .args(["--out", "axiom.axiom"])
+        .args(variant.map(|v| vec!["--variant", v]).unwrap_or_default())
+        .env("CI", "true")
+        .kill_on_drop(true)
+        .status(),
     )
     .await
     .context("development build exceeded 30 seconds")??;
@@ -192,7 +206,10 @@ async fn compile(
     } else {
         ensure!(d.plan_sha256 == p.sha256()?, "reviewed deployment must match the initial private plan exactly; rebuild and review configuration before serving");
     }
-    d.validate(&p, &axiom_server::host_capabilities(true, delivery.is_some()))?;
+    d.validate(
+        &p,
+        &axiom_server::host_capabilities(true, delivery.is_some()),
+    )?;
     ensure!(
         p.actions
             .values()
@@ -220,11 +237,21 @@ async fn compile(
         )?;
     }
     if delivery.is_some() {
-        let index=1+usize::from(bindings.is_some());
-        let text=std::str::from_utf8(&configuration[index])?;
-        let mut config=axiom_server::delivery::DeliveryDeployment::from_json(text)?;
-        if rebind {config.plan_sha256=p.sha256()?;} else {ensure!(config.plan_sha256==p.sha256()?,"initial delivery configuration must match the exact private plan");}
-        fs::write(directory.path().join("delivery.json"),serde_jcs::to_vec(&config)?)?;
+        let index = 1 + usize::from(bindings.is_some());
+        let text = std::str::from_utf8(&configuration[index])?;
+        let mut config = axiom_server::delivery::DeliveryDeployment::from_json(text)?;
+        if rebind {
+            config.plan_sha256 = p.sha256()?;
+        } else {
+            ensure!(
+                config.plan_sha256 == p.sha256()?,
+                "initial delivery configuration must match the exact private plan"
+            );
+        }
+        fs::write(
+            directory.path().join("delivery.json"),
+            serde_jcs::to_vec(&config)?,
+        )?;
     }
     Ok(Snapshot {
         directory,
@@ -251,7 +278,12 @@ fn arguments(snapshot: &Snapshot, operation: &str) -> Vec<std::ffi::OsString> {
             root.join("bindings.json").into_os_string(),
         ]);
     }
-    if root.join("delivery.json").exists() {args.extend(["--delivery".into(),root.join("delivery.json").into_os_string()]);}
+    if root.join("delivery.json").exists() {
+        args.extend([
+            "--delivery".into(),
+            root.join("delivery.json").into_os_string(),
+        ]);
+    }
     args
 }
 async fn preflight(snapshot: &Snapshot) -> Result<()> {
@@ -318,7 +350,10 @@ pub(super) async fn start(snapshot: Snapshot, listen: std::net::SocketAddr) -> R
     ready["listen"] = json!(listen);
     ready["reload"] = json!("snapshot");
     ready["reviewedGrants"] = json!("retained");
-    let plan:ServerPlan=axiom_server::serve::read_json(&snapshot.directory.path().join("axiom.server.json"),16_777_216)?;
+    let plan: ServerPlan = axiom_server::serve::read_json(
+        &snapshot.directory.path().join("axiom.server.json"),
+        16_777_216,
+    )?;
     ready["planSha256"] = json!(plan.sha256()?);
     println!("{ready}");
     Ok(Running {
@@ -379,7 +414,7 @@ pub(super) async fn supervise(
     let (initial, configuration, mut fingerprint) =
         collect(root, &deployment, bindings.as_deref(), delivery.as_deref())?;
     let snapshot = tokio::select! {
-        result=compile(Path::new(source_name), &deployment, bindings.as_deref(), delivery.as_deref(), initial, configuration, variant, false)=>result?,
+        result=compile(root, Path::new(source_name), &deployment, bindings.as_deref(), delivery.as_deref(), initial, configuration, variant, false)=>result?,
         _=cancelled(&cancellation)=>return Ok(()),
     };
     tokio::select! {
@@ -403,19 +438,20 @@ pub(super) async fn supervise(
                 "development service exited unexpectedly ({status}); inspect the startup/runtime diagnostic"
             );
         }
-        let (files, configuration, next) = match collect(root, &deployment, bindings.as_deref(), delivery.as_deref()) {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!("Development snapshot failed: {e:#}");
-                continue;
-            }
-        };
+        let (files, configuration, next) =
+            match collect(root, &deployment, bindings.as_deref(), delivery.as_deref()) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("Development snapshot failed: {e:#}");
+                    continue;
+                }
+            };
         if next == fingerprint {
             continue;
         }
         fingerprint = next;
         let candidate = match tokio::select! {
-            result=compile(Path::new(source_name), &deployment, bindings.as_deref(), delivery.as_deref(), files, configuration, variant, true)=>result,
+            result=compile(root, Path::new(source_name), &deployment, bindings.as_deref(), delivery.as_deref(), files, configuration, variant, true)=>result,
             _=cancelled(&cancellation)=>break,
         } {
             Ok(v) => v,

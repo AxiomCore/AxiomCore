@@ -160,6 +160,11 @@ a destination. GET/HEAD input fields become percent-encoded query values;
 other methods send a typed JSON body. Responses require unambiguous JSON and the
 operation's exact output type; HEAD requires Void output.
 
+The matching source preview also offers purpose-bound runtime credentials and
+explicit local/Cloud bindings. It has a separate target and distribution gate;
+see [project secrets and runtime boundaries](/backend/runtime-secrets). The
+environment resolver described above remains the installed provider workflow.
+
 `safe` permits GET/HEAD, `idempotent` permits PUT/DELETE, and `idempotencyKey`
 requires a mandatory String `idempotencyField: .key`, a stable key of 8–128 ASCII
 characters, and a deployment that explicitly confirms downstream support.

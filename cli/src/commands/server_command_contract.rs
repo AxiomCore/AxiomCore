@@ -10,6 +10,10 @@ use std::{
 
 #[derive(Clone, Debug, Args)]
 pub struct CommonInput {
+    /// Runtime secret/configuration profile in the adjacent AxiomSecrets.toml.
+    /// Values are resolved after compilation; never used for mock execution.
+    #[arg(long)]
+    pub environment: Option<String>,
     /// .acore source or .axiom artifact; defaults to local axiom.acore
     pub input: Option<PathBuf>,
     /// Exact private companion plan (artifact input only)
@@ -102,6 +106,7 @@ pub enum PreparationInput {
 /// request, process or listener is started. Source classification follows later.
 #[derive(Clone, Debug)]
 pub struct ResolvedInput {
+    pub environment: Option<String>,
     pub profile: ProfileIntent,
     pub input: PreparationInput,
     pub deployment: Option<PathBuf>,
@@ -178,6 +183,16 @@ impl ResolvedInput {
 }
 
 fn resolve(args: &CommonInput, profile: ProfileIntent, cwd: &Path) -> Result<ResolvedInput> {
+    ensure!(
+        args.environment
+            .as_ref()
+            .is_none_or(|v| axiom_lib::secrets::name(v)),
+        "invalid runtime environment name"
+    );
+    ensure!(
+        args.environment.is_none() || profile == ProfileIntent::Real,
+        "runtime secrets are unavailable in mock execution"
+    );
     ensure!(
         args.variant
             .as_ref()
@@ -320,6 +335,7 @@ fn resolve(args: &CommonInput, profile: ProfileIntent, cwd: &Path) -> Result<Res
         },
     )?;
     Ok(ResolvedInput {
+        environment: args.environment.clone(),
         profile,
         input,
         deployment,

@@ -9,6 +9,7 @@
     "execution",
     "policies",
     "integrations",
+    "runtime-secrets",
     "request-batching",
     "events-and-jobs",
     "release-workflow",

@@ -284,8 +284,9 @@ pub fn resolve(args: &ConnectionArgs, engine: &str, root: &Path) -> Result<Conne
             if uri.query().is_some() || uri.fragment().is_some() {
                 bail!("ADB1107: this persistent profile accepts a SQLite file URI without query options");
             }
-            uri.to_file_path()
-                .map_err(|_| anyhow::anyhow!("ADB1107: SQLite URI must identify a local persistent file"))?
+            uri.to_file_path().map_err(|_| {
+                anyhow::anyhow!("ADB1107: SQLite URI must identify a local persistent file")
+            })?
         } else {
             root.join(".axiom/database/data/database.sqlite")
         };
@@ -326,9 +327,12 @@ pub fn resolve(args: &ConnectionArgs, engine: &str, root: &Path) -> Result<Conne
         url
     };
     if let Some(password) = args.password.clone().or_else(|| {
-        if url.password().is_none() { std::env::var("PGPASSWORD").ok() } else { None }
-    })
-    {
+        if url.password().is_none() {
+            std::env::var("PGPASSWORD").ok()
+        } else {
+            None
+        }
+    }) {
         url.set_password(Some(&password))
             .map_err(|_| anyhow::anyhow!("ADB1107: invalid password input"))?;
     }
@@ -951,9 +955,12 @@ pub async fn rollback(args: &RollbackArgs) -> Result<()> {
             && current.revision.restores.as_deref() == Some(requested))
     {
         if args.policy.json {
-            println!("{}", serde_json::json!({"format":"axiom-database-migration-result/v1",
+            println!(
+                "{}",
+                serde_json::json!({"format":"axiom-database-migration-result/v1",
                 "version":current.revision.identity.version,"status":"current",
-                "applied":false,"restores":requested}));
+                "applied":false,"restores":requested})
+            );
         } else {
             println!("Database is already at the requested schema state.");
         }
@@ -1176,12 +1183,20 @@ pub fn diff(source: &Path, from: &str, to: &str, json: bool) -> Result<()> {
     let versions = db::archive_versions(&loaded.root)?;
     let get = |version: &str| -> Result<(DatabaseContractIR, Option<String>)> {
         if version == "working" {
-            Ok((loaded.compiled.contract.clone(), loaded.compiled.migration_source.clone()))
+            Ok((
+                loaded.compiled.contract.clone(),
+                loaded.compiled.migration_source.clone(),
+            ))
         } else {
             versions
                 .iter()
                 .find(|r| r.revision.identity.version == version)
-                .map(|r| (r.revision.desired.clone(), r.revision.evolution.as_ref().map(|e| e.source.clone())))
+                .map(|r| {
+                    (
+                        r.revision.desired.clone(),
+                        r.revision.evolution.as_ref().map(|e| e.source.clone()),
+                    )
+                })
                 .with_context(|| format!("ADB1102: version {version} is not in the local catalog"))
         }
     };
@@ -1744,10 +1759,16 @@ mod tests {
         };
         let Connection::Sqlite { file } =
             resolve(&args("sqlite:///tmp/task%20list.sqlite"), "sqlite", root).unwrap()
-        else { panic!("expected SQLite file"); };
+        else {
+            panic!("expected SQLite file");
+        };
         assert_eq!(file, Path::new("/tmp/task list.sqlite"));
-        for url in ["sqlite::memory:", "sqlite:///:memory:", "sqlite://remote/tasks.sqlite",
-                    "sqlite:tasks.sqlite?mode=memory"] {
+        for url in [
+            "sqlite::memory:",
+            "sqlite:///:memory:",
+            "sqlite://remote/tasks.sqlite",
+            "sqlite:tasks.sqlite?mode=memory",
+        ] {
             assert!(resolve(&args(url), "sqlite", root).is_err(), "{url}");
         }
     }

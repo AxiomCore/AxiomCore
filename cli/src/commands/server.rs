@@ -10,10 +10,52 @@ pub enum Language {
     Go,
 }
 
+#[derive(Clone, Debug, Default, clap::Args)]
+pub struct SecretProfileArgs {
+    #[arg(long)]
+    pub environment: Option<String>,
+    /// Project directory containing the reference-only AxiomSecrets.toml.
+    #[arg(long, requires = "environment")]
+    pub secret_root: Option<PathBuf>,
+}
+impl SecretProfileArgs {
+    pub(super) fn resolve(
+        &self,
+        contract: &std::path::Path,
+        plan: &axiom_lib::backend::ServerPlan,
+    ) -> Result<Option<std::sync::Arc<axiom_server::secret_runtime::RuntimeSecrets>>> {
+        let Some(environment) = &self.environment else {
+            return Ok(None);
+        };
+        let root = self.secret_root.as_deref().unwrap_or_else(|| {
+            contract
+                .parent()
+                .filter(|path| !path.as_os_str().is_empty())
+                .unwrap_or_else(|| std::path::Path::new("."))
+        });
+        // Some server commands are synchronous adapters. Isolate native login
+        // HTTP from any caller's Tokio executor instead of nesting block_on.
+        let source = std::thread::scope(|scope| {
+            scope
+                .spawn(|| -> Result<_> {
+                    let runtime = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()?;
+                    runtime.block_on(super::secrets::runtime(root, environment, plan))
+                })
+                .join()
+                .map_err(|_| anyhow::anyhow!("AXSECRET_UNAVAILABLE: runtime preparation failed"))?
+        })?;
+        Ok(Some(std::sync::Arc::new(source)))
+    }
+}
+
 #[derive(Debug, Subcommand)]
 pub enum ServerAction {
     /// Validate providers, credentials, handlers and cleanup before opening a listener
     Validate {
+        #[command(flatten)]
+        secrets: SecretProfileArgs,
         contract: PathBuf,
         plan: PathBuf,
         #[arg(long)]
@@ -47,6 +89,8 @@ pub enum ServerAction {
     VerifyBundle { directory: PathBuf },
     /// Run a verified release using its exact packaged executable and configuration
     RunBundle {
+        #[command(flatten)]
+        secrets: SecretProfileArgs,
         directory: PathBuf,
         #[arg(long, default_value = "127.0.0.1:8080")]
         listen: std::net::SocketAddr,
@@ -69,6 +113,8 @@ pub enum ServerAction {
     },
     /// Execute durable jobs, consumers, schedules and signed webhook attempts
     Worker {
+        #[command(flatten)]
+        secrets: SecretProfileArgs,
         contract: PathBuf,
         plan: PathBuf,
         #[arg(long)]
@@ -84,6 +130,8 @@ pub enum ServerAction {
     },
     /// Submit a typed job or publish to explicitly granted event bindings
     Enqueue {
+        #[command(flatten)]
+        secrets: SecretProfileArgs,
         contract: PathBuf,
         plan: PathBuf,
         #[arg(long)]
@@ -93,6 +141,8 @@ pub enum ServerAction {
     },
     /// Inspect redacted provider state, attempts, failures and recovery history
     DeliveryInspect {
+        #[command(flatten)]
+        secrets: SecretProfileArgs,
         contract: PathBuf,
         plan: PathBuf,
         #[arg(long)]
@@ -106,6 +156,8 @@ pub enum ServerAction {
     },
     /// Cancel pending work or signal a leased attempt
     DeliveryCancel {
+        #[command(flatten)]
+        secrets: SecretProfileArgs,
         contract: PathBuf,
         plan: PathBuf,
         #[arg(long)]
@@ -115,6 +167,8 @@ pub enum ServerAction {
     },
     /// Explicitly redrive a dead letter; external effects can repeat
     DeliveryRedrive {
+        #[command(flatten)]
+        secrets: SecretProfileArgs,
         contract: PathBuf,
         plan: PathBuf,
         #[arg(long)]
@@ -131,6 +185,8 @@ pub enum ServerAction {
     },
     /// Execute managed/sandbox actions as an HTTP service; never starts mocks
     Run {
+        #[command(flatten)]
+        secrets: SecretProfileArgs,
         contract: PathBuf,
         plan: PathBuf,
         #[arg(long)]
@@ -149,6 +205,8 @@ pub enum ServerAction {
     },
     /// Invoke an authored action directly through its mandatory guards
     Invoke {
+        #[command(flatten)]
+        secrets: SecretProfileArgs,
         contract: PathBuf,
         plan: PathBuf,
         #[arg(long)]
@@ -228,7 +286,9 @@ pub async fn handle_async(action: &ServerAction) -> Result<()> {
             delivery,
             observations,
             listen,
+            secrets,
         } => {
+            let secrets = secrets.clone();
             let (contract, plan, deployment, bindings, delivery) = (
                 contract.clone(),
                 plan.clone(),
@@ -237,7 +297,10 @@ pub async fn handle_async(action: &ServerAction) -> Result<()> {
                 delivery.clone(),
             );
             let cancellation = axiom_server::invocation::InvocationCancellation::default();
-            let observation_output = observations.as_deref().map(prepare_observation_output).transpose()?;
+            let observation_output = observations
+                .as_deref()
+                .map(prepare_observation_output)
+                .transpose()?;
             let token = cancellation.clone();
             let signal = tokio::spawn(async move {
                 axiom_server::development::shutdown_signal().await;
@@ -245,19 +308,33 @@ pub async fn handle_async(action: &ServerAction) -> Result<()> {
             });
             let result = async {
                 let host = tokio::task::spawn_blocking(move || {
-                    super::serve::load_host(&contract, &plan, &deployment, bindings.as_deref(), delivery.as_deref())
+                    let private_plan: ServerPlan = read(&plan)?;
+                    let source = secrets.resolve(&contract, &private_plan)?;
+                    super::serve::load_host_with_resolver(
+                        &contract,
+                        &plan,
+                        &deployment,
+                        bindings.as_deref(),
+                        delivery.as_deref(),
+                        source,
+                    )
                 })
                 .await??;
                 let observed = host.clone();
                 let result = axiom_server::development::real_session(host, *listen, false)
-                    .run(cancellation).await;
+                    .run(cancellation)
+                    .await;
                 if let Some((mut file, destination)) = observation_output {
                     let bytes = serde_json::to_vec_pretty(&observed.observations())?;
-                    anyhow::ensure!(bytes.len() <= 25 * 1024 * 1024, "observation report exceeds its bound");
+                    anyhow::ensure!(
+                        bytes.len() <= 25 * 1024 * 1024,
+                        "observation report exceeds its bound"
+                    );
                     file.write_all(&bytes)?;
                     file.write_all(b"\n")?;
                     file.as_file().sync_all()?;
-                    file.persist_noclobber(&destination).with_context(|| format!("save observations {}", destination.display()))?;
+                    file.persist_noclobber(&destination)
+                        .with_context(|| format!("save observations {}", destination.display()))?;
                 }
                 result.map_err(Into::into)
             }
@@ -265,8 +342,13 @@ pub async fn handle_async(action: &ServerAction) -> Result<()> {
             signal.abort();
             result
         }
-        ServerAction::RunBundle { directory, listen } => {
+        ServerAction::RunBundle {
+            directory,
+            listen,
+            secrets,
+        } => {
             let directory = directory.clone();
+            let secrets = secrets.clone();
             let cancellation = axiom_server::invocation::InvocationCancellation::default();
             let token = cancellation.clone();
             let signal = tokio::spawn(async move {
@@ -275,7 +357,7 @@ pub async fn handle_async(action: &ServerAction) -> Result<()> {
             });
             let result = async {
                 let host = tokio::task::spawn_blocking(move || {
-                    super::server_workflow::prepare_bundle(&directory)
+                    super::server_workflow::prepare_bundle(&directory, &secrets)
                 })
                 .await??;
                 axiom_server::development::real_session(host, *listen, false)
@@ -309,18 +391,25 @@ pub async fn handle_async(action: &ServerAction) -> Result<()> {
     }
 }
 
-fn prepare_observation_output(path: &std::path::Path) -> Result<(tempfile::NamedTempFile, PathBuf)> {
+fn prepare_observation_output(
+    path: &std::path::Path,
+) -> Result<(tempfile::NamedTempFile, PathBuf)> {
     match fs::symlink_metadata(path) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(error.into()),
         Ok(_) => anyhow::bail!("observation destination already exists; choose a new report path"),
     }
-    let parent = path.parent().filter(|parent| !parent.as_os_str().is_empty()).unwrap_or_else(|| std::path::Path::new("."));
-    let file = tempfile::NamedTempFile::new_in(parent).context("prepare private observation output before host activation")?;
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| std::path::Path::new("."));
+    let file = tempfile::NamedTempFile::new_in(parent)
+        .context("prepare private observation output before host activation")?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        file.as_file().set_permissions(fs::Permissions::from_mode(0o600))?;
+        file.as_file()
+            .set_permissions(fs::Permissions::from_mode(0o600))?;
     }
     Ok((file, path.into()))
 }
@@ -365,39 +454,51 @@ pub fn handle(action: &ServerAction) -> Result<()> {
             contract,
             plan,
             delivery,
+            secrets,
             ..
         }
         | ServerAction::Enqueue {
             contract,
             plan,
             delivery,
+            secrets,
             ..
         }
         | ServerAction::DeliveryInspect {
             contract,
             plan,
             delivery,
+            secrets,
             ..
         }
         | ServerAction::DeliveryCancel {
             contract,
             plan,
             delivery,
+            secrets,
             ..
         }
         | ServerAction::DeliveryRedrive {
             contract,
             plan,
             delivery,
+            secrets,
             ..
         } => {
-            let contract: AxiomFile = read(contract)?;
             let plan: ServerPlan = read(plan)?;
+            let source = secrets.resolve(contract, &plan)?;
+            let resolver: std::sync::Arc<
+                dyn axiom_server::providers::ConfigurationResolver + Send + Sync,
+            > = match source {
+                Some(source) => source,
+                None => std::sync::Arc::new(|key: &str| std::env::var(key).ok()),
+            };
+            let contract: AxiomFile = read(contract)?;
             let controller = axiom_server::delivery::DeliveryController::connect(
                 contract.clone(),
                 plan.clone(),
                 read_delivery(delivery)?,
-                std::sync::Arc::new(|key: &str| std::env::var(key).ok()),
+                resolver.clone(),
             )?;
             match action {
                 ServerAction::Worker {
@@ -535,6 +636,7 @@ pub fn handle(action: &ServerAction) -> Result<()> {
         deployment,
         bindings,
         delivery,
+        secrets,
         ..
     }
     | ServerAction::Invoke {
@@ -543,21 +645,20 @@ pub fn handle(action: &ServerAction) -> Result<()> {
         deployment,
         bindings,
         delivery,
+        secrets,
         ..
     } = action
     {
-        let contract: AxiomFile = read(contract)?;
-        let plan: ServerPlan = read(plan)?;
-        plan.validate(&contract)?;
-        let mut registry =
-            axiom_server::serve::registry_from_file(&contract, &plan, bindings.as_deref())?;
-        super::serve::attach_delivery(&contract,&plan,&mut registry,delivery.as_deref())?;
-        let host = std::sync::Arc::new(axiom_server::host::ActionHost::new(
+        let private_plan: ServerPlan = read(plan)?;
+        let source = secrets.resolve(contract, &private_plan)?;
+        let host = super::serve::load_host_with_resolver(
             contract,
             plan,
-            read(deployment)?,
-            registry,
-        )?);
+            deployment,
+            bindings.as_deref(),
+            delivery.as_deref(),
+            source,
+        )?;
         if matches!(action, ServerAction::Run { .. }) {
             anyhow::bail!("HTTP execution requires async command routing");
         }
@@ -626,18 +727,47 @@ pub fn handle(action: &ServerAction) -> Result<()> {
                     Ok((
                         name.clone(),
                         ProviderBinding {
- configuration_sha256: resource.configuration.as_ref().map(|n|plan.configurations[n].digest()).transpose()?,
-                            secrets: resource.secrets.iter().map(|n|(n.clone(),format!("env:AXIOM_SECRET_{}",n.to_ascii_uppercase()))).collect(),
-                            provider: if resource.transaction_profile.is_some() {"postgres".into()}
-                                else if let Some(provider)=plan.integrations.provider(name){provider.into()}
-                                else if resource.interface_schema_sha256.is_some(){"reviewRequired".into()}
-                                else {"jsonSnapshot".into()},
+                            configuration_sha256: resource
+                                .configuration
+                                .as_ref()
+                                .map(|n| plan.configurations[n].digest())
+                                .transpose()?,
+                            secrets: resource
+                                .secrets
+                                .iter()
+                                .map(|n| (n.clone(), format!("secret:{n}")))
+                                .collect(),
+                            provider: if resource.transaction_profile.is_some() {
+                                "postgres".into()
+                            } else if let Some(provider) = plan.integrations.provider(name) {
+                                provider.into()
+                            } else if resource.interface_schema_sha256.is_some() {
+                                "reviewRequired".into()
+                            } else {
+                                "jsonSnapshot".into()
+                            },
                             interface_sha256: resource.interface_hash()?,
-                            configuration: if let Some(schema)=resource.configuration.as_ref().map(|n|&plan.configurations[n]) {
-                                schema.fields.iter().filter(|(_,f)|!f.optional&&f.default.is_none()).map(|(key,_)|(key.clone(),format!("env:AXIOM_{}_{}",name.to_ascii_uppercase(),key.to_ascii_uppercase()))).collect()
-                            }else if plan.integrations.provider(name)
-                                == Some("memoryCache")
+                            configuration: if let Some(schema) = resource
+                                .configuration
+                                .as_ref()
+                                .map(|n| &plan.configurations[n])
                             {
+                                schema
+                                    .fields
+                                    .iter()
+                                    .filter(|(_, f)| !f.optional && f.default.is_none())
+                                    .map(|(key, _)| {
+                                        (
+                                            key.clone(),
+                                            format!(
+                                                "env:AXIOM_{}_{}",
+                                                name.to_ascii_uppercase(),
+                                                key.to_ascii_uppercase()
+                                            ),
+                                        )
+                                    })
+                                    .collect()
+                            } else if plan.integrations.provider(name) == Some("memoryCache") {
                                 Default::default()
                             } else if plan.integrations.provider(name) == Some("httpClient") {
                                 [
@@ -647,6 +777,7 @@ pub fn handle(action: &ServerAction) -> Result<()> {
                                     "idempotencySupported",
                                 ]
                                 .into_iter()
+                                .filter(|key| *key != "credential" || resource.secrets.is_empty())
                                 .map(|key| {
                                     (
                                         key.into(),
@@ -660,8 +791,11 @@ pub fn handle(action: &ServerAction) -> Result<()> {
                                 .collect()
                             } else {
                                 std::collections::BTreeMap::from([(
-                                    (if resource.transaction_profile.is_some() {"binding"}
-                                    else if plan.integrations.provider(name) == Some("localUpload") {
+                                    (if resource.transaction_profile.is_some() {
+                                        "binding"
+                                    } else if plan.integrations.provider(name)
+                                        == Some("localUpload")
+                                    {
                                         "root"
                                     } else {
                                         "path"

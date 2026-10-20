@@ -1,0 +1,53 @@
+---
+title: Project environments
+description: Keep application data, users, sessions, and secrets separate across project environments.
+pageType: concept
+---
+
+A logical environment names a separate application data, authentication and
+configuration scope, such as development, staging or production.
+
+**Alpha:** the dashboard can assign a managed database resource to a logical
+environment. Managed application authentication and hosted database runtime
+connections are **Coming soon**. Existing [secret environments](/cloud/secret-environments)
+retain their documented support and behavior.
+
+## Understand the scopes
+
+| Scope | Purpose |
+| --- | --- |
+| Local development | Runs local workflows without allocating hosted storage. |
+| Logical project environment | Identifies a data, authentication and configuration boundary. |
+| Hosted database resource | Provides persistent storage for a logical environment. |
+| Sandbox deployment | Tests a particular contract with a separate deployment lifecycle. |
+
+Deleting a temporary sandbox must not implicitly delete persistent database data
+or the logical environment's secret values.
+
+## Isolation
+
+Environments must not automatically share application users, sessions, credentials
+or secret values. Previews should start from synthetic or sanitized data. A
+database branch is a separate resource and does not automatically merge
+schema or data into production.
+
+Managed SQLite requires qualified table and action permissions for protected
+authentication and migration tables. Those permissions do not replace application
+row-ownership checks. PostgreSQL uses protected schemas and restricted roles,
+with row policies where supported.
+
+Managed authentication databases must not be replicated into browsers or mobile
+devices. Clients use authenticated application operations.
+
+## Review the destination
+
+Before changing a hosted resource, check the project, environment, profile,
+location and current state. Changing a subscription must not silently convert
+the engine or move data across regions.
+
+The initial allowance includes one hosted environment per project. Additional
+environments, migration test databases and restore targets consume hosting
+capacity even when temporary. Released allowances will be shown in Resources.
+
+Continue with [project resources](/cloud/project-resources) and the existing
+[release environments guide](/cloud/releases-and-environments).

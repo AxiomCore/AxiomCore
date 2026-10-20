@@ -4,18 +4,18 @@ pub mod benchmark;
 pub mod cache;
 pub mod contract;
 pub mod contract_build;
-pub mod dependencies;
 pub mod database;
 pub mod database_dev;
+pub mod database_fleet;
 pub mod database_runtime;
 pub mod database_sqlite;
-pub mod database_fleet;
+pub mod dependencies;
 pub mod deploy;
 pub mod diff;
 pub mod doctor;
+pub mod domain;
 pub mod editor;
 pub mod editor_workflows;
-pub mod domain;
 pub mod extensions;
 pub mod init;
 pub mod inspector;
@@ -25,9 +25,9 @@ mod inspector_jev;
 mod inspector_runtime;
 mod inspector_server;
 pub mod install;
-pub mod lsp;
 pub mod join;
 mod legacy_mock;
+pub mod lsp;
 pub mod mock;
 mod mock_development;
 pub mod onboard;
@@ -36,8 +36,9 @@ pub mod project; // Add this
 pub mod pull;
 pub mod release;
 pub mod run;
-pub mod security;
 pub mod scenario;
+pub mod secrets;
+pub mod security;
 pub mod serve;
 pub mod server;
 #[allow(dead_code)] // Standalone mock CLI types remain reserved for their execution phase.
@@ -50,3 +51,7 @@ pub mod watch;
 
 #[cfg(test)]
 mod editor_schema_parity;
+
+pub mod secret_development;
+
+pub mod resources;

@@ -68,6 +68,7 @@ mime_guess = "2"
 zip = "0.6"
 tempfile = "3.8"
 dotenvy = "0.15"
+zeroize = "1.8"
 
 # The large derived command tree otherwise retains oversized temporary builder
 # frames in unoptimized test code. Exercise the parser with release-like frames.

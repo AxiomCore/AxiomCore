@@ -6,7 +6,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 pub fn baseline_path(source: &Path, variant: &str) -> PathBuf {
-    let root=axiom_lib::project_state::root(source);
+    let root = axiom_lib::project_state::root(source);
     let relative = source.strip_prefix(&root).unwrap_or(source);
     baseline_variant_path(&root.join(".axiom/baselines").join(relative), variant)
 }
@@ -31,7 +31,11 @@ fn baseline_variant_path(source: &Path, variant: &str) -> PathBuf {
 pub fn read_baseline_path(source: &Path, variant: &str) -> PathBuf {
     let hidden = baseline_path(source, variant);
     let legacy = baseline_variant_path(source, variant);
-    if hidden.is_file() || !legacy.is_file() { hidden } else { legacy }
+    if hidden.is_file() || !legacy.is_file() {
+        hidden
+    } else {
+        legacy
+    }
 }
 
 pub fn write_baseline(source: &Path, variant: &str, json: &str) -> Result<()> {
@@ -82,7 +86,7 @@ pub async fn build_to(
 ) -> Result<String> {
     super::contract_build::validate_output(output)?;
     axiom_lib::project_state::import_legacy(source)?;
-    dotenvy::dotenv().ok();
+    // Secret sources are resolved only by the runtime, never during compilation.
     let emit = |status, message| {
         if let Some(tx) = &tx {
             let _ = tx.send(Action::UpdateBuildStep {
@@ -125,26 +129,38 @@ pub async fn build_to(
     }
     let staged_plan = staged.with_extension("server.json");
     if staged_plan.is_file() {
-        let mut private: axiom_lib::backend::ServerPlan=serde_json::from_slice(&std::fs::read(&staged_plan)?)?;
+        let mut private: axiom_lib::backend::ServerPlan =
+            serde_json::from_slice(&std::fs::read(&staged_plan)?)?;
         if !private.storage.is_empty() {
-            let public: axiom_lib::contract::AxiomFile=serde_json::from_slice(&std::fs::read(&staged)?)?;
+            let public: axiom_lib::contract::AxiomFile =
+                serde_json::from_slice(&std::fs::read(&staged)?)?;
             for storage in private.storage.clone().values() {
-                if let Some(resource)=&storage.resource {
-                    let schema_path=source.parent().unwrap_or(std::path::Path::new(".")).join(&storage.schema);
-                    let (_,schema)=super::database::source(&schema_path)?;
-                    let runtime=axiom_lib::database::runtime::RuntimePlan {
-                        format:axiom_lib::database::runtime::FORMAT.into(),
-                        profile:axiom_lib::database::runtime::DEVELOPMENT_PROFILE.into(),
-                        schema:schema.contract,source_origins:Default::default(),
-                        tenant_claim:storage.tenant_claim.clone(),tenant_column:storage.tenant_column.clone(),operations:storage.operations.clone(),
+                if let Some(resource) = &storage.resource {
+                    let schema_path = source
+                        .parent()
+                        .unwrap_or(std::path::Path::new("."))
+                        .join(&storage.schema);
+                    let (_, schema) = super::database::source(&schema_path)?;
+                    let runtime = axiom_lib::database::runtime::RuntimePlan {
+                        format: axiom_lib::database::runtime::FORMAT.into(),
+                        profile: axiom_lib::database::runtime::DEVELOPMENT_PROFILE.into(),
+                        schema: schema.contract,
+                        source_origins: Default::default(),
+                        tenant_claim: storage.tenant_claim.clone(),
+                        tenant_column: storage.tenant_column.clone(),
+                        operations: storage.operations.clone(),
                     };
-                    runtime.validate(&public,&private,resource)?;
-                    private.persistence.insert(resource.clone(),runtime);
+                    runtime.validate(&public, &private, resource)?;
+                    private.persistence.insert(resource.clone(), runtime);
                 }
             }
-            if !private.persistence.is_empty() {private.required_capabilities.insert(axiom_lib::backend::Capability::DatabasePersistence);}
+            if !private.persistence.is_empty() {
+                private
+                    .required_capabilities
+                    .insert(axiom_lib::backend::Capability::DatabasePersistence);
+            }
             private.validate(&public)?;
-            std::fs::write(&staged_plan,serde_json::to_vec(&private)?)?;
+            std::fs::write(&staged_plan, serde_json::to_vec(&private)?)?;
         }
         super::contract_build::atomic_write(&plan, &std::fs::read(staged_plan)?)?;
     } else if plan.is_file() {

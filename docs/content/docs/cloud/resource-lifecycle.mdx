@@ -1,0 +1,80 @@
+---
+title: Resource lifecycle
+description: Understand lazy database allocation, provisioning failures, suspension, and recovery boundaries.
+pageType: concept
+---
+
+A database resource has a lifecycle separate from project metadata and contract
+releases. A project can exist before it needs hosted storage.
+
+**Alpha:** provisioning, retry, suspension, resume, access rotation and deletion are available
+through project Resources. Archive, restore and customer-owned database
+connections are **Coming soon**. No hosted database recovery SLA or automatic
+archive policy is announced.
+
+## States
+
+| State | Meaning |
+| --- | --- |
+| Unprovisioned | Preferences exist; no hosted database has been allocated. |
+| Provisioning | An asynchronous operation is allocating and initializing storage. |
+| Ready | Storage verification passed. Authentication readiness is separate. |
+| Retrying | A recoverable operation is scheduled for another attempt. |
+| Repair required | An operator must reconcile provider state before work continues. |
+| Suspended | Axiom routing is paused. Data has not been archived or deleted. |
+| Deleted | Provider deletion was verified; metadata retains the outcome. |
+
+## Safe retries
+
+Lifecycle requests need an idempotency key and the expected resource generation.
+A retry should inspect or finish the same operation. Reusing its key with
+changed input must fail.
+
+A timeout does not prove that provider creation or a write failed. The service
+must reconcile the recorded identity before retrying. It must not create a
+second database or delete an unfamiliar database based only on its name.
+
+## Suspend or delete
+
+Open **Resources**, find the environment, and choose its action. Review the
+destination before confirming. **Suspend** fences Axiom application routing;
+it retains the stored database and still consumes hosting capacity. **Resume**
+verifies the existing placement before returning it to Ready.
+
+**Delete** permanently removes the hosted database. The confirmation requires
+the phrase `delete database`. Use a disposable database to test deletion.
+Deletion is not an archive and does not provide a restore point.
+
+## Rotate database access
+
+1. Open the project's **Resources** page and find the Ready database.
+2. Select **Rotate access** when it is available for that database.
+3. Review the environment and confirm. Follow the operation until it completes.
+
+Rotation replaces database access credentials. PostgreSQL connections close,
+and Axiom pauses database access until the operation finishes. Your application's users
+and their passwords do not change. Saved credentials are not displayed.
+
+The action appears only for a database with qualified rotation support. Storage
+readiness alone does not enable runtime connections, hosted migrations or
+application authentication. Those capabilities remain **Coming soon**.
+
+## Limits and payment failures
+
+Quota exhaustion should stop new application work while preserving reserved
+security actions, including revocation and recovery. Failed payments and exceeded
+quotas must not silently delete data.
+
+No automatic 30-day inactivity archive policy is currently announced.
+Suspension, archive and deletion have different effects. A provider's retained
+history window is not an Axiom recovery guarantee.
+
+## Recovery
+
+Restoration must validate a new target before changing routing and fence old
+writers and credentials. Restoring historical authentication data must not
+revive revoked sessions or permissions. Recovery and customer-owned database
+support will be documented for each qualified profile before release.
+
+Continue with [project environments](/cloud/project-environments) and
+[project resources](/cloud/project-resources).

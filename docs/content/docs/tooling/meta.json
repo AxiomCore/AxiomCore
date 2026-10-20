@@ -3,6 +3,7 @@
   "pages": [
     "doctor-and-onboarding",
     "cli-reference",
+    "secrets-cli",
     "interactive-dashboards",
     "security-check"
   ]

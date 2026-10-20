@@ -52,6 +52,11 @@ roles:
 Workspace membership and project membership are enforced by the service; a
 valid browser session alone does not grant project access.
 
+Project secrets have additional [operation-level permissions](/cloud/secrets#project-roles).
+Owning a project does not grant runtime use of a secret. Configure an explicit
+binding and expiring identity grant in the intended
+[secret environment](/cloud/secret-environments).
+
 ## Rotate a signing key
 
 ```bash title="Terminal"
@@ -77,3 +82,10 @@ their own UI or logs.
 - record the release attempt and channel generation used for activation; and
 - rotate credentials through their owning service rather than editing
   generated config.
+
+## Database resources and environments
+
+For managed storage provisioning and its availability boundaries, read
+[project resources](/cloud/project-resources) and
+[project environments](/cloud/project-environments). Cloud membership is
+separate from the users who sign in to an application you build.

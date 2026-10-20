@@ -24,8 +24,15 @@ fn artifacts(
 pub(super) fn selected_target(id: &str) -> Result<TargetProfile> {
     axiom_server::release::selected_target(id, env!("CARGO_PKG_VERSION"))
 }
-pub(super) fn prepare_bundle(directory: &Path) -> Result<Arc<axiom_server::host::ActionHost>> {
-    axiom_server::release::prepare_bundle(directory, env!("CARGO_PKG_VERSION"))
+pub(super) fn prepare_bundle(
+    directory: &Path,
+    secrets: &super::server::SecretProfileArgs,
+) -> Result<Arc<axiom_server::host::ActionHost>> {
+    axiom_server::release::prepare_bundle_with_secrets(
+        directory,
+        env!("CARGO_PKG_VERSION"),
+        |plan| secrets.resolve(&directory.join("contract.axiom"), plan),
+    )
 }
 pub(super) fn inspection(
     contract: &AxiomFile,
@@ -56,35 +63,39 @@ pub fn handle(action: &ServerAction) -> Result<bool> {
             bindings,
             delivery,
             target,
+            secrets,
         } => {
+            anyhow::ensure!(secrets.environment.is_none() || target=="native-server", "AXSECRET_UNSUPPORTED_TARGET: this runtime profile requires the qualified native target");
             let (c, p, d, b) = artifacts(contract, plan, deployment, bindings.as_deref())?;
-            let mut selected=selected_target(target)?;
+            let mut selected = selected_target(target)?;
             if delivery.is_some() {
                 anyhow::ensure!(target=="native-server","an explicit delivery controller requires the native local host; other targets need a qualified delivery packaging adapter");
                 selected.capabilities.insert(Capability::Jobs);
             }
-            let assessment = assess_target(
-                &c,
-                &p,
-                Some(&d),
-                b.as_ref(),
-                &selected,
-                None,
-            )?;
+            let mut assessment = assess_target(&c, &p, Some(&d), b.as_ref(), &selected, None)?;
+            if secrets.environment.is_some() {
+                axiom_server::release::require_protected_profile(&mut assessment)?;
+            }
             assessment.require_compatible()?;
             if target == "cloudflare-workers-local" {
                 let plan_sha256 = p.sha256()?;
-                axiom_server::worker_package::preflight(c,p,d)?;
-                println!("{}",json!({"validated":true,"targetAssessment":assessment,"listenerOpened":false,"cleanup":"request-local; no remote dispatch","planSha256":plan_sha256}));
+                axiom_server::worker_package::preflight(c, p, d)?;
+                println!(
+                    "{}",
+                    json!({"validated":true,"targetAssessment":assessment,"listenerOpened":false,"cleanup":"request-local; no remote dispatch","planSha256":plan_sha256})
+                );
                 return Ok(true);
             }
-            let mut registry = axiom_server::serve::registry_from_file(&c, &p, bindings.as_deref())?;
-            super::serve::attach_delivery(&c,&p,&mut registry,delivery.as_deref())?;
+            let source = secrets.resolve(contract, &p)?;
             let plan_sha256 = p.sha256()?;
-            let ready =
-                axiom_server::host::ActionHost::configured(c, p, d, registry, &|key: &str| {
-                    std::env::var(key).ok()
-                })?;
+            let ready = super::serve::load_host_with_resolver(
+                contract,
+                plan,
+                deployment,
+                bindings.as_deref(),
+                delivery.as_deref(),
+                source,
+            )?;
             ready.shutdown(Duration::from_secs(5))?;
             println!(
                 "{}",
@@ -130,7 +141,11 @@ pub fn handle(action: &ServerAction) -> Result<bool> {
         }
         ServerAction::VerifyBundle { directory } => println!(
             "{}",
-            if directory.join("worker-release.json").exists() { axiom_server::worker_package::verify_bundle(directory)? } else { axiom_server::release::verify_bundle(directory, env!("CARGO_PKG_VERSION"))? }
+            if directory.join("worker-release.json").exists() {
+                axiom_server::worker_package::verify_bundle(directory)?
+            } else {
+                axiom_server::release::verify_bundle(directory, env!("CARGO_PKG_VERSION"))?
+            }
         ),
         ServerAction::RollbackCheck { current, previous } => println!(
             "{}",

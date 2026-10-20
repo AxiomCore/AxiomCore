@@ -61,6 +61,20 @@ Connected accounts, projects, releases, environments, tests, observability, and
 the Cloud Dashboard are **Alpha** and require their configured services.
 Axiom Studio, Acode, and Axiom Marketplace are **Coming soon**.
 
+Project environment secret management is **Alpha** in the deployed Dashboard.
+Protected local/Cloud consumption is **Experimental** in the matching source
+preview on macOS arm64 with native ActionHost and server WASM. The source web
+frontend uses delegated backend operations. Native mobile runtime parity and
+container/Worker consumption are unqualified. Published CLI 0.149.0 and host
+0.6.12 do not include this qualification. See
+[project secrets and runtime boundaries](/backend/runtime-secrets).
+
+The deployed inventory, candidate review, runtime access and activity workflow
+is described in [Manage project secrets](/cloud/secrets). See
+[secret environments](/cloud/secret-environments) for protection and expiry, and
+the [Secrets CLI reference](/tooling/secrets-cli) for explicitly qualified
+source-preview commands.
+
 ## Database DX delivery
 
 CLI 0.149.0 provides versioned run, migrate, rollback, status, history,
@@ -73,3 +87,14 @@ or native Windows downloads. Installer platform detection does not establish
 artifact availability. See [installation](/getting-started/installation) and
 [the detailed reference](/reference/capability-boundaries#database-developer-workflow)
 for constraints outside the checked local path.
+
+## Managed project databases
+
+Dashboard database preferences, managed storage provisioning and resource
+lifecycle controls, including qualified access rotation, are **Alpha**, checked
+on October 20, 2026. Customers select
+SQLite or PostgreSQL; allocation depends on location, capacity and entitlement.
+Hosted runtime connections, migrations, managed application authentication and
+public paid checkout are **Coming soon**. New resource-management CLI commands
+are source-only. See [project resources](/cloud/project-resources) and the
+existing local database path.

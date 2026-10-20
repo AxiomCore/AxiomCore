@@ -1,0 +1,103 @@
+---
+title: Project resources
+description: Understand managed database plans, hosting allocation, locations, and project billing in Axiom Cloud.
+pageType: concept
+---
+
+Project resources connect a logical project environment to persistent hosted
+storage. They are separate from published contracts and temporary sandboxes.
+
+**Alpha:** the dashboard can save database preferences and provision managed
+storage in available locations. Runtime connections, hosted migrations and
+managed application authentication are **Coming soon**. Existing local database
+workflows remain available.
+
+## Database choices
+
+| Choice | Intended storage | Boundary |
+| --- | --- | --- |
+| Free | Managed SQLite | One database per hosted environment. |
+| Pro | Private PostgreSQL database on shared managed compute | Application and protected authentication schemas belong to that environment. |
+| Upgrade an existing SQLite project | Retain SQLite with its displayed allowances | A subscription upgrade does not automatically convert the engine. |
+
+Axiom manages hosting and placement behind these database choices. Native local
+SQLite and managed SQLite have distinct capability profiles. Support for one
+does not qualify every deployment target.
+
+## Creation and allocation
+
+Creating project metadata saves preferences. It does not allocate a database
+or start a charge. Local development stays local. Hosting additionally requires
+an available database option and location, available capacity and an appropriate
+project entitlement.
+
+Check requested and actual locations separately. A location name does not prove
+backup residency or an availability guarantee. Provisioning must initialize and
+verify storage before it becomes ready. Managed authentication readiness is a
+separate state.
+
+## Provision from the dashboard
+
+1. Create a project and choose Free or Pro, SQLite or PostgreSQL, a location and
+   an environment. Free uses SQLite. PostgreSQL requires Pro.
+2. Open the project's **Resources** page. For an existing project without
+   database preferences, choose them there and select **Save preferences**.
+3. Select **Provision**, review the environment and database, then confirm.
+4. Follow the operation until it completes. **Ready** means storage bootstrap
+   verification passed. **Auth: not_configured** means application
+   authentication is not available for that resource.
+
+Allocation runs asynchronously and can take several minutes. Refreshing the
+page does not create another database. If capacity is unavailable, no additional
+resource is allocated. Review the displayed failure before retrying.
+
+The current locations are Mumbai for SQLite and Singapore for PostgreSQL.
+The dashboard shows available choices at the time of the request. The initial
+allowance is one hosted environment, with 100 MB for SQLite or 1 GB for
+PostgreSQL. Paid SQLite currently retains its displayed database allowance.
+Additional resource and execution limits appear on the Resources page.
+Free lifecycle work allows 20 operations per project and 60 across the account
+per UTC calendar month. Suspension and deletion remain available for cleanup.
+
+Work totals report the budget reserved this month. Storage measurements appear
+beside each database. **Not reported** means no total is available for that
+metric; it does not mean zero usage. These totals are not a billing invoice.
+
+The new resource-management CLI commands are not part of the released CLI yet.
+Use the dashboard for this Alpha workflow.
+
+## Project subscriptions
+
+A workspace groups projects and members. A project subscription funds the
+included resources of one project. Upgrading it does not upgrade other projects
+in the workspace.
+
+The launch price is $20 USD per Pro project per month. Released
+allowances and tax treatment will be shown before checkout. Selecting Pro saves
+a preference; payment details will be collected by Stripe-hosted Checkout.
+A browser success redirect alone cannot activate paid access. Verified
+subscription state must synchronize first.
+
+Public paid checkout is not enabled yet. Controlled test checkout is labeled
+**Test billing** and makes no real charge. A Pro preference alone does not
+authorize hosting.
+
+Storage, database work, execution time, traffic and message delivery need
+separate budgets. A request allowance does not authorize an arbitrarily
+expensive query. Additional environments, SMS, AI inference and dedicated
+availability need separately funded allowances.
+
+## Credentials
+
+Provider administration credentials stay in trusted services. Frontend bundles,
+Acore contracts and sandbox extensions must not receive platform-wide database
+tokens or unrestricted database-owner credentials. Cloud membership is distinct
+from the users who sign in to an application.
+
+Owners can [rotate database access](/cloud/resource-lifecycle#rotate-database-access)
+from Resources when the action is available. The operation replaces connection
+credentials without exposing their values.
+
+Continue with [project environments](/cloud/project-environments),
+[resource lifecycle](/cloud/resource-lifecycle), or the currently supported
+[local database workflow](/getting-started/quickstart-database).

@@ -111,6 +111,7 @@ pub fn handle(action: &ServerAction) -> Result<bool> {
             ))?
         ),
         ServerAction::Package {
+            secrets,
             contract,
             plan,
             deployment,
@@ -119,8 +120,11 @@ pub fn handle(action: &ServerAction) -> Result<bool> {
             runtime_source,
             output,
         } => {
-            if matches!(target.as_str(), "container-amd64" | "container-arm64") {
-                axiom_server::container::package_context(contract, plan, deployment, bindings.as_deref(), target, runtime_source.as_deref().ok_or_else(|| anyhow::anyhow!("container packaging requires --runtime-source pointing to the reviewed workspace root"))?, output)?;
+            let container = matches!(target.as_str(), "container-amd64" | "container-arm64");
+            anyhow::ensure!(container || secrets.environment.is_none(), "AXSECRET_UNSUPPORTED_TARGET: --environment seals a secrets profile into container releases only");
+            if container {
+                let sealed = secrets.sealed(contract)?;
+                axiom_server::container::package_context_with_secrets(contract, plan, deployment, bindings.as_deref(), target, runtime_source.as_deref().ok_or_else(|| anyhow::anyhow!("container packaging requires --runtime-source pointing to the reviewed workspace root"))?, output, sealed.as_ref())?;
             } else if target.starts_with("cloudflare-workers") {
                 axiom_server::worker_package::package(contract,plan,deployment,bindings.as_deref(),target,runtime_source.as_deref().ok_or_else(|| anyhow::anyhow!("Worker packaging requires --runtime-source pointing to the reviewed workspace root"))?,output)?;
             } else {

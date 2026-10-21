@@ -19,6 +19,23 @@ pub struct SecretProfileArgs {
     pub secret_root: Option<PathBuf>,
 }
 impl SecretProfileArgs {
+    /// The selected environment as a sealable container profile (no values are read).
+    pub(super) fn sealed(
+        &self,
+        contract: &std::path::Path,
+    ) -> Result<Option<axiom_server::release::SealedProfile>> {
+        let Some(environment) = &self.environment else {
+            return Ok(None);
+        };
+        let root = self.secret_root.as_deref().unwrap_or_else(|| {
+            contract
+                .parent()
+                .filter(|path| !path.as_os_str().is_empty())
+                .unwrap_or_else(|| std::path::Path::new("."))
+        });
+        let bindings = axiom_server::secret_runtime::RuntimeSecrets::inspect(root, environment)?;
+        Ok(Some(axiom_server::release::SealedProfile::new(environment, bindings)?))
+    }
     pub(super) fn resolve(
         &self,
         contract: &std::path::Path,
@@ -71,6 +88,10 @@ pub enum ServerAction {
     Targets,
     /// Create a reproducible, hash-bound conventional-server release directory
     Package {
+        /// Container targets: seal this AxiomSecrets.toml environment (value-free; Cloud
+        /// sources only) into the release, so run-bundle resolves it through the workload.
+        #[command(flatten)]
+        secrets: SecretProfileArgs,
         contract: PathBuf,
         plan: PathBuf,
         #[arg(long)]

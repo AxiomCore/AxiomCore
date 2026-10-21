@@ -758,7 +758,11 @@ pub fn handle(action: &ServerAction) -> Result<()> {
                                 .iter()
                                 .map(|n| (n.clone(), format!("secret:{n}")))
                                 .collect(),
-                            provider: if resource.transaction_profile.is_some() {
+                            provider: if resource.transaction_profile.as_deref() == Some(axiom_lib::database::runtime::HOSTED_LIBSQL_PROFILE) {
+                                // Hosted libSQL: endpoint, credential and head come from the
+                                // managed credential's lease (runtime-data/v1).
+                                "libsql".into()
+                            } else if resource.transaction_profile.is_some() {
                                 "postgres".into()
                             } else if let Some(provider) = plan.integrations.provider(name) {
                                 provider.into()
@@ -788,7 +792,9 @@ pub fn handle(action: &ServerAction) -> Result<()> {
                                         )
                                     })
                                     .collect()
-                            } else if plan.integrations.provider(name) == Some("memoryCache") {
+                            } else if plan.integrations.provider(name) == Some("memoryCache")
+                                || resource.transaction_profile.as_deref() == Some(axiom_lib::database::runtime::HOSTED_LIBSQL_PROFILE)
+                            {
                                 Default::default()
                             } else if plan.integrations.provider(name) == Some("httpClient") {
                                 [

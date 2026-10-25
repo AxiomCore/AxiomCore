@@ -253,12 +253,24 @@ pub enum ServerAction {
         #[arg(short, long)]
         output: PathBuf,
     },
-    /// Scaffold private provider references; review providers and explicit grants
+    /// Scaffold private provider references; review providers and explicit grants.
+    /// Authentication scaffolds `axiomAuth` with the environment's Axiom issuer
+    /// (`https://auth.axiomcore.dev/<project-id>/<environment-id>`); `--static-key` keeps
+    /// a static-key JWT provider instead
     Deployment {
         contract: PathBuf,
         plan: PathBuf,
         #[arg(short, long)]
         output: PathBuf,
+        /// The Axiom project ID (lowercase UUID) of the `axiomAuth` issuer
+        #[arg(long, value_name = "UUID", requires = "environment_id")]
+        project_id: Option<String>,
+        /// The Axiom environment ID (lowercase UUID) of the `axiomAuth` issuer
+        #[arg(long, value_name = "UUID", requires = "project_id")]
+        environment_id: Option<String>,
+        /// Keep a static-key JWT provider (RS256, public key in `AXIOM_JWT_PUBLIC_KEY`)
+        #[arg(long, conflicts_with_all = ["project_id", "environment_id"])]
+        static_key: bool,
     },
     /// Validate exact contract identity and inspect action guards/effect evidence
     Inspect {
@@ -740,7 +752,7 @@ pub fn handle(action: &ServerAction) -> Result<()> {
     let plan: ServerPlan = read(plan)?;
     plan.validate(&contract)?;
     match action {
-        ServerAction::Deployment { output, .. } => {
+        ServerAction::Deployment { output, project_id, environment_id, static_key, .. } => {
             let bindings = plan
                 .resources
                 .iter()
@@ -872,27 +884,18 @@ pub fn handle(action: &ServerAction) -> Result<()> {
                 bindings,
                 grants: Default::default(),
                 coordination,
-                authentication: if let Some(profile) = security.authentication.values().next() {
-                    Some(AuthenticationProvider::Jwt {
-                        issuer: profile.issuer.clone(),
-                        audience: profile.audience.clone(),
-                        algorithm: JwtAlgorithm::RS256,
-                        key_env: "AXIOM_JWT_PUBLIC_KEY".into(),
-                    })
-                } else if !plan.guards.is_empty()
-                    || contract.ir.endpoints.values().any(|e| e.auth.is_some())
-                {
-                    Some(AuthenticationProvider::Jwt {
-                        issuer: "https://issuer.example".into(),
-                        audience: "server".into(),
-                        algorithm: JwtAlgorithm::RS256,
-                        key_env: "AXIOM_JWT_PUBLIC_KEY".into(),
-                    })
-                } else {
-                    None
-                },
+                authentication: deployment_authentication(
+                    security.authentication.values().next().map(|p| (p.issuer.as_str(), p.audience.as_str())),
+                    !plan.guards.is_empty() || contract.ir.endpoints.values().any(|e| e.auth.is_some()),
+                    project_id.as_deref().zip(environment_id.as_deref()),
+                    *static_key,
+                )?,
             };
             security.validate_provider(deployment.authentication.as_ref())?;
+            if let Some(authentication) = &deployment.authentication {
+                authentication.validate()?;
+                authentication.validate_plan(&plan)?;
+            }
             write(output, &serde_json::to_vec_pretty(&deployment)?)
         }
         ServerAction::Inspect {
@@ -932,5 +935,70 @@ pub fn handle(action: &ServerAction) -> Result<()> {
             .as_bytes(),
         ),
         _ => unreachable!(),
+    }
+}
+
+/// The deployment's authentication provider (`auth-core/v1`, "CLI scaffolding").
+/// `signed`: the contract's signed issuer and audience, which the provider must equal;
+/// `needed`: guards or authenticated endpoints without a signed profile; `ids`: the
+/// project and environment of the `axiomAuth` issuer; `static_key`: keep a static-key JWT
+/// provider. An Axiom issuer scaffolds `axiomAuth` (no key reference); any other signed
+/// issuer, or `--static-key`, a static-key RS256 provider.
+fn deployment_authentication(signed: Option<(&str, &str)>, needed: bool, ids: Option<(&str, &str)>, static_key: bool) -> Result<Option<AuthenticationProvider>> {
+    use axiom_lib::backend::authentication::axiom_auth_issuer;
+    let static_jwt = |issuer: &str, audience: &str| AuthenticationProvider::Jwt { issuer: issuer.into(), audience: audience.into(), algorithm: JwtAlgorithm::RS256, key_env: "AXIOM_JWT_PUBLIC_KEY".into() };
+    let uuid = |s: &str| s.len() == 36 && s.bytes().enumerate().all(|(i, b)| if [8, 13, 18, 23].contains(&i) { b == b'-' } else { b.is_ascii_digit() || (b'a'..=b'f').contains(&b) });
+    let environment_issuer = match ids {
+        Some((project, environment)) => {
+            if !uuid(project) || !uuid(environment) {
+                anyhow::bail!("--project-id and --environment-id are lowercase UUIDs");
+            }
+            Some(format!("{}/{project}/{environment}", axiom_lib::backend::authentication::AXIOM_AUTH_ORIGIN))
+        }
+        None => None,
+    };
+    if let Some((issuer, audience)) = signed {
+        if axiom_auth_issuer(issuer, false).is_some() && !static_key {
+            if environment_issuer.as_deref().is_some_and(|e| e != issuer) {
+                anyhow::bail!("the contract signs the Axiom issuer {issuer}; --project-id and --environment-id name another environment");
+            }
+            return Ok(Some(AuthenticationProvider::AxiomAuth { issuer: issuer.into(), audience: audience.into() }));
+        }
+        if environment_issuer.is_some() {
+            anyhow::bail!("the contract signs the issuer {issuer}, not an Axiom issuer; rebuild the contract for axiomAuth or omit --project-id and --environment-id");
+        }
+        return Ok(Some(static_jwt(issuer, audience)));
+    }
+    if !needed {
+        return Ok(None);
+    }
+    if static_key {
+        return Ok(Some(static_jwt("https://issuer.example", "server")));
+    }
+    let issuer = environment_issuer.ok_or_else(|| anyhow::anyhow!("authentication needs an issuer: pass --project-id and --environment-id for the environment's axiomAuth issuer, or --static-key for a static-key JWT provider"))?;
+    Ok(Some(AuthenticationProvider::AxiomAuth { audience: format!("{issuer}/api"), issuer }))
+}
+
+#[cfg(test)]
+mod deployment_authentication_tests {
+    use super::*;
+    const P: &str = "5d1f0c2e-8a7b-4c6d-9e0f-1a2b3c4d5e6f";
+    const E: &str = "6e2a1d3f-9b8c-4d7e-8f1a-2b3c4d5e6f70";
+    #[test]
+    fn scaffolds_axiom_auth_with_the_environment_issuer() {
+        let issuer = format!("https://auth.axiomcore.dev/{P}/{E}");
+        assert_eq!(deployment_authentication(None, true, Some((P, E)), false).unwrap(), Some(AuthenticationProvider::AxiomAuth { issuer: issuer.clone(), audience: format!("{issuer}/api") }));
+        // The signed Axiom issuer wins; another environment is refused.
+        assert_eq!(deployment_authentication(Some((&issuer, "app")), true, None, false).unwrap(), Some(AuthenticationProvider::AxiomAuth { issuer: issuer.clone(), audience: "app".into() }));
+        assert!(deployment_authentication(Some((&issuer, "app")), true, Some((E, P)), false).is_err());
+        // No issuer to scaffold without IDs, unless a static key is asked for.
+        assert!(deployment_authentication(None, true, None, false).is_err());
+        assert!(matches!(deployment_authentication(None, true, None, true).unwrap(), Some(AuthenticationProvider::Jwt { algorithm: JwtAlgorithm::RS256, .. })));
+        // A signed external issuer keeps its static-key provider.
+        assert!(matches!(deployment_authentication(Some(("https://login.example", "api")), true, None, false).unwrap(), Some(AuthenticationProvider::Jwt { .. })));
+        assert!(deployment_authentication(Some(("https://login.example", "api")), true, Some((P, E)), false).is_err());
+        // IDs are lowercase UUIDs; nothing is scaffolded when nothing authenticates.
+        assert!(deployment_authentication(None, true, Some((&P.to_uppercase(), E)), false).is_err());
+        assert_eq!(deployment_authentication(None, false, Some((P, E)), false).unwrap(), None);
     }
 }

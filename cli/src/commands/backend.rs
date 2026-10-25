@@ -141,12 +141,13 @@ pub async fn build_to(
                         .unwrap_or(std::path::Path::new("."))
                         .join(&storage.schema);
                     let (_, schema) = super::database::source(&schema_path)?;
-                    // A resource declaring `TransactionProfile.hostedLibsql` runs on hosted
-                    // libSQL (runtime-data/v1); other storage uses the development profile.
-                    let hosted = private.resources.get(resource).and_then(|r| r.transaction_profile.as_deref()) == Some(axiom_lib::database::runtime::HOSTED_LIBSQL_PROFILE);
+                    // A resource declaring a transaction profile (`hostedLibsql`, or
+                    // `postgres17_11` for PostgreSQL) runs on it; other storage uses the
+                    // development profile.
+                    let declared = private.resources.get(resource).and_then(|r| r.transaction_profile.clone());
                     let runtime = axiom_lib::database::runtime::RuntimePlan {
                         format: axiom_lib::database::runtime::FORMAT.into(),
-                        profile: if hosted { axiom_lib::database::runtime::HOSTED_LIBSQL_PROFILE } else { axiom_lib::database::runtime::DEVELOPMENT_PROFILE }.into(),
+                        profile: declared.unwrap_or_else(|| axiom_lib::database::runtime::DEVELOPMENT_PROFILE.into()),
                         schema: schema.contract,
                         source_origins: Default::default(),
                         tenant_claim: storage.tenant_claim.clone(),

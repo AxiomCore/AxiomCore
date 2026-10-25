@@ -268,7 +268,8 @@ pub enum ServerAction {
         /// The Axiom environment ID (lowercase UUID) of the `axiomAuth` issuer
         #[arg(long, value_name = "UUID", requires = "project_id")]
         environment_id: Option<String>,
-        /// Keep a static-key JWT provider (RS256, public key in `AXIOM_JWT_PUBLIC_KEY`)
+        /// Keep a static-key JWT provider (RS256, public key in `AXIOM_JWT_PUBLIC_KEY`); without
+        /// a signed issuer it scaffolds the placeholder issuer `https://issuer.example`, to review
         #[arg(long, conflicts_with_all = ["project_id", "environment_id"])]
         static_key: bool,
     },
@@ -958,7 +959,10 @@ fn deployment_authentication(signed: Option<(&str, &str)>, needed: bool, ids: Op
         None => None,
     };
     if let Some((issuer, audience)) = signed {
-        if axiom_auth_issuer(issuer, false).is_some() && !static_key {
+        if axiom_auth_issuer(issuer, false).is_some() {
+            if static_key {
+                anyhow::bail!("the contract signs the Axiom issuer {issuer}, which only axiomAuth verifies; omit --static-key");
+            }
             if environment_issuer.as_deref().is_some_and(|e| e != issuer) {
                 anyhow::bail!("the contract signs the Axiom issuer {issuer}; --project-id and --environment-id name another environment");
             }
@@ -973,6 +977,8 @@ fn deployment_authentication(signed: Option<(&str, &str)>, needed: bool, ids: Op
         return Ok(None);
     }
     if static_key {
+        // No signed issuer to copy: a placeholder the operator must replace before deploying.
+        eprintln!("review deployment.authentication: replace the placeholder issuer https://issuer.example and audience server with your token issuer's, and set AXIOM_JWT_PUBLIC_KEY");
         return Ok(Some(static_jwt("https://issuer.example", "server")));
     }
     let issuer = environment_issuer.ok_or_else(|| anyhow::anyhow!("authentication needs an issuer: pass --project-id and --environment-id for the environment's axiomAuth issuer, or --static-key for a static-key JWT provider"))?;
@@ -991,6 +997,8 @@ mod deployment_authentication_tests {
         // The signed Axiom issuer wins; another environment is refused.
         assert_eq!(deployment_authentication(Some((&issuer, "app")), true, None, false).unwrap(), Some(AuthenticationProvider::AxiomAuth { issuer: issuer.clone(), audience: "app".into() }));
         assert!(deployment_authentication(Some((&issuer, "app")), true, Some((E, P)), false).is_err());
+        // An Axiom issuer is never verified with a static key.
+        assert!(deployment_authentication(Some((&issuer, "app")), true, None, true).is_err());
         // No issuer to scaffold without IDs, unless a static key is asked for.
         assert!(deployment_authentication(None, true, None, false).is_err());
         assert!(matches!(deployment_authentication(None, true, None, true).unwrap(), Some(AuthenticationProvider::Jwt { algorithm: JwtAlgorithm::RS256, .. })));

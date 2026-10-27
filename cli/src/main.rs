@@ -246,6 +246,10 @@ enum Commands {
         /// suggest the next available version on a collision.
         #[arg(long, requires = "release")]
         version: Option<String>,
+
+        /// Frontend [auth.environments.<name>] baked into the runtime configuration (default development)
+        #[arg(long, value_name = "NAME")]
+        auth_environment: Option<String>,
     },
     /// Inspect an application workspace, contract snapshot, or packaged application
     Inspect {
@@ -301,6 +305,8 @@ enum Commands {
         #[command(subcommand)]
         action: ProjectAction,
     },
+    /// Administer project authentication: settings, providers, users, keys
+    Auth(commands::auth::AuthArgs),
     Deploy {
         #[command(subcommand)]
         target: DeployTarget,
@@ -410,6 +416,9 @@ enum Commands {
         /// Open the browser or native simulator after starting the UI session
         #[arg(long, conflicts_with = "once")]
         launch: bool,
+        /// Frontend [auth.environments.<name>] baked into the runtime configuration (default development)
+        #[arg(long, value_name = "NAME")]
+        auth_environment: Option<String>,
     },
     /// Validate or bootstrap the optional Domain Model v1 layer
     Domain {
@@ -1743,6 +1752,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Pull { .. } => "pull",
         Commands::Watch { .. } => "watch",
         Commands::Project { .. } => "project",
+        Commands::Auth(..) => "auth",
         Commands::Diff { .. } => "diff",
         Commands::Contract { .. } => "contract",
         Commands::Packages { .. } => "packages",
@@ -2779,7 +2789,9 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             fixtures,
             identities,
             watch,
+            auth_environment,
         } => {
+            commands::ui::set_auth_environment(auth_environment.clone())?;
             if commands::app::is_axiom_application(source) {
                 if environment.is_some()
                     || mode.is_some()
@@ -3007,7 +3019,9 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             release,
             project,
             version,
+            auth_environment,
         } => {
+            commands::ui::set_auth_environment(auth_environment.clone())?;
             let output = commands::contract_build::build(
                 Path::new(file),
                 out.as_deref(),
@@ -3076,6 +3090,7 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             }
             handle_inspect(&path).await
         }
+        Commands::Auth(args) => commands::auth::handle(args).await,
         Commands::Project { action } => match action {
             ProjectAction::List => commands::project::handle_project_list().await,
             ProjectAction::Resources { project, action } => {

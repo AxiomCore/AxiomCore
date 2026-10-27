@@ -1,0 +1,1134 @@
+//! `axiom auth`: project authentication administration (auth-surfaces/v1 W4.5).
+//!
+//! Output is metadata-safe by default: addresses are masked unless
+//! `--reveal-email`, and no secret or token field is ever printed or written.
+//! Secret values come only from stdin or a masked prompt, never argv. Exit
+//! codes: 0 ok, 2 usage, 3 forbidden, 4 conflict, 5 unavailable.
+use anyhow::{Context, Result};
+use axiom_cloud::auth_admin::{public_issuer_get, AuthAdminError};
+use axiom_cloud::CloudClient;
+use axiom_lib::backend::authentication::{axiom_auth_issuer, LOOPBACK_ISSUERS};
+use axiom_lib::deps_manifest::{parse_axiom_deps_v2, AuthDeclaration};
+use clap::{Args, Subcommand};
+use reqwest::Method;
+use serde_json::{json, Map, Value};
+use std::io::{IsTerminal, Read};
+use std::path::{Path, PathBuf};
+use zeroize::Zeroizing;
+
+#[derive(Args, Debug)]
+pub struct AuthArgs {
+    /// Cloud project slug (default: the project linked to this directory)
+    #[arg(long, global = true)]
+    pub project: Option<String>,
+    /// Environment name or UUID
+    #[arg(long, global = true, default_value = "development")]
+    pub environment: String,
+    /// Stable machine-readable output
+    #[arg(long, global = true)]
+    pub json: bool,
+    #[command(subcommand)]
+    pub action: Action,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum Action {
+    /// Show whether authentication is enabled and ready, and the issuer epoch
+    Status,
+    /// Read or replace the environment's authentication settings
+    Settings {
+        #[command(subcommand)]
+        action: SettingsAction,
+    },
+    /// Configure Google, GitHub and OIDC sign-in providers
+    Providers {
+        #[command(subcommand)]
+        action: ProvidersAction,
+    },
+    /// List, inspect, ban, unban and revoke users
+    Users {
+        #[command(subcommand)]
+        action: UsersAction,
+    },
+    /// Invite an address (sends one invitation email)
+    Invite {
+        email: String,
+        /// Role name; repeatable
+        #[arg(long = "role")]
+        roles: Vec<String>,
+        #[arg(long)]
+        organization: Option<String>,
+    },
+    /// Read the public JWKS and epoch; --check compares their key revisions
+    Jwks {
+        /// Issuer URL (default: the environment's issuer)
+        #[arg(long)]
+        issuer: Option<String>,
+        #[arg(long)]
+        check: bool,
+    },
+    /// Write the environment's issuer configuration into a frontend manifest
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
+    /// Compare a frontend manifest, the environment settings and a deployment
+    Check {
+        #[arg(long, default_value = "AxiomDeps.toml")]
+        manifest: PathBuf,
+        /// Backend deployment JSON whose axiomAuth provider is compared
+        #[arg(long)]
+        deployment: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum SettingsAction {
+    Get {
+        /// Write the settings JSON to this file (default stdout)
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+    Set {
+        /// Settings JSON including `revision`; `turnstile_secret` may only come from here
+        #[arg(long)]
+        file: PathBuf,
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ProvidersAction {
+    List,
+    /// Create or update `google`, `github` or `oidc-<slug>`
+    Set {
+        provider: String,
+        #[arg(long)]
+        client_id: Option<String>,
+        /// OIDC issuer (oidc-<slug> only)
+        #[arg(long)]
+        issuer: Option<String>,
+        /// Comma-separated scopes
+        #[arg(long)]
+        scopes: Option<String>,
+        #[arg(long, conflicts_with = "disable")]
+        enable: bool,
+        #[arg(long)]
+        disable: bool,
+        /// Read the client secret from stdin (otherwise a masked prompt when one is needed)
+        #[arg(long)]
+        client_secret_stdin: bool,
+    },
+    /// Check the provider's credentials without signing anyone in
+    Test { provider: String },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum UsersAction {
+    List {
+        /// An email prefix, or a user UUID
+        #[arg(long)]
+        search: Option<String>,
+        #[arg(long, value_parser = ["active", "banned", "deleted", "unverified"])]
+        status: Option<String>,
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..=100))]
+        limit: Option<u32>,
+        #[arg(long)]
+        cursor: Option<String>,
+        #[arg(long)]
+        reveal_email: bool,
+    },
+    Show {
+        user_id: String,
+        #[arg(long)]
+        reveal_email: bool,
+    },
+    Ban {
+        user_id: String,
+        #[arg(long)]
+        reason: String,
+    },
+    Unban { user_id: String },
+    /// End the user's sessions (one with --session)
+    Revoke {
+        user_id: String,
+        #[arg(long)]
+        session: Option<String>,
+        #[arg(long)]
+        yes: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ConfigAction {
+    Pull {
+        #[arg(long, default_value = "AxiomDeps.toml")]
+        manifest: PathBuf,
+        /// Update the manifest (otherwise print the block)
+        #[arg(long)]
+        write: bool,
+    },
+}
+
+/// An `axiom auth` failure with its exit code; the message names a code only.
+#[derive(Debug)]
+pub struct Exit {
+    pub code: i32,
+    pub message: String,
+}
+
+impl std::fmt::Display for Exit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+impl std::error::Error for Exit {}
+
+fn usage(message: impl Into<String>) -> anyhow::Error {
+    Exit { code: 2, message: message.into() }.into()
+}
+
+pub fn exit_code(error: &AuthAdminError) -> i32 {
+    match error {
+        AuthAdminError::Invalid { .. } => 2,
+        AuthAdminError::Forbidden { .. } | AuthAdminError::Unauthenticated => 3,
+        AuthAdminError::Conflict { .. } => 4,
+        AuthAdminError::Unavailable { .. } => 5,
+    }
+}
+
+fn admin(error: AuthAdminError) -> anyhow::Error {
+    Exit { code: exit_code(&error), message: error.to_string() }.into()
+}
+
+/// Run `axiom auth`; failures exit with the documented code.
+pub async fn handle(args: &AuthArgs) -> Result<()> {
+    match run(args).await {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let (code, message) = match error.downcast_ref::<Exit>() {
+                Some(exit) => (exit.code, exit.message.clone()),
+                None => (5, format!("{error:#}")),
+            };
+            eprintln!("axiom auth: {message}");
+            std::process::exit(code)
+        }
+    }
+}
+
+struct Target {
+    client: CloudClient,
+    slug: String,
+    environment: String,
+}
+
+fn uuid_shaped(value: &str) -> bool {
+    value.len() == 36
+        && value.bytes().enumerate().all(|(i, b)| {
+            if [8, 13, 18, 23].contains(&i) {
+                b == b'-'
+            } else {
+                b.is_ascii_digit() || (b'a'..=b'f').contains(&b)
+            }
+        })
+}
+
+async fn target(args: &AuthArgs) -> Result<Target> {
+    let client = crate::auth_store::authenticated_cloud_client()
+        .map_err(|_| Exit { code: 3, message: "AXAUTH_UNAUTHENTICATED: run `axiom login` first".into() })?;
+    let slug = match &args.project {
+        Some(slug) => slug.clone(),
+        None => {
+            let directory = std::env::current_dir()?;
+            let linked = crate::auth_store::get_project_id(&directory)?
+                .ok_or_else(|| usage("no project: pass --project <slug> or link this directory with `axiom project link`"))?;
+            let projects = client.list_projects().await.map_err(|_| Exit { code: 5, message: "AXAUTH_UNAVAILABLE: could not list projects".into() })?;
+            projects
+                .into_iter()
+                .find(|p| p.id == linked || p.slug == linked)
+                .map(|p| p.slug)
+                .ok_or_else(|| usage("the linked project is not available; pass --project <slug>"))?
+        }
+    };
+    let environment = resolve_environment(&client, &slug, &args.environment).await?;
+    Ok(Target { client, slug, environment })
+}
+
+/// A name resolves through `configuration-environments`; a UUID passes through.
+pub async fn resolve_environment(client: &CloudClient, slug: &str, name: &str) -> Result<String> {
+    if uuid_shaped(name) {
+        return Ok(name.to_string());
+    }
+    let environments = client.configuration_environments(slug).await.map_err(admin)?;
+    pick_environment(&environments, name)
+}
+
+pub fn pick_environment(environments: &[Value], name: &str) -> Result<String> {
+    environments
+        .iter()
+        .find(|e| e["slug"].as_str() == Some(name))
+        .and_then(|e| e["id"].as_str())
+        .filter(|id| uuid_shaped(id))
+        .map(str::to_string)
+        .ok_or_else(|| usage(format!("unknown environment `{name}`; pass a configured environment name or UUID")))
+}
+
+impl Target {
+    async fn call(&self, method: Method, rest: &str, query: &[(&str, String)], body: Option<&Value>) -> Result<Value> {
+        self.client
+            .auth_admin_request(method, &self.slug, &self.environment, rest, query, body)
+            .await
+            .map_err(admin)
+    }
+}
+
+/// Keys whose values are never printed or written: secrets, credentials,
+/// hashes, sealed material. Booleans such as `client_secret_set` remain.
+const DENIED: [&str; 10] = ["secret", "password", "token", "phc", "hash", "ciphertext", "wrapped_key", "nonce", "seed", "pending"];
+
+fn denied(key: &str) -> bool {
+    let key = key.to_ascii_lowercase();
+    DENIED.iter().any(|d| key.contains(d))
+}
+
+/// `j***@e***.com`.
+pub fn mask_email(value: &str) -> String {
+    let Some((local, domain)) = value.split_once('@') else { return value.to_string() };
+    let first = |s: &str| s.chars().next().map(String::from).unwrap_or_default();
+    let tld = domain.rsplit_once('.').map(|(_, t)| t).unwrap_or("");
+    format!("{}***@{}***.{}", first(local), first(domain), tld)
+}
+
+fn looks_like_email(value: &str) -> bool {
+    value.split_once('@').is_some_and(|(local, domain)| {
+        !local.is_empty() && domain.contains('.') && !value.contains(char::is_whitespace) && !value.contains('/')
+    })
+}
+
+/// Remove secret fields and, unless `reveal`, mask every address.
+pub fn sanitize(value: &mut Value, reveal: bool) {
+    match value {
+        Value::Object(map) => {
+            map.retain(|key, value| value.is_boolean() || !denied(key));
+            for value in map.values_mut() {
+                sanitize(value, reveal);
+            }
+        }
+        Value::Array(items) => items.iter_mut().for_each(|v| sanitize(v, reveal)),
+        Value::String(text) if !reveal && looks_like_email(text) => *text = mask_email(text),
+        _ => {}
+    }
+}
+
+fn print(args: &AuthArgs, value: &Value, human: impl FnOnce(&Value) -> Vec<String>) -> Result<()> {
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(value)?);
+    } else {
+        for line in human(value) {
+            println!("{line}");
+        }
+    }
+    Ok(())
+}
+
+fn text(value: &Value, key: &str) -> String {
+    match &value[key] {
+        Value::Null => "-".into(),
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    }
+}
+
+async fn run(args: &AuthArgs) -> Result<()> {
+    match &args.action {
+        Action::Jwks { issuer, check } => jwks(args, issuer.as_deref(), *check).await,
+        Action::Check { manifest, deployment } => check(args, manifest, deployment.as_deref()).await,
+        Action::Config { action: ConfigAction::Pull { manifest, write } } => config_pull(args, manifest, *write).await,
+        Action::Status => {
+            let target = target(args).await?;
+            let mut overview = target.call(Method::GET, "overview", &[], None).await?;
+            sanitize(&mut overview, false);
+            let epoch = match overview["issuer"].as_str() {
+                Some(issuer) if valid_issuer(issuer) => public_issuer_get(issuer, "/epoch").await.ok(),
+                _ => None,
+            };
+            let report = json!({
+                "enabled": overview["enabled"],
+                "auth_status": overview["auth_status"],
+                "stream_version": overview["stream_version"],
+                "upgrade_pending": overview["upgrade_pending"],
+                "issuer": overview["issuer"],
+                "users_count": overview["users_count"],
+                "viewer": overview["viewer"],
+                "epoch": epoch,
+            });
+            print(args, &report, |r| {
+                vec![
+                    format!("Authentication: {} ({})", if r["enabled"] == true { "enabled" } else { "disabled" }, text(r, "auth_status")),
+                    format!("Stream version: {}{}", text(r, "stream_version"), if r["upgrade_pending"] == true { " (upgrade pending)" } else { "" }),
+                    format!("Issuer: {}", text(r, "issuer")),
+                    format!("Users: {}", text(r, "users_count")),
+                    format!("Epoch: {}", r["epoch"]["epoch"].as_i64().map_or("unavailable".to_string(), |e| format!("{e} (keys_rev {})", r["epoch"]["keys_rev"]))),
+                ]
+            })
+        }
+        Action::Settings { action: SettingsAction::Get { output } } => {
+            let target = target(args).await?;
+            let mut settings = target.call(Method::GET, "settings", &[], None).await?;
+            sanitize(&mut settings, true);
+            let rendered = format!("{}\n", serde_json::to_string_pretty(&settings)?);
+            match output {
+                Some(path) => {
+                    std::fs::write(path, rendered).with_context(|| format!("write {}", path.display()))?;
+                    if !args.json {
+                        println!("Settings written to {} (revision {}).", path.display(), text(&settings, "revision"));
+                    }
+                    Ok(())
+                }
+                None => {
+                    print!("{rendered}");
+                    Ok(())
+                }
+            }
+        }
+        Action::Settings { action: SettingsAction::Set { file, dry_run } } => {
+            let body = settings_body(file)?;
+            if *dry_run {
+                let mut shown = body.clone();
+                if shown.get("turnstile_secret").is_some_and(|v| !v.is_null()) {
+                    shown["turnstile_secret"] = json!("(set from file)");
+                }
+                println!("{}", serde_json::to_string_pretty(&json!({"dry_run": true, "request": shown}))?);
+                return Ok(());
+            }
+            let target = target(args).await?;
+            let mut settings = target.call(Method::PUT, "settings", &[], Some(&body)).await?;
+            sanitize(&mut settings, true);
+            print(args, &settings, |s| vec![format!("Settings saved (revision {}).", text(s, "revision"))])
+        }
+        Action::Providers { action } => providers(args, action).await,
+        Action::Users { action } => users(args, action).await,
+        Action::Invite { email, roles, organization } => {
+            let target = target(args).await?;
+            let role_ids = if roles.is_empty() {
+                vec![]
+            } else {
+                let listed = target.call(Method::GET, "roles", &[], None).await?;
+                let items = listed.get("roles").cloned().unwrap_or(listed);
+                roles
+                    .iter()
+                    .map(|name| {
+                        items
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .find(|r| r["name"].as_str() == Some(name))
+                            .and_then(|r| r["id"].as_str())
+                            .map(str::to_string)
+                            .ok_or_else(|| usage(format!("unknown role `{name}`")))
+                    })
+                    .collect::<Result<Vec<_>>>()?
+            };
+            let mut body = json!({"email": email});
+            if !role_ids.is_empty() {
+                body["role_ids"] = json!(role_ids);
+            }
+            if let Some(organization) = organization {
+                body["organization_id"] = json!(organization);
+            }
+            let mut invitation = target.call(Method::POST, "invitations", &[], Some(&body)).await?;
+            sanitize(&mut invitation, false);
+            print(args, &invitation, |i| vec![format!("Invitation {} sent to {} ({}), expires {}.", text(i, "id"), text(i, "email"), text(i, "delivery_state"), text(i, "expires_at"))])
+        }
+    }
+}
+
+/// Settings from a file: an object with `revision`; provider and SMTP secret
+/// fields are refused (they have their own commands and write-only routes).
+pub fn settings_body(file: &Path) -> Result<Value> {
+    let raw = std::fs::read(file).with_context(|| format!("read {}", file.display()))?;
+    if raw.len() > 32 * 1024 {
+        return Err(usage("settings files are at most 32 KiB"));
+    }
+    let body: Value = serde_json::from_slice(&raw).map_err(|_| usage("the settings file is not JSON"))?;
+    let Value::Object(map) = &body else { return Err(usage("the settings file is a JSON object")) };
+    if !map.get("revision").is_some_and(Value::is_u64) {
+        return Err(usage("the settings file needs the current `revision` (from `axiom auth settings get`)"));
+    }
+    fn refused(map: &Map<String, Value>) -> Option<String> {
+        for (key, value) in map {
+            let lower = key.to_ascii_lowercase();
+            if lower != "turnstile_secret"
+                && (lower.contains("client_secret") || lower.contains("smtp") || lower.contains("password") || lower == "providers")
+            {
+                return Some(key.clone());
+            }
+            if let Value::Object(inner) = value {
+                if let Some(found) = refused(inner) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+    if let Some(key) = refused(map) {
+        return Err(usage(format!("`{key}` is not a settings field; provider and SMTP secrets have their own commands")));
+    }
+    Ok(body)
+}
+
+fn valid_issuer(issuer: &str) -> bool {
+    axiom_auth_issuer(issuer, LOOPBACK_ISSUERS).is_some()
+}
+
+/// Parse `google`, `github` or `oidc-<slug>`.
+pub fn provider_selector(value: &str) -> Result<(&'static str, Option<String>)> {
+    match value {
+        "google" => Ok(("google", None)),
+        "github" => Ok(("github", None)),
+        other => match other.strip_prefix("oidc-") {
+            Some(slug) if !slug.is_empty() && slug.len() <= 32 && slug.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-') => {
+                Ok(("oidc", Some(slug.to_string())))
+            }
+            _ => Err(usage("providers are google, github or oidc-<slug>")),
+        },
+    }
+}
+
+fn find_provider<'a>(providers: &'a Value, kind: &str, slug: Option<&str>) -> Option<&'a Value> {
+    providers["providers"].as_array()?.iter().find(|p| {
+        p["kind"].as_str() == Some(kind) && (slug.is_none() || p["slug"].as_str() == slug)
+    })
+}
+
+/// The client secret from stdin (bounded) or a masked prompt; never argv.
+fn read_secret(stdin: bool) -> Result<Zeroizing<String>> {
+    let secret = if stdin {
+        let mut bytes = Zeroizing::new(Vec::new());
+        std::io::stdin().take(4097).read_to_end(&mut bytes)?;
+        if bytes.len() > 4096 {
+            return Err(usage("client secrets are at most 4096 bytes"));
+        }
+        Zeroizing::new(String::from_utf8(bytes.to_vec()).map_err(|_| usage("the client secret is not UTF-8"))?)
+    } else {
+        if !std::io::stdin().is_terminal() {
+            return Err(usage("no terminal for the masked prompt; pass --client-secret-stdin"));
+        }
+        Zeroizing::new(dialoguer::Password::new().with_prompt("Client secret").interact()?)
+    };
+    let trimmed = Zeroizing::new(secret.trim_end_matches(['\r', '\n']).to_string());
+    if trimmed.is_empty() {
+        return Err(usage("the client secret is empty"));
+    }
+    Ok(trimmed)
+}
+
+async fn providers(args: &AuthArgs, action: &ProvidersAction) -> Result<()> {
+    let target = target(args).await?;
+    match action {
+        ProvidersAction::List => {
+            let mut listed = target.call(Method::GET, "providers", &[], None).await?;
+            sanitize(&mut listed, true);
+            print(args, &listed, |l| {
+                let mut lines = vec![];
+                for p in l["providers"].as_array().into_iter().flatten() {
+                    let name = match p["kind"].as_str() {
+                        Some("oidc") => format!("oidc-{}", text(p, "slug")),
+                        _ => text(p, "kind"),
+                    };
+                    lines.push(format!(
+                        "{name}  {}  client {}  secret {}  test {}",
+                        if p["enabled"] == true { "enabled" } else { "disabled" },
+                        text(p, "client_id"),
+                        if p["client_secret_set"] == true { "configured" } else { "not configured" },
+                        p["last_test"]["result"].as_str().unwrap_or("untested"),
+                    ));
+                }
+                if lines.is_empty() {
+                    lines.push("No providers configured.".into());
+                }
+                lines
+            })
+        }
+        ProvidersAction::Set { provider, client_id, issuer, scopes, enable, disable, client_secret_stdin } => {
+            let (kind, slug) = provider_selector(provider)?;
+            if issuer.is_some() && kind != "oidc" {
+                return Err(usage("--issuer applies to oidc-<slug> providers only"));
+            }
+            let scopes = scopes.as_ref().map(|s| s.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect::<Vec<_>>());
+            let listed = target.call(Method::GET, "providers", &[], None).await?;
+            let mut saved = match find_provider(&listed, kind, slug.as_deref()) {
+                None => {
+                    let client_id = client_id.clone().ok_or_else(|| usage("--client-id is required for a new provider"))?;
+                    if kind == "oidc" && issuer.is_none() {
+                        return Err(usage("--issuer is required for a new OIDC provider"));
+                    }
+                    let secret = read_secret(*client_secret_stdin)?;
+                    let mut body = json!({"kind": kind, "client_id": client_id, "client_secret": secret.as_str(), "enabled": *enable});
+                    if let Some(slug) = &slug {
+                        body["slug"] = json!(slug);
+                    }
+                    if let Some(issuer) = issuer {
+                        body["issuer"] = json!(issuer);
+                    }
+                    if let Some(scopes) = &scopes {
+                        body["scopes"] = json!(scopes);
+                    }
+                    let result = target.call(Method::POST, "providers", &[], Some(&body)).await;
+                    if let Value::Object(map) = &mut body {
+                        map.remove("client_secret");
+                    }
+                    result?
+                }
+                Some(existing) => {
+                    let id = existing["id"].as_str().ok_or_else(|| Exit { code: 5, message: "AXAUTH_UNAVAILABLE: provider without id".into() })?;
+                    let mut body = json!({"revision": existing["revision"]});
+                    if let Some(client_id) = client_id {
+                        body["client_id"] = json!(client_id);
+                    }
+                    if let Some(scopes) = &scopes {
+                        body["scopes"] = json!(scopes);
+                    }
+                    if *enable || *disable {
+                        body["enabled"] = json!(*enable);
+                    }
+                    if issuer.is_some() {
+                        return Err(usage("an OIDC provider's issuer never changes; delete and create it again"));
+                    }
+                    let secret = if *client_secret_stdin { Some(read_secret(true)?) } else { None };
+                    if let Some(secret) = &secret {
+                        body["client_secret"] = json!(secret.as_str());
+                    }
+                    if body.as_object().is_some_and(|m| m.len() == 1) {
+                        return Err(usage("nothing to change: pass --client-id, --scopes, --enable, --disable or --client-secret-stdin"));
+                    }
+                    let result = target.call(Method::PATCH, &format!("providers/{id}"), &[], Some(&body)).await;
+                    if let Value::Object(map) = &mut body {
+                        map.remove("client_secret");
+                    }
+                    result?
+                }
+            };
+            sanitize(&mut saved, true);
+            print(args, &saved, |p| {
+                let mut lines = vec![format!("Provider {provider} saved ({}).", if p["enabled"] == true { "enabled" } else { "disabled" })];
+                if p["warning"].as_str() == Some("pairwise_subjects") {
+                    lines.push("Warning: providers that issue a different subject per client ID split existing accounts.".into());
+                }
+                lines
+            })
+        }
+        ProvidersAction::Test { provider } => {
+            let (kind, slug) = provider_selector(provider)?;
+            let listed = target.call(Method::GET, "providers", &[], None).await?;
+            let id = find_provider(&listed, kind, slug.as_deref())
+                .and_then(|p| p["id"].as_str())
+                .ok_or_else(|| usage(format!("provider {provider} is not configured")))?
+                .to_string();
+            let mut result = target.call(Method::POST, &format!("providers/{id}/test"), &[], Some(&json!({}))).await?;
+            sanitize(&mut result, true);
+            print(args, &result, |r| {
+                vec![match r["result"].as_str() {
+                    Some("ok") => format!("{provider}: ok"),
+                    Some("untested") => format!("{provider}: configured, untested"),
+                    Some(other) => format!("{provider}: {other}"),
+                    None => format!("{provider}: unknown result"),
+                }]
+            })
+        }
+    }
+}
+
+fn user_line(u: &Value) -> String {
+    format!(
+        "{}  {}  {}  {}  sessions {}",
+        text(u, "id"),
+        text(u, "email"),
+        text(u, "status"),
+        text(u, "kind"),
+        text(u, "active_sessions")
+    )
+}
+
+async fn users(args: &AuthArgs, action: &UsersAction) -> Result<()> {
+    let target = target(args).await?;
+    match action {
+        UsersAction::List { search, status, limit, cursor, reveal_email } => {
+            let mut listed = match search {
+                Some(id) if uuid_shaped(id) => {
+                    let mut query = vec![("user_id", id.clone())];
+                    if let Some(limit) = limit {
+                        query.push(("limit", limit.to_string()));
+                    }
+                    target.call(Method::GET, "users", &query, None).await?
+                }
+                Some(prefix) => {
+                    let mut body = json!({"email_prefix": prefix});
+                    if let Some(status) = status {
+                        body["status"] = json!(status);
+                    }
+                    if let Some(limit) = limit {
+                        body["limit"] = json!(limit);
+                    }
+                    if let Some(cursor) = cursor {
+                        body["cursor"] = json!(cursor);
+                    }
+                    target.call(Method::POST, "users/search", &[], Some(&body)).await?
+                }
+                None => {
+                    let mut query = vec![];
+                    if let Some(status) = status {
+                        query.push(("status", status.clone()));
+                    }
+                    if let Some(limit) = limit {
+                        query.push(("limit", limit.to_string()));
+                    }
+                    if let Some(cursor) = cursor {
+                        query.push(("cursor", cursor.clone()));
+                    }
+                    target.call(Method::GET, "users", &query, None).await?
+                }
+            };
+            sanitize(&mut listed, *reveal_email);
+            print(args, &listed, |l| {
+                let mut lines = l["users"].as_array().into_iter().flatten().map(user_line).collect::<Vec<_>>();
+                if lines.is_empty() {
+                    lines.push("No users.".into());
+                }
+                if let Some(next) = l["next_cursor"].as_str() {
+                    lines.push(format!("More: --cursor {next}"));
+                }
+                lines
+            })
+        }
+        UsersAction::Show { user_id, reveal_email } => {
+            let mut user = target.call(Method::GET, &format!("users/{}", checked_id(user_id)?), &[], None).await?;
+            sanitize(&mut user, *reveal_email);
+            print(args, &user, |u| {
+                let mut lines = vec![user_line(u)];
+                for identity in u["identities"].as_array().into_iter().flatten() {
+                    lines.push(format!("  identity {} {}", text(identity, "provider"), text(identity, "email")));
+                }
+                lines
+            })
+        }
+        UsersAction::Ban { user_id, reason } => {
+            if reason.trim().is_empty() {
+                return Err(usage("--reason cannot be empty"));
+            }
+            let mut user = target.call(Method::POST, &format!("users/{}/ban", checked_id(user_id)?), &[], Some(&json!({"reason": reason}))).await?;
+            sanitize(&mut user, false);
+            print(args, &user, |u| vec![format!("Banned {}; sessions end at their next refresh.", text(u, "id"))])
+        }
+        UsersAction::Unban { user_id } => {
+            let mut user = target.call(Method::POST, &format!("users/{}/unban", checked_id(user_id)?), &[], Some(&json!({}))).await?;
+            sanitize(&mut user, false);
+            print(args, &user, |u| vec![format!("Unbanned {}.", text(u, "id"))])
+        }
+        UsersAction::Revoke { user_id, session, yes } => {
+            let user_id = checked_id(user_id)?;
+            if !yes {
+                if !std::io::stdin().is_terminal() {
+                    return Err(usage("pass --yes to revoke without a prompt"));
+                }
+                let what = session.as_ref().map_or("every session".to_string(), |s| format!("session {s}"));
+                if !dialoguer::Confirm::new().with_prompt(format!("End {what} of user {user_id}?")).default(false).interact()? {
+                    return Err(usage("cancelled"));
+                }
+            }
+            let body = match session {
+                Some(sid) => json!({"session_id": checked_id(sid)?}),
+                None => json!({}),
+            };
+            let ended = target.call(Method::POST, &format!("users/{user_id}/sessions/revoke"), &[], Some(&body)).await?;
+            print(args, &ended, |_| vec!["Sessions ended.".to_string()])
+        }
+    }
+}
+
+fn checked_id(value: &str) -> Result<&str> {
+    if uuid_shaped(value) {
+        Ok(value)
+    } else {
+        Err(usage(format!("`{value}` is not a lowercase UUID")))
+    }
+}
+
+/// `--check`: the JWKS must carry an `axiom_keys_rev` at least the epoch's
+/// `keys_rev` (auth-core "Epoch").
+pub fn jwks_report(jwks: &Value, epoch: &Value) -> Value {
+    let keys = jwks["keys"].as_array().cloned().unwrap_or_default();
+    let jwks_rev = jwks["axiom_keys_rev"].as_i64();
+    let epoch_rev = epoch["keys_rev"].as_i64();
+    let consistent = matches!((jwks_rev, epoch_rev), (Some(j), Some(e)) if j >= e);
+    json!({
+        "kids": keys.iter().filter_map(|k| k["kid"].as_str()).collect::<Vec<_>>(),
+        "axiom_keys_rev": jwks_rev,
+        "epoch": epoch["epoch"],
+        "keys_rev": epoch_rev,
+        "emergency": epoch["emergency"],
+        "consistent": consistent,
+    })
+}
+
+async fn jwks(args: &AuthArgs, issuer: Option<&str>, check: bool) -> Result<()> {
+    let (issuer, target) = match issuer {
+        Some(issuer) => (issuer.to_string(), None),
+        None => {
+            let target = target(args).await?;
+            let overview = target.call(Method::GET, "overview", &[], None).await?;
+            let issuer = overview["issuer"].as_str().map(str::to_string).ok_or_else(|| Exit { code: 5, message: "AXAUTH_UNAVAILABLE: the environment reports no issuer".into() })?;
+            (issuer, Some(target))
+        }
+    };
+    if !valid_issuer(&issuer) {
+        return Err(usage("issuers are https://auth.axiomcore.dev/<project_id>/<environment_id>"));
+    }
+    let jwks = public_issuer_get(&issuer, "/.well-known/jwks.json").await.map_err(admin)?;
+    let epoch = public_issuer_get(&issuer, "/epoch").await.map_err(admin)?;
+    let mut report = jwks_report(&jwks, &epoch);
+    report["issuer"] = json!(issuer);
+    if let Some(target) = &target {
+        if let Ok(mut keys) = target.call(Method::GET, "keys", &[], None).await {
+            sanitize(&mut keys, true);
+            report["keys"] = keys.get("keys").cloned().unwrap_or(keys);
+        }
+    }
+    print(args, &report, |r| {
+        let mut lines = vec![
+            format!("Issuer: {}", text(r, "issuer")),
+            format!("Keys: {}", r["kids"].as_array().map(|k| k.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", ")).unwrap_or_default()),
+            format!("JWKS axiom_keys_rev {} / epoch {} keys_rev {}", text(r, "axiom_keys_rev"), text(r, "epoch"), text(r, "keys_rev")),
+        ];
+        if check {
+            lines.push(if r["consistent"] == true { "Check: consistent".into() } else { "Check: the JWKS is behind the epoch".into() });
+        }
+        lines
+    })?;
+    if check && report["consistent"] != true {
+        return Err(Exit { code: 5, message: "AXAUTH_KEYS_STALE: the published JWKS is behind the epoch's keys_rev".into() }.into());
+    }
+    Ok(())
+}
+
+fn read_manifest(path: &Path) -> Result<(String, Option<AuthDeclaration>)> {
+    let source = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    let manifest = parse_axiom_deps_v2(&source).map_err(|e| usage(format!("{}: {e:#}", path.display())))?;
+    Ok((source, manifest.auth))
+}
+
+/// The `[auth.environments.<env>]` values implied by the environment settings.
+pub fn environment_block(overview: &Value, settings: &Value, callback_path: &str) -> Result<Map<String, Value>> {
+    let issuer = overview["issuer"].as_str().ok_or_else(|| Exit { code: 5, message: "AXAUTH_UNAVAILABLE: the environment reports no issuer".into() })?;
+    let allowed = settings["allowed_origins"].as_array().cloned().unwrap_or_default();
+    let candidates = settings["redirect_urls"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter_map(|u| reqwest::Url::parse(u).ok())
+        .filter(|u| u.path() == callback_path && u.query().is_none())
+        .map(|u| u.origin().ascii_serialization())
+        .collect::<Vec<_>>();
+    let origin = candidates
+        .iter()
+        .find(|o| allowed.iter().any(|a| a.as_str() == Some(o.as_str())))
+        .or(candidates.first())
+        .cloned()
+        .ok_or_else(|| usage(format!("no redirect URL of this environment ends with {callback_path}; add <origin>{callback_path} to redirect_urls")))?;
+    let mut block = Map::new();
+    block.insert("issuer".into(), json!(issuer));
+    if let Some(audience) = settings["audiences"].as_array().and_then(|a| a.first()).and_then(Value::as_str) {
+        if audience != format!("{issuer}/api") {
+            block.insert("audience".into(), json!(audience));
+        }
+    }
+    block.insert("redirectOrigin".into(), json!(origin));
+    if let Some(logout) = settings["logout_urls"].as_array().and_then(|a| a.first()).and_then(Value::as_str) {
+        block.insert("logoutUri".into(), json!(logout));
+    }
+    Ok(block)
+}
+
+/// The manifest with `[auth.environments.<name>]` replaced (comments kept).
+pub fn write_environment(source: &str, name: &str, block: &Map<String, Value>) -> Result<String> {
+    let mut document = source.parse::<toml_edit::DocumentMut>().map_err(|_| usage("the manifest is not valid TOML"))?;
+    if document.get("auth").is_none() {
+        let mut auth = toml_edit::Table::new();
+        auth.insert("provider", toml_edit::value("axiom"));
+        auth.insert("callbackPath", toml_edit::value("/auth/callback"));
+        document.insert("auth", toml_edit::Item::Table(auth));
+    }
+    let auth = document["auth"].as_table_mut().ok_or_else(|| usage("`auth` must be a table"))?;
+    if auth.get("environments").is_none() {
+        let mut environments = toml_edit::Table::new();
+        environments.set_implicit(true);
+        auth.insert("environments", toml_edit::Item::Table(environments));
+    }
+    let environments = auth["environments"].as_table_mut().ok_or_else(|| usage("`auth.environments` must be a table"))?;
+    let mut table = toml_edit::Table::new();
+    for (key, value) in block {
+        if let Some(text) = value.as_str() {
+            table.insert(key, toml_edit::value(text));
+        }
+    }
+    environments.insert(name, toml_edit::Item::Table(table));
+    let rendered = document.to_string();
+    parse_axiom_deps_v2(&rendered).map_err(|e| usage(format!("the updated manifest would be invalid: {e:#}")))?;
+    Ok(rendered)
+}
+
+async fn config_pull(args: &AuthArgs, manifest: &Path, write: bool) -> Result<()> {
+    let (source, auth) = read_manifest(manifest)?;
+    let callback = auth.as_ref().map_or("/auth/callback".to_string(), |a| a.callback_path.clone());
+    let target = target(args).await?;
+    let overview = target.call(Method::GET, "overview", &[], None).await?;
+    let settings = target.call(Method::GET, "settings", &[], None).await?;
+    let name = &args.environment;
+    let block = environment_block(&overview, &settings, &callback)?;
+    if write {
+        let updated = write_environment(&source, name, &block)?;
+        let temporary = manifest.with_extension("toml.axiom-tmp");
+        std::fs::write(&temporary, &updated)?;
+        std::fs::rename(&temporary, manifest)?;
+        if !args.json {
+            println!("Updated [auth.environments.{name}] in {}.", manifest.display());
+        }
+    }
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&json!({"environment": name, "block": block, "written": write}))?);
+    } else if !write {
+        println!("[auth.environments.{name}]");
+        for (key, value) in &block {
+            println!("{key} = {value}");
+        }
+    }
+    Ok(())
+}
+
+/// Read-only comparison of a manifest environment, its settings and a deployment.
+pub fn compare(
+    auth: &AuthDeclaration,
+    environment: &str,
+    overview: &Value,
+    settings: &Value,
+    deployment: Option<&Value>,
+) -> Vec<String> {
+    let mut warnings = vec![];
+    let Some(selected) = auth.environments.get(environment) else {
+        return vec![format!("the manifest has no [auth.environments.{environment}]")];
+    };
+    if overview["issuer"].as_str().is_some_and(|i| i != selected.issuer) {
+        warnings.push("the manifest issuer differs from the environment's issuer".into());
+    }
+    let audience = selected.effective_audience();
+    if !settings["audiences"].as_array().is_some_and(|a| a.iter().any(|v| v.as_str() == Some(audience.as_str()))) {
+        warnings.push(format!("audience {audience} is not one of the environment's audiences"));
+    }
+    let redirect = auth.redirect_uri(environment).unwrap_or_default();
+    if !settings["redirect_urls"].as_array().is_some_and(|a| a.iter().any(|v| v.as_str() == Some(redirect.as_str()))) {
+        warnings.push(format!("{redirect} is not in the environment's redirect_urls"));
+    }
+    if !settings["allowed_origins"].as_array().is_some_and(|a| a.iter().any(|v| v.as_str() == Some(selected.redirect_origin.as_str()))) {
+        warnings.push(format!("{} is not in the environment's allowed_origins", selected.redirect_origin));
+    }
+    if let Some(logout) = &selected.logout_uri {
+        if !settings["logout_urls"].as_array().is_some_and(|a| a.iter().any(|v| v.as_str() == Some(logout.as_str()))) {
+            warnings.push(format!("{logout} is not in the environment's logout_urls"));
+        }
+    }
+    if let Some(deployment) = deployment {
+        let provider = &deployment["authentication"];
+        if provider["kind"].as_str() != Some("axiomAuth") {
+            warnings.push("the deployment does not use the axiomAuth provider".into());
+        } else {
+            if provider["issuer"].as_str() != Some(selected.issuer.as_str()) {
+                warnings.push("the deployment's axiomAuth issuer differs from the manifest issuer".into());
+            }
+            if provider["audience"].as_str() != Some(audience.as_str()) {
+                warnings.push("the deployment's axiomAuth audience differs from the manifest audience".into());
+            }
+        }
+    }
+    warnings
+}
+
+async fn check(args: &AuthArgs, manifest: &Path, deployment: Option<&Path>) -> Result<()> {
+    let (_, auth) = read_manifest(manifest)?;
+    let auth = auth.ok_or_else(|| usage(format!("{} has no [auth] block", manifest.display())))?;
+    let deployment = deployment
+        .map(|path| -> Result<Value> {
+            let raw = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
+            serde_json::from_slice(&raw).map_err(|_| usage("the deployment is not JSON"))
+        })
+        .transpose()?;
+    let target = target(args).await?;
+    let overview = target.call(Method::GET, "overview", &[], None).await?;
+    let settings = target.call(Method::GET, "settings", &[], None).await?;
+    let warnings = compare(&auth, &args.environment, &overview, &settings, deployment.as_ref());
+    let report = json!({"environment": args.environment, "warnings": warnings, "consistent": warnings.is_empty()});
+    print(args, &report, |r| {
+        let warnings = r["warnings"].as_array().cloned().unwrap_or_default();
+        if warnings.is_empty() {
+            vec!["Manifest, settings and deployment agree.".into()]
+        } else {
+            warnings.iter().filter_map(Value::as_str).map(|w| format!("warning: {w}")).collect()
+        }
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[derive(clap::Parser)]
+    struct Harness {
+        #[command(flatten)]
+        auth: AuthArgs,
+    }
+
+    fn every_argument(command: &clap::Command, out: &mut Vec<String>) {
+        for argument in command.get_arguments() {
+            if let Some(long) = argument.get_long() {
+                out.push(long.to_string());
+            }
+        }
+        for sub in command.get_subcommands() {
+            every_argument(sub, out);
+        }
+    }
+
+    #[test]
+    fn no_secret_value_is_ever_an_argument() {
+        let command = Harness::command();
+        command.clone().debug_assert();
+        let mut arguments = vec![];
+        every_argument(&command, &mut arguments);
+        assert!(arguments.contains(&"client-secret-stdin".to_string()));
+        for argument in &arguments {
+            let secretish = ["secret", "password", "token", "key"].iter().any(|word| argument.contains(word));
+            assert!(!secretish || argument == "client-secret-stdin", "secret-bearing flag --{argument}");
+        }
+        use clap::Parser;
+        assert!(Harness::try_parse_from(["t", "providers", "set", "google", "--client-secret", "x"]).is_err());
+        assert!(Harness::try_parse_from(["t", "users", "list", "--limit", "0"]).is_err());
+        assert!(Harness::try_parse_from(["t", "users", "list", "--limit", "101"]).is_err());
+        assert!(Harness::try_parse_from(["t", "users", "list", "--status", "gone"]).is_err());
+        assert!(Harness::try_parse_from(["t", "--environment", "production", "users", "list", "--limit", "100"]).is_ok());
+    }
+
+    #[test]
+    fn output_is_masked_and_never_carries_secrets() {
+        assert_eq!(mask_email("jane@example.com"), "j***@e***.com");
+        assert_eq!(mask_email("a.b@mail.example.co.uk"), "a***@m***.uk");
+        let mut value = json!({
+            "users": [{"id": "u", "email": "jane@example.com", "has_password": true}],
+            "client_secret": "SYNTHETIC_SECRET_CANARY", "client_secret_set": true,
+            "refresh_token": "axr1_x", "password_hash": "$argon2id$", "nested": {"turnstile_secret": "x", "pending_phc": "y"},
+            "callback_url": "https://auth.axiomcore.dev/p/e/v1/providers/google/callback"
+        });
+        sanitize(&mut value, false);
+        let text = value.to_string();
+        for canary in ["SYNTHETIC_SECRET_CANARY", "axr1_", "argon2id", "jane@example.com", "pending_phc", "turnstile_secret"] {
+            assert!(!text.contains(canary), "{canary} in {text}");
+        }
+        assert_eq!(value["users"][0]["email"], "j***@e***.com");
+        assert_eq!(value["client_secret_set"], true);
+        assert_eq!(value["users"][0]["has_password"], true);
+        assert!(value["callback_url"].as_str().unwrap().starts_with("https://"));
+        let mut revealed = json!({"email": "jane@example.com"});
+        sanitize(&mut revealed, true);
+        assert_eq!(revealed["email"], "jane@example.com");
+    }
+
+    #[test]
+    fn settings_files_need_a_revision_and_refuse_provider_and_smtp_secrets() {
+        let directory = tempfile::tempdir().unwrap();
+        let write = |body: &str| {
+            let path = directory.path().join("settings.json");
+            std::fs::write(&path, body).unwrap();
+            path
+        };
+        let ok = settings_body(&write(r#"{"revision":3,"enabled":true,"turnstile_secret":"t"}"#)).unwrap();
+        assert_eq!(ok["revision"], 3);
+        for refused in [
+            r#"{"enabled":true}"#,
+            r#"{"revision":3,"client_secret":"x"}"#,
+            r#"{"revision":3,"smtp":{"password":"x"}}"#,
+            r#"{"revision":3,"providers":[]}"#,
+            r#"{"revision":3,"nested":{"smtp_password":"x"}}"#,
+            "not json",
+        ] {
+            let error = settings_body(&write(refused)).unwrap_err();
+            assert_eq!(error.downcast_ref::<Exit>().unwrap().code, 2, "{refused}");
+        }
+    }
+
+    #[test]
+    fn exit_codes_follow_the_contract() {
+        let status = |code: u16| exit_code(&axiom_cloud::auth_admin::classify(code, b"{}"));
+        assert_eq!(status(403), 3);
+        assert_eq!(status(409), 4);
+        assert_eq!(status(503), 5);
+        assert_eq!(status(400), 2);
+        assert_eq!(exit_code(&AuthAdminError::Unauthenticated), 3);
+    }
+
+    #[test]
+    fn environments_resolve_by_name_and_uuid() {
+        let listed = vec![
+            json!({"id": "0b5e2c1a-9f3d-4c7e-8a21-5d6f7e8a9b0c", "slug": "development", "kind": "development"}),
+            json!({"id": "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f", "slug": "production", "kind": "production"}),
+        ];
+        assert_eq!(pick_environment(&listed, "production").unwrap(), "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f");
+        assert_eq!(pick_environment(&listed, "staging").unwrap_err().downcast_ref::<Exit>().unwrap().code, 2);
+        assert!(uuid_shaped("0b5e2c1a-9f3d-4c7e-8a21-5d6f7e8a9b0c"));
+        assert!(!uuid_shaped("0B5E2C1A-9F3D-4C7E-8A21-5D6F7E8A9B0C"));
+        assert!(provider_selector("oidc-okta").is_ok());
+        assert!(provider_selector("oidc-").is_err());
+        assert!(provider_selector("twitter").is_err());
+    }
+
+    #[test]
+    fn jwks_check_compares_key_revisions() {
+        let epoch = json!({"epoch": 3, "keys_rev": 5, "emergency": false});
+        let current = json!({"keys": [{"kid": "k1"}, {"kid": "k2"}], "axiom_keys_rev": 5});
+        let stale = json!({"keys": [{"kid": "k1"}], "axiom_keys_rev": 4});
+        assert_eq!(jwks_report(&current, &epoch)["consistent"], true);
+        assert_eq!(jwks_report(&current, &epoch)["kids"], json!(["k1", "k2"]));
+        assert_eq!(jwks_report(&stale, &epoch)["consistent"], false);
+        assert_eq!(jwks_report(&json!({"keys": []}), &epoch)["consistent"], false);
+    }
+
+    const ISSUER: &str = "https://auth.axiomcore.dev/0b5e2c1a-9f3d-4c7e-8a21-5d6f7e8a9b0c/1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f";
+
+    #[test]
+    fn config_pull_writes_a_valid_v3_environment_and_check_compares_it() {
+        let overview = json!({"issuer": ISSUER});
+        let settings = json!({
+            "audiences": [format!("{ISSUER}/api")],
+            "allowed_origins": ["https://shop.example.com"],
+            "redirect_urls": ["http://127.0.0.1:5173/auth/callback", "https://shop.example.com/auth/callback", "https://shop.example.com/other"],
+            "logout_urls": ["https://shop.example.com/signed-out"],
+        });
+        let block = environment_block(&overview, &settings, "/auth/callback").unwrap();
+        assert_eq!(block["redirectOrigin"], "https://shop.example.com");
+        assert!(block.get("audience").is_none());
+        let source = "# frontend\ntype = \"frontend\"\ntargets = [\"web\"]\n";
+        let written = write_environment(source, "production", &block).unwrap();
+        assert!(written.starts_with("# frontend\n"));
+        let manifest = parse_axiom_deps_v2(&written).unwrap();
+        let auth = manifest.auth.unwrap();
+        assert_eq!(auth.environments["production"].issuer, ISSUER);
+        assert!(compare(&auth, "production", &overview, &settings, None).is_empty());
+        let deployment = json!({"authentication": {"kind": "axiomAuth", "issuer": ISSUER, "audience": "other"}});
+        let warnings = compare(&auth, "production", &overview, &settings, Some(&deployment));
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        let mut narrow = settings.clone();
+        narrow["redirect_urls"] = json!([]);
+        assert!(environment_block(&overview, &narrow, "/auth/callback").is_err());
+        assert_eq!(compare(&auth, "production", &overview, &narrow, None).len(), 1);
+    }
+}

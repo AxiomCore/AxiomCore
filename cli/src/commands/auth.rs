@@ -505,8 +505,10 @@ pub fn provider_selector(value: &str) -> Result<(&'static str, Option<String>)> 
         "google" => Ok(("google", None)),
         "github" => Ok(("github", None)),
         other => match other.strip_prefix("oidc-") {
-            Some(slug) if !slug.is_empty() && slug.len() <= 32 && slug.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-') => {
-                Ok(("oidc", Some(slug.to_string())))
+            // The provider slug is the whole `oidc-<slug>` (auth-surfaces/v1 `auth_identity_providers.slug`);
+            // stripping the prefix made create send a slug the server refuses and broke matching.
+            Some(slug) if !slug.is_empty() && slug.len() <= 31 && slug.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-') => {
+                Ok(("oidc", Some(other.to_string())))
             }
             _ => Err(usage("providers are google, github or oidc-<slug>")),
         },
@@ -551,7 +553,7 @@ async fn providers(args: &AuthArgs, action: &ProvidersAction) -> Result<()> {
                 let mut lines = vec![];
                 for p in l["providers"].as_array().into_iter().flatten() {
                     let name = match p["kind"].as_str() {
-                        Some("oidc") => format!("oidc-{}", text(p, "slug")),
+                        Some("oidc") => text(p, "slug"),
                         _ => text(p, "kind"),
                     };
                     lines.push(format!(
@@ -1176,7 +1178,7 @@ mod tests {
         assert_eq!(pick_environment(&listed, "staging").unwrap_err().downcast_ref::<Exit>().unwrap().code, 2);
         assert!(uuid_shaped("0b5e2c1a-9f3d-4c7e-8a21-5d6f7e8a9b0c"));
         assert!(!uuid_shaped("0B5E2C1A-9F3D-4C7E-8A21-5D6F7E8A9B0C"));
-        assert!(provider_selector("oidc-okta").is_ok());
+        assert_eq!(provider_selector("oidc-okta").unwrap(), ("oidc", Some("oidc-okta".to_string())));
         assert!(provider_selector("oidc-").is_err());
         assert!(provider_selector("twitter").is_err());
     }

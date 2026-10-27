@@ -23,7 +23,8 @@ Setup:
 2. Write the issuer into the frontend manifest:
    `axiom auth config pull --environment development --manifest frontend/AxiomDeps.toml --write`.
 3. Check the manifest against the environment:
-   `axiom auth check --manifest frontend/AxiomDeps.toml`.
+   `axiom auth check --manifest frontend/AxiomDeps.toml --backend backend/application.acore`
+   (it also reports guarded endpoints without an `auth(...)` clause).
 4. Build the backend (`axiom build backend/application.acore`) and run it with
    an `axiomAuth` deployment for the same environment (the server deployment
    scaffold writes one from `--project-id` and `--environment-id`).

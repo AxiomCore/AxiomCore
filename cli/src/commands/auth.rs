@@ -79,6 +79,9 @@ pub enum Action {
         /// Backend deployment JSON whose axiomAuth provider is compared
         #[arg(long)]
         deployment: Option<PathBuf>,
+        /// Backend .acore source: guarded endpoints without an auth(...) clause are reported
+        #[arg(long)]
+        backend: Option<PathBuf>,
     },
 }
 
@@ -284,12 +287,14 @@ impl Target {
 }
 
 /// Keys whose values are never printed or written: secrets, credentials,
-/// hashes, sealed material. Booleans such as `client_secret_set` remain.
-const DENIED: [&str; 10] = ["secret", "password", "token", "phc", "hash", "ciphertext", "wrapped_key", "nonce", "seed", "pending"];
+/// hashes, sealed material, matched as whole names or `_`-suffixes so settings
+/// such as `password_min_length` remain. Booleans such as `client_secret_set`
+/// remain too.
+const DENIED: [&str; 11] = ["secret", "password", "token", "phc", "hash", "ciphertext", "wrapped_key", "nonce", "seed", "pending_phc", "credential"];
 
 fn denied(key: &str) -> bool {
     let key = key.to_ascii_lowercase();
-    DENIED.iter().any(|d| key.contains(d))
+    DENIED.iter().any(|d| key == *d || key.ends_with(&format!("_{d}")) || key.starts_with(&format!("{d}_hash")))
 }
 
 /// `j***@e***.com`.
@@ -343,7 +348,7 @@ fn text(value: &Value, key: &str) -> String {
 async fn run(args: &AuthArgs) -> Result<()> {
     match &args.action {
         Action::Jwks { issuer, check } => jwks(args, issuer.as_deref(), *check).await,
-        Action::Check { manifest, deployment } => check(args, manifest, deployment.as_deref()).await,
+        Action::Check { manifest, deployment, backend } => check(args, manifest, deployment.as_deref(), backend.as_deref()).await,
         Action::Config { action: ConfigAction::Pull { manifest, write } } => config_pull(args, manifest, *write).await,
         Action::Status => {
             let target = target(args).await?;
@@ -444,6 +449,9 @@ async fn run(args: &AuthArgs) -> Result<()> {
     }
 }
 
+/// Fields `GET settings` returns that `PUT settings` does not accept.
+const READ_ONLY_SETTINGS: [&str; 4] = ["updated_at", "turnstile_secret_set", "stream_version", "upgrade_pending"];
+
 /// Settings from a file: an object with `revision`; provider and SMTP secret
 /// fields are refused (they have their own commands and write-only routes).
 pub fn settings_body(file: &Path) -> Result<Value> {
@@ -456,12 +464,14 @@ pub fn settings_body(file: &Path) -> Result<Value> {
     if !map.get("revision").is_some_and(Value::is_u64) {
         return Err(usage("the settings file needs the current `revision` (from `axiom auth settings get`)"));
     }
+    // Only secret fields are refused: provider client secrets, the SMTP password
+    // and configuration, providers. `password_min_length` and the `smtp-env-*`
+    // rate limits are ordinary settings.
     fn refused(map: &Map<String, Value>) -> Option<String> {
         for (key, value) in map {
             let lower = key.to_ascii_lowercase();
-            if lower != "turnstile_secret"
-                && (lower.contains("client_secret") || lower.contains("smtp") || lower.contains("password") || lower == "providers")
-            {
+            let secret = lower != "turnstile_secret" && (lower.ends_with("_secret") || lower == "secret");
+            if secret || lower == "password" || lower.ends_with("_password") || lower == "smtp" || lower == "providers" {
                 return Some(key.clone());
             }
             if let Value::Object(inner) = value {
@@ -474,6 +484,13 @@ pub fn settings_body(file: &Path) -> Result<Value> {
     }
     if let Some(key) = refused(map) {
         return Err(usage(format!("`{key}` is not a settings field; provider and SMTP secrets have their own commands")));
+    }
+    // Read-only fields of the GET view; PUT decodes strictly.
+    let mut body = body;
+    if let Value::Object(map) = &mut body {
+        for key in READ_ONLY_SETTINGS {
+            map.remove(key);
+        }
     }
     Ok(body)
 }
@@ -658,8 +675,14 @@ async fn users(args: &AuthArgs, action: &UsersAction) -> Result<()> {
             let mut listed = match search {
                 Some(id) if uuid_shaped(id) => {
                     let mut query = vec![("user_id", id.clone())];
+                    if let Some(status) = status {
+                        query.push(("status", status.clone()));
+                    }
                     if let Some(limit) = limit {
                         query.push(("limit", limit.to_string()));
+                    }
+                    if let Some(cursor) = cursor {
+                        query.push(("cursor", cursor.clone()));
                     }
                     target.call(Method::GET, "users", &query, None).await?
                 }
@@ -954,7 +977,41 @@ pub fn compare(
     warnings
 }
 
-async fn check(args: &AuthArgs, manifest: &Path, deployment: Option<&Path>) -> Result<()> {
+/// Endpoints whose handled action has `require(guard:)` but no `auth(...)`
+/// clause: the compiler derives none, so the web client never attaches the
+/// managed bearer and every call answers 401.
+pub fn guarded_without_auth(contract: &Value) -> Vec<String> {
+    let actions = &contract["server"]["actions"];
+    let mut found = contract["server"]["endpointPolicies"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter_map(|(endpoint, policy)| {
+            let action = policy["handle"]["action"].as_str()?;
+            let guarded = actions[action]["settings"]["guards"].as_array().is_some_and(|g| !g.is_empty())
+                || policy["guards"].as_array().is_some_and(|g| !g.is_empty());
+            let auth = &contract["endpoints"][endpoint]["auth"];
+            (guarded && auth.is_null()).then(|| endpoint.clone())
+        })
+        .collect::<Vec<_>>();
+    found.sort();
+    found
+}
+
+fn backend_contract(path: &Path) -> Result<Value> {
+    let source = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    let absolute = std::fs::canonicalize(path)?;
+    let uri = format!("file://{}", absolute.display());
+    let mut open = std::collections::HashMap::new();
+    if let Some(deps) = absolute.parent().map(|p| p.join("AxiomDeps.toml")).filter(|p| p.is_file()) {
+        open.insert(format!("file://{}", deps.display()), std::fs::read_to_string(&deps)?);
+    }
+    let inspection = acore::backend::inspection::compile(&uri, &source, &open, false, None)
+        .map_err(|error| usage(format!("{}: {error}", path.display())))?;
+    Ok(inspection.contract)
+}
+
+async fn check(args: &AuthArgs, manifest: &Path, deployment: Option<&Path>, backend: Option<&Path>) -> Result<()> {
     let (_, auth) = read_manifest(manifest)?;
     let auth = auth.ok_or_else(|| usage(format!("{} has no [auth] block", manifest.display())))?;
     let deployment = deployment
@@ -966,7 +1023,12 @@ async fn check(args: &AuthArgs, manifest: &Path, deployment: Option<&Path>) -> R
     let target = target(args).await?;
     let overview = target.call(Method::GET, "overview", &[], None).await?;
     let settings = target.call(Method::GET, "settings", &[], None).await?;
-    let warnings = compare(&auth, &args.environment, &overview, &settings, deployment.as_ref());
+    let mut warnings = compare(&auth, &args.environment, &overview, &settings, deployment.as_ref());
+    if let Some(backend) = backend {
+        for endpoint in guarded_without_auth(&backend_contract(backend)?) {
+            warnings.push(format!("guarded endpoint `{endpoint}` has no auth(...) clause; the web client will not attach the access token"));
+        }
+    }
     let report = json!({"environment": args.environment, "warnings": warnings, "consistent": warnings.is_empty()});
     print(args, &report, |r| {
         let warnings = r["warnings"].as_array().cloned().unwrap_or_default();
@@ -1057,13 +1119,41 @@ mod tests {
             r#"{"enabled":true}"#,
             r#"{"revision":3,"client_secret":"x"}"#,
             r#"{"revision":3,"smtp":{"password":"x"}}"#,
+            r#"{"revision":3,"smtp_password":"x"}"#,
             r#"{"revision":3,"providers":[]}"#,
-            r#"{"revision":3,"nested":{"smtp_password":"x"}}"#,
+            r#"{"revision":3,"nested":{"client_secret":"x"}}"#,
             "not json",
         ] {
             let error = settings_body(&write(refused)).unwrap_err();
             assert_eq!(error.downcast_ref::<Exit>().unwrap().code, 2, "{refused}");
         }
+    }
+
+    #[test]
+    fn settings_round_trip_keeps_password_min_length_and_drops_read_only_fields() {
+        let mut view = json!({"revision": 4, "enabled": true, "password_min_length": 12, "access_ttl_seconds": 900,
+            "rate_limits": {"smtp-env-hour": 10}, "turnstile_secret_set": true, "stream_version": 2, "upgrade_pending": false, "updated_at": "2026-10-27T00:00:00Z"});
+        sanitize(&mut view, true);
+        assert_eq!(view["password_min_length"], 12);
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.json");
+        std::fs::write(&path, view.to_string()).unwrap();
+        let body = settings_body(&path).unwrap();
+        assert_eq!(body["password_min_length"], 12);
+        assert_eq!(body["rate_limits"]["smtp-env-hour"], 10);
+        for absent in READ_ONLY_SETTINGS {
+            assert!(body.get(absent).is_none(), "{absent}");
+        }
+    }
+
+    #[test]
+    fn check_reports_guarded_endpoints_without_an_auth_clause() {
+        let contract = json!({
+            "endpoints": {"me": {"auth": null}, "secured": {"auth": {"required": true}}, "open": {"auth": null}},
+            "server": {"actions": {"whoami": {"settings": {"guards": ["signedIn"]}}, "health": {"settings": {"guards": []}}},
+                "endpointPolicies": {"me": {"handle": {"action": "whoami"}}, "secured": {"handle": {"action": "whoami"}}, "open": {"handle": {"action": "health"}}}}
+        });
+        assert_eq!(guarded_without_auth(&contract), vec!["me".to_string()]);
     }
 
     #[test]

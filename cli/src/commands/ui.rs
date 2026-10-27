@@ -6305,7 +6305,10 @@ mod tests {
         assert_eq!(auth_runtime_config(&web.ir.as_ref().unwrap().imports[0], &lock_path, "production").unwrap()["issuer"], PROD);
         assert!(auth_runtime_config(&web.ir.as_ref().unwrap().imports[0], &lock_path, "staging").is_err());
         let ios = compile(UiTarget::Ios);
-        if ios.ir.is_some() {
+        assert!(!ios.is_valid(), "native targets refuse managed auth at compile time");
+        assert!(ios.diagnostics.iter().any(|d| d.code == "AUI468" && d.message.contains("ACORE_AUTH_HOST_UNSUPPORTED")));
+        if let Some(ir) = ios.ir.as_ref() {
+            assert_eq!(ir.target, UiTarget::Ios);
             let error = build_verified_runtime_config_value(&ios, &lock_path).unwrap_err().to_string();
             assert!(error.contains("ACORE_AUTH_HOST_UNSUPPORTED"), "{error}");
         }

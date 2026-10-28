@@ -1,7 +1,7 @@
 //! Dashboard captures on the CLI side (data-tools/v1, "CLI: pull, migrate and version
 //! skew"; confirmation C-S6): pull's three-way region comparison and the two mechanical
 //! edits, written under the path rules (security S-5), and the label of capture releases.
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use axiom_database::capture::region::{self, Region};
 use axiom_database::developer::{capture::source_key, capture::migration_path, Release};
 use std::collections::{BTreeMap, BTreeSet};
@@ -33,19 +33,31 @@ fn regions_of(sources: &BTreeMap<String, String>) -> Result<BTreeMap<String, Reg
     let bodies = region::schema_bodies(sources).map_err(|e| anyhow::anyhow!("{}: {}", e.code, e.message))?;
     region::regions(sources, &bodies).map_err(|e| anyhow::anyhow!("{}: {}", e.code, e.message))
 }
-fn text<'a>(sources: &'a BTreeMap<String, String>, r: Option<&Region>) -> Option<&'a str> {
-    r.map(|r| &sources[&r.file][r.span.clone()])
+/// A region's text with line endings normalised, so a CRLF checkout compares equal.
+fn text(sources: &BTreeMap<String, String>, r: Option<&Region>) -> Option<String> {
+    r.map(|r| sources[&r.file][r.span.clone()].replace("\r\n", "\n"))
 }
 
 /// Plans pull's source edits for the newest capture release of `chain` (the incoming
-/// release). `catalog`: the newest chain release that was already in the local catalog
-/// before this pull. Per schema, comparing the catalog, local and incoming regions:
+/// release), once per capture (review H-3): nothing when the incoming release, or any later
+/// release, is already in the local catalog (`local`, before this pull); refused (`ADB1104`)
+/// when code releases follow the capture in the hosted history but not locally. The
+/// catalog region comes from the newest local release before the incoming one. Per schema,
+/// comparing the catalog, local and incoming regions:
 /// local equals catalog, the local region becomes the incoming one (inserted at the end of
 /// the schema body when absent); incoming equals catalog, the local region is kept;
 /// otherwise pull refuses with both diffs and writes nothing.
-pub(crate) fn plan(chain: &[Release], catalog: Option<&Release>, entry: &str, local: &BTreeMap<String, String>) -> Result<Option<(Release, Plan)>> {
-    let Some(index) = chain.iter().rposition(|r| r.revision.capture.is_some()) else { return Ok(None) };
+pub(crate) fn plan(chain: &[Release], pulled: &BTreeSet<String>, entry: &str, local: &BTreeMap<String, String>) -> Result<Option<(Release, Plan)>> {
+    let Some(index) = pending(chain, pulled) else { return Ok(None) };
     let incoming = &chain[index];
+    if index + 1 < chain.len() {
+        bail!(
+            "ADB1104: the hosted history has release(s) {} after the dashboard capture {} that are not in the local catalog; get their sources first (they were released from code), then pull again. Nothing was written.",
+            chain[index + 1..].iter().map(|r| r.revision.identity.version.as_str()).collect::<Vec<_>>().join(", "),
+            incoming.revision.identity.version
+        );
+    }
+    let catalog = chain[..index].iter().rev().find(|r| pulled.contains(&r.sha256));
     let empty = BTreeMap::new();
     let catalog_sources = catalog.map_or(&empty, |c| &c.revision.sources);
     let (c_regions, l_regions, i_regions) = (regions_of(catalog_sources)?, regions_of(local)?, regions_of(&incoming.revision.sources)?);
@@ -56,6 +68,7 @@ pub(crate) fn plan(chain: &[Release], catalog: Option<&Release>, entry: &str, lo
     let mut conflicts = vec![];
     for schema in schemas {
         let (c, l, i) = (text(catalog_sources, c_regions.get(schema)), text(local, l_regions.get(schema)), text(&incoming.revision.sources, i_regions.get(schema)));
+        let (c, l, i) = (c.as_deref(), l.as_deref(), i.as_deref());
         if l == i {
             continue;
         }
@@ -126,6 +139,14 @@ pub(crate) fn plan(chain: &[Release], catalog: Option<&Release>, entry: &str, lo
     Ok(Some((incoming.clone(), plan)))
 }
 
+/// The index of the newest capture release of `chain` that pull still has to apply: one
+/// newer than every release already in the local catalog.
+pub(crate) fn pending(chain: &[Release], pulled: &BTreeSet<String>) -> Option<usize> {
+    let index = chain.iter().rposition(|r| r.revision.capture.is_some())?;
+    let newest_local = chain.iter().rposition(|r| pulled.contains(&r.sha256));
+    (newest_local.is_none_or(|n| n < index)).then_some(index)
+}
+
 /// A line diff (`-`/`+`/` ` prefixes), small and dependency-free.
 fn diff(a: &str, b: &str) -> String {
     let (x, y): (Vec<&str>, Vec<&str>) = (a.lines().collect(), b.lines().collect());
@@ -152,66 +173,113 @@ fn diff(a: &str, b: &str) -> String {
     out.join("\n")
 }
 
-/// Writes a plan under the path rules (security S-5): every path is a valid source key that
-/// already exists in the project as a regular file (not a symlink) inside the canonical
-/// root; originals are copied to `.axiom/database/pulled/<version>/` first; new texts are
-/// written with `create_new` into a fresh directory and renamed over their targets; at most
-/// 8 MiB in total. Returns the backup directory.
-pub(crate) fn write(root: &Path, version: &str, plan: &Plan, migration: Option<&str>) -> Result<PathBuf> {
+/// A plan checked under the path rules (security S-5, review H-4 and L-14) with its new
+/// texts staged, before anything is archived: every path is a valid source key that already
+/// exists as a regular file inside the canonical root with no symlink on any component; at
+/// most 8 MiB. [`Staged::apply`] then copies the originals to
+/// `.axiom/database/pulled/<version>/`, records what it applied (`applied.json`) and renames
+/// the staged texts over their targets, restoring every original if one rename fails.
+pub(crate) struct Staged {
+    root: PathBuf,
+    backup: PathBuf,
+    staging: tempfile::TempDir,
+    /// (relative path, target, staged text file or `None` to delete)
+    files: Vec<(String, PathBuf, Option<PathBuf>)>,
+    record: serde_json::Value,
+}
+
+fn checked_target(root: &Path, path: &str, migration: Option<&str>) -> Result<PathBuf> {
+    if !source_key(path, migration) {
+        bail!("ADB1101: source key `{path}` is outside the source-key rule; nothing was written");
+    }
+    let mut cursor = root.to_path_buf();
+    for component in path.split('/') {
+        cursor.push(component);
+        let meta = std::fs::symlink_metadata(&cursor).map_err(|_| anyhow::anyhow!("ADB1101: pull writes only existing project files; `{path}` does not exist; nothing was written"))?;
+        if meta.file_type().is_symlink() {
+            bail!("ADB1101: `{path}` passes through a symlink; nothing was written");
+        }
+    }
+    if !std::fs::symlink_metadata(&cursor)?.file_type().is_file() || !cursor.canonicalize()?.starts_with(root) {
+        bail!("ADB1101: `{path}` is not a regular file inside the project; nothing was written");
+    }
+    Ok(cursor)
+}
+
+/// Checks and stages `plan` for `incoming`; writes nothing in the project.
+pub(crate) fn stage(root: &Path, incoming: &Release, plan: &Plan) -> Result<Staged> {
     let root = root.canonicalize()?;
     let total: usize = plan.files.values().flatten().map(String::len).sum();
     if total > MAX_WRITE {
         bail!("ADB1101: pull would write more than 8 MiB of source; nothing was written");
     }
-    let mut targets = vec![];
-    for path in plan.files.keys() {
-        if !source_key(path, migration) {
-            bail!("ADB1101: source key `{path}` is outside the source-key rule; nothing was written");
-        }
-        let target = root.join(path);
-        let meta = std::fs::symlink_metadata(&target).map_err(|_| anyhow::anyhow!("ADB1101: pull writes only existing project files; `{path}` does not exist; nothing was written"))?;
-        if !meta.file_type().is_file() || !target.canonicalize()?.starts_with(&root) {
-            bail!("ADB1101: `{path}` is not a regular file inside the project; nothing was written");
-        }
-        targets.push((path.clone(), target));
-    }
     let database = root.join(".axiom/database");
     std::fs::create_dir_all(&database)?;
+    let staging = tempfile::Builder::new().prefix("pull-").tempdir_in(&database)?;
+    let mut files = vec![];
+    for (index, (path, text)) in plan.files.iter().enumerate() {
+        let target = checked_target(&root, path, plan.removed_migration.as_deref())?;
+        let staged = match text {
+            Some(text) => {
+                let file_path = staging.path().join(index.to_string());
+                let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&file_path)?;
+                file.write_all(text.as_bytes())?;
+                file.sync_all()?;
+                Some(file_path)
+            }
+            None => None,
+        };
+        files.push((path.clone(), target, staged));
+    }
+    let version = &incoming.revision.identity.version;
     let mut backup = database.join("pulled").join(version);
     let mut n = 1;
     while backup.exists() {
         n += 1;
         backup = database.join("pulled").join(format!("{version}.{n}"));
     }
-    for (path, target) in &targets {
-        let copy = backup.join(path);
-        std::fs::create_dir_all(copy.parent().unwrap())?;
-        let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&copy)?;
-        file.write_all(&std::fs::read(target)?)?;
-        file.sync_all()?;
-    }
-    let staging = tempfile::Builder::new().prefix("pull-").tempdir_in(&database)?;
-    let mut staged = vec![];
-    for (index, (path, target)) in targets.iter().enumerate() {
-        if let Some(Some(text)) = plan.files.get(path) {
-            let file_path = staging.path().join(index.to_string());
-            let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&file_path)?;
-            file.write_all(text.as_bytes())?;
+    let record = serde_json::json!({"format": "axiom-database-pull-applied/v1", "release": incoming.sha256, "version": version, "replaced": plan.replaced, "kept": plan.kept, "projectVersion": plan.version, "removedMigration": plan.removed_migration, "files": plan.files.keys().collect::<Vec<_>>()});
+    Ok(Staged { root, backup, staging, files, record })
+}
+
+impl Staged {
+    /// Applies the staged edits; returns the backup directory.
+    pub(crate) fn apply(self) -> Result<PathBuf> {
+        for (path, target, _) in &self.files {
+            let copy = self.backup.join(path);
+            std::fs::create_dir_all(copy.parent().unwrap())?;
+            let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&copy)?;
+            file.write_all(&std::fs::read(target)?)?;
             file.sync_all()?;
-            staged.push((file_path, target.clone()));
         }
-    }
-    for (from, to) in staged {
-        // Checked again just before the rename: still a regular file inside the root.
-        if !std::fs::symlink_metadata(&to)?.file_type().is_file() || !to.canonicalize()?.starts_with(&root) {
-            bail!("ADB1101: `{}` changed during pull", to.display());
+        let mut record = std::fs::OpenOptions::new().write(true).create_new(true).open(self.backup.join("applied.json"))?;
+        record.write_all(&serde_json::to_vec_pretty(&self.record)?)?;
+        record.sync_all()?;
+        let mut done: Vec<&PathBuf> = vec![];
+        let result = (|| -> Result<()> {
+            for (path, target, staged) in &self.files {
+                // Checked again just before each change.
+                if !std::fs::symlink_metadata(target)?.file_type().is_file() || !target.canonicalize()?.starts_with(&self.root) {
+                    bail!("ADB1101: `{path}` changed during pull");
+                }
+                match staged {
+                    Some(from) => std::fs::rename(from, target)?,
+                    None => std::fs::remove_file(target)?,
+                }
+                done.push(target);
+            }
+            Ok(())
+        })();
+        if let Err(error) = result {
+            // Restore every file already changed from its backup copy.
+            for (path, target, _) in &self.files {
+                if done.contains(&target) {
+                    let _ = std::fs::copy(self.backup.join(path), target);
+                }
+            }
+            return Err(error.context("pull restored the original sources"));
         }
-        std::fs::rename(from, to)?;
+        drop(self.staging);
+        Ok(self.backup)
     }
-    for (path, target) in &targets {
-        if plan.files.get(path) == Some(&None) {
-            std::fs::remove_file(target)?;
-        }
-    }
-    Ok(backup)
 }

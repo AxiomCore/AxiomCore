@@ -844,9 +844,14 @@ pub(crate) async fn pull_with(h: &Hosted<'_>, args: &PullArgs, out: &mut dyn Wri
     }
     // Dashboard captures (data-tools/v1): the incoming region and the mechanical edits are
     // planned, and the result compiled, before anything is written.
-    let catalog_release = chain.iter().rev().find(|r| local.iter().any(|l| l.sha256 == r.sha256));
+    // Fail closed (review H-4): a capture that still has to be applied is never archived
+    // unless its region can be written to a working source tree.
+    let pulled = local.iter().map(|r| r.sha256.clone()).collect::<std::collections::BTreeSet<_>>();
+    if super::database_capture::pending(&chain, &pulled).is_some() && !working {
+        bail!("ADB1104: the hosted history holds a dashboard capture, and the working source does not compile (or is a release file); fix the source and pull again. Nothing was written.");
+    }
     let sources = if working {
-        super::database_capture::plan(&chain, catalog_release, &loaded.input.entry, &loaded.input.files)?
+        super::database_capture::plan(&chain, &pulled, &loaded.input.entry, &loaded.input.files)?
     } else {
         None
     };
@@ -862,6 +867,11 @@ pub(crate) async fn pull_with(h: &Hosted<'_>, args: &PullArgs, out: &mut dyn Wri
             bail!("ADB1104: the working sources with the pulled dashboard region do not compile; nothing was written");
         }
     }
+    // Every path check runs, and every new text is staged, before anything is archived.
+    let staged = match &sources {
+        Some((incoming, plan)) if !plan.files.is_empty() => Some(super::database_capture::stage(&loaded.root, incoming, plan)?),
+        _ => None,
+    };
     let mut added = vec![];
     let mut present = vec![];
     for release in &chain {
@@ -872,13 +882,7 @@ pub(crate) async fn pull_with(h: &Hosted<'_>, args: &PullArgs, out: &mut dyn Wri
             added.push((release, path));
         }
     }
-    let mut written = None;
-    if let Some((incoming, plan)) = &sources {
-        if !plan.files.is_empty() {
-            let backup = super::database_capture::write(&loaded.root, &incoming.revision.identity.version, plan, plan.removed_migration.as_deref())?;
-            written = Some(backup);
-        }
-    }
+    let written = staged.map(super::database_capture::Staged::apply).transpose()?;
     let region = sources.as_ref().map(|(incoming, plan)| serde_json::json!({"incoming":incoming.revision.identity.version,"replaced":plan.replaced,"kept":plan.kept,"version":plan.version,"removedMigration":plan.removed_migration,"files":plan.files.keys().collect::<Vec<_>>(),"backup":written.as_ref().map(|b| b.strip_prefix(&loaded.root).unwrap_or(b).display().to_string())}));
     if args.json {
         writeln!(
@@ -1588,8 +1592,10 @@ mod tests {
         let before = std::fs::read_to_string(root.path().join("schema.acore")).unwrap();
         let mut out = vec![];
         pull_with(&hosted(&client), &pull_args(root.path()), &mut out).await.unwrap();
-        assert!(text(out).contains("dashboard region of schema main kept (local edit)"));
-        assert_eq!(std::fs::read_to_string(root.path().join("schema.acore")).unwrap(), before, "incoming equals catalog: the local move stands");
+        // The capture is already in the local catalog, so pull applies nothing (review H-3).
+        let out = text(out);
+        assert!(!out.contains("dashboard region") && out.contains("kept  1.0.1"), "{out}");
+        assert_eq!(std::fs::read_to_string(root.path().join("schema.acore")).unwrap(), before, "the local move stands");
         assert!(!root.path().join(".axiom/database/pulled").exists());
     }
 
@@ -1611,6 +1617,88 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pull_applies_a_capture_once_and_keeps_later_local_work() {
+        // (a) After the capture is pulled, a new migration declaration of the developer's
+        // survives every later pull (review H-3).
+        let r1 = release("1.0.0", TASKS, None);
+        let r2 = with_intent(&r1, "1.1.0");
+        let c3 = captured(&r2, "CREATE TABLE notes (id TEXT PRIMARY KEY)");
+        let (_, client) = pull_cloud(&[&r1, &r2, &c3], true).await;
+        let root = tree(&r2);
+        db::archive(root.path(), &r1).unwrap();
+        db::archive(root.path(), &r2).unwrap();
+        pull_with(&hosted(&client), &pull_args(root.path()), &mut Vec::new()).await.unwrap();
+        let applied: serde_json::Value = serde_json::from_slice(&std::fs::read(root.path().join(".axiom/database/pulled/1.1.1/applied.json")).unwrap()).unwrap();
+        assert_eq!(applied["release"], c3.sha256.as_str(), "what was applied is recorded");
+        let schema = root.path().join("schema.acore");
+        let mut schema_text = std::fs::read_to_string(&schema).unwrap();
+        schema_text.push_str("migration(source: \"migration.acore\")\n");
+        std::fs::write(&schema, &schema_text).unwrap();
+        std::fs::write(root.path().join("migration.acore"), FILL).unwrap();
+        let mut out = vec![];
+        pull_with(&hosted(&client), &pull_args(root.path()), &mut out).await.unwrap();
+        assert_eq!(std::fs::read_to_string(&schema).unwrap(), schema_text, "{}", String::from_utf8_lossy(&out));
+        assert!(root.path().join("migration.acore").exists());
+        assert!(!root.path().join(".axiom/database/pulled/1.1.1.2").exists());
+
+        // (b) A CLI release after the capture that moved the table out: pull never writes
+        // the capture's older region back.
+        let r1 = release("1.0.0", TASKS, None);
+        let c2 = captured(&r1, "CREATE TABLE notes (id TEXT PRIMARY KEY)");
+        let moved = tree(&c2);
+        move_out(moved.path(), "notes");
+        let mut files = c2.revision.sources.clone();
+        files.insert("schema.acore".into(), std::fs::read_to_string(moved.path().join("schema.acore")).unwrap().replace("version: \"1.0.1\"", "version: \"1.1.0\""));
+        let input = acore::database::ProjectInput { entry: "schema.acore".into(), files, packages: Default::default() };
+        let compiled = acore::database::compile(&input).unwrap();
+        let r3 = db::sign_with_key(db::revision(&compiled, input, Some(&c2), "migration", None).unwrap(), SEED).unwrap();
+        let (_, client) = pull_cloud(&[&r1, &c2, &r3], true).await;
+        let root = tree(&r3);
+        for r in [&r1, &c2, &r3] {
+            db::archive(root.path(), r).unwrap();
+        }
+        let before = std::fs::read_to_string(root.path().join("schema.acore")).unwrap();
+        pull_with(&hosted(&client), &pull_args(root.path()), &mut Vec::new()).await.unwrap();
+        assert_eq!(std::fs::read_to_string(root.path().join("schema.acore")).unwrap(), before);
+        // A following local migrate keeps the moved table: the head is current.
+        let mut out = vec![];
+        migrate_with(&hosted(&client), &migrate_args(root.path(), false), &mut out).await.unwrap();
+        assert!(text(out).contains("Database is current"));
+
+        // Code releases after an unpulled capture, not local: refused, nothing written.
+        let root = tree(&r1);
+        db::archive(root.path(), &r1).unwrap();
+        let error = pull_with(&hosted(&client), &pull_args(root.path()), &mut Vec::new()).await.unwrap_err().to_string();
+        assert!(error.starts_with("ADB1104:") && error.contains("1.1.0"), "{error}");
+        assert!(!catalog(root.path(), "1.0.1").exists());
+    }
+
+    #[tokio::test]
+    async fn pull_fails_closed_when_the_capture_region_cannot_be_written() {
+        // (review H-4) A tree that does not compile: nothing is archived.
+        let r1 = release("1.0.0", TASKS, None);
+        let c2 = captured(&r1, "CREATE TABLE notes (id TEXT PRIMARY KEY)");
+        let (_, client) = pull_cloud(&[&r1, &c2], true).await;
+        let root = tree(&r1);
+        db::archive(root.path(), &r1).unwrap();
+        std::fs::write(root.path().join("schema.acore"), "this does not compile").unwrap();
+        let error = pull_with(&hosted(&client), &pull_args(root.path()), &mut Vec::new()).await.unwrap_err().to_string();
+        assert!(error.starts_with("ADB1104:"), "{error}");
+        assert!(!catalog(root.path(), "1.0.1").exists());
+        // A schema file that is a symlink to a file outside the project: refused before
+        // anything is archived, and the outside file is untouched.
+        let root = tree(&r1);
+        db::archive(root.path(), &r1).unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::rename(root.path().join("schema.acore"), outside.path().join("schema.acore")).unwrap();
+        std::os::unix::fs::symlink(outside.path().join("schema.acore"), root.path().join("schema.acore")).unwrap();
+        let error = pull_with(&hosted(&client), &pull_args(root.path()), &mut Vec::new()).await.unwrap_err().to_string();
+        assert!(error.starts_with("ADB1101:") || error.starts_with("ADB1104:"), "{error}");
+        assert!(!catalog(root.path(), "1.0.1").exists());
+        assert_eq!(std::fs::read_to_string(outside.path().join("schema.acore")).unwrap(), r1.revision.sources["schema.acore"]);
+    }
+
+    #[tokio::test]
     async fn migrate_refuses_an_unpulled_capture_head() {
         let r1 = release("1.0.0", TASKS, None);
         let c2 = captured(&r1, "CREATE TABLE notes (id TEXT PRIMARY KEY)");
@@ -1624,7 +1712,10 @@ mod tests {
 
     #[test]
     fn pull_writes_only_existing_project_files_under_the_source_key_rule() {
-        use super::super::database_capture::{write, Plan};
+        use super::super::database_capture::{stage, Plan};
+        let write = |root: &Path, version: &str, plan: &Plan, _: Option<&str>| -> anyhow::Result<PathBuf> {
+            stage(root, &release(version, TASKS, None), plan)?.apply()
+        };
         let root = tempfile::tempdir().unwrap();
         std::fs::write(root.path().join("schema.acore"), "x").unwrap();
         for path in ["../x.acore", "/abs.acore", "missing.acore", "notes.txt"] {
@@ -1634,6 +1725,18 @@ mod tests {
         std::os::unix::fs::symlink(root.path().join("schema.acore"), root.path().join("link.acore")).unwrap();
         let plan = Plan { files: [("link.acore".to_string(), Some("y".to_string()))].into(), ..Default::default() };
         assert!(write(root.path(), "1.0.1", &plan, None).is_err(), "symlinks are never written");
+        // A symlinked directory on the path (lstat on every component), inside or outside.
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("x.acore"), "x").unwrap();
+        std::os::unix::fs::symlink(outside.path(), root.path().join("sub")).unwrap();
+        let plan = Plan { files: [("sub/x.acore".to_string(), Some("y".to_string()))].into(), ..Default::default() };
+        assert!(write(root.path(), "1.0.1", &plan, None).unwrap_err().to_string().starts_with("ADB1101"));
+        assert_eq!(std::fs::read_to_string(outside.path().join("x.acore")).unwrap(), "x");
+        std::fs::create_dir(root.path().join("dir")).unwrap();
+        std::fs::write(root.path().join("dir/y.acore"), "y").unwrap();
+        std::os::unix::fs::symlink(root.path().join("dir"), root.path().join("alias")).unwrap();
+        let plan = Plan { files: [("alias/y.acore".to_string(), Some("z".to_string()))].into(), ..Default::default() };
+        assert!(write(root.path(), "1.0.1", &plan, None).unwrap_err().to_string().starts_with("ADB1101"));
         let plan = Plan { files: [("schema.acore".to_string(), Some("y".repeat(8 * 1024 * 1024 + 1)))].into(), ..Default::default() };
         assert!(write(root.path(), "1.0.1", &plan, None).is_err(), "8 MiB bound");
         assert_eq!(std::fs::read_to_string(root.path().join("schema.acore")).unwrap(), "x");

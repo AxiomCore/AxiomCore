@@ -175,13 +175,12 @@ pub fn compute(source: &Path, options: &Options, release: &Release) -> Result<Re
         let column = before.rsplit('\n').next().unwrap_or_default().chars().count() + 1;
         Some((u32::try_from(line).ok()?, u32::try_from(column).ok()?))
     };
-    let find = |path: &str, start: usize, end: usize, needle: &str| -> Option<usize> {
+    let text = |path: &str| -> Option<String> {
         let root = application.as_ref()?;
         if !impact::relative_path(path) {
             return None;
         }
-        let text = std::fs::read_to_string(root.join(path)).ok()?;
-        text.get(start..end.min(text.len()))?.find(needle).map(|i| start + i)
+        std::fs::read_to_string(root.join(path)).ok()
     };
     let plan = if found.is_empty() { Plan::Missing } else { Plan::Found(found.iter().collect()) };
     impact::report(impact::Inputs {
@@ -191,7 +190,7 @@ pub fn compute(source: &Path, options: &Options, release: &Release) -> Result<Re
         plan,
         graph: graph.as_ref(),
         locate: &locate,
-        find: &find,
+        text: &text,
         unknown,
     })
 }

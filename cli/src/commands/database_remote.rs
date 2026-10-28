@@ -466,7 +466,11 @@ pub(crate) async fn migrate_with(
     let mut chain = history;
     for (index, candidate) in candidates.iter().enumerate() {
         if !dry_run {
+            let fresh = super::database_impact::fresh(&loaded.root, candidate);
             db::archive(&loaded.root, candidate).map_err(engine_error)?;
+            if fresh {
+                super::database_impact::write_quietly(&loaded.root, &args.source, &args.impact, candidate, json);
+            }
             if index + 1 == pending.len()
                 && loaded.input.files != original.files
                 && !loaded.immutable
@@ -1180,6 +1184,7 @@ mod tests {
             },
             frozen: false,
             to: None,
+            impact: Default::default(),
         }
     }
     fn pull_args(root: &Path) -> PullArgs {

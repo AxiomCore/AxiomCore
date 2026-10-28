@@ -91,6 +91,8 @@ pub struct MigrateArgs {
     /// Migrate to this catalog version instead of the working contract
     #[arg(long)]
     pub to: Option<String>,
+    #[command(flatten)]
+    pub impact: super::database_impact::Options,
 }
 #[derive(Args, Clone, Debug)]
 pub struct RollbackArgs {
@@ -925,7 +927,11 @@ pub async fn migrate(args: &MigrateArgs, shell: bool, execute: Option<&str>) -> 
                     return Err(error.into());
                 }
             };
+            let fresh = super::database_impact::fresh(&loaded.root, candidate);
             let path = db::archive(&loaded.root, candidate)?;
+            if fresh {
+                super::database_impact::write_quietly(&loaded.root, &args.source, &args.impact, candidate, args.policy.json);
+            }
             if index + 1 == pending.len()
                 && loaded.input.files != original.files
                 && !loaded.immutable
@@ -1296,6 +1302,7 @@ pub async fn run(
             policy: policy.clone(),
             frozen,
             to: None,
+            impact: Default::default(),
         },
         !no_shell,
         execute,
@@ -1361,6 +1368,7 @@ pub async fn run_backend(
                 policy: policy.clone(),
                 frozen: false,
                 to: None,
+                impact: Default::default(),
             },
             false,
             None,

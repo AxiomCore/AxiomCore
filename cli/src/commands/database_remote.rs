@@ -331,6 +331,18 @@ async fn upload(h: &Hosted<'_>, release: &Release) -> Result<()> {
     Ok(())
 }
 
+/// Attaches the release's signed impact sidecar, when the catalog holds a valid one
+/// (`data-tools/v1`, "Storage: signed sidecar"). Never fails the migration: the sidecar
+/// is re-attachable, and a refusal is reported on standard error outside JSON mode.
+async fn upload_impact(h: &Hosted<'_>, root: &Path, release: &Release, json: bool) {
+    let Some(body) = super::database_impact::upload_body(root, release) else { return };
+    if let Err(error) = h.client.upload_migration_impact(h.project, &release.sha256, &body, &idempotency_key()).await {
+        if !json {
+            eprintln!("The impact report for {} was not attached: {error}", release.revision.identity.version);
+        }
+    }
+}
+
 /// Prints a finished `migrate` or `check` operation, or fails with its code.
 fn report(
     out: &mut dyn Write,
@@ -415,6 +427,13 @@ pub(crate) async fn migrate_with(
     let head = hosted_head(h, &stream).await?;
     let local = db::archive_versions(&loaded.root).map_err(engine_error)?;
     let history = hosted_chain(h, &stream, head.as_ref(), &local, None).await?;
+    // data-tools/v1: a hosted head the developer has not pulled, whose unpulled history
+    // holds a dashboard capture, would recompile stale sources over the capture.
+    if head.as_ref().is_some_and(|t| !local.iter().any(|l| l.sha256 == t.head))
+        && history.iter().any(|r| r.revision.capture.is_some() && !local.iter().any(|l| l.sha256 == r.sha256))
+    {
+        bail!("ADB1103: the hosted head includes a dashboard capture that is not in the local catalog; run `axiom database pull` first");
+    }
     let catalog = dev::migration_catalog(&loaded, &history)?;
     let (_, pending_preview) =
         db::working_preview(history.last(), &loaded.compiled).map_err(engine_error)?;
@@ -479,6 +498,9 @@ pub(crate) async fn migrate_with(
             }
         }
         upload(h, candidate).await?;
+        if !dry_run {
+            upload_impact(h, &loaded.root, candidate, json).await;
+        }
         let mode = if dry_run { Mode::Check } else { Mode::Migrate };
         let operation = run_operation(h, mode, Some(&candidate.sha256)).await?;
         report(out, &operation, candidate, &stream, json)?;
@@ -704,13 +726,15 @@ pub(crate) async fn history_with(
         None => writeln!(out, "No applied migrations recorded.")?,
     }
     for release in &applied {
+        let captured = local.iter().find(|l| l.sha256 == release.sha256).and_then(super::database_capture::label);
         writeln!(
             out,
-            "{}  {}  {}  {}",
+            "{}  {}  {}  {}{}",
             release.version,
             release.kind,
             short(&release.sha256),
-            marker(&release.sha256, &release.version)
+            marker(&release.sha256, &release.version),
+            captured.map(|c| format!("  {c}")).unwrap_or_default()
         )?;
     }
     if head
@@ -797,6 +821,7 @@ pub(crate) async fn diff_with(
 /// rewritten; nothing is executed against the database.
 pub(crate) async fn pull_with(h: &Hosted<'_>, args: &PullArgs, out: &mut dyn Write) -> Result<()> {
     let (loaded, diagnostic) = dev::load_existing(&args.source)?;
+    let working = diagnostic.is_none() && !loaded.immutable;
     if let Some(diagnostic) = diagnostic {
         eprintln!("{diagnostic}");
     }
@@ -817,6 +842,26 @@ pub(crate) async fn pull_with(h: &Hosted<'_>, args: &PullArgs, out: &mut dyn Wri
                 .join(", ")
         );
     }
+    // Dashboard captures (data-tools/v1): the incoming region and the mechanical edits are
+    // planned, and the result compiled, before anything is written.
+    let catalog_release = chain.iter().rev().find(|r| local.iter().any(|l| l.sha256 == r.sha256));
+    let sources = if working {
+        super::database_capture::plan(&chain, catalog_release, &loaded.input.entry, &loaded.input.files)?
+    } else {
+        None
+    };
+    if let Some((_, plan)) = &sources {
+        let mut input = loaded.input.clone();
+        for (path, text) in &plan.files {
+            match text {
+                Some(text) => input.files.insert(path.clone(), text.clone()),
+                None => input.files.remove(path),
+            };
+        }
+        if acore::database::compile(&input).is_err() {
+            bail!("ADB1104: the working sources with the pulled dashboard region do not compile; nothing was written");
+        }
+    }
     let mut added = vec![];
     let mut present = vec![];
     for release in &chain {
@@ -827,11 +872,19 @@ pub(crate) async fn pull_with(h: &Hosted<'_>, args: &PullArgs, out: &mut dyn Wri
             added.push((release, path));
         }
     }
+    let mut written = None;
+    if let Some((incoming, plan)) = &sources {
+        if !plan.files.is_empty() {
+            let backup = super::database_capture::write(&loaded.root, &incoming.revision.identity.version, plan, plan.removed_migration.as_deref())?;
+            written = Some(backup);
+        }
+    }
+    let region = sources.as_ref().map(|(incoming, plan)| serde_json::json!({"incoming":incoming.revision.identity.version,"replaced":plan.replaced,"kept":plan.kept,"version":plan.version,"removedMigration":plan.removed_migration,"files":plan.files.keys().collect::<Vec<_>>(),"backup":written.as_ref().map(|b| b.strip_prefix(&loaded.root).unwrap_or(b).display().to_string())}));
     if args.json {
         writeln!(
             out,
             "{}",
-            serde_json::json!({"format":"axiom-database-hosted-pull/v1","project":stream,"head":head.as_ref().map(|t| &t.head),"generation":head.as_ref().map(|t| t.generation),"added":added.iter().map(|(r, _)| &r.revision.identity.version).collect::<Vec<_>>(),"present":present.iter().map(|r| &r.revision.identity.version).collect::<Vec<_>>(),"executed":false})
+            serde_json::json!({"format":"axiom-database-hosted-pull/v1","project":stream,"head":head.as_ref().map(|t| &t.head),"generation":head.as_ref().map(|t| t.generation),"added":added.iter().map(|(r, _)| &r.revision.identity.version).collect::<Vec<_>>(),"present":present.iter().map(|r| &r.revision.identity.version).collect::<Vec<_>>(),"dashboard":region,"executed":false})
         )?;
         return Ok(());
     }
@@ -854,12 +907,30 @@ pub(crate) async fn pull_with(h: &Hosted<'_>, args: &PullArgs, out: &mut dyn Wri
     for (release, path) in &added {
         writeln!(
             out,
-            "  added {}  {}  {}  {}",
+            "  added {}  {}  {}  {}{}",
             release.revision.identity.version,
             release.revision.kind,
             short(&release.sha256),
-            path.strip_prefix(&loaded.root).unwrap_or(path).display()
+            path.strip_prefix(&loaded.root).unwrap_or(path).display(),
+            super::database_capture::label(release).map(|l| format!("  {l}")).unwrap_or_default()
         )?;
+    }
+    if let Some((incoming, plan)) = &sources {
+        for schema in &plan.replaced {
+            writeln!(out, "  dashboard region of schema {schema} updated from {}", incoming.revision.identity.version)?;
+        }
+        for schema in &plan.kept {
+            writeln!(out, "  dashboard region of schema {schema} kept (local edit)")?;
+        }
+        if let Some(version) = &plan.version {
+            writeln!(out, "  project version set to {version}")?;
+        }
+        if let Some(path) = &plan.removed_migration {
+            writeln!(out, "  migration(source: \"{path}\") and its file removed (applied by the capture)")?;
+        }
+        if let Some(backup) = &written {
+            writeln!(out, "  originals copied to {}", backup.strip_prefix(&loaded.root).unwrap_or(backup).display())?;
+        }
     }
     for release in &present {
         writeln!(
@@ -1003,6 +1074,13 @@ pub(crate) mod fake {
                         self.releases.push((sha, body.to_vec()));
                     }
                     (if created { 201 } else { 200 }, json!({"release": summary}).to_string().into_bytes())
+                }
+                ("PUT", r) if r.starts_with("/migrations/releases/") && r.ends_with("/impact") => {
+                    let sha = r["/migrations/releases/".len()..r.len() - "/impact".len()].to_string();
+                    if !self.releases.iter().any(|(s, _)| *s == sha) {
+                        return (404, br#"{"error":{"code":"AXRESOURCE_DENIED"}}"#.to_vec());
+                    }
+                    (201, json!({"impact": {"release_sha256": sha, "public_key": "x", "uploaded_at": "2026-10-20T00:00:00Z"}}).to_string().into_bytes())
                 }
                 ("GET", "/migrations/releases") => ok(json!({"releases": self.releases.iter().rev().filter_map(|(_, b)| Self::summary(b)).collect::<Vec<_>>()})),
                 ("GET", r) if r.starts_with("/migrations/releases/") => {
@@ -1224,6 +1302,9 @@ mod tests {
             assert_eq!(ops[1], serde_json::json!({"environment": "development", "mode": "migrate", "release": first.sha256}));
             assert!(state.count("GET", "/api/v1/projects/acme/migrations/operations/00000000-0000-4000-8000-000000000002") >= 2);
             assert_eq!(state.head.as_ref().unwrap().0, first.sha256);
+            // The signed impact sidecar written next to the release is attached to it.
+            let sidecar = std::fs::read(root.path().join(".axiom/database/migrations/1.0.0/impact.json")).unwrap();
+            assert_eq!(state.bodies("PUT", &format!("/api/v1/projects/acme/migrations/releases/{}/impact", first.sha256)), vec![sidecar]);
         }
         assert!(out.contains(&format!("Applied migration 1.0.0 · hosted head {} (generation 1)", first.sha256)), "{out}");
 
@@ -1405,6 +1486,161 @@ mod tests {
         let state = state.lock().unwrap();
         assert_eq!(state.count("GET", &format!("/api/v1/projects/acme/migrations/releases/{}", r1.sha256)), 0);
         assert_eq!(state.count("GET", &format!("/api/v1/projects/acme/migrations/releases/{}", r2.sha256)), 1);
+    }
+
+    // --- dashboard captures (data-tools/v1, "CLI: pull, migrate and version skew") ---------
+    const FILL: &str = "evolution fill(from: Previous, to: Current, coordination: EvolutionCoordination.maintenanceFenced) { backfill(table: Current.Tables.main.tasks, key: Previous.Columns.main.tasks.id, column: Current.Columns.main.tasks.title, using: value(literal: \"filled\"), batchSize: 10, batchesPerRun: 1, maxRows: 10, catchUpRows: 10) }";
+
+    /// A capture on `parent` as the dashboard builds it (preview, then build with the
+    /// receipt's block), signed by the test key.
+    fn captured(parent: &Release, sql: &str) -> Release {
+        use axiom_database::capture;
+        let preview = capture::build(parent, &[], None, sql, None).unwrap();
+        let block = db::capture::CaptureBlock {
+            format: "axiom-dashboard-capture/v1".into(),
+            project_id: "5d2c1b0a-9e8f-4a7b-8c6d-5e4f3a2b1c0d".into(),
+            environment_id: "c0ffee00-0000-4000-8000-000000000001".into(),
+            receipt_id: "c0ffee00-0000-4000-8000-000000000002".into(),
+            parent_sha256: parent.sha256.clone(),
+            sql_sha256: "0".repeat(64),
+            statements_sha256: preview.statements_sha256.clone(),
+            captured_by: "owner@example.com".into(),
+            captured_at: "2026-10-28T10:00:00Z".into(),
+            title: "Add notes".into(),
+        };
+        let built = capture::build(parent, &[], Some(&preview.version), sql, Some(block)).unwrap();
+        db::sign_with_key(built.revision, SEED).unwrap()
+    }
+    /// A working tree with exactly the sources of `release`.
+    fn tree(release: &Release) -> tempfile::TempDir {
+        let root = tempfile::tempdir().unwrap();
+        for (path, text) in &release.revision.sources {
+            let target = root.path().join(path);
+            std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+            std::fs::write(target, text).unwrap();
+        }
+        root
+    }
+    fn with_intent(parent: &Release, version: &str) -> Release {
+        let mut files = parent.revision.sources.clone();
+        let entry = files.get_mut("schema.acore").unwrap();
+        *entry = entry.replace(&format!("version: \"{}\"", parent.revision.identity.version), &format!("version: \"{version}\""));
+        entry.push_str("\nmigration(source: \"migration.acore\")\n");
+        files.insert("migration.acore".into(), FILL.into());
+        let input = acore::database::ProjectInput { entry: "schema.acore".into(), files, packages: Default::default() };
+        let compiled = acore::database::compile(&input).unwrap();
+        let release = db::sign_with_key(db::revision(&compiled, input, Some(parent), "migration", None).unwrap(), SEED).unwrap();
+        assert!(release.revision.evolution.is_some());
+        release
+    }
+    /// The developer moves `table` out of the dashboard region (above the begin marker).
+    fn move_out(root: &Path, table: &str) {
+        let path = root.join("schema.acore");
+        let mut text = std::fs::read_to_string(&path).unwrap();
+        let start = text.find(&format!("  table {table}")).unwrap();
+        let end = start + text[start..].find("\n  }\n").unwrap() + "\n  }\n".len();
+        let block = text[start..end].to_string();
+        text.replace_range(start..end, "");
+        let begin = text.find(&format!("  {}", axiom_database::capture::region::BEGIN)).unwrap();
+        text.insert_str(begin, &block);
+        std::fs::write(path, text).unwrap();
+    }
+
+    #[tokio::test]
+    async fn pull_writes_the_capture_region_and_mechanical_edits_then_migrate_is_current() {
+        let r1 = release("1.0.0", TASKS, None);
+        let r2 = with_intent(&r1, "1.1.0");
+        let c3 = captured(&r2, "CREATE TABLE notes (id TEXT PRIMARY KEY, body TEXT)");
+        assert!(!c3.revision.sources.contains_key("migration.acore"));
+        let (state, client) = pull_cloud(&[&r1, &r2, &c3], true).await;
+        // The developer's tree is at 1.1.0 with the typed intent, catalog r1 and r2.
+        let root = tree(&r2);
+        db::archive(root.path(), &r1).unwrap();
+        db::archive(root.path(), &r2).unwrap();
+        let mut out = vec![];
+        pull_with(&hosted(&client), &pull_args(root.path()), &mut out).await.unwrap();
+        let out = text(out);
+        assert!(out.contains("captured in dashboard: Add notes by owner@example.com") && out.contains("dashboard region of schema main updated") && out.contains("Nothing was executed."), "{out}");
+        let schema = std::fs::read_to_string(root.path().join("schema.acore")).unwrap();
+        assert_eq!(schema, c3.revision.sources["schema.acore"], "local equals catalog: the incoming region and edits");
+        assert!(!root.path().join("migration.acore").exists(), "no stale typed intent stays");
+        assert_eq!(std::fs::read_to_string(root.path().join(".axiom/database/pulled/1.1.1/schema.acore")).unwrap(), r2.revision.sources["schema.acore"]);
+        assert_eq!(std::fs::read_to_string(root.path().join(".axiom/database/pulled/1.1.1/migration.acore")).unwrap(), FILL);
+        assert_eq!(db::read_release(&catalog(root.path(), "1.1.1")).unwrap().sha256, c3.sha256);
+        let modes = state.lock().unwrap().operations.iter().map(|o| o["mode"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+        assert_eq!(modes, ["status"], "pull executes nothing");
+        // A following local migrate keeps the dashboard table: the hosted head is current.
+        let mut out = vec![];
+        migrate_with(&hosted(&client), &migrate_args(root.path(), false), &mut out).await.unwrap();
+        let out = text(out);
+        assert!(out.contains("Database is current") && out.contains(&c3.sha256), "{out}");
+    }
+
+    #[tokio::test]
+    async fn pull_keeps_a_local_region_edit_when_the_capture_is_already_pulled() {
+        let r1 = release("1.0.0", TASKS, None);
+        let c2 = captured(&r1, "CREATE TABLE notes (id TEXT PRIMARY KEY)");
+        let (_, client) = pull_cloud(&[&r1, &c2], true).await;
+        let root = tree(&c2);
+        db::archive(root.path(), &r1).unwrap();
+        db::archive(root.path(), &c2).unwrap();
+        move_out(root.path(), "notes");
+        let before = std::fs::read_to_string(root.path().join("schema.acore")).unwrap();
+        let mut out = vec![];
+        pull_with(&hosted(&client), &pull_args(root.path()), &mut out).await.unwrap();
+        assert!(text(out).contains("dashboard region of schema main kept (local edit)"));
+        assert_eq!(std::fs::read_to_string(root.path().join("schema.acore")).unwrap(), before, "incoming equals catalog: the local move stands");
+        assert!(!root.path().join(".axiom/database/pulled").exists());
+    }
+
+    #[tokio::test]
+    async fn pull_refuses_when_local_and_incoming_regions_both_changed() {
+        let r1 = release("1.0.0", TASKS, None);
+        let c2 = captured(&r1, "CREATE TABLE notes (id TEXT PRIMARY KEY)");
+        let c3 = captured(&c2, "CREATE TABLE labels (id TEXT PRIMARY KEY)");
+        let (_, client) = pull_cloud(&[&r1, &c2, &c3], true).await;
+        let root = tree(&c2);
+        db::archive(root.path(), &r1).unwrap();
+        db::archive(root.path(), &c2).unwrap();
+        move_out(root.path(), "notes");
+        let before = std::fs::read_to_string(root.path().join("schema.acore")).unwrap();
+        let error = pull_with(&hosted(&client), &pull_args(root.path()), &mut Vec::new()).await.unwrap_err().to_string();
+        assert!(error.starts_with("ADB1104:") && error.contains("catalog to local") && error.contains("catalog to incoming") && error.contains("+   table labels"), "{error}");
+        assert_eq!(std::fs::read_to_string(root.path().join("schema.acore")).unwrap(), before);
+        assert!(!catalog(root.path(), &c3.revision.identity.version).exists(), "nothing was written");
+    }
+
+    #[tokio::test]
+    async fn migrate_refuses_an_unpulled_capture_head() {
+        let r1 = release("1.0.0", TASKS, None);
+        let c2 = captured(&r1, "CREATE TABLE notes (id TEXT PRIMARY KEY)");
+        let (state, client) = pull_cloud(&[&r1, &c2], true).await;
+        let root = project("1.1.0", &format!("{TASKS} {LABELS}"));
+        db::archive(root.path(), &r1).unwrap();
+        let error = migrate_with(&hosted(&client), &migrate_args(root.path(), false), &mut Vec::new()).await.unwrap_err().to_string();
+        assert!(error.starts_with("ADB1103:") && error.contains("axiom database pull"), "{error}");
+        assert_eq!(state.lock().unwrap().count("POST", "/api/v1/projects/acme/migrations/releases"), 0);
+    }
+
+    #[test]
+    fn pull_writes_only_existing_project_files_under_the_source_key_rule() {
+        use super::super::database_capture::{write, Plan};
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("schema.acore"), "x").unwrap();
+        for path in ["../x.acore", "/abs.acore", "missing.acore", "notes.txt"] {
+            let plan = Plan { files: [(path.to_string(), Some("y".to_string()))].into(), ..Default::default() };
+            assert!(write(root.path(), "1.0.1", &plan, None).unwrap_err().to_string().starts_with("ADB1101"), "{path}");
+        }
+        std::os::unix::fs::symlink(root.path().join("schema.acore"), root.path().join("link.acore")).unwrap();
+        let plan = Plan { files: [("link.acore".to_string(), Some("y".to_string()))].into(), ..Default::default() };
+        assert!(write(root.path(), "1.0.1", &plan, None).is_err(), "symlinks are never written");
+        let plan = Plan { files: [("schema.acore".to_string(), Some("y".repeat(8 * 1024 * 1024 + 1)))].into(), ..Default::default() };
+        assert!(write(root.path(), "1.0.1", &plan, None).is_err(), "8 MiB bound");
+        assert_eq!(std::fs::read_to_string(root.path().join("schema.acore")).unwrap(), "x");
+        let plan = Plan { files: [("schema.acore".to_string(), Some("y".to_string()))].into(), ..Default::default() };
+        write(root.path(), "1.0.1", &plan, None).unwrap();
+        assert_eq!(std::fs::read_to_string(root.path().join("schema.acore")).unwrap(), "y");
+        assert_eq!(std::fs::read_to_string(root.path().join(".axiom/database/pulled/1.0.1/schema.acore")).unwrap(), "x");
     }
 
     #[tokio::test]

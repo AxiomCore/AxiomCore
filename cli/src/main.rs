@@ -3248,6 +3248,7 @@ async fn handle_login_tui() -> anyhow::Result<()> {
                             val["refresh_token"].as_str().unwrap_or_default(),
                             val["expires_in"].as_u64().unwrap_or_default(),
                         )?;
+                        commands::step_up::StepUpStore::forget_for_profile();
                         state.login_context.status = crate::state::LoginStatus::Success;
                     }
                     Err(e) => {

@@ -608,6 +608,7 @@ async fn login_for_contract_pull() -> Result<()> {
         .as_u64()
         .context("AxiomCore returned an invalid device-login expiry")?;
     crate::auth_store::save_tokens(access_token, refresh_token, expires_in)?;
+    crate::commands::step_up::StepUpStore::forget_for_profile();
     println!("✅ Signed in. Rechecking project access...");
     Ok(())
 }

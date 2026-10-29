@@ -51,6 +51,14 @@ impl StepUpStore {
         Ok(Self { path })
     }
 
+    /// Forgets the profile's step-up token. Every new sign-in calls it, so a
+    /// step-up token never outlives an account switch (W6-F L-20).
+    pub fn forget_for_profile() {
+        if let Ok(store) = Self::for_profile() {
+            store.clear();
+        }
+    }
+
     #[cfg(test)]
     pub fn at(path: PathBuf) -> Self {
         Self { path }
@@ -230,8 +238,15 @@ pub async fn step_up(base_url: &str, store: &StepUpStore, poll_floor: Duration) 
             &token.access_token,
             token.expires_in.unwrap_or(MAX_LIFETIME_SECONDS),
         )?;
+        // W6-F L-17: the server's expires_in is the true lifetime (it ends
+        // 15 minutes after the browser sign-in that approved it).
+        let minutes = token
+            .expires_in
+            .unwrap_or(MAX_LIFETIME_SECONDS)
+            .min(MAX_LIFETIME_SECONDS)
+            .div_ceil(60);
         eprintln!(
-            "Step-up sign-in complete. It is valid for up to 15 minutes and is not refreshed."
+            "Step-up sign-in complete. It is valid for about {minutes} minutes and is not refreshed."
         );
         return Ok(());
     }

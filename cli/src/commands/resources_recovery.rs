@@ -290,9 +290,12 @@ pub fn code_message(
         .unwrap_or_else(|| " Retry in about 30 seconds.".to_string());
     Some(match code {
         "AXRESOURCE_MOVING" => "The database is switching to a restored or resumed copy. Requests pause for about two minutes; signed-in users stay signed in. Retry shortly.".to_string(),
+        // W6-F L-21: a resume on next use is promised only when the server
+        // says so (an inactivity archive).
         "AXRESOURCE_ARCHIVED" => match resumable {
+            Some(true) => "The database is archived. It resumes on next use, or an Owner can resume it now with `--action unarchive`.".to_string(),
             Some(false) => "The database was archived by an Owner and does not resume on use. An Owner can resume it with `--action unarchive`.".to_string(),
-            _ => "The database is archived. It resumes on next use, or an Owner can resume it now with `--action unarchive`.".to_string(),
+            None => "The database is archived. An Owner can resume it with `--action unarchive`.".to_string(),
         },
         "AXRESOURCE_RESUMING" => format!("The database is resuming from its archive.{retry}"),
         "AXRESOURCE_POINT_UNAVAILABLE" => "That point is outside the restore window. Run `axiom project resources recovery` to see the earliest point, or restore from a daily backup with `--backup`.".to_string(),
@@ -420,6 +423,8 @@ fn confirm_form(input: &ActionInput<'_>) -> String {
                 .unwrap_or_else(|| "<point or backup id>".into())
         ),
         "archive" => "--confirm \"archive <database name>\"".to_string(),
+        // W6-F L-22: the phrase the server checks.
+        "retire_previous" => "--confirm \"retire <database name>\"".to_string(),
         _ => "--confirm \"<phrase shown in the dashboard>\"".to_string(),
     }
 }
@@ -505,7 +510,10 @@ pub fn build_body(input: &ActionInput<'_>) -> Result<Value> {
         }
         "retire_previous" => {
             let confirm = input.confirm.ok_or_else(|| missing_confirm(input))?;
-            if !valid_phrase(confirm) {
+            let named = confirm
+                .strip_prefix("retire ")
+                .is_some_and(|name| !name.trim().is_empty());
+            if !valid_phrase(confirm) || !named {
                 bail!(
                     "The confirmation does not match. Use {}.",
                     confirm_form(input)

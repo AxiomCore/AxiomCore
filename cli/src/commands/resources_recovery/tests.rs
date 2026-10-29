@@ -319,7 +319,7 @@ async fn archive_resume_and_retire_send_their_bodies() {
         generation: 3,
         at: None,
         backup: None,
-        confirm: Some("retire previous shop"),
+        confirm: Some("retire shop"),
     };
     let outcome = run_action(&f.api, "demo", &archive, None, false, true)
         .await
@@ -345,7 +345,7 @@ async fn archive_resume_and_retire_send_their_bodies() {
     );
     assert_eq!(
         seen(&f.shared, &route("retire_previous"))[0].body,
-        json!({"generation": 3, "confirm": "retire previous shop"})
+        json!({"generation": 3, "confirm": "retire shop"})
     );
     // Every request carries a fresh UUID Idempotency-Key.
     for action in ["archive", "unarchive", "retire_previous"] {
@@ -441,6 +441,21 @@ fn local_validation_explains_consequences_and_refuses_bad_flags() {
         .unwrap_err()
         .to_string()
         .contains("Support can no longer recover it"));
+    // W6-F L-22: the hint names the server's phrase, checked locally.
+    assert!(build_body(&retire)
+        .unwrap_err()
+        .to_string()
+        .contains("--confirm \"retire <database name>\""));
+    assert!(build_body(&ActionInput {
+        confirm: Some("retire previous"),
+        ..retire
+    })
+    .is_ok());
+    assert!(build_body(&ActionInput {
+        confirm: Some("retire"),
+        ..retire
+    })
+    .is_err());
 
     let resume = ActionInput {
         resource: RESOURCE,
@@ -599,7 +614,7 @@ async fn a_refused_step_up_token_steps_up_again_once() {
         generation: 3,
         at: None,
         backup: None,
-        confirm: Some("retire previous shop"),
+        confirm: Some("retire shop"),
     };
     run_action(&f.api, "demo", &retire, None, false, false)
         .await
@@ -789,6 +804,14 @@ async fn every_contract_code_maps_to_plain_words_without_echo() {
             None,
             json!({"resumable": false}),
             "does not resume on use",
+        ),
+        // W6-F L-21: no flag, no promise of a resume on use.
+        (
+            "AXRESOURCE_ARCHIVED",
+            409,
+            None,
+            json!({}),
+            "An Owner can resume it",
         ),
         (
             "AXRESOURCE_RESUMING",

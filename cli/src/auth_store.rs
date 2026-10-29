@@ -145,7 +145,7 @@ pub fn authenticated_cloud_client() -> Result<CloudClient> {
     CloudClient::with_session(data.access_token, data.refresh_token, get_auth_file_path()?)
 }
 
-fn write_private_file(path: &Path, content: &[u8]) -> Result<()> {
+pub(crate) fn write_private_file(path: &Path, content: &[u8]) -> Result<()> {
     let parent = path
         .parent()
         .context("Axiom CLI auth path has no parent directory")?;

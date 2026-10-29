@@ -101,7 +101,14 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
-    Login,
+    /// Sign in to AxiomCore through the device flow
+    Login {
+        /// Get a short step-up token (scope `resources:recovery`, 15 minutes, no refresh) for
+        /// restore, archive and retire_previous. Approve it in a browser where you signed in
+        /// within the last 15 minutes. Your normal session is kept.
+        #[arg(long)]
+        step_up: bool,
+    },
     /// Join the waitlist if you don't have a referral code
     Join {
         email: String,
@@ -1741,7 +1748,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Doctor { .. } => "doctor",
         Commands::Onboard { .. } => "onboard",
         Commands::Benchmark { .. } => "benchmark",
-        Commands::Login => "login",
+        Commands::Login { .. } => "login",
         Commands::Join { .. } => "join",
         Commands::Cache { .. } => "cache",
         Commands::Install { .. } => "install",
@@ -3179,7 +3186,8 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
         Commands::Init { entrypoint, module } => {
             crate::commands::init::handle_init(entrypoint.clone(), module.clone()).await
         }
-        Commands::Login => handle_login_tui().await,
+        Commands::Login { step_up: true } => commands::step_up::handle_login_step_up().await,
+        Commands::Login { step_up: false } => handle_login_tui().await,
         Commands::Join { email } => crate::commands::join::handle_join(email.clone()).await,
         Commands::Cache { action } => {
             let mut cache_dir = crate::auth_store::get_config_dir()?;

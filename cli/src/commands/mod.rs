@@ -59,5 +59,6 @@ mod editor_schema_parity;
 pub mod secret_development;
 
 pub mod resources;
+pub mod resources_recovery;
 pub mod step_up;
 pub mod signers;

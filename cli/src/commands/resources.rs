@@ -26,26 +26,80 @@ pub enum Action {
         environment: String,
     },
     /// Request a lifecycle operation. The ID can be reused after a network failure.
+    ///
+    /// Recovery actions: `restore` (with --at or --backup), `archive`, `unarchive` (resume an
+    /// archived database) and `retire_previous`. Restore, archive and retire_previous need a
+    /// recent sign-in; the CLI runs `axiom login --step-up` when the server asks for it.
     Request {
         #[arg(long)]
         resource: String,
-        #[arg(long,value_parser=["provision","retry","suspend","resume","delete","rotate"])]
+        #[arg(long,value_parser=["provision","retry","suspend","resume","delete","rotate","restore","archive","unarchive","retire_previous"])]
         action: String,
         #[arg(long)]
         generation: u64,
         #[arg(long)]
         operation_id: Option<String>,
-        /// Required phrase for deletion: "delete database"
+        /// Typed confirmation: "delete database", "restore <database name> to <at or backup id>",
+        /// "archive <database name>", or the retire_previous phrase
         #[arg(long)]
         confirm: Option<String>,
-        /// Poll operation metadata for up to five minutes
+        /// Restore: the point in time to return application data to (RFC 3339)
+        #[arg(long, conflicts_with = "backup")]
+        at: Option<String>,
+        /// Restore: a daily backup id from `recovery`
+        #[arg(long)]
+        backup: Option<String>,
+        /// Poll the operation until it finishes (five minutes; 40 for restore, archive and resume)
         #[arg(long)]
         wait: bool,
+        /// Recovery actions: print the JSON response instead of plain text
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show restore options: the point-in-time window, daily backups, the kept previous
+    /// generation, archive state, inactivity and recent moves
+    Recovery {
+        #[arg(long)]
+        resource: String,
+        #[arg(long)]
+        json: bool,
     },
     /// Show currently configured databases and location admission
     Catalog,
 }
 pub async fn handle(project: &str, action: Option<&Action>) -> Result<()> {
+    use crate::commands::resources_recovery as recovery;
+    match action {
+        Some(Action::Recovery { resource, json }) => {
+            return recovery::handle_view(project, resource, *json).await;
+        }
+        Some(Action::Request {
+            resource,
+            action,
+            generation,
+            operation_id,
+            confirm,
+            at,
+            backup,
+            wait,
+            json,
+        }) if recovery::is_recovery_action(action) => {
+            let input = recovery::ActionInput {
+                resource,
+                action,
+                generation: *generation,
+                at: at.as_deref(),
+                backup: backup.as_deref(),
+                confirm: confirm.as_deref(),
+            };
+            return recovery::handle_action(project, &input, operation_id.as_deref(), *wait, *json)
+                .await;
+        }
+        Some(Action::Request { at, backup, .. }) if at.is_some() || backup.is_some() => {
+            bail!("--at and --backup are only used with --action restore");
+        }
+        _ => {}
+    }
     let client = crate::auth_store::authenticated_cloud_client()?;
     let base = ["projects", project, "resources"];
     let value = match action {
@@ -79,6 +133,7 @@ pub async fn handle(project: &str, action: Option<&Action>) -> Result<()> {
                 )
                 .await?
         }
+        Some(Action::Recovery { .. }) => unreachable!("handled above"),
         Some(Action::Catalog) => {
             client
                 .resource_request(Method::GET, &["resource-catalog"], None, None)
@@ -108,6 +163,7 @@ pub async fn handle(project: &str, action: Option<&Action>) -> Result<()> {
             operation_id,
             confirm,
             wait,
+            ..
         }) => {
             if *generation == 0 {
                 bail!("--generation must be positive");

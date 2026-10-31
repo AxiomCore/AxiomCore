@@ -1,5 +1,6 @@
 // src/main.rs
 pub mod access_config;
+pub mod access_gate;
 pub mod auth_store;
 pub mod commands;
 pub mod components;
@@ -14,11 +15,9 @@ use crate::components::inspect::endpoint_list::render_endpoint_list;
 use crate::components::inspect::model_browser::render_model_browser;
 use crate::state::InspectTab;
 use crate::telemetry::Telemetry;
-use axiom_cloud::{uses_local_cloud, CliApi, CloudClient};
+use axiom_cloud::{uses_local_cloud, CloudClient};
 use clap::{Parser, Subcommand};
-use console::style;
 use crossterm::event::KeyCode;
-use dialoguer::{theme::ColorfulTheme, Input};
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph};
 use std::path::{Path, PathBuf};
@@ -1642,7 +1641,8 @@ async fn main() -> anyhow::Result<()> {
     } else {
         uses_local_cloud()?
     };
-    let active_config = if local_cloud
+    let is_first_login = matches!(&*cli.command, Commands::Login { step_up: false });
+    let mut active_config = if local_cloud
         || local_application_command
         || matches!(
             &*cli.command,
@@ -1663,74 +1663,21 @@ async fn main() -> anyhow::Result<()> {
         // registration or telemetry state.
         None
     } else {
-        // Load Access Config
-        let mut access_config = AccessConfig::load().await?;
-
-        // If no config exists, force registration
-        if access_config.is_none() {
-            println!(
-                "{}",
-                style("🔒 Axiom CLI is currently in Private Alpha.")
-                    .bold()
-                    .yellow()
-            );
-            println!("To proceed, you need a valid referral code.\n");
-            let referral_from_env = std::env::var("AXIOM_REFERRAL_CODE").ok();
-
-            let code = if let Some(env_code) = referral_from_env {
-                println!("Using referral code from environment variable.");
-                env_code
-            } else {
-                // If running in CI and no referral provided, fail cleanly
-                if std::env::var("CI").is_ok() {
-                    eprintln!("❌ No AXIOM_REFERRAL_CODE provided in CI environment.");
-                    std::process::exit(1);
-                }
-
-                println!(
-                    "If you don't have one, run: {}",
-                    style("axiom join <EMAIL>").cyan()
-                );
-                println!("");
-
-                Input::with_theme(&ColorfulTheme::default())
-                    .with_prompt("Enter Referral Code")
-                    .interact_text()?
-            };
-
-            // Create temp config to generate machine ID
-            let temp_config = AccessConfig::save(&code).await?;
-
-            println!("{}", style("Verifying code...").dim());
-
-            // Register with Server
-            match CliApi::register(&temp_config.referral_code, &temp_config.machine_id).await {
-                Ok(_) => {
-                    println!(
-                        "✅ {}",
-                        style("Access Granted. Welcome to Axiom.").green().bold()
-                    );
-                    println!("");
-                    access_config = Some(temp_config);
-                }
-                Err(e) => {
-                    // Registration failed, wipe local config so they try again next time
-                    let _ = AccessConfig::wipe().await;
-                    println!(
-                        "\n❌ {}",
-                        style(format!("Authorization Failed: {}", e)).red()
-                    );
-                    std::process::exit(1);
-                }
-            }
+        // Load Access Config. A machine without one registers through the
+        // gate: a signed-in Cloud account needs no referral code (W7 J1).
+        match AccessConfig::load().await? {
+            Some(config) => Some(config),
+            None => access_gate::admit(is_first_login).await?,
         }
-
-        access_config
     };
+    let register_after_login = is_first_login && !local_cloud && active_config.is_none();
 
     // 3. EXECUTE COMMAND
     // -------------------------------------------------------------------------
     let result = execute_command(&cli.command).await;
+    if register_after_login && result.is_ok() {
+        active_config = access_gate::after_login().await;
+    }
 
     // 4. TELEMETRY
     // -------------------------------------------------------------------------

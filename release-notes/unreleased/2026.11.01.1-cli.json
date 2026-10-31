@@ -1,0 +1,5 @@
+{
+  "component": "cli",
+  "type": "feature",
+  "summary": "Hosted database migrations: axiom database migrate, status, history, rollback and diff accept --project and --environment to run against a hosted environment, axiom database pull downloads the applied hosted history, and releases are signed locally by project signers."
+}

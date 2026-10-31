@@ -1,0 +1,5 @@
+{
+  "component": "cli",
+  "type": "feature",
+  "summary": "Runtime data: storage backed by a hosted libSQL resource compiles to its hosted runtime profile, server deployment scaffolds the libsql binding, managed database sources lease through the data gateway, and server package --environment seals that environment into container releases."
+}

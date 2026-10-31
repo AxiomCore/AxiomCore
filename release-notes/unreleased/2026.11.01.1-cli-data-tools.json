@@ -1,0 +1,5 @@
+{
+  "component": "cli",
+  "type": "feature",
+  "summary": "Data tools: migrate writes a signed release impact report next to each prepared release and uploads it after a hosted upload; pull merges changes captured in the dashboard with a three-way comparison and refuses conflicting edits without writing anything."
+}

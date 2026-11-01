@@ -6342,7 +6342,7 @@ mod tests {
         let auth = &build_verified_runtime_config_value(&v1, &lock_path).unwrap()["auth"];
         assert_eq!(auth["contractKey"], axiom_ui::auth_contract::CONTRACT_KEY);
         assert_eq!(auth["identity"], axiom_ui::auth_contract::identity());
-        let v2 = compile("module shop.ui\nuse auth Auth from \"axiom\"\napp Shop { route \"/\" => Home }\npage Home {\n query factors = Auth.listFactors()\n view { Text(factors.pending ? \"Loading\" : \"Ready\") }\n}\n");
+        let v2 = compile("module shop.ui\nuse auth Auth from \"axiom\"\napp Shop { route \"/\" => Home }\npage Home {\n query factors = Auth.listFactors()\n view { Text(factors.error?.message ?? \"\") Text(factors.pending ? \"Loading\" : \"Ready\") }\n}\n");
         assert!(v2.is_valid(), "{:?}", v2.diagnostics);
         let ir = v2.ir.as_ref().unwrap();
         assert_eq!(ir.imports[0].alias, axiom_ui::auth_contract::CONTRACT_KEY_V2);

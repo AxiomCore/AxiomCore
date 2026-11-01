@@ -1,0 +1,4 @@
+.axiom/
+backend/.axiom/
+backend/AxiomSecrets.toml
+backend/deployment.json

@@ -1,0 +1,10 @@
+amends "application.acore"
+
+// Rows are scoped to the verified token's subject: `owner` is written and filtered from the
+// `sub` claim, never from the request.
+storage notes(schema: "../schema.acore", resource: Resources.notes, tenantClaim: "sub", tenantColumn: "owner") {
+  select list(table: "main.notes", fields: {id: "id", body: "body"}, limit: 100)
+  insert create(table: "main.notes", values: {id: Input.id, body: Input.body},
+    fields: {id: "id", body: "body"}, constraint: "notes_pkey",
+    failure: Failures.duplicate, message: "That note already exists")
+}

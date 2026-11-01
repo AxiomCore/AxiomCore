@@ -1,0 +1,4 @@
+.axiom/
+backend/.axiom/
+backend/deployment.json
+backend/work-*.json

@@ -60,6 +60,9 @@ mod editor_schema_parity;
 pub mod secret_development;
 
 pub mod resources;
+pub mod resources_placement;
 pub mod resources_recovery;
+#[cfg(test)]
+pub(crate) mod cloud_mock;
 pub mod step_up;
 pub mod signers;

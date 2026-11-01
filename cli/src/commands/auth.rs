@@ -16,6 +16,10 @@ use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use zeroize::Zeroizing;
 
+mod advanced;
+mod config;
+mod policy;
+
 #[derive(Args, Debug)]
 pub struct AuthArgs {
     /// Cloud project slug (default: the project linked to this directory)
@@ -72,6 +76,46 @@ pub enum Action {
         #[command(subcommand)]
         action: ConfigAction,
     },
+    /// OAuth applications that sign users in with this environment (auth-advanced/v1 11)
+    OauthApps {
+        #[command(subcommand)]
+        action: advanced::OauthAppsAction,
+    },
+    /// The environment's OpenID Connect issuer
+    Oidc {
+        #[command(subcommand)]
+        action: advanced::OidcAction,
+    },
+    /// External token issuers whose tokens are exchanged for sessions
+    TrustedIssuers {
+        #[command(subcommand)]
+        action: advanced::TrustedIssuersAction,
+    },
+    /// Auth policy releases: pull, diff, impact check, release, plan and apply (branches-v1 CDB4)
+    Policy {
+        #[command(subcommand)]
+        action: policy::PolicyAction,
+    },
+    /// Multi-factor authentication
+    Mfa {
+        #[command(subcommand)]
+        action: advanced::MfaAction,
+    },
+    /// Signed event webhooks (Owner)
+    Webhooks {
+        #[command(subcommand)]
+        action: advanced::WebhooksAction,
+    },
+    /// Claim hooks: before_user_create and token_claims (Owner)
+    Hooks {
+        #[command(subcommand)]
+        action: advanced::HooksAction,
+    },
+    /// Twilio SMS for phone verification and the SMS factor (Owner, Pro)
+    Sms {
+        #[command(subcommand)]
+        action: advanced::SmsAction,
+    },
     /// Compare a frontend manifest, the environment settings and a deployment
     Check {
         #[arg(long, default_value = "AxiomDeps.toml")]
@@ -104,7 +148,7 @@ pub enum SettingsAction {
 #[derive(Subcommand, Debug)]
 pub enum ProvidersAction {
     List,
-    /// Create or update `google`, `github` or `oidc-<slug>`
+    /// Create or update `google`, `github`, `microsoft`, `apple` or `oidc-<slug>`
     Set {
         provider: String,
         #[arg(long)]
@@ -122,6 +166,21 @@ pub enum ProvidersAction {
         /// Read the client secret from stdin (otherwise a masked prompt when one is needed)
         #[arg(long)]
         client_secret_stdin: bool,
+        /// Microsoft: common, organizations, consumers or a tenant GUID
+        #[arg(long)]
+        tenant: Option<String>,
+        /// Microsoft: a tenant GUID allowed to sign in (with common or organizations); repeatable
+        #[arg(long = "allowed-tenant")]
+        allowed_tenants: Vec<String>,
+        /// Apple: the Team ID
+        #[arg(long)]
+        team_id: Option<String>,
+        /// Apple: the Key ID of the Sign in with Apple key
+        #[arg(long)]
+        key_id: Option<String>,
+        /// Apple: the AuthKey .p8 file (read from the file, never an argument)
+        #[arg(long)]
+        private_key_file: Option<PathBuf>,
     },
     /// Check the provider's credentials without signing anyone in
     Test { provider: String },
@@ -153,6 +212,25 @@ pub enum UsersAction {
         reason: String,
     },
     Unban { user_id: String },
+    /// A user's factors (types and labels only)
+    Factors { user_id: String },
+    /// Remove every factor and recovery code of a user (account recovery)
+    ResetFactors {
+        user_id: String,
+        #[arg(long)]
+        reason: String,
+        #[arg(long)]
+        yes: bool,
+    },
+    /// The OAuth applications a user consented to
+    Consents { user_id: String },
+    /// Revoke one consent; the application's sessions end
+    RevokeConsent {
+        user_id: String,
+        consent_id: String,
+        #[arg(long)]
+        yes: bool,
+    },
     /// End the user's sessions (one with --session)
     Revoke {
         user_id: String,
@@ -165,6 +243,9 @@ pub enum UsersAction {
 
 #[derive(Subcommand, Debug)]
 pub enum ConfigAction {
+    /// Export, diff and push axiom-auth-config/v1 (local-to-Cloud promotion)
+    #[command(flatten)]
+    Promote(config::ConfigCommand),
     Pull {
         #[arg(long, default_value = "AxiomDeps.toml")]
         manifest: PathBuf,
@@ -350,6 +431,8 @@ async fn run(args: &AuthArgs) -> Result<()> {
         Action::Jwks { issuer, check } => jwks(args, issuer.as_deref(), *check).await,
         Action::Check { manifest, deployment, backend } => check(args, manifest, deployment.as_deref(), backend.as_deref()).await,
         Action::Config { action: ConfigAction::Pull { manifest, write } } => config_pull(args, manifest, *write).await,
+        Action::Config { action: ConfigAction::Promote(command) } => config::run(args, command).await,
+        Action::Policy { action } => policy::run(args, action).await,
         Action::Status => {
             let target = target(args).await?;
             let mut overview = target.call(Method::GET, "overview", &[], None).await?;
@@ -413,7 +496,18 @@ async fn run(args: &AuthArgs) -> Result<()> {
             print(args, &settings, |s| vec![format!("Settings saved (revision {}).", text(s, "revision"))])
         }
         Action::Providers { action } => providers(args, action).await,
+        Action::Users { action: UsersAction::Factors { user_id } } => advanced::user_factors(args, user_id).await,
+        Action::Users { action: UsersAction::ResetFactors { user_id, reason, yes } } => advanced::reset_factors(args, user_id, reason, *yes).await,
+        Action::Users { action: UsersAction::Consents { user_id } } => advanced::user_consents(args, user_id).await,
+        Action::Users { action: UsersAction::RevokeConsent { user_id, consent_id, yes } } => advanced::revoke_consent(args, user_id, consent_id, *yes).await,
         Action::Users { action } => users(args, action).await,
+        Action::OauthApps { action } => advanced::oauth_apps(args, action).await,
+        Action::Oidc { action } => advanced::oidc(args, action).await,
+        Action::TrustedIssuers { action } => advanced::trusted_issuers(args, action).await,
+        Action::Mfa { action } => advanced::mfa(args, action).await,
+        Action::Webhooks { action } => advanced::webhooks(args, action).await,
+        Action::Hooks { action } => advanced::hooks(args, action).await,
+        Action::Sms { action } => advanced::sms(args, action).await,
         Action::Invite { email, roles, organization } => {
             let target = target(args).await?;
             let role_ids = if roles.is_empty() {
@@ -499,18 +593,20 @@ fn valid_issuer(issuer: &str) -> bool {
     axiom_auth_issuer(issuer, LOOPBACK_ISSUERS).is_some()
 }
 
-/// Parse `google`, `github` or `oidc-<slug>`.
+/// Parse `google`, `github`, `microsoft`, `apple` or `oidc-<slug>`.
 pub fn provider_selector(value: &str) -> Result<(&'static str, Option<String>)> {
     match value {
         "google" => Ok(("google", None)),
         "github" => Ok(("github", None)),
+        "microsoft" => Ok(("microsoft", None)),
+        "apple" => Ok(("apple", None)),
         other => match other.strip_prefix("oidc-") {
             // The provider slug is the whole `oidc-<slug>` (auth-surfaces/v1 `auth_identity_providers.slug`);
             // stripping the prefix made create send a slug the server refuses and broke matching.
             Some(slug) if !slug.is_empty() && slug.len() <= 31 && slug.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-') => {
                 Ok(("oidc", Some(other.to_string())))
             }
-            _ => Err(usage("providers are google, github or oidc-<slug>")),
+            _ => Err(usage("providers are google, github, microsoft, apple or oidc-<slug>")),
         },
     }
 }
@@ -570,21 +666,35 @@ async fn providers(args: &AuthArgs, action: &ProvidersAction) -> Result<()> {
                 lines
             })
         }
-        ProvidersAction::Set { provider, client_id, issuer, scopes, enable, disable, client_secret_stdin } => {
+        ProvidersAction::Set { provider, client_id, issuer, scopes, enable, disable, client_secret_stdin, tenant, allowed_tenants, team_id, key_id, private_key_file } => {
             let (kind, slug) = provider_selector(provider)?;
             if issuer.is_some() && kind != "oidc" {
                 return Err(usage("--issuer applies to oidc-<slug> providers only"));
             }
+            if kind == "apple" && *client_secret_stdin {
+                return Err(usage("Apple takes no client secret; pass --private-key-file <AuthKey.p8>"));
+            }
+            let private_key = private_key_file.as_deref().map(advanced::apple_private_key).transpose()?;
             let scopes = scopes.as_ref().map(|s| s.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect::<Vec<_>>());
             let listed = target.call(Method::GET, "providers", &[], None).await?;
-            let mut saved = match find_provider(&listed, kind, slug.as_deref()) {
+            let existing = find_provider(&listed, kind, slug.as_deref());
+            let extras = advanced::provider_extras(kind, tenant.as_deref(), allowed_tenants, team_id.as_deref(), key_id.as_deref(), private_key.is_some(), existing.is_none())?;
+            let mut saved = match existing {
                 None => {
                     let client_id = client_id.clone().ok_or_else(|| usage("--client-id is required for a new provider"))?;
                     if kind == "oidc" && issuer.is_none() {
                         return Err(usage("--issuer is required for a new OIDC provider"));
                     }
-                    let secret = read_secret(*client_secret_stdin)?;
-                    let mut body = json!({"kind": kind, "client_id": client_id, "client_secret": secret.as_str(), "enabled": *enable});
+                    let mut body = json!({"kind": kind, "client_id": client_id, "enabled": *enable});
+                    if kind == "apple" {
+                        body["private_key"] = json!(private_key.as_ref().map(|k| k.as_str()));
+                    } else {
+                        let secret = read_secret(*client_secret_stdin)?;
+                        body["client_secret"] = json!(secret.as_str());
+                    }
+                    for (key, value) in extras.as_object().into_iter().flatten() {
+                        body[key] = value.clone();
+                    }
                     if let Some(slug) = &slug {
                         body["slug"] = json!(slug);
                     }
@@ -597,6 +707,7 @@ async fn providers(args: &AuthArgs, action: &ProvidersAction) -> Result<()> {
                     let result = target.call(Method::POST, "providers", &[], Some(&body)).await;
                     if let Value::Object(map) = &mut body {
                         map.remove("client_secret");
+                        map.remove("private_key");
                     }
                     result?
                 }
@@ -619,12 +730,19 @@ async fn providers(args: &AuthArgs, action: &ProvidersAction) -> Result<()> {
                     if let Some(secret) = &secret {
                         body["client_secret"] = json!(secret.as_str());
                     }
+                    if let Some(key) = &private_key {
+                        body["private_key"] = json!(key.as_str());
+                    }
+                    for (key, value) in extras.as_object().into_iter().flatten() {
+                        body[key] = value.clone();
+                    }
                     if body.as_object().is_some_and(|m| m.len() == 1) {
                         return Err(usage("nothing to change: pass --client-id, --scopes, --enable, --disable or --client-secret-stdin"));
                     }
                     let result = target.call(Method::PATCH, &format!("providers/{id}"), &[], Some(&body)).await;
                     if let Value::Object(map) = &mut body {
                         map.remove("client_secret");
+                        map.remove("private_key");
                     }
                     result?
                 }
@@ -634,6 +752,12 @@ async fn providers(args: &AuthArgs, action: &ProvidersAction) -> Result<()> {
                 let mut lines = vec![format!("Provider {provider} saved ({}).", if p["enabled"] == true { "enabled" } else { "disabled" })];
                 if p["warning"].as_str() == Some("pairwise_subjects") {
                     lines.push("Warning: providers that issue a different subject per client ID split existing accounts.".into());
+                }
+                if p["warning"].as_str() == Some("any_tenant") {
+                    lines.push("Warning: any Microsoft tenant can sign in; restrict it with --allowed-tenant.".into());
+                }
+                if p["available"] == false {
+                    lines.push("Note: this provider kind is not served on this platform yet; it stays unavailable to users.".into());
                 }
                 lines
             })
@@ -751,6 +875,7 @@ async fn users(args: &AuthArgs, action: &UsersAction) -> Result<()> {
             sanitize(&mut user, false);
             print(args, &user, |u| vec![format!("Unbanned {}.", text(u, "id"))])
         }
+        UsersAction::Factors { .. } | UsersAction::ResetFactors { .. } | UsersAction::Consents { .. } | UsersAction::RevokeConsent { .. } => unreachable!("dispatched in run"),
         UsersAction::Revoke { user_id, session, yes } => {
             let user_id = checked_id(user_id)?;
             if !yes {
@@ -873,7 +998,21 @@ pub fn environment_block(overview: &Value, settings: &Value, callback_path: &str
     if let Some(logout) = settings["logout_urls"].as_array().and_then(|a| a.first()).and_then(Value::as_str) {
         block.insert("logoutUri".into(), json!(logout));
     }
+    // auth-advanced/v1 17.3: the passkey relying party and the OAuth discovery URL.
+    if passkeys_enabled(settings) {
+        if let Some(rp_id) = settings["webauthn_rp_id"].as_str() {
+            block.insert("webauthnRpId".into(), json!(rp_id));
+        }
+    }
+    if overview["oauth_served"] == true {
+        block.insert("oauthDiscovery".into(), json!(format!("{issuer}/.well-known/openid-configuration")));
+    }
     Ok(block)
+}
+
+fn passkeys_enabled(settings: &Value) -> bool {
+    let has = |key: &str| settings[key].as_array().is_some_and(|a| a.iter().any(|m| m.as_str() == Some("passkey")));
+    has("enabled_methods") || has("mfa_factors")
 }
 
 /// The manifest with `[auth.environments.<name>]` replaced (comments kept).
@@ -908,8 +1047,12 @@ async fn config_pull(args: &AuthArgs, manifest: &Path, write: bool) -> Result<()
     let (source, auth) = read_manifest(manifest)?;
     let callback = auth.as_ref().map_or("/auth/callback".to_string(), |a| a.callback_path.clone());
     let target = target(args).await?;
-    let overview = target.call(Method::GET, "overview", &[], None).await?;
+    let mut overview = target.call(Method::GET, "overview", &[], None).await?;
     let settings = target.call(Method::GET, "settings", &[], None).await?;
+    // OAuth is served when the issuer publishes OpenID discovery.
+    if let Some(issuer) = overview["issuer"].as_str().filter(|i| valid_issuer(i)).map(str::to_string) {
+        overview["oauth_served"] = json!(public_issuer_get(&issuer, "/.well-known/openid-configuration").await.is_ok());
+    }
     let name = &args.environment;
     let block = environment_block(&overview, &settings, &callback)?;
     if write {
@@ -962,6 +1105,9 @@ pub fn compare(
         if !settings["logout_urls"].as_array().is_some_and(|a| a.iter().any(|v| v.as_str() == Some(logout.as_str()))) {
             warnings.push(format!("{logout} is not in the environment's logout_urls"));
         }
+    }
+    if passkeys_enabled(settings) && !settings["webauthn_origins"].as_array().is_some_and(|a| a.iter().any(|v| v.as_str() == Some(selected.redirect_origin.as_str()))) {
+        warnings.push(format!("passkeys are enabled but {} is not in the environment's webauthn_origins", selected.redirect_origin));
     }
     if let Some(deployment) = deployment {
         let provider = &deployment["authentication"];
@@ -1071,9 +1217,20 @@ mod tests {
         let mut arguments = vec![];
         every_argument(&command, &mut arguments);
         assert!(arguments.contains(&"client-secret-stdin".to_string()));
+        // Secret input is stdin or a file; one-time secrets go to a file; the rest name
+        // identifiers, never values (auth-advanced/v1 17.3).
+        let allowed = ["client-secret-stdin", "auth-token-stdin", "api-key-secret-stdin", "private-key-file", "token-file", "output-secret", "key-id", "api-key-sid", "idempotency-key", "signing-key-file"];
         for argument in &arguments {
             let secretish = ["secret", "password", "token", "key"].iter().any(|word| argument.contains(word));
-            assert!(!secretish || argument == "client-secret-stdin", "secret-bearing flag --{argument}");
+            assert!(!secretish || allowed.contains(&argument.as_str()), "secret-bearing flag --{argument}");
+        }
+        for refused in [
+            &["t", "oauth-apps", "rotate-secret", "x", "--secret", "s"][..],
+            &["t", "sms", "set", "--auth-token", "t"],
+            &["t", "trusted-issuers", "test", "x", "--token", "t"],
+            &["t", "providers", "set", "apple", "--private-key", "k"],
+        ] {
+            assert!(Harness::try_parse_from(refused).is_err(), "{refused:?}");
         }
         use clap::Parser;
         assert!(Harness::try_parse_from(["t", "providers", "set", "google", "--client-secret", "x"]).is_err());
@@ -1218,6 +1375,19 @@ mod tests {
         let deployment = json!({"authentication": {"kind": "axiomAuth", "issuer": ISSUER, "audience": "other"}});
         let warnings = compare(&auth, "production", &overview, &settings, Some(&deployment));
         assert_eq!(warnings.len(), 1, "{warnings:?}");
+        // Passkeys: the RP ID is written and an origin outside webauthn_origins is reported.
+        let mut passkeys = settings.clone();
+        passkeys["enabled_methods"] = json!(["password", "passkey"]);
+        passkeys["webauthn_rp_id"] = json!("shop.example.com");
+        passkeys["webauthn_origins"] = json!(["https://other.example.com"]);
+        let served = json!({"issuer": ISSUER, "oauth_served": true});
+        let block = environment_block(&served, &passkeys, "/auth/callback").unwrap();
+        assert_eq!(block["webauthnRpId"], "shop.example.com");
+        assert_eq!(block["oauthDiscovery"], format!("{ISSUER}/.well-known/openid-configuration"));
+        let written = write_environment(source, "production", &block).unwrap();
+        let auth = parse_axiom_deps_v2(&written).unwrap().auth.unwrap();
+        assert_eq!(auth.environments["production"].webauthn_rp_id.as_deref(), Some("shop.example.com"));
+        assert!(compare(&auth, "production", &served, &passkeys, None).iter().any(|w| w.contains("webauthn_origins")));
         let mut narrow = settings.clone();
         narrow["redirect_urls"] = json!([]);
         assert!(environment_block(&overview, &narrow, "/auth/callback").is_err());

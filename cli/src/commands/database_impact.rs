@@ -255,5 +255,132 @@ pub fn upload_body(root: &Path, release: &Release) -> Option<Vec<u8>> {
     read(&sidecar_path(root, release), release).ok()?.canonical_bytes().ok()
 }
 
+// ---------------------------------------------------------------------------
+// `axiom database impact check` (branches-v1 "CI policy")
+// ---------------------------------------------------------------------------
+
+pub const APPROVALS_FORMAT: &str = "axiom-database-impact-approvals/v1";
+
+#[derive(clap::Subcommand, Debug)]
+pub enum ImpactAction {
+    /// Fail (exit 10) when a breaking change reaches endpoints or frontend consumers without an approval
+    Check {
+        /// The release (default: the newest release in .axiom/database/migrations of this directory)
+        #[arg(long)]
+        release: Option<PathBuf>,
+        /// Approvals bound to the release: {"format","release_sha256","approved":[{"object_id","reason"}]}
+        #[arg(long, default_value = "db/impact.approvals.json")]
+        approvals: PathBuf,
+        /// Exit 9 when the impact coverage is partial
+        #[arg(long)]
+        require_complete: bool,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Approval {
+    pub object_id: String,
+    pub reason: String,
+}
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Approvals {
+    pub format: String,
+    pub release_sha256: String,
+    pub approved: Vec<Approval>,
+}
+
+/// The outcome: 0 clean, 9 partial coverage with `require_complete`, 10 unapproved breaking
+/// change with mapped endpoints or frontend consumers.
+#[derive(Clone, Debug, serde::Serialize, PartialEq, Eq)]
+pub struct ImpactCheck {
+    pub exit: i32,
+    pub release_sha256: String,
+    pub breaking: Vec<String>,
+    pub unapproved: Vec<String>,
+    pub coverage: String,
+}
+
+/// Whether an object (a column, or a table whose columns it prefixes) is read by an endpoint
+/// of the report.
+fn mapped(report: &Report, object: &str) -> bool {
+    report.endpoints.iter().any(|e| e.fields.iter().any(|f| f.column_id == object || f.column_id.starts_with(&format!("{object}."))))
+}
+
+pub fn check(release: &Release, report: &Report, approvals: Option<&Approvals>, require_complete: bool) -> Result<ImpactCheck> {
+    let breaking = match &release.revision.base {
+        Some(base) => axiom_lib::database::change::diff(base, &release.revision.desired)?.changes.into_iter().filter(|c| c.compatibility == "breaking").map(|c| c.object_id).collect::<Vec<_>>(),
+        None => vec![],
+    };
+    let approved = approvals
+        .filter(|a| a.format == APPROVALS_FORMAT && a.release_sha256 == release.sha256)
+        .map(|a| a.approved.iter().filter(|x| !x.reason.trim().is_empty()).map(|x| x.object_id.as_str()).collect::<std::collections::BTreeSet<_>>())
+        .unwrap_or_default();
+    let consumed = !report.frontend.is_empty();
+    let unapproved = breaking.iter().filter(|id| (mapped(report, id) || consumed && !report.endpoints.is_empty()) && !approved.contains(id.as_str())).cloned().collect::<Vec<_>>();
+    let exit = if !unapproved.is_empty() {
+        10
+    } else if require_complete && report.coverage != "complete" {
+        9
+    } else {
+        0
+    };
+    Ok(ImpactCheck { exit, release_sha256: release.sha256.clone(), breaking, unapproved, coverage: report.coverage.clone() })
+}
+
+/// The newest release of the project's migration catalog.
+fn newest_release(root: &Path) -> Result<PathBuf> {
+    let dir = root.join(".axiom/database/migrations");
+    let mut found = std::fs::read_dir(&dir)
+        .with_context(|| format!("no migration catalog at {}", dir.display()))?
+        .flatten()
+        .map(|e| e.path().join("release.axiom"))
+        .filter(|p| p.is_file())
+        .filter_map(|p| Some((std::fs::metadata(&p).ok()?.modified().ok()?, p)))
+        .collect::<Vec<_>>();
+    found.sort();
+    found.pop().map(|(_, p)| p).context("the migration catalog holds no release; pass --release")
+}
+
+pub fn run_check(action: &ImpactAction) -> Result<()> {
+    let ImpactAction::Check { release, approvals, require_complete, json } = action;
+    let path = match release {
+        Some(path) => path.clone(),
+        None => newest_release(&std::env::current_dir()?)?,
+    };
+    let release = db::read_release(&path).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    let sidecar = path.with_file_name("impact.json");
+    let envelope = read(&sidecar, &release).with_context(|| format!("no valid impact sidecar at {}; run `axiom database migrate` to prepare one", sidecar.display()))?;
+    let approvals = if approvals.exists() {
+        let bytes = std::fs::read(approvals)?;
+        let parsed: Approvals = serde_json::from_slice(&bytes).with_context(|| format!("{} is not an {APPROVALS_FORMAT} file", approvals.display()))?;
+        if parsed.format != APPROVALS_FORMAT {
+            anyhow::bail!("{} is not an {APPROVALS_FORMAT} file", approvals.display());
+        }
+        Some(parsed)
+    } else {
+        None
+    };
+    let outcome = check(&release, &envelope.report, approvals.as_ref(), *require_complete)?;
+    if *json {
+        println!("{}", serde_json::to_string_pretty(&outcome)?);
+    } else {
+        println!("Release {}: {} breaking change(s), coverage {}", &outcome.release_sha256[..12.min(outcome.release_sha256.len())], outcome.breaking.len(), outcome.coverage);
+        for id in &outcome.unapproved {
+            println!("Unapproved breaking change with consumers: {id}");
+        }
+        if approvals.as_ref().is_some_and(|a| a.release_sha256 != release.sha256) {
+            println!("The approvals file names another release; approve this release again.");
+        }
+    }
+    if outcome.exit != 0 {
+        std::process::exit(outcome.exit);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests;

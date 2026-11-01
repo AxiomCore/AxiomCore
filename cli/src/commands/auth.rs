@@ -18,6 +18,7 @@ use zeroize::Zeroizing;
 
 mod advanced;
 mod config;
+mod emulate;
 mod policy;
 
 #[derive(Args, Debug)]
@@ -116,6 +117,9 @@ pub enum Action {
         #[command(subcommand)]
         action: advanced::SmsAction,
     },
+    /// Local auth emulation: a loopback issuer on a disposable SQLite store with the hosted
+    /// auth stream, a mail viewer and a mock OIDC issuer (no network, no hosted database)
+    Emulate(emulate::EmulateArgs),
     /// Compare a frontend manifest, the environment settings and a deployment
     Check {
         #[arg(long, default_value = "AxiomDeps.toml")]
@@ -433,6 +437,7 @@ async fn run(args: &AuthArgs) -> Result<()> {
         Action::Config { action: ConfigAction::Pull { manifest, write } } => config_pull(args, manifest, *write).await,
         Action::Config { action: ConfigAction::Promote(command) } => config::run(args, command).await,
         Action::Policy { action } => policy::run(args, action).await,
+        Action::Emulate(emulate) => emulate::run(args, emulate).await,
         Action::Status => {
             let target = target(args).await?;
             let mut overview = target.call(Method::GET, "overview", &[], None).await?;

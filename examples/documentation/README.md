@@ -28,7 +28,7 @@ in a clean prefix and HOME with canary scans (counts and file names only).
 | `convert-to-postgres` | E9 | both schema checks |
 | `passkeys-mfa` | E10 | needs the W8 CLI (assurance guards) |
 | `oauth-client` | E11 | relying-party unit tests |
-| `local-auth` | E12 | needs `axiom auth emulate` (W8 CLI) |
+| `local-auth` | E12 | complete locally: emulator, mail viewer, mock OIDC, a local runtime verifying its tokens, export (promotion is the lead's) |
 | `fastapi-auth` | E13 | verifier and API tests, web build from the tarball |
 | `linux-backend` | E14 | build, axiomAuth scaffold holds no credential, native validate |
 | `sandbox-refusal` | E15 | complete (Workers refuses axiomAuth and Principal.*) |

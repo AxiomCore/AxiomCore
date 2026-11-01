@@ -143,7 +143,8 @@ pub fn parse(bytes: &[u8]) -> Result<Config> {
         match value {
             Value::Object(map) => map.iter().all(|(k, v)| {
                 let lower = k.to_ascii_lowercase();
-                let secretish = lower == "secret" || lower.ends_with("_secret") || lower.contains("password") || lower == "private_key" || lower.ends_with("token");
+                // Promotable settings are public by definition (`password_min_length`).
+                let secretish = !SETTINGS.contains(&k.as_str()) && (lower == "secret" || lower.ends_with("_secret") || lower.contains("password") || lower == "private_key" || lower.ends_with("token"));
                 if secretish {
                     v.as_object().is_some_and(|r| r.len() == 1 && r.get("ref").and_then(Value::as_str).is_some_and(|n| !n.is_empty() && n.len() <= 128 && n.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')))
                 } else {
@@ -358,12 +359,15 @@ pub fn parse_approvals(bytes: &[u8]) -> Result<Approvals> {
 pub enum ConfigCommand {
     /// Write the environment's auth configuration as axiom-auth-config/v1 (secrets as references)
     Export {
+        /// `local`: the emulated configuration of this directory (`axiom auth emulate`)
+        #[arg(long)]
+        from: Option<String>,
         #[arg(long)]
         output: Option<PathBuf>,
     },
     /// Show what pushing a configuration would change in an environment, with its security impact
     Diff {
-        /// An axiom-auth-config/v1 file (`local` needs local auth emulation)
+        /// An axiom-auth-config/v1 file, or `local` (the emulated configuration of this directory)
         #[arg(long)]
         from: String,
         /// `env:<environment>`
@@ -408,7 +412,8 @@ async fn environment_config(args: &AuthArgs, target: &Target) -> Result<(Config,
 
 fn read_from(from: &str) -> Result<Config> {
     if from == "local" {
-        return Err(usage("local auth emulation is not available in this CLI build; export the local configuration to a file"));
+        // Public settings and secret references only, without local callbacks or the mock provider.
+        return super::emulate::local_config(std::path::Path::new("."));
     }
     let bytes = std::fs::read(from).with_context(|| format!("read {from}"))?;
     parse(&bytes)
@@ -434,9 +439,15 @@ fn render(header: &Value, items: &[Item]) -> Vec<String> {
 
 pub async fn run(args: &AuthArgs, command: &ConfigCommand) -> Result<()> {
     match command {
-        ConfigCommand::Export { output } => {
-            let target = target(args).await?;
-            let (config, _) = environment_config(args, &target).await?;
+        ConfigCommand::Export { from, output } => {
+            let config = match from.as_deref() {
+                Some("local") => read_from("local")?,
+                Some(_) => return Err(usage("--from is `local` (without it the environment is exported)")),
+                None => {
+                    let target = target(args).await?;
+                    environment_config(args, &target).await?.0
+                }
+            };
             let mut bytes = serde_json::to_vec_pretty(&serde_json::to_value(&config)?)?;
             bytes.push(b'\n');
             match output {
@@ -622,6 +633,12 @@ mod tests {
         assert!(parse(leaked.to_string().as_bytes()).is_err());
         leaked["providers"][0]["secret"] = json!({"ref": "ok_lower"});
         assert!(parse(leaked.to_string().as_bytes()).is_err());
+        // Public settings whose names look secret are not secrets.
+        let mut ok = serde_json::to_value(&config).unwrap();
+        ok["settings"]["password_min_length"] = json!(12);
+        assert!(parse(ok.to_string().as_bytes()).is_ok());
+        ok["outbound"]["smtp_password"] = json!("SYNTHETIC_SECRET_CANARY");
+        assert!(parse(ok.to_string().as_bytes()).is_err());
     }
 
     #[test]

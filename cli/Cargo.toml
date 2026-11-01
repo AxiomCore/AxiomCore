@@ -69,6 +69,10 @@ zip = "0.6"
 tempfile = "3.8"
 dotenvy = "0.15"
 zeroize = "1.8"
+# Local auth emulation (`axiom auth emulate`): synthetic password hashes and form bodies.
+pbkdf2 = { version = "0.11", default-features = false }
+hmac = "0.12"
+url = "2.5"
 
 # The large derived command tree otherwise retains oversized temporary builder
 # frames in unoptimized test code. Exercise the parser with release-like frames.

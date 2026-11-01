@@ -32,4 +32,11 @@ else:
     assert doc.get("format") == "axiom-auth-config/v1"
     assert doc.get("source", {}).get("kind") == "local"
     walk(doc)
-    print("export holds secret references only")
+    # Local callbacks, origins, the mock provider, users and keys never become Cloud state.
+    text = raw.decode()
+    for local in ("127.0.0.1", "localhost", "/local/oidc"):
+        assert local not in text, f"local value in the export: {local}"
+    assert set(doc) == {"format", "source", "settings", "providers", "trusted_issuers", "policy", "outbound"}, sorted(doc)
+    assert [p["slug"] for p in doc["providers"]] == ["google"], [p["slug"] for p in doc["providers"]]
+    assert doc["settings"]["redirect_urls"] == ["https://app.example.com/auth/callback"]
+    print("export holds public settings and secret references only, no local callbacks or mock provider")

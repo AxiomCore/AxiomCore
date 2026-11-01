@@ -5,7 +5,8 @@ edition = "2021"
 
 [dependencies]
 axiom-lib = { path = "../../axiom-lib" }
-axiom-database = { path = "../../axiom-database" }
+# `local-auth`: `axiom auth emulate` installs the axiom-auth stream locally (embeds system/axiom-auth).
+axiom-database = { path = "../../axiom-database", features = ["local-auth"] }
 axiom-server = { path = "../../axiom-runtime/server" }
 axiom-cloud = { path = "../../axiom-cloud" }
 axiom-extractor = { path = "../../axiom-extractor" }

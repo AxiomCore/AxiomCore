@@ -23,17 +23,22 @@ What it shows:
 
 Run locally:
 
+Tokens and the synthetic password go to a private directory outside the project (`$work`),
+never into the source tree:
+
 ```sh
+work=$(mktemp -d)                                  # mode 700; delete it when done
 axiom auth emulate --identity jo@example.com      # keep it running; prints issuer, mail, oidc
-python3 -B flow.py password .axiom/auth-local/state.json work   # sign-up, codes, refresh
-python3 -B flow.py oidc .axiom/auth-local/state.json work       # mock OIDC sign-in
+python3 -B flow.py password .axiom/auth-local/state.json "$work"   # sign-up, codes, refresh
+python3 -B flow.py oidc .axiom/auth-local/state.json "$work"       # mock OIDC sign-in
 cd backend && axiom build application.acore && cd ..
-axiom server deployment backend/.axiom/contracts/backend.axiom backend/.axiom/contracts/backend.server.json -o work/deployment.json --static-key
-axiom auth emulate deployment work/deployment.json
+axiom server deployment backend/.axiom/contracts/backend.axiom backend/.axiom/contracts/backend.server.json -o "$work/deployment.json" --static-key
+axiom auth emulate deployment "$work/deployment.json"
 AXIOM_AUTH_LOCAL_PUBLIC_KEY="$(cat .axiom/auth-local/public.pem)" \
-  axiom server run backend/.axiom/contracts/backend.axiom backend/.axiom/contracts/backend.server.json --deployment work/deployment.json --listen 127.0.0.1:8080
-axiom auth config export --from local --output work/config.json
+  axiom server run backend/.axiom/contracts/backend.axiom backend/.axiom/contracts/backend.server.json --deployment "$work/deployment.json" --listen 127.0.0.1:8080
+axiom auth config export --from local --output "$work/config.json"
 axiom auth emulate reset                           # after stopping the emulator
+rm -rf "$work"
 ```
 
 `auth/config.local.json` holds the local settings (`axiom-auth-config/v1`, secrets as

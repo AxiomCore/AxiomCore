@@ -14,6 +14,8 @@ step "installed CLI" axiom --version
 # Local, offline
 step "backend build" sh -c "cd backend && axiom build application.acore >/dev/null"
 step "guarded endpoint declares auth(...)" grep -q 'auth(required: true' backend/application.acore
+step "frontend contract lock" sh -c "cd frontend && axiom contract resolve >/dev/null"
+step "frontend check (web)" sh -c "cd frontend && axiom check main.acore --target web >/dev/null"
 
 # Production (lead)
 if [ "${AXIOM_W8_APPLY:-}" != yes ]; then

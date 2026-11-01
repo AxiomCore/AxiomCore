@@ -21,7 +21,7 @@ if [ "${AXIOM_W8_APPLY:-}" != yes ]; then
 fi
 : "${AXIOM_W8_PROJECT:?axq-w8x-auth project slug}" "${AXIOM_W8_ENV:=development}"
 H=(--project "$AXIOM_W8_PROJECT" --environment "$AXIOM_W8_ENV")
-step "OIDC discovery and JWKS" axiom auth oidc check
+step "OIDC discovery and JWKS" axiom auth oidc check "${H[@]}"
 step "register the client" axiom auth oauth-apps create --name "W8 example" --type public --redirect-uri http://127.0.0.1:5178/callback --scope openid --scope email "${H[@]}" --json
 lead "python3 client/rp.py --issuer <issuer> --client-id <axcl_...>: browser consent, code exchange with the verifier, ID token signature, iss, aud, nonce, exp checked; userinfo; logout"
 lead "GET /v1/consents lists the client; revoke; the next authorize shows consent again"

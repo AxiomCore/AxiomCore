@@ -23,8 +23,9 @@ if [ "${AXIOM_W8_APPLY:-}" != yes ]; then
   finish; exit $?
 fi
 : "${AXIOM_W8_PROJECT:?axq-w8x-auth project slug}" "${AXIOM_W8_ENV:=development}"
-step "issuer into the manifest" axiom auth config pull --environment "$AXIOM_W8_ENV" --manifest frontend/AxiomDeps.toml --write
-step "manifest, settings and backend agree" axiom auth check --manifest frontend/AxiomDeps.toml --backend backend/application.acore
+H=(--project "$AXIOM_W8_PROJECT" --environment "$AXIOM_W8_ENV")
+step "issuer into the manifest" axiom auth config pull "${H[@]}" --manifest frontend/AxiomDeps.toml --write
+step "manifest, settings and backend agree" axiom auth check "${H[@]}" --manifest frontend/AxiomDeps.toml --backend backend/application.acore
 lead "automated methods on a branch with captured mail (branches-v1 Outbound, admin GET mail): password, email code, magic link, signup verification, reset; hosted page and custom UI"
 lead "G6 once per RC on the non-branch environment: every email method with real Resend delivery to the owner inbox (owner reads codes)"
 lead "refresh: the old refresh token is refused and reuse ends the family; axiom auth users revoke <id> and ban <id> end the session at the next refresh"

@@ -1,6 +1,6 @@
 //! Server-plan inspection and real managed/sandbox execution. Never starts mocks.
 use anyhow::{Context, Result};
-use axiom_lib::{backend::*, contract::AxiomFile};
+use axiom_lib::{backend::authentication::OAuthClients, backend::*, contract::AxiomFile};
 use clap::{Subcommand, ValueEnum};
 use std::{fs, io::Write, path::PathBuf};
 
@@ -272,6 +272,10 @@ pub enum ServerAction {
         /// a signed issuer it scaffolds the placeholder issuer `https://issuer.example`, to review
         #[arg(long, conflicts_with_all = ["project_id", "environment_id"])]
         static_key: bool,
+        /// `axiomAuth` only: whether tokens issued to OAuth applications (`client_id`) are
+        /// accepted (auth-advanced/v1 7.4); `deny` refuses them
+        #[arg(long, value_enum, default_value = "deny", conflicts_with = "static_key")]
+        oauth_clients: OAuthClientsFlag,
     },
     /// Validate exact contract identity and inspect action guards/effect evidence
     Inspect {
@@ -753,7 +757,7 @@ pub fn handle(action: &ServerAction) -> Result<()> {
     let plan: ServerPlan = read(plan)?;
     plan.validate(&contract)?;
     match action {
-        ServerAction::Deployment { output, project_id, environment_id, static_key, .. } => {
+        ServerAction::Deployment { output, project_id, environment_id, static_key, oauth_clients, .. } => {
             let bindings = plan
                 .resources
                 .iter()
@@ -890,6 +894,7 @@ pub fn handle(action: &ServerAction) -> Result<()> {
                     !plan.guards.is_empty() || contract.ir.endpoints.values().any(|e| e.auth.is_some()),
                     project_id.as_deref().zip(environment_id.as_deref()),
                     *static_key,
+                    (*oauth_clients).into(),
                 )?,
             };
             security.validate_provider(deployment.authentication.as_ref())?;
@@ -945,7 +950,7 @@ pub fn handle(action: &ServerAction) -> Result<()> {
 /// project and environment of the `axiomAuth` issuer; `static_key`: keep a static-key JWT
 /// provider. An Axiom issuer scaffolds `axiomAuth` (no key reference); any other signed
 /// issuer, or `--static-key`, a static-key RS256 provider.
-fn deployment_authentication(signed: Option<(&str, &str)>, needed: bool, ids: Option<(&str, &str)>, static_key: bool) -> Result<Option<AuthenticationProvider>> {
+fn deployment_authentication(signed: Option<(&str, &str)>, needed: bool, ids: Option<(&str, &str)>, static_key: bool, oauth_clients: OAuthClients) -> Result<Option<AuthenticationProvider>> {
     use axiom_lib::backend::authentication::axiom_auth_issuer;
     let static_jwt = |issuer: &str, audience: &str| AuthenticationProvider::Jwt { issuer: issuer.into(), audience: audience.into(), algorithm: JwtAlgorithm::RS256, key_env: "AXIOM_JWT_PUBLIC_KEY".into() };
     let uuid = |s: &str| s.len() == 36 && s.bytes().enumerate().all(|(i, b)| if [8, 13, 18, 23].contains(&i) { b == b'-' } else { b.is_ascii_digit() || (b'a'..=b'f').contains(&b) });
@@ -966,7 +971,10 @@ fn deployment_authentication(signed: Option<(&str, &str)>, needed: bool, ids: Op
             if environment_issuer.as_deref().is_some_and(|e| e != issuer) {
                 anyhow::bail!("the contract signs the Axiom issuer {issuer}; --project-id and --environment-id name another environment");
             }
-            return Ok(Some(AuthenticationProvider::AxiomAuth { issuer: issuer.into(), audience: audience.into() }));
+            return Ok(Some(AuthenticationProvider::AxiomAuth { issuer: issuer.into(), audience: audience.into(), oauth_clients }));
+        }
+        if !oauth_clients.is_deny() {
+            anyhow::bail!("--oauth-clients allow applies to the axiomAuth provider only; the contract signs the issuer {issuer}");
         }
         if environment_issuer.is_some() {
             anyhow::bail!("the contract signs the issuer {issuer}, not an Axiom issuer; rebuild the contract for axiomAuth or omit --project-id and --environment-id");
@@ -982,7 +990,22 @@ fn deployment_authentication(signed: Option<(&str, &str)>, needed: bool, ids: Op
         return Ok(Some(static_jwt("https://issuer.example", "server")));
     }
     let issuer = environment_issuer.ok_or_else(|| anyhow::anyhow!("authentication needs an issuer: pass --project-id and --environment-id for the environment's axiomAuth issuer, or --static-key for a static-key JWT provider"))?;
-    Ok(Some(AuthenticationProvider::AxiomAuth { audience: format!("{issuer}/api"), issuer }))
+    Ok(Some(AuthenticationProvider::AxiomAuth { audience: format!("{issuer}/api"), issuer, oauth_clients }))
+}
+
+/// `--oauth-clients` (auth-advanced/v1 7.4): the deployment's `axiomAuth` `oauthClients`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum OAuthClientsFlag {
+    Deny,
+    Allow,
+}
+impl From<OAuthClientsFlag> for OAuthClients {
+    fn from(flag: OAuthClientsFlag) -> Self {
+        match flag {
+            OAuthClientsFlag::Deny => OAuthClients::Deny,
+            OAuthClientsFlag::Allow => OAuthClients::Allow,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -990,23 +1013,28 @@ mod deployment_authentication_tests {
     use super::*;
     const P: &str = "5d1f0c2e-8a7b-4c6d-9e0f-1a2b3c4d5e6f";
     const E: &str = "6e2a1d3f-9b8c-4d7e-8f1a-2b3c4d5e6f70";
+    const D: OAuthClients = OAuthClients::Deny;
     #[test]
     fn scaffolds_axiom_auth_with_the_environment_issuer() {
         let issuer = format!("https://auth.axiomcore.dev/{P}/{E}");
-        assert_eq!(deployment_authentication(None, true, Some((P, E)), false).unwrap(), Some(AuthenticationProvider::AxiomAuth { issuer: issuer.clone(), audience: format!("{issuer}/api") }));
+        assert_eq!(deployment_authentication(None, true, Some((P, E)), false, D).unwrap(), Some(AuthenticationProvider::AxiomAuth { issuer: issuer.clone(), audience: format!("{issuer}/api"), oauth_clients: D }));
         // The signed Axiom issuer wins; another environment is refused.
-        assert_eq!(deployment_authentication(Some((&issuer, "app")), true, None, false).unwrap(), Some(AuthenticationProvider::AxiomAuth { issuer: issuer.clone(), audience: "app".into() }));
-        assert!(deployment_authentication(Some((&issuer, "app")), true, Some((E, P)), false).is_err());
+        assert_eq!(deployment_authentication(Some((&issuer, "app")), true, None, false, D).unwrap(), Some(AuthenticationProvider::AxiomAuth { issuer: issuer.clone(), audience: "app".into(), oauth_clients: D }));
+        assert!(deployment_authentication(Some((&issuer, "app")), true, Some((E, P)), false, D).is_err());
         // An Axiom issuer is never verified with a static key.
-        assert!(deployment_authentication(Some((&issuer, "app")), true, None, true).is_err());
+        assert!(deployment_authentication(Some((&issuer, "app")), true, None, true, D).is_err());
         // No issuer to scaffold without IDs, unless a static key is asked for.
-        assert!(deployment_authentication(None, true, None, false).is_err());
-        assert!(matches!(deployment_authentication(None, true, None, true).unwrap(), Some(AuthenticationProvider::Jwt { algorithm: JwtAlgorithm::RS256, .. })));
+        assert!(deployment_authentication(None, true, None, false, D).is_err());
+        assert!(matches!(deployment_authentication(None, true, None, true, D).unwrap(), Some(AuthenticationProvider::Jwt { algorithm: JwtAlgorithm::RS256, .. })));
         // A signed external issuer keeps its static-key provider.
-        assert!(matches!(deployment_authentication(Some(("https://login.example", "api")), true, None, false).unwrap(), Some(AuthenticationProvider::Jwt { .. })));
-        assert!(deployment_authentication(Some(("https://login.example", "api")), true, Some((P, E)), false).is_err());
+        assert!(matches!(deployment_authentication(Some(("https://login.example", "api")), true, None, false, D).unwrap(), Some(AuthenticationProvider::Jwt { .. })));
+        assert!(deployment_authentication(Some(("https://login.example", "api")), true, Some((P, E)), false, D).is_err());
         // IDs are lowercase UUIDs; nothing is scaffolded when nothing authenticates.
-        assert!(deployment_authentication(None, true, Some((&P.to_uppercase(), E)), false).is_err());
-        assert_eq!(deployment_authentication(None, false, Some((P, E)), false).unwrap(), None);
+        assert!(deployment_authentication(None, true, Some((&P.to_uppercase(), E)), false, D).is_err());
+        assert_eq!(deployment_authentication(None, false, Some((P, E)), false, D).unwrap(), None);
+        // `--oauth-clients allow` sets the axiomAuth setting and is refused for a static-key provider.
+        let allow = OAuthClients::Allow;
+        assert_eq!(deployment_authentication(None, true, Some((P, E)), false, allow).unwrap(), Some(AuthenticationProvider::AxiomAuth { issuer: issuer.clone(), audience: format!("{issuer}/api"), oauth_clients: allow }));
+        assert!(deployment_authentication(Some(("https://login.example", "api")), true, None, false, allow).is_err());
     }
 }

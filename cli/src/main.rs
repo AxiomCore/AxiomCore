@@ -313,6 +313,8 @@ enum Commands {
     },
     /// Administer project authentication: settings, providers, users, keys
     Auth(commands::auth::AuthArgs),
+    /// Short-lived branch environments of a hosted database: create, review, delete
+    Branch(commands::branch::BranchArgs),
     Deploy {
         #[command(subcommand)]
         target: DeployTarget,
@@ -546,6 +548,11 @@ enum DatabaseAction {
     Convert {
         #[command(subcommand)]
         action: commands::database_convert::Action,
+    },
+    /// Release impact gates for CI (branches-v1 "CI policy")
+    Impact {
+        #[command(subcommand)]
+        action: commands::database_impact::ImpactAction,
     },
     /// Schema-derived private backend operations and database-to-API impact
     #[command(hide = true)]
@@ -1719,6 +1726,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Watch { .. } => "watch",
         Commands::Project { .. } => "project",
         Commands::Auth(..) => "auth",
+        Commands::Branch(..) => "branch",
         Commands::Diff { .. } => "diff",
         Commands::Contract { .. } => "contract",
         Commands::Packages { .. } => "packages",
@@ -2309,6 +2317,7 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             DatabaseAction::Pull(args) => commands::database_remote::pull(args).await,
             DatabaseAction::Convert { action } => commands::database_convert::run(action).await,
             DatabaseAction::Runtime { command } => commands::database_runtime::run(command),
+            DatabaseAction::Impact { action } => commands::database_impact::run_check(action),
             DatabaseAction::Sqlite { command } => commands::database_sqlite::run(command),
             DatabaseAction::Fleet { command } => commands::database_fleet::run(command).await,
             DatabaseAction::Check { source } => commands::database::check(source),
@@ -3058,6 +3067,7 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             handle_inspect(&path).await
         }
         Commands::Auth(args) => commands::auth::handle(args).await,
+        Commands::Branch(args) => commands::branch::handle(args).await,
         Commands::Project { action } => match action {
             ProjectAction::List => commands::project::handle_project_list().await,
             ProjectAction::Resources { project, action } => {

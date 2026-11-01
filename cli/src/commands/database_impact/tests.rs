@@ -182,3 +182,25 @@ fn the_sidecar_is_signed_by_the_release_key_and_only_for_it() {
     std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
     assert!(read(&path, &release).is_err());
 }
+
+#[test]
+fn impact_check_fails_on_an_unapproved_breaking_change_with_consumers() {
+    let Some(app) = fixture() else { return };
+    let removed = release(&app, "1.1.0", |s| s.replace("      title: Pg.Text\n", ""), Some(&base(&app)));
+    let r = report(&app, &removed);
+    let outcome = check(&removed, &r, None, false).unwrap();
+    assert_eq!(outcome.exit, 10, "{outcome:?}");
+    assert!(!outcome.unapproved.is_empty());
+    let approvals = Approvals {
+        format: APPROVALS_FORMAT.into(),
+        release_sha256: removed.sha256.clone(),
+        approved: outcome.unapproved.iter().map(|id| Approval { object_id: id.clone(), reason: "title moves to notes".into() }).collect(),
+    };
+    assert_eq!(check(&removed, &r, Some(&approvals), false).unwrap().exit, 0);
+    // Approvals bound to another release do not count.
+    let other = Approvals { release_sha256: "0".repeat(64), ..approvals };
+    assert_eq!(check(&removed, &r, Some(&other), false).unwrap().exit, 10);
+    // A non-breaking type change passes; a first release has no base and nothing breaks.
+    assert_eq!(check(&typed(&app), &report(&app, &typed(&app)), None, false).unwrap().exit, 0);
+    assert!(check(&base(&app), &report(&app, &base(&app)), None, false).unwrap().breaking.is_empty());
+}

@@ -57,7 +57,7 @@ pub struct Api {
     persist_session: bool,
     step_up: StepUpStore,
     step_up_poll_floor: Duration,
-    wait_interval: Duration,
+    pub(crate) wait_interval: Duration,
 }
 
 #[derive(Debug)]
@@ -111,7 +111,7 @@ impl Api {
     }
 
     #[cfg(test)]
-    fn fast(mut self) -> Self {
+    pub(crate) fn fast(mut self) -> Self {
         self.step_up_poll_floor = Duration::ZERO;
         self.wait_interval = Duration::from_millis(10);
         self
@@ -133,14 +133,14 @@ impl Api {
     async fn send(
         &self,
         method: &Method,
-        segments: &[&str],
+        url: reqwest::Url,
         body: Option<&Value>,
         key: Option<&str>,
         bearer: &str,
     ) -> Result<Reply> {
         let mut request = self
             .http
-            .request(method.clone(), self.url(segments)?)
+            .request(method.clone(), url)
             .bearer_auth(bearer);
         if let Some(body) = body {
             request = request.json(body);
@@ -195,12 +195,12 @@ impl Api {
     async fn send_session(
         &self,
         method: &Method,
-        segments: &[&str],
+        url: reqwest::Url,
         body: Option<&Value>,
         key: Option<&str>,
     ) -> Result<Reply> {
         let access = self.session.lock().await.access.clone();
-        let reply = self.send(method, segments, body, key, &access).await?;
+        let reply = self.send(method, url.clone(), body, key, &access).await?;
         if reply.status != 401 {
             return Ok(reply);
         }
@@ -222,14 +222,36 @@ impl Api {
                 tokens.expires_in,
             )?;
         }
-        self.send(method, segments, body, key, &tokens.access_token)
+        self.send(method, url, body, key, &tokens.access_token)
             .await
+    }
+
+    /// A write with the CLI session only (no step-up), refreshed once on 401.
+    pub async fn write(&self, method: &Method, segments: &[&str], body: &Value, key: Option<&str>) -> Result<Value> {
+        let reply = self.send_session(method, self.url(segments)?, Some(body), key).await?;
+        if (200..300).contains(&reply.status) {
+            return Ok(reply.body);
+        }
+        Err(recovery_error(&reply))
+    }
+
+    /// A read with the CLI session, with a query string.
+    pub async fn get_query(&self, segments: &[&str], query: &[(&str, String)]) -> Result<Value> {
+        let mut url = self.url(segments)?;
+        if !query.is_empty() {
+            url.query_pairs_mut().extend_pairs(query.iter().map(|(k, v)| (*k, v.as_str())));
+        }
+        let reply = self.send_session(&Method::GET, url, None, None).await?;
+        if (200..300).contains(&reply.status) {
+            return Ok(reply.body);
+        }
+        Err(recovery_error(&reply))
     }
 
     /// A read with the CLI session.
     pub async fn get(&self, segments: &[&str]) -> Result<Value> {
         let reply = self
-            .send_session(&Method::GET, segments, None, None)
+            .send_session(&Method::GET, self.url(segments)?, None, None)
             .await?;
         if (200..300).contains(&reply.status) {
             return Ok(reply.body);
@@ -242,16 +264,30 @@ impl Api {
     /// the step-up token, which is never refreshed) it runs the step-up
     /// device flow once and retries with the same Idempotency-Key.
     pub async fn post_action(&self, segments: &[&str], body: &Value, key: &str) -> Result<Value> {
+        self.step_up_action(&Method::POST, segments, body, key).await
+    }
+
+    /// [`Api::post_action`] with any write method (placement `PUT …/connection`).
+    pub async fn step_up_action(&self, method: &Method, segments: &[&str], body: &Value, key: &str) -> Result<Value> {
+        self.step_up_action_query(method, segments, &[], body, key).await
+    }
+
+    /// [`Api::step_up_action`] with a query string (branch policy and settings).
+    pub async fn step_up_action_query(&self, method: &Method, segments: &[&str], query: &[(&str, String)], body: &Value, key: &str) -> Result<Value> {
+        let mut url = self.url(segments)?;
+        if !query.is_empty() {
+            url.query_pairs_mut().extend_pairs(query.iter().map(|(k, v)| (*k, v.as_str())));
+        }
         let mut stepped_up = false;
         loop {
             let step_up_token = self.step_up.load();
             let reply = match step_up_token.as_deref() {
                 Some(token) => {
-                    self.send(&Method::POST, segments, Some(body), Some(key), token)
+                    self.send(method, url.clone(), Some(body), Some(key), token)
                         .await?
                 }
                 None => {
-                    self.send_session(&Method::POST, segments, Some(body), Some(key))
+                    self.send_session(method, url.clone(), Some(body), Some(key))
                         .await?
                 }
             };
@@ -313,7 +349,8 @@ pub fn code_message(
         "AXRESOURCE_NOT_ADMITTED" => "This database action is not available for the selected resource yet.".to_string(),
         "AXRESOURCE_PAYMENT_REQUIRED" => "An active Pro project subscription is required.".to_string(),
         "AXRESOURCE_UNAVAILABLE" => format!("The resource service is temporarily unavailable.{retry}"),
-        _ => return None,
+        // placement/v1 and branches-v1 codes: the shared fixed messages.
+        _ => return axiom_cloud::resources::code_message(code).map(str::to_string),
     })
 }
 

@@ -1,0 +1,5 @@
+{
+  "component": "cli",
+  "type": "feature",
+  "summary": "Frontend authentication: programs that use MFA, factors, passkeys or step-up operations select axiom.auth/v2, the runtime configuration records that contract version, and the web UI Host candidate shows the session assurance level and authentication time."
+}

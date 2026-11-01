@@ -1,0 +1,1 @@
+{"format":"axiom-auth-policy/v1","permissions":[{"description":"","name":"orders.read"},{"description":"","name":"orders.write"}],"roles":[{"description":"","name":"admin","permissions":["orders.read","orders.write"]},{"description":"","name":"member","permissions":["orders.read"]}]}

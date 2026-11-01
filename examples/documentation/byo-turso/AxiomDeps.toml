@@ -1,0 +1,2 @@
+type = "database"
+targets = ["server"]

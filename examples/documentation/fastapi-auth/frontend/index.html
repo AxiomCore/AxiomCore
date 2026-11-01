@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>FastAPI with Axiom auth</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://auth.axiomcore.dev http://127.0.0.1:8000; script-src 'self'"></head>
+<body>
+  <p id="status">unknown</p>
+  <p id="error"></p>
+  <button id="sign-in">Sign in</button>
+  <button id="sign-out">Sign out</button>
+  <button id="me-button">Call /me</button>
+  <pre id="me"></pre>
+  <script type="module" src="/main.js"></script>
+</body>
+</html>

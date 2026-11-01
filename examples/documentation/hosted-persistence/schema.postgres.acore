@@ -1,0 +1,15 @@
+project(id: "w8x.hosted", version: "1.0.0")
+module w8x.hosted
+
+// Synthetic table, no customer data.
+database notes(engine: DatabaseEngine.postgres) {
+  manage(schemas: [Schemas.app], mode: ManagementMode.ownedObjects)
+  schema app {
+    table notes {
+      id: Pg.Int32
+      owner: Pg.Text
+      body: Pg.Text
+      primaryKey(columns: [.id])
+    }
+  }
+}

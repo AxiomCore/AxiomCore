@@ -1,0 +1,46 @@
+project(id: "docs.sandbox-refusal", version: "1.0.0")
+variant default(include: ["*"])
+
+// E15 (examples matrix): a sandbox target is refused auth capability.
+// `status` reads nothing from the principal, so the only Workers refusal is
+// the deployment's `axiomAuth` provider. `whoami` reads Principal.*, which
+// Workers refuse on its own.
+model Status { id: String state: String } also entity
+model Viewer { id: String subject: String } also entity
+model Problem { message: String }
+failure unavailable(payload: Models.Problem, status: 503)
+
+guard signedIn(kind: GuardKind.authenticated)
+
+action status(kind: ActionKind.query, output: Models.Status) {
+  require(guard: Guards.signedIn)
+  errors(Failures.unavailable)
+  managed {
+    result(value: {id: "status", state: "ok"})
+  }
+}
+
+action whoami(kind: ActionKind.query, output: Models.Viewer) {
+  require(guard: Guards.signedIn)
+  errors(Failures.unavailable)
+  managed {
+    result(value: {id: Principal.sid, subject: Principal.subject})
+  }
+}
+
+projection statusPublic(entity: Entities.status, fields: [.id, .state], audience: Audience.web)
+projection viewerPublic(entity: Entities.viewer, fields: [.id, .subject], audience: Audience.web)
+
+endpoint status(method: GET, path: "/status") {
+  auth(required: true, methods: [AuthMethodDef(type: "bearer", name: "Authorization", scheme: "Bearer", location: "header")])
+  handle(action: Actions.status)
+  response(type: Models.Status, projection: Projections.statusPublic)
+  errors(Failures.unavailable)
+}
+
+endpoint me(method: GET, path: "/me") {
+  auth(required: true, methods: [AuthMethodDef(type: "bearer", name: "Authorization", scheme: "Bearer", location: "header")])
+  handle(action: Actions.whoami)
+  response(type: Models.Viewer, projection: Projections.viewerPublic)
+  errors(Failures.unavailable)
+}

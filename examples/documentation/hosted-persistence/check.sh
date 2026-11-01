@@ -25,6 +25,7 @@ H=(--project "$AXIOM_W8_PROJECT" --environment "$AXIOM_W8_ENV")
 ENGINE=${AXIOM_W8_ENGINE:-sqlite}   # postgresql for E4
 [ "$ENGINE" = postgresql ] && cp schema.postgres.acore schema.acore
 step "status" axiom database status schema.acore "${H[@]}"
+step "enroll this machine's release signing key" axiom project signers add --project "$AXIOM_W8_PROJECT" --schema schema.acore
 step "migrate" axiom database migrate schema.acore "${H[@]}" --non-interactive
 step "history" axiom database history schema.acore "${H[@]}"
 lead "deploy backend/ with the E14 recipe (runtime-data credential by Secrets only), then:"

@@ -23,6 +23,7 @@ fi
 H=(--project "$AXIOM_W8_PROJECT" --environment "$AXIOM_W8_ENV")
 lead "connect: axiom project resources connect turso --database <url> --token-stdin < secrets-w8x/byo-turso.token (token never in argv)"
 lead "ownership verification passes; GET .../resources shows provider byo-turso and billed_by turso"
+step "enroll this machine's release signing key" axiom project signers add --project "$AXIOM_W8_PROJECT" --schema schema.acore
 step "migrate into the BYO database" axiom database migrate schema.acore "${H[@]}" --non-interactive
 step "one history" axiom database history schema.acore "${H[@]}"
 lead "sign up a user through the hosted page: the user row is in the managed auth store, not in the BYO database"

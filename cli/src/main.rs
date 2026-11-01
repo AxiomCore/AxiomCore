@@ -344,6 +344,7 @@ enum Commands {
         action: PackagesAction,
     },
     /// Run and migrate versioned PostgreSQL and SQLite database contracts
+    #[command(alias = "db")]
     Database {
         #[command(subcommand)]
         action: DatabaseAction,
@@ -536,6 +537,16 @@ enum DatabaseAction {
     /// local releases. Existing local releases are never rewritten. Nothing is
     /// executed against the database.
     Pull(commands::database_remote::PullArgs),
+    /// Convert a hosted libSQL database to PostgreSQL: draft, plan and submit
+    ///
+    /// `draft` proposes a PostgreSQL contract from the hosted libSQL head; `plan` signs
+    /// the PostgreSQL baseline release and the transition receipt after a local
+    /// compatibility report; `submit` uploads them for the server check. The conversion
+    /// runs with `axiom project resources request --action convert`.
+    Convert {
+        #[command(subcommand)]
+        action: commands::database_convert::Action,
+    },
     /// Schema-derived private backend operations and database-to-API impact
     #[command(hide = true)]
     Runtime {
@@ -741,6 +752,7 @@ impl DatabaseAction {
             DatabaseAction::History { remote, .. } => remote.target().is_some(),
             DatabaseAction::Diff { project, .. } => project.is_some(),
             DatabaseAction::Pull(_) => true,
+            DatabaseAction::Convert { .. } => true,
             _ => false,
         }
     }
@@ -2295,6 +2307,7 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             }
             DatabaseAction::Status(args) => commands::database_dev::read(args, false).await,
             DatabaseAction::Pull(args) => commands::database_remote::pull(args).await,
+            DatabaseAction::Convert { action } => commands::database_convert::run(action).await,
             DatabaseAction::Runtime { command } => commands::database_runtime::run(command),
             DatabaseAction::Sqlite { command } => commands::database_sqlite::run(command),
             DatabaseAction::Fleet { command } => commands::database_fleet::run(command).await,
@@ -3449,6 +3462,12 @@ mod launch_tests {
         ])
         .is_ok());
         assert!(Cli::try_parse_from(["axiom", "database", "apply", "private-release"]).is_err());
+        // placement/v1 10.3: `axiom db convert draft|plan|submit`.
+        let convert = Cli::try_parse_from(["axiom", "db", "convert", "plan", "pg/schema.acore", "--project", "p", "--environment", "development", "--encoding", "users.created=unix_ms", "--assume-utc", "logs.at", "--acknowledge-semantics"]).unwrap();
+        assert!(matches!(*convert.command, Commands::Database { action: DatabaseAction::Convert { .. } }));
+        assert!(Cli::try_parse_from(["axiom", "db", "convert", "draft", "--project", "p", "--environment", "development", "--stream", "app.data", "--out", "pg"]).is_ok());
+        assert!(Cli::try_parse_from(["axiom", "database", "convert", "submit", "--project", "p", "--wait"]).is_ok());
+        assert!(Cli::try_parse_from(["axiom", "db", "convert", "draft", "--project", "p", "--environment", "development"]).is_err());
         assert!(Cli::try_parse_from([
             "axiom",
             "database",

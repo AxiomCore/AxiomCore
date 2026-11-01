@@ -7,6 +7,7 @@ pub mod contract;
 pub mod contract_build;
 pub mod database;
 pub mod database_capture;
+pub mod database_convert;
 pub mod database_dev;
 pub mod database_fleet;
 pub mod database_impact;

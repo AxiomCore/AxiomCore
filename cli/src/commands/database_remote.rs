@@ -58,7 +58,7 @@ pub(crate) struct Hosted<'a> {
 // Entry points. Input is validated before the session is loaded, so a bad
 // slug fails before authentication or any network call. Clap already refused
 // --project and --environment with local connection flags.
-fn target<'a>(remote: Option<(&'a str, &'a str)>) -> Result<(&'a str, &'a str)> {
+pub(crate) fn target<'a>(remote: Option<(&'a str, &'a str)>) -> Result<(&'a str, &'a str)> {
     let (project, environment) =
         remote.context("hosted commands need both --project and --environment")?;
     api::check_environment(environment)?;
@@ -110,13 +110,13 @@ pub async fn pull(args: &PullArgs) -> Result<()> {
     .await)
 }
 
-fn idempotency_key() -> String {
+pub(crate) fn idempotency_key() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 fn short(sha: &str) -> &str {
     &sha[..sha.len().min(12)]
 }
-fn engine_error(error: axiom_database::Error) -> anyhow::Error {
+pub(crate) fn engine_error(error: axiom_database::Error) -> anyhow::Error {
     anyhow::anyhow!(error.to_string())
 }
 
@@ -160,7 +160,7 @@ fn failure(operation: &Operation) -> anyhow::Error {
 }
 
 /// The ledger head of `stream`, from a hosted `status` run.
-async fn hosted_head(h: &Hosted<'_>, stream: &str) -> Result<Option<OperationTarget>> {
+pub(crate) async fn hosted_head(h: &Hosted<'_>, stream: &str) -> Result<Option<OperationTarget>> {
     let operation = run_operation(h, Mode::Status, None).await?;
     if !operation.succeeded() {
         return Err(failure(&operation));
@@ -169,7 +169,7 @@ async fn hosted_head(h: &Hosted<'_>, stream: &str) -> Result<Option<OperationTar
 }
 
 /// Downloads one release and verifies its digest, signature and source.
-async fn fetch_release(h: &Hosted<'_>, sha256: &str) -> Result<Release> {
+pub(crate) async fn fetch_release(h: &Hosted<'_>, sha256: &str) -> Result<Release> {
     let bytes = h.client.migration_release(h.project, sha256).await?;
     let release: Release = serde_json::from_slice(&bytes).map_err(|_| {
         anyhow::anyhow!(
@@ -300,7 +300,7 @@ fn divergence<'a>(chain: &[Release], local: &'a [Release], stream: &str) -> Vec<
 }
 
 /// Fails unless every key is enrolled and unrevoked for the project.
-async fn require_enrolled<'k>(
+pub(crate) async fn require_enrolled<'k>(
     h: &Hosted<'_>,
     keys: impl IntoIterator<Item = &'k str>,
 ) -> Result<()> {
@@ -322,7 +322,7 @@ async fn require_enrolled<'k>(
     Ok(())
 }
 
-async fn upload(h: &Hosted<'_>, release: &Release) -> Result<()> {
+pub(crate) async fn upload(h: &Hosted<'_>, release: &Release) -> Result<()> {
     // The catalog stores this exact canonical encoding.
     let body = axiom_database::canonical_bytes(release).map_err(engine_error)?;
     h.client

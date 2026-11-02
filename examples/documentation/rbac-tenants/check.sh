@@ -30,8 +30,18 @@ fi
 : "${AXIOM_W8_PROJECT:?axq-w8x-rbac project slug}" "${AXIOM_W8_ENV:=development}"
 H=(--project "$AXIOM_W8_PROJECT" --environment "$AXIOM_W8_ENV")
 step "pull the current policy" axiom auth policy pull "${H[@]}" --write work-policy.json
-step "release" axiom auth policy release "${H[@]}" --policy auth/policy.json
-lead "axiom auth policy plan --environment $AXIOM_W8_ENV --release <sha>; apply with --acknowledge-from work-approvals.json"
+# A policy release is signed with an enrolled database release key: name the project's
+# database contract (its owning AxiomDeps.toml beside it), or set AXIOM_DATABASE_SIGNING_KEY.
+SCHEMA=(${AXIOM_W8_SCHEMA:+--schema "$AXIOM_W8_SCHEMA"})
+release() { axiom auth policy release "${H[@]}" --policy "$1" "${SCHEMA[@]}" --json > "$2" && python3 -B -c 'import json,sys; print(json.load(open(sys.argv[1]))["release"])' "$2"; }
+REL=$(release auth/policy.json work-release.json) || REL=
+step "release uploaded" test -n "$REL"
+step "plan names environment and items" sh -c "axiom auth policy plan ${H[*]} --release $REL --json > work-plan.json"
+set +e; axiom auth policy apply "${H[@]}" --release "$REL" >/dev/null; rc=$?; set -e
+step "apply refuses unacknowledged widening (exit 6)" test "$rc" -eq 6
+set +e; axiom auth policy check "${H[@]}" --base "env:$AXIOM_W8_ENV" --policy auth/policy.json --json > work-env-impact.json; set -e
+step "approve against the environment's current policy" python3 -B approve.py work-env-impact.json work-env-approvals.json
+step "apply with the approvals" axiom auth policy apply "${H[@]}" --release "$REL" --acknowledge-from work-env-approvals.json
 lead "with authz_invalidation on: apply auth/policy.narrow.json, call GET /orders with the old token within 65 s -> 401 authorization_changed; the web client refreshes once and the retry succeeds"
 lead "Ownership guard: user B reading user A's order -> 403; Role guard: member calling DELETE /orders/{id} -> 403; admin -> 200"
 finish

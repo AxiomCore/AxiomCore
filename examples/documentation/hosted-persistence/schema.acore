@@ -1,7 +1,9 @@
-project(id: "w8x.hosted", version: "1.0.0")
+project(id: "w8x.hosted", version: "1.1.0")
 module w8x.hosted
 
-// Synthetic table, no customer data.
+// Synthetic tables, no customer data. 1.1.0 adds org_notes keyed on (owner, id): ids are per
+// organization, so another organization's id is never refused (no cross-tenant existence
+// oracle). The 1.0.0 table `notes` (id alone) stays; the backend no longer uses it.
 database notes(engine: DatabaseEngine.sqlite) {
   manage(schemas: [Schemas.main], mode: ManagementMode.ownedObjects)
   schema main {
@@ -10,6 +12,12 @@ database notes(engine: DatabaseEngine.sqlite) {
       owner: Sqlite.Text()
       body: Sqlite.Text()
       primaryKey(columns: [.id])
+    }
+    table org_notes(strict: true) {
+      id: Sqlite.Integer()
+      owner: Sqlite.Text()
+      body: Sqlite.Text()
+      primaryKey(columns: [.owner, .id])
     }
   }
 }

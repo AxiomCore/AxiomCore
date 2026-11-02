@@ -16,7 +16,9 @@ The backend (`backend/hosted.acore`) stores notes in the hosted libSQL table of 
 through a `connectDatabase` secret: on a Linux container the runtime leases the credential with
 its service account through the data gateway (`AxiomSecrets.toml`, source
 `axiom-cloud-database`), so no credential is stored in the source, image or deployment. Rows are
-scoped to the token's `tenant` (the user's selected organization; a token without one is refused). With `AXIOM_W8_PROJECT_ID`, `AXIOM_W8_ENVIRONMENT_ID` and
+scoped to the token's `tenant` (the user's selected organization; a token without one is refused). Schema 1.1.0 stores them in
+`org_notes`, keyed on (owner, id): a note id is unique per organization only, so another
+organization's ids are never revealed by a duplicate refusal (1.0.0's `notes` stays, unused). With `AXIOM_W8_PROJECT_ID`, `AXIOM_W8_ENVIRONMENT_ID` and
 `AXIOM_W8_RESOURCE_ID`, `check.sh` writes that file and the deployment; with
 `AXIOM_W8_RUNTIME_SOURCE` and `AXIOM_W8_CONTEXT_OUT` it also packages the `container-amd64`
 build context. E4 (PostgreSQL) needs a PostgreSQL storage variant (not written yet).

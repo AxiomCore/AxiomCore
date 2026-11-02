@@ -10,10 +10,11 @@ What it shows:
 - `sensitive state` for the password and the code. The compiler refuses to
   render, store, emit or log them (AUI460 to AUI466).
 - `session_actions(sign_in: [byPassword, byCode])` with
-  `session sign_in(<name>)` selecting one sign-in. Signing in does not navigate:
-  the Login page shows **Continue** (`go Home()`) once `session.status` is
-  `authenticated`, and the guarded Home route admits it. The hosted page returns
-  to `return_to` (`/`) by itself.
+  `session sign_in(<name>)` selecting one sign-in. Statements after
+  `session sign_in` run once the session is established, so `go Home()` reaches
+  the guarded Home route; a failed sign-in runs nothing after it and shows
+  `session_ux.error`. A sign-in that started from a denied route returns there
+  instead. The hosted page returns to `return_to` (`/`) by itself.
 - A guarded backend endpoint that receives the access token
   (`auth(required: true, methods: [AuthMethodDef(type: "bearer", ...)])`) and
   returns `Principal.subject` and `Principal.sid`.

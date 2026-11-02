@@ -21,15 +21,11 @@ cors(origins: ["http://127.0.0.1:5173", "http://localhost:5173"],
   methods: [GET, POST], headers: ["authorization", "content-type", "traceparent", "x-axiom-cache-mode"],
   credentials: false, maxAge: 1m)
 
-// Notes live in the hosted database (schema.acore); the runtime reaches it through the
-// data gateway with a leased credential, never a stored one. Each row belongs to the
-// signed-in user's organization: storage scopes reads and writes by the token's `tenant` (hosted.acore).
-secret notesDb(purpose: SecretPurpose.connectDatabase)
-resource notes(lifetime: ProviderLifetime.application, transactionProfile: TransactionProfile.hostedLibsql, secrets: [Secrets.notesDb]) {
-  operation list(input: Models.Empty, output: List<Models.Note>, effect: EffectKind.read)
-  operation create(input: Models.NewNote, output: Models.Note, effect: EffectKind.write,
-    errors: [Failures.duplicate])
-}
+// Notes live in the hosted database; the resource, its connectDatabase secret and its storage
+// are declared per engine (hosted.acore for libSQL, hosted.postgres.acore for PostgreSQL). The
+// runtime reaches the database through the data gateway with a leased credential, never a
+// stored one. Each row belongs to the signed-in user: storage scopes reads and writes by the
+// verified token's subject (`sub`), never by the request.
 
 action whoami(kind: ActionKind.query, output: Models.Viewer) {
   require(guard: Guards.signedIn)

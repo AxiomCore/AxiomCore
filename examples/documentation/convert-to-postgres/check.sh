@@ -22,9 +22,11 @@ if [ "${AXIOM_W8_APPLY:-}" != yes ]; then
 fi
 : "${AXIOM_W8_PROJECT:?axq-w8x-upgrade project slug}" "${AXIOM_W8_ENV:=development}"
 H=(--project "$AXIOM_W8_PROJECT" --environment "$AXIOM_W8_ENV")
-step "draft" axiom db convert draft schema.acore "${H[@]}"
-step "plan (compatibility report)" axiom db convert plan schema.acore "${H[@]}" --json
-lead "axiom db convert submit ... ; wait for the receipt and the fence"
+step "enroll this machine's release signing key" axiom project signers add --project "$AXIOM_W8_PROJECT" --schema schema.acore
+step "migrate the libSQL contract" axiom database migrate schema.acore "${H[@]}" --non-interactive
+step "draft a PostgreSQL proposal from the hosted head" axiom database convert draft "${H[@]}" --stream w8x.convert --out work-draft
+step "plan with the reviewed PostgreSQL contract (compatibility report, signed receipt; nothing uploaded)" axiom database convert plan schema.postgres.acore "${H[@]}" --out work-conversion
+lead "Pro only (conversion allowlist): axiom database convert submit --project $AXIOM_W8_PROJECT --dir work-conversion --wait; then axiom project resources request --action convert; wait for the receipt and the fence"
 lead "the SQLite build's next lease is refused AXRESOURCE_REDEPLOY_REQUIRED"
 lead "deploy and grant the PostgreSQL build (placement CV-3), then app reads and writes succeed; existing auth users sign in"
 finish

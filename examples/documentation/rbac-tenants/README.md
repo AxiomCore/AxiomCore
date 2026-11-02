@@ -12,6 +12,10 @@ bash ../../../tools/w8D2/run-row.sh rbac-tenants            # local, offline ste
 AXIOM_W8_APPLY=yes AXIOM_W8_PROJECT=<slug> bash ../../../tools/w8D2/run-row.sh rbac-tenants
 ```
 
+A policy release is signed with the project's enrolled database release key: pass
+`--schema <database contract>` (the contract's own `AxiomDeps.toml` beside it; `check.sh` takes
+`AXIOM_W8_SCHEMA`) or set `AXIOM_DATABASE_SIGNING_KEY`.
+
 `check.sh` prints `PASS`, `FAIL` and `LEAD` lines; `LEAD` lines are the manual or browser
 steps of section 4 "Assertions per row". Secrets come only from files under
 `secrets-w8x/` (mode 0600), stdin or prompts, never argv. Cleanup follows matrix 3.1:

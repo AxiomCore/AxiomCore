@@ -489,7 +489,7 @@ pub async fn run(api: &Api, project: &str, args: &BranchArgs) -> Result<()> {
             let current = api.get_query(&["projects", p, "branches", "settings"], &[("environment", environment.clone())]).await?;
             let body = json!({"require_review": require_review, "revision": current["revision"].as_i64().unwrap_or(0)});
             let key = key(None)?;
-            let saved = api.step_up_action_query(&Method::PUT, &["projects", p, "branches", "settings"], &[("environment", environment.clone())], &body, &key).await?;
+            let saved = api.session_action_query(&Method::PUT, &["projects", p, "branches", "settings"], &[("environment", environment.clone())], &body, &key).await?;
             print(args.json, &saved, |s| vec![format!("require_review {} (revision {})", text(s, "/require_review"), text(s, "/revision"))])
         }
         BranchAction::Sources { environment } => {

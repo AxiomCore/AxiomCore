@@ -2,12 +2,15 @@
 // assurance-guarded Acore endpoint. Passkeys run on this origin (RP ID localhost).
 import { createAxiomAuth, runtimeAuthRefusal, sessionStorageAdapter, type PublicSession } from '@axiomcore/auth-web';
 
-const config = await (await fetch('./config.json', { cache: 'no-store' })).json() as { issuer: string; audience: string; api: string };
+// Absolute: the same script runs on /auth/callback after the hosted page.
+const config = await (await fetch('/config.json', { cache: 'no-store' })).json() as { issuer: string; audience: string; api: string };
 const auth = createAxiomAuth({
   issuer: config.issuer,
   audience: config.audience,
   redirectUri: location.origin + '/auth/callback',
   storage: sessionStorageAdapter(),
+  // The bearer goes only to this page's origin and these: the API is another origin.
+  apiOrigins: [new URL(config.api).origin],
 });
 
 const $ = (id: string) => document.getElementById(id) as HTMLElement;

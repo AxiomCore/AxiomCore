@@ -26,12 +26,11 @@ page Login {
 
   session_actions(sign_in: [byPassword, byCode], sign_out: logout)
 
-  action withPassword() { session sign_in(byPassword) }
+  action withPassword() { session sign_in(byPassword); go Home() }
   action sendCode() { let sent = await askCode.run(); challenge = sent.challenge }
-  action withCode() { session sign_in(byCode) }
+  action withCode() { session sign_in(byCode); go Home() }
   action withGoogle() { await google.run() }
   action withHostedPage() { await hosted.run() }
-  action continueHome() { go Home() }
 
   view {
     SafeArea {
@@ -47,10 +46,6 @@ page Login {
         }
         Button(label: "Continue with Google", on_press: withGoogle, class: "secondary")
         Button(label: "Use the hosted page", on_press: withHostedPage, class: "secondary")
-        // `session sign_in` does not navigate: once signed in, continue to the guarded Home.
-        if session.status == "authenticated" {
-          Button(label: "Continue", on_press: continueHome, class: "primary")
-        }
         Text(session_ux.error ?? "", class: "error")
       }
     }

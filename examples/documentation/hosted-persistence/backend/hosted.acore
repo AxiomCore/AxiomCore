@@ -1,8 +1,9 @@
 amends "application.acore"
 
-// Rows are scoped to the verified token's subject: `owner` is written and filtered from the
-// `sub` claim, never from the request.
-storage notes(schema: "../schema.acore", resource: Resources.notes, tenantClaim: "sub", tenantColumn: "owner") {
+// Rows belong to the signed-in user's selected organization: `owner` is written and filtered
+// from the verified token's `tenant` claim, never from the request. A token without an
+// organization is refused (403 database_identity_required).
+storage notes(schema: "../schema.acore", resource: Resources.notes, tenantColumn: "owner") {
   select list(table: "main.notes", fields: {id: "id", body: "body"}, limit: 100)
   insert create(table: "main.notes", values: {id: Input.id, body: Input.body},
     fields: {id: "id", body: "body"}, constraint: "notes_pkey",

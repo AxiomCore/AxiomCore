@@ -50,7 +50,7 @@ TOML
   else lead "package: axiom server package ... --target container-amd64 --environment $AXIOM_W8_ENV --secret-root backend --runtime-source <workspace> --output <context>"; fi
 fi
 lead "build the context on Cloud Build (docker buildx --platform linux/amd64), deploy to Cloud Run with its own service account; register that account: axiom secrets register-workload, axiom secrets grant (requirement notesDb, consumer server)"
-lead "  curl POST /notes without a token -> 401; with a signed-in token -> 201; GET /notes -> the row; another user's GET /notes -> no row"
+lead "  organizations org-a and org-b with one member each; curl POST /notes without a token -> 401; without an organization -> 403 database_identity_required; with an org-a token -> 201; GET /notes -> the row; an org-b member's GET /notes -> no row"
 lead "  revoke the grant (axiom secrets revoke-grant): the next lease is refused and /notes answers 503; a copied lease after its TTL -> 401"
 lead "  scan: canary_scan.py scan <canaries> cli \"$HOME\" .axiom backend/.axiom <context>/input"
 finish

@@ -23,7 +23,7 @@ cors(origins: ["http://127.0.0.1:5173", "http://localhost:5173"],
 
 // Notes live in the hosted database (schema.acore); the runtime reaches it through the
 // data gateway with a leased credential, never a stored one. Each row belongs to the
-// signed-in user: storage scopes reads and writes by the token's `sub` (hosted.acore).
+// signed-in user's organization: storage scopes reads and writes by the token's `tenant` (hosted.acore).
 secret notesDb(purpose: SecretPurpose.connectDatabase)
 resource notes(lifetime: ProviderLifetime.application, transactionProfile: TransactionProfile.hostedLibsql, secrets: [Secrets.notesDb]) {
   operation list(input: Models.Empty, output: List<Models.Note>, effect: EffectKind.read)

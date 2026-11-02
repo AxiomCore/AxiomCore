@@ -10,7 +10,10 @@ What it shows:
 - `sensitive state` for the password and the code. The compiler refuses to
   render, store, emit or log them (AUI460 to AUI466).
 - `session_actions(sign_in: [byPassword, byCode])` with
-  `session sign_in(<name>)` selecting one sign-in.
+  `session sign_in(<name>)` selecting one sign-in. Signing in does not navigate:
+  the Login page shows **Continue** (`go Home()`) once `session.status` is
+  `authenticated`, and the guarded Home route admits it. The hosted page returns
+  to `return_to` (`/`) by itself.
 - A guarded backend endpoint that receives the access token
   (`auth(required: true, methods: [AuthMethodDef(type: "bearer", ...)])`) and
   returns `Principal.subject` and `Principal.sid`.
@@ -28,7 +31,8 @@ Setup:
 4. Build the backend (`axiom build backend/application.acore`) and run it with
    an `axiomAuth` deployment for the same environment (the server deployment
    scaffold writes one from `--project-id` and `--environment-id`).
-5. Run the frontend: `axiom run frontend/main.acore --target web --port 5173`.
+5. Run the frontend: `axiom run frontend/main.acore --target web --port 5173`
+   (add `--auth-environment <name>` for an `[auth.environments.<name>]` other than `development`).
 
 The refresh token is kept in memory, so a reload signs the user out. Set
 `storage = "session"` in `[auth]` to keep it for the tab. Managed auth runs on

@@ -22,7 +22,7 @@ if [ "${AXIOM_W8_APPLY:-}" != yes ]; then
 fi
 : "${AXIOM_W8_PROJECT:?axq-w8x-auth project slug}" "${AXIOM_W8_ENV:=development}"
 H=(--project "$AXIOM_W8_PROJECT" --environment "$AXIOM_W8_ENV")
-lead "settings: mfa_policy optional, mfa_factors [totp, passkey], webauthn_rp_id localhost, webauthn_origins and allowed_origins http://localhost:5177"
+lead "settings: enabled_methods includes passkey (first-factor passkey sign-in; without it signInWithPasskey answers method_disabled), mfa_policy optional, mfa_factors [totp, passkey], webauthn_rp_id localhost, webauthn_origins and allowed_origins http://localhost:5177"
 lead "browser (tools/w8D2, Playwright, channel chrome, WebAuthn.addVirtualAuthenticator ctap2 internal uv): sign up, enrollTotp, confirm with a code computed from the canary seed, keep the recovery codes in secrets-w8x/"
 lead "GET /admin with the password-only token -> 401 step_up_required (acr_values=aal2); stepUp totp -> 200"
 lead "registerPasskey; sign out; signInWithPasskey -> acr phr; a recovery code works once, the second use -> invalid_code"

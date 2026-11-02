@@ -29,8 +29,8 @@ if [ "${AXIOM_W8_APPLY:-}" != yes ]; then
 fi
 : "${AXIOM_W8_PROJECT:?axq-w8x-rbac project slug}" "${AXIOM_W8_ENV:=development}"
 H=(--project "$AXIOM_W8_PROJECT" --environment "$AXIOM_W8_ENV")
-step "pull the current policy" axiom auth policy pull --environment "$AXIOM_W8_ENV" --write work-policy.json
-step "release" axiom auth policy release --policy auth/policy.json
+step "pull the current policy" axiom auth policy pull "${H[@]}" --write work-policy.json
+step "release" axiom auth policy release "${H[@]}" --policy auth/policy.json
 lead "axiom auth policy plan --environment $AXIOM_W8_ENV --release <sha>; apply with --acknowledge-from work-approvals.json"
 lead "with authz_invalidation on: apply auth/policy.narrow.json, call GET /orders with the old token within 65 s -> 401 authorization_changed; the web client refreshes once and the retry succeeds"
 lead "Ownership guard: user B reading user A's order -> 403; Role guard: member calling DELETE /orders/{id} -> 403; admin -> 200"

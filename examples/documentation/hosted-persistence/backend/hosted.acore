@@ -1,0 +1,11 @@
+amends "application.acore"
+
+// Rows belong to the signed-in user's selected organization: `owner` is written and filtered
+// from the verified token's `tenant` claim, never from the request. A token without an
+// organization is refused (403 database_identity_required).
+storage notes(schema: "../schema.acore", resource: Resources.notes, tenantColumn: "owner") {
+  select list(table: "main.org_notes", fields: {id: "id", body: "body"}, limit: 100)
+  insert create(table: "main.org_notes", values: {id: Input.id, body: Input.body},
+    fields: {id: "id", body: "body"}, constraint: "org_notes_pkey",
+    failure: Failures.duplicate, message: "That note already exists")
+}

@@ -12,7 +12,7 @@ finish() { echo "summary: $pass passed, $fail failed"; [ "$fail" -eq 0 ]; }
 step "installed CLI" axiom --version
 
 # Local, offline
-step "client unit test (PKCE, ID token checks)" sh -c "cd client && python3 -B -m unittest -q test_rp"
+step "client unit test (PKCE, ID token signature and claim checks)" sh -c "cd client && python3 -B -m unittest -q test_rp"
 
 # Production (lead)
 if [ "${AXIOM_W8_APPLY:-}" != yes ]; then
@@ -21,8 +21,8 @@ if [ "${AXIOM_W8_APPLY:-}" != yes ]; then
 fi
 : "${AXIOM_W8_PROJECT:?axq-w8x-auth project slug}" "${AXIOM_W8_ENV:=development}"
 H=(--project "$AXIOM_W8_PROJECT" --environment "$AXIOM_W8_ENV")
-step "OIDC discovery and JWKS" axiom auth oidc check
+step "OIDC discovery and JWKS" axiom auth oidc check "${H[@]}"
 step "register the client" axiom auth oauth-apps create --name "W8 example" --type public --redirect-uri http://127.0.0.1:5178/callback --scope openid --scope email "${H[@]}" --json
-lead "python3 client/rp.py --issuer <issuer> --client-id <axcl_...>: browser consent, code exchange with the verifier, ID token signature, iss, aud, nonce, exp checked; userinfo; logout"
+lead "python3 -B client/rp.py --issuer <issuer> --client-id <axcl_...> [--out <private dir>]: sign in and allow in the browser; rp.py checks state, iss, the code exchange with the PKCE verifier, the ID token signature (JWKS) and iss, aud, nonce, exp, a tampered token refused, userinfo, code replay refused and the access token revoked after it"
 lead "GET /v1/consents lists the client; revoke; the next authorize shows consent again"
 finish

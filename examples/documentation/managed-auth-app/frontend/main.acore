@@ -4,7 +4,10 @@ use auth Auth from "axiom"
 
 app ManagedAuth {
   route Login "/login" => Login
-  route Home "/" => Home { guard session.status == "authenticated" denied "/login" }
+  route Home "/" => Home {
+    guard session.status == "authenticated"
+    denied "/login"
+  }
   signed_out "/login"
 }
 

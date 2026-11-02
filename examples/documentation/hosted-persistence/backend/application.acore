@@ -1,3 +1,4 @@
+amends "Note.acore"
 project(id: "docs.hosted-persistence", version: "1.0.0")
 variant default(include: ["*"])
 
@@ -7,13 +8,28 @@ model Viewer {
   id: String
   subject: String
 } also entity
+model NewNote { id: String(minLength: 1, maxLength: 20) body: String(minLength: 1, maxLength: 280) }
+model Empty {}
 model Problem { message: String }
+failure duplicate(payload: Models.Problem, status: 409)
 failure unavailable(payload: Models.Problem, status: 503)
 
 guard signedIn(kind: GuardKind.authenticated)
+serverPolicy bounded(timeout: 10s)
+serverDefaults(policy: ServerPolicies.bounded)
 cors(origins: ["http://127.0.0.1:5173", "http://localhost:5173"],
-  methods: [GET], headers: ["authorization", "traceparent", "x-axiom-cache-mode"],
+  methods: [GET, POST], headers: ["authorization", "content-type", "traceparent", "x-axiom-cache-mode"],
   credentials: false, maxAge: 1m)
+
+// Notes live in the hosted database (schema.acore); the runtime reaches it through the
+// data gateway with a leased credential, never a stored one. Each row belongs to the
+// signed-in user's organization: storage scopes reads and writes by the token's `tenant` (hosted.acore).
+secret notesDb(purpose: SecretPurpose.connectDatabase)
+resource notes(lifetime: ProviderLifetime.application, transactionProfile: TransactionProfile.hostedLibsql, secrets: [Secrets.notesDb]) {
+  operation list(input: Models.Empty, output: List<Models.Note>, effect: EffectKind.read)
+  operation create(input: Models.NewNote, output: Models.Note, effect: EffectKind.write,
+    errors: [Failures.duplicate])
+}
 
 action whoami(kind: ActionKind.query, output: Models.Viewer) {
   require(guard: Guards.signedIn)
@@ -23,13 +39,52 @@ action whoami(kind: ActionKind.query, output: Models.Viewer) {
   }
 }
 
-projection viewerPublic(entity: Entities.viewer, fields: [.id, .subject], audience: Audience.web)
+action listNotes(kind: ActionKind.query, output: List<Models.Note>) {
+  require(guard: Guards.signedIn)
+  errors(Failures.unavailable)
+  managed {
+    let rows = await Resources.notes.list(input: {})
+    return rows
+  }
+}
 
-// The Acore web client attaches the managed access token to this endpoint.
+action createNote(kind: ActionKind.command, input: Models.NewNote, output: Models.Note) {
+  require(guard: Guards.signedIn)
+  errors(Failures.duplicate)
+  managed {
+    let note = await Resources.notes.create(input: {id: Input.id, body: Input.body.trim()})
+    return note
+  }
+}
+
+projection viewerPublic(entity: Entities.viewer, fields: [.id, .subject], audience: Audience.web)
+projection notePublic(entity: Entities.note, fields: [.id, .body], audience: Audience.web)
+
 endpoint me(method: GET, path: "/me") {
   auth(required: true, methods: [AuthMethodDef(type: "bearer", name: "Authorization", scheme: "Bearer", location: "header")])
   handle(action: Actions.whoami)
   response(type: Models.Viewer, projection: Projections.viewerPublic)
   errors(Failures.unavailable)
   cacheIdentity("viewer:me")
+}
+
+endpoint list_notes(method: GET, path: "/notes") {
+  auth(required: true, methods: [AuthMethodDef(type: "bearer", name: "Authorization", scheme: "Bearer", location: "header")])
+  handle(action: Actions.listNotes)
+  response(type: List<Models.Note>, projection: Projections.notePublic)
+  errors(Failures.unavailable)
+  cacheIdentity("notes:list")
+}
+
+endpoint create_note(method: POST, path: "/notes") {
+  auth(required: true, methods: [AuthMethodDef(type: "bearer", name: "Authorization", scheme: "Bearer", location: "header")])
+  request {
+    body("id", type: String)
+    body("body", type: String)
+  }
+  handle(action: Actions.createNote, input: {id: Input.body.id, body: Input.body.body})
+  response(type: Models.Note, projection: Projections.notePublic, status: 201)
+  errors(Failures.duplicate)
+  exposeFailure(failure: Failures.duplicate, fields: [.message], audiences: ["web"])
+  invalidates("notes:list")
 }

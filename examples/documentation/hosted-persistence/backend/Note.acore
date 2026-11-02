@@ -1,0 +1,5 @@
+// Schema-derived explicit projection; regenerate after schema changes.
+model Note {
+  id: String
+  body: String(maxLength: 280)
+} also entity

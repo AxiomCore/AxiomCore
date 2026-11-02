@@ -23,7 +23,13 @@ if [ "${AXIOM_W8_APPLY:-}" != yes ]; then
 fi
 : "${AXIOM_W8_PROJECT:?axq-w8x-hosted project slug}" "${AXIOM_W8_ENV:=development}"
 H=(--project "$AXIOM_W8_PROJECT" --environment "$AXIOM_W8_ENV")
-lead "Cloud Build: gcloud builds submit --config cloudbuild-linux.yaml (installs the Linux CLI artifact, packages container-amd64 with --environment), no local Docker"
+if [ -n "${AXIOM_W8_PROJECT_ID:-}" ] && [ -n "${AXIOM_W8_ENVIRONMENT_ID:-}" ]; then
+  step "deployment: axiomAuth for this environment, no credential" sh -c "cd backend && rm -f deployment.json && axiom server deployment .axiom/contracts/backend.axiom .axiom/contracts/backend.server.json -o deployment.json --project-id $AXIOM_W8_PROJECT_ID --environment-id $AXIOM_W8_ENVIRONMENT_ID >/dev/null && python3 -B ../check_scaffold.py deployment.json"
+  if [ -n "${AXIOM_W8_RUNTIME_SOURCE:-}" ] && [ -n "${AXIOM_W8_CONTEXT_OUT:-}" ]; then
+    step "container-amd64 build context" sh -c "cd backend && axiom server package .axiom/contracts/backend.axiom .axiom/contracts/backend.server.json --deployment deployment.json --target container-amd64 --runtime-source $AXIOM_W8_RUNTIME_SOURCE --output $AXIOM_W8_CONTEXT_OUT >/dev/null"
+  fi
+fi
+lead "build the container-amd64 context on Cloud Build (docker buildx --platform linux/amd64; no local Docker on the 8 GB machine); a backend with a hosted database adds --environment <env> --secret-root (hosted-persistence)"
 lead "deploy to Cloud Run as axq-w8x-e14; the deployment JSON and image hold no credential (scan the image tarball and the service JSON)"
 lead "a token of another environment -> 401; after the lease TTL a copied lease -> 401; after revocation -> 401"
 finish

@@ -1,0 +1,5 @@
+{
+  "component": "cli",
+  "type": "feature",
+  "summary": "Advanced authentication: axiom auth adds OAuth apps, OIDC checks, Microsoft and Apple providers, trusted-issuer presets, MFA status, user factors and consents, webhooks, claim hooks and SMS settings, auth policy pull, diff, check, release, plan and apply with approvals, auth config export, diff and push, and axiom auth emulate for a local loopback issuer with captured mail."
+}

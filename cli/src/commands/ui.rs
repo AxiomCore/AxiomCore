@@ -3393,12 +3393,25 @@ fn auth_runtime_config(
             manifest.display()
         )
     })?;
+    // The host refuses a configuration whose contract key or identity differs
+    // from the program's import, so both follow the version the program selected.
+    let (contract_key, identity) = if axiom_ui::auth_contract::is_v2(import) {
+        (axiom_ui::auth_contract::CONTRACT_KEY_V2, axiom_ui::auth_contract::identity_v2())
+    } else {
+        (axiom_ui::auth_contract::CONTRACT_KEY, axiom_ui::auth_contract::identity())
+    };
+    if import.alias != contract_key || import.artifact_sha256 != identity {
+        bail!(
+            "AXIOM_UI_AUTH: the program imports `{}` with an identity this CLI does not embed; rebuild it with this CLI",
+            import.alias
+        );
+    }
     Ok(serde_json::json!({
         "format": "acore-auth-config/v1",
         "provider": auth.provider,
         "localName": import.local_name,
-        "contractKey": axiom_ui::auth_contract::CONTRACT_KEY,
-        "identity": import.artifact_sha256,
+        "contractKey": contract_key,
+        "identity": identity,
         "environment": environment,
         "issuer": selected.issuer,
         "audience": selected.effective_audience(),
@@ -3423,7 +3436,7 @@ fn build_verified_runtime_config_value(
     })?;
     let mut contracts = Vec::new();
     if ir.target != UiTarget::Web && ir.imports.iter().any(axiom_ui::auth_contract::is_builtin) {
-        bail!("ACORE_AUTH_HOST_UNSUPPORTED: managed auth (axiom.auth/v1) runs only on the web host; native Lynx, Flutter and Swift hosts refuse it");
+        bail!("ACORE_AUTH_HOST_UNSUPPORTED: managed auth (axiom.auth/v1 and v2) runs only on the web host; native Lynx, Flutter and Swift hosts refuse it");
     }
     let auth = ir
         .imports
@@ -6312,6 +6325,36 @@ mod tests {
             let error = build_verified_runtime_config_value(&ios, &lock_path).unwrap_err().to_string();
             assert!(error.contains("ACORE_AUTH_HOST_UNSUPPORTED"), "{error}");
         }
+    }
+
+    #[test]
+    fn managed_auth_runtime_config_follows_the_imported_contract_version() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(
+            root.path().join("AxiomDeps.toml"),
+            "type = \"frontend\"\ntargets = [\"web\"]\n\n[auth]\nprovider = \"axiom\"\ncallbackPath = \"/auth/callback\"\nstorage = \"session\"\n\n[auth.environments.development]\nissuer = \"https://auth.axiomcore.dev/0b5e2c1a-9f3d-4c7e-8a21-5d6f7e8a9b0c/1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f\"\nredirectOrigin = \"http://127.0.0.1:5173\"\n",
+        )
+        .unwrap();
+        let lock_path = root.path().join(".axiom/dev/axiom.ui.lock.json");
+        let compile = |source: &str| compile_ui_source(source, &UiCompileOptions { target: UiTarget::Web, lock_path: lock_path.clone(), asset_root: None });
+        let v1 = compile("module shop.ui\nuse auth Auth from \"axiom\"\napp Shop { route \"/\" => Home }\npage Home {\n mutation logout = Auth.signOut()\n session_actions(sign_out: logout)\n action out() { session sign_out() }\n view { Text(session.status) Button(label: \"Sign out\", on_press: out) }\n}\n");
+        assert!(v1.is_valid(), "{:?}", v1.diagnostics);
+        let auth = &build_verified_runtime_config_value(&v1, &lock_path).unwrap()["auth"];
+        assert_eq!(auth["contractKey"], axiom_ui::auth_contract::CONTRACT_KEY);
+        assert_eq!(auth["identity"], axiom_ui::auth_contract::identity());
+        let v2 = compile("module shop.ui\nuse auth Auth from \"axiom\"\napp Shop { route \"/\" => Home }\npage Home {\n query factors = Auth.listFactors()\n view { Text(factors.error?.message ?? \"\") Text(factors.pending ? \"Loading\" : \"Ready\") }\n}\n");
+        assert!(v2.is_valid(), "{:?}", v2.diagnostics);
+        let ir = v2.ir.as_ref().unwrap();
+        assert_eq!(ir.imports[0].alias, axiom_ui::auth_contract::CONTRACT_KEY_V2);
+        let auth = &build_verified_runtime_config_value(&v2, &lock_path).unwrap()["auth"];
+        assert_eq!(auth["contractKey"], axiom_ui::auth_contract::CONTRACT_KEY_V2);
+        assert_eq!(auth["identity"], axiom_ui::auth_contract::identity_v2());
+        assert_eq!(auth["identity"], ir.imports[0].artifact_sha256);
+        assert_eq!(auth["localName"], "Auth");
+        let mut forged = ir.imports[0].clone();
+        forged.artifact_sha256 = axiom_ui::auth_contract::identity();
+        let error = auth_runtime_config(&forged, &lock_path, "development").unwrap_err().to_string();
+        assert!(error.contains("AXIOM_UI_AUTH"), "{error}");
     }
 
     #[test]

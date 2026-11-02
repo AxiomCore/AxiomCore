@@ -1,0 +1,5 @@
+{
+  "component": "cli",
+  "type": "feature",
+  "summary": "Preview branches: axiom branch lists, creates, shows, extends and deletes sanitized database branches and manages their policy, settings, review, captured mail and test users, and axiom database impact check reports the auth policy impact of a change."
+}

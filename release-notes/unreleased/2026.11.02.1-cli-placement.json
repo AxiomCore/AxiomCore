@@ -1,0 +1,5 @@
+{
+  "component": "cli",
+  "type": "feature",
+  "summary": "Database placement: axiom project resources connects, checks and disconnects a customer-owned Turso database, shows placement, records relocation consent, verifies move receipts offline and requests a conversion, and axiom db convert drafts, plans and submits a libSQL to PostgreSQL conversion."
+}

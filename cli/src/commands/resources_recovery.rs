@@ -273,6 +273,20 @@ impl Api {
     }
 
     /// [`Api::step_up_action`] with a query string (branch policy and settings).
+    /// A write with the normal session only (no step-up token): for routes that need ownership but
+    /// not a fresh sign-in, where the server refuses a step-up token (W8 QJ, BR branch settings).
+    pub async fn session_action_query(&self, method: &Method, segments: &[&str], query: &[(&str, String)], body: &Value, key: &str) -> Result<Value> {
+        let mut url = self.url(segments)?;
+        if !query.is_empty() {
+            url.query_pairs_mut().extend_pairs(query.iter().map(|(k, v)| (*k, v.as_str())));
+        }
+        let reply = self.send_session(method, url, Some(body), Some(key)).await?;
+        if (200..300).contains(&reply.status) {
+            return Ok(reply.body);
+        }
+        Err(recovery_error(&reply))
+    }
+
     pub async fn step_up_action_query(&self, method: &Method, segments: &[&str], query: &[(&str, String)], body: &Value, key: &str) -> Result<Value> {
         let mut url = self.url(segments)?;
         if !query.is_empty() {

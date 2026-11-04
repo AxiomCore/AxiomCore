@@ -1,0 +1,115 @@
+---
+title: Axiom Cloud security model
+description: How Axiom Cloud separates identities, isolates projects and environments, handles database and signing credentials, and what a restore does to sessions and permissions.
+pageType: concept
+---
+
+<StatusNote status="alpha" title="Axiom Cloud security model">
+  This page describes the managed database and authentication services as they
+  run today for invited accounts (**Alpha**). Where a guarantee has a bound or a
+  known limit, the bound is stated.
+</StatusNote>
+
+This page explains who can reach what in Axiom Cloud. Read it before you put
+real users or data in a managed project.
+
+## Identity boundaries
+
+Axiom Cloud has three separate kinds of identity. None of them can act as
+another.
+
+| Identity | Who | Signs in at | Can |
+| --- | --- | --- | --- |
+| Cloud account | You and your team | The Dashboard and `axiom login` | Manage workspaces, projects, releases, secrets and resources by role (Owner, Maintainer, Reader) |
+| Application user | The people who use your application | Your application, through managed authentication at `auth.axiomcore.dev/<project>/<environment>` | Use your application as your policies allow |
+| Workload | Your server process | A Google Cloud workload identity token | Lease a short-lived database credential for one environment |
+
+Application users never become Cloud members, and a Cloud member is not an
+application user unless they sign up to your application like anyone else.
+Each environment has its own issuer, signing keys, users and sessions, so a
+token from one environment is refused by another.
+
+## Project and environment isolation
+
+- Every control-plane query for databases, branches, placements, receipts,
+  conversions, grants, migrations, authentication administration and the data
+  editor is scoped to the caller's project and environment.
+- Each environment has its own database, or its own isolated database in a
+  shared provider pool. Databases of different projects never share tables.
+- Database credentials are scoped to one database and generation. PostgreSQL
+  logins have no rights on another project's database. SQLite (libSQL) tokens
+  name the tables they may touch.
+- Authentication tables live in the same database as your application but
+  your application's credentials cannot read or write them. On PostgreSQL they
+  are in a separate `auth` schema; on SQLite they are tables the scoped token
+  does not grant.
+
+Known limits:
+
+- PostgreSQL row-level security is not set up in managed schemas. Tenant
+  isolation inside your application comes from the runtime's tenant filter.
+- On SQLite, schema changes made through migrations are visible to every
+  token for that database.
+- A SQLite (libSQL) runtime token names at most 64 tables and views. A schema
+  with more, or with an `AUTOINCREMENT` table, cannot get runtime credentials.
+
+## Credentials
+
+| Credential | Where it lives | Lifetime |
+| --- | --- | --- |
+| Database credential for your server | Leased at runtime through the credential gateway; never shown in the Dashboard | At most 15 minutes, 5 minutes under usage pressure |
+| Provider administration tokens | Only in Axiom's trusted services | Not given to customers, frontends or extensions |
+| Application signing keys | Encrypted with Google Cloud KMS in `asia-southeast1` | Rotated automatically; due at 150 days |
+| Authenticator app secrets | Encrypted with a dedicated KMS key | Until the user removes the factor |
+| Project secrets | Write-only values, encrypted, scoped to an environment | Versioned |
+| Cloud session | Browser and CLI | Access tokens 1 hour; refresh tokens rotate on use and expire after 30 days unused |
+
+A database credential copied out of a server keeps working at the provider
+until it expires or the database is stopped. When a grant is revoked,
+PostgreSQL logins are rotated within one worker run (at most 10 minutes); a
+SQLite token stays valid until it expires.
+
+Frontend bundles, Acore contracts and sandboxed extensions never receive
+database credentials or provider tokens.
+
+## Recovery semantics
+
+Restoring a database never brings back access that was taken away.
+
+- A restore builds a new copy, checks it, then fences the old one before
+  switching. Old credentials stop working.
+- Revocations, bans, password changes, user deletions and role changes made
+  after the restore point are replayed onto the restored authentication data
+  from a tamper-evident security ledger.
+- Sessions in the restored copy are ended. Users sign in again.
+- After a disaster recovery restore, every OAuth grant ends and recovery codes
+  must be regenerated.
+- The previous copy is kept for 24 hours, then deleted.
+
+See [Operations and status](/cloud/operations#retention) for retention.
+
+## Operator access
+
+Axiom operators can run recovery, moves, orphan repair and capacity changes.
+Destructive operator actions need a reason and a ticket reference. Operators
+do not read application rows as part of normal operation.
+
+Today, operator actions record their reason and reference but not the
+operator's personal identity, and refused operator attempts are kept only in
+service logs. Both are being addressed.
+
+## Reviews and standards
+
+- An independent security review of the managed database and authentication
+  services was completed before general availability. Findings that block
+  general availability are fixed before the platform opens.
+- The OAuth and OpenID Connect issuer was tested with the OpenID Foundation
+  conformance suite against the production issuer. AxiomCore is **not**
+  OpenID Certified.
+- To report a vulnerability, follow the
+  [security policy](https://github.com/AxiomCore/AxiomCore/blob/main/SECURITY.md).
+
+## Next steps
+
+- [See where data and backups are stored](/cloud/regions)
+- [Read the incident and retention policy](/cloud/operations)

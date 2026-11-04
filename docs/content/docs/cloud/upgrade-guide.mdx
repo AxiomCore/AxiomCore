@@ -1,0 +1,116 @@
+---
+title: Upgrade to the November 2026 Axiom Cloud release
+description: Move from Axiom CLI 0.149 to 0.151, understand the automatic authentication table upgrade, and turn on the new opt-in database and authentication features one environment at a time.
+pageType: guide
+---
+
+<StatusNote status="coming-soon" title="CLI 0.151 and the November 2026 release">
+  Axiom CLI 0.151.0, `@axiomcore/auth-web` 0.2.0 and web UI Host 0.8.0 are
+  prepared and **Coming soon**. Until they are published, the latest released
+  CLI is 0.149.1 and nothing on this page needs action.
+</StatusNote>
+
+This guide is for projects that already use Axiom Cloud with CLI 0.149.x. It
+covers three changes: the CLI version, the managed authentication tables, and
+the features that stay off until you turn them on.
+
+## Before you start
+
+- Note your current CLI version with `axiom --version`.
+- Commit your project, including `.axiom` lock files.
+- Have an Owner of the Cloud project available: several new features need an
+  Owner and a recent sign-in (step-up).
+
+## Upgrade the CLI from 0.149 to 0.151
+
+CLI 0.150.0 was never published. Go straight from 0.149.1 to 0.151.0.
+
+Re-run the installer script with the version pinned:
+
+```bash title="Terminal"
+curl -fsSL https://axiomcore.dev/install | VERSION=0.151.0 bash
+axiom --version
+```
+
+If you installed with Homebrew on macOS, run `brew upgrade AxiomCore/tap/axiom`
+after the formula is updated to 0.151.0. See
+[Install the Axiom CLI](/getting-started/installation) for checksums and
+platforms (macOS arm64; Linux amd64 and arm64 with glibc 2.36 or newer).
+
+What 0.151.0 adds for Cloud projects:
+
+| Area | New in 0.151.0 |
+| --- | --- |
+| Hosted migrations | `axiom database migrate`, `status`, `history`, `rollback` and `diff` accept `--project` and `--environment`; `axiom database pull` downloads the applied hosted history; releases are signed by project signers |
+| Runtime data | Storage backed by a hosted database compiles to its hosted profile; `server package --environment` seals the environment into container releases |
+| Authentication | `axiom auth` configures providers and settings, OAuth apps, MFA status, webhooks and hooks, policy releases and `axiom auth emulate` |
+| Data tools | Signed release impact reports; `pull` merges changes captured in the Dashboard and refuses conflicting edits |
+| Recovery | `axiom project resources recovery` shows the restore window, backups and archive state; `axiom login --step-up` |
+| Branches and placement | `axiom branch`, placement, move receipts and `axiom db convert` |
+| Security | Errors no longer echo evaluated configuration that could contain secret values |
+
+Existing commands keep their behavior. Re-run your build after the upgrade so
+generated runtime configuration records the new contract versions.
+
+## Authentication tables upgrade automatically
+
+Managed authentication stores its tables in your environment's database.
+The November release adds tables for MFA, passkeys, OAuth applications,
+webhooks, phone codes and captured branch mail. Axiom upgrades them for you:
+
+- An environment upgrades when you first turn on one of the new
+  authentication features, and later for every environment during a scheduled
+  upgrade. You do not run a migration.
+- The upgrade adds tables only. Existing users, passwords, sessions and roles
+  are unchanged.
+- On SQLite the upgrade runs in one short transaction. A sign-in that meets it
+  is retried once; in the rare case it still fails, the user sees a temporary
+  error and can try again.
+- Until an environment is upgraded, the new features answer
+  `AXAUTH_UPGRADE_PENDING`. Saving a setting that needs the upgrade returns
+  `"upgrade_pending": true` and starts it.
+
+Your own migrations never touch these tables, and the upgrade never touches
+your application tables.
+
+## Frontends that use MFA, passkeys or step-up
+
+Programs that use MFA, factors, passkeys or step-up operations select the
+`axiom.auth/v2` frontend contract when built with CLI 0.151. Use web UI Host
+0.8.0 or `@axiomcore/auth-web` 0.2.0 with them. Programs that use only
+password, email code, magic link or social sign-in keep working with the
+earlier host and SDK.
+
+## Opt in to the new features
+
+Each new feature is off for every environment until it is turned on, and
+some need an Owner and a Pro project.
+
+| Feature | How to turn it on | Status |
+| --- | --- | --- |
+| [OAuth applications and the OIDC issuer](/authentication/oidc) | Per environment, Owner | Coming soon |
+| [Authenticator apps, recovery codes and passkeys](/authentication/mfa) | Per environment, Owner | Coming soon |
+| [Webhooks and claim hooks](/authentication/hooks) | Per environment, Owner | Coming soon |
+| [Phone verification](/authentication/phone) | Per environment, Owner, Pro, your own Twilio account | Coming soon |
+| [Microsoft sign-in and third-party presets](/authentication/third-party) | Per environment, Owner | Coming soon |
+| [Preview branches](/cloud/branches) | Per project, after admission | Coming soon |
+| [SQLite to PostgreSQL conversion](/database/project-upgrades) | Per database, Owner, Pro | Coming soon |
+| [Moves between pools and regions](/cloud/database-placement) | Owner consent for each move | Coming soon |
+| [Your own Turso database](/cloud/turso-connections) | Per environment, Owner | Coming soon |
+
+Turn features on in one environment first, such as a staging environment,
+check your application, then repeat for production.
+
+## Roll back
+
+- **CLI.** Reinstall 0.149.1. Projects built with 0.151 that use the new
+  frontend contract need a rebuild with 0.149.1.
+- **Authentication tables.** The upgrade is not reversed. Turning a feature
+  off stops it; the added tables stay empty or unused.
+- **Features.** Turn each feature off per environment. Data created by a
+  conversion or a move stays where it is.
+
+## Next steps
+
+- [See what changed in the platform](/cloud/changelog)
+- [Check the support matrix](/introduction/support-matrix)

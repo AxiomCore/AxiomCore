@@ -1,0 +1,117 @@
+---
+title: Axiom Cloud operations and status
+description: How Axiom Cloud handles incidents and status updates, how to export your data, how long each kind of data and backup is kept, and how to close an account.
+pageType: reference
+---
+
+<StatusNote status="alpha" title="Axiom Cloud operations">
+  These procedures apply to the managed services available to invited
+  accounts (**Alpha**). A public status page is **Coming soon**.
+</StatusNote>
+
+This page tells you what to expect when something goes wrong, how to get your
+data out, and how long Axiom keeps what.
+
+## Incidents
+
+Axiom monitors pool capacity, storage, authentication errors and latency,
+email delivery, signing-key rotation, repair queues, backups and a weekly
+restore drill. Alerts go to the Axiom operator at any hour.
+
+| Severity | Examples |
+| --- | --- |
+| Critical | Data exposure or loss; sign-in down for every project |
+| Major | One service degraded for many projects; backups failing |
+| Minor | One project affected |
+
+Response-time targets are not published yet (TODO: add them when they are
+set).
+
+During an incident Axiom first limits the damage without deleting anything:
+it can pause new signups, new databases or a single feature, or return a
+service to its previous release. Existing sign-ins and data stay in place.
+
+After an incident Axiom writes a timeline from its own records (resource
+events, operation history, the security ledger and service logs).
+
+## Status communication
+
+- If your project's data is involved, the project Owners get an email as soon
+  as the scope is known and again when it is resolved.
+- Platform-wide incidents are posted on this page until a dedicated status page
+  exists (TODO: status page address).
+- Report a problem through [Support and feedback](/reference/support-and-feedback).
+  Report a vulnerability privately as the
+  [security policy](https://github.com/AxiomCore/AxiomCore/blob/main/SECURITY.md)
+  describes.
+
+<span id="export" />
+
+## Export and portability
+
+| Method | Engines | Who | Limits |
+| --- | --- | --- | --- |
+| CSV export of one table or view from the Dashboard data editor | SQLite and PostgreSQL | Project Owner | 50,000 rows or 25 MiB per file, 20 exports per project per day. The last line says `# complete <n> rows` or `# truncated <n> rows` |
+| Reads from your own server through a runtime connection | SQLite and PostgreSQL | A registered workload with a database grant | Application tables only; credentials last at most 15 minutes |
+| Hosted migration history | SQLite and PostgreSQL | Project members | `axiom database pull` downloads the applied history |
+| Export on request | SQLite and PostgreSQL | Project Owner, through support | Manual; contact support |
+
+Not supported:
+
+- a one-step export of a whole database;
+- exporting authentication data such as password hashes or authenticator
+  secrets (you can list users through the authentication admin API);
+- downloading Axiom's backups or archives, or restoring them outside Axiom.
+
+A `pg_dump` with a runtime credential is not supported: the credential covers
+application schemas only and expires within 15 minutes.
+
+## Retention
+
+| Data | Kept for |
+| --- | --- |
+| Daily backups | 7 days (storage objects deleted at 8 days) |
+| Point-in-time restore window | SQLite 24 hours, PostgreSQL 6 hours |
+| Previous copy after a restore or move | 24 hours |
+| Previous SQLite copy after a conversion to PostgreSQL | 7 days |
+| Conversion artifact | 30 days |
+| Archive of an archived database | Until the database is resumed or deleted, then 7 days |
+| Sanitized branch source | 7 days |
+| Authentication security ledger | 90 days |
+| Authentication events and audit log | 90 days |
+| Ended application sessions | 30 days |
+| Webhook delivery records | 72 hours after delivery |
+| Data editor activity | 180 days |
+| SQL editor history | 30 days |
+| Request telemetry | Project setting, 30 days by default |
+| Cloud refresh tokens | 30 days without use |
+
+Daily backups and Owner restores are turned on for selected projects only
+today, and will be on for every project at general availability. Backups are
+kept in the jurisdiction of the database; see
+[Regions](/cloud/regions#where-backups-are-stored).
+
+Billing never deletes data: a failed payment or cancelled subscription blocks
+new provisioning and runtime credentials but keeps every database in place.
+See [Pricing](/cloud/pricing#when-a-payment-fails-or-a-subscription-ends).
+
+## Deleting data and closing an account
+
+- **Delete a database.** A project Owner deletes it from **Resources** and
+  types `delete database` to confirm. The provider database is deleted. Its
+  daily backups expire within 8 days and any archive within 7 days. Deletion
+  leaves no restore point.
+- **Delete an application user.** Sign-in is refused at once and the user's
+  authentication rows are purged.
+- **Close a Cloud account.** There is no self-service closure yet. Ask support
+  from the account's email address. Axiom deletes the account's databases as
+  above and removes the account. Backups and logs then expire on the schedule
+  above.
+
+TODO: the retention of Cloud account records, billing records and
+control-plane audit history after closure is not published yet.
+
+## Next steps
+
+- [Read the security model](/cloud/security-model)
+- [Compare Free and Pro limits](/cloud/limits)

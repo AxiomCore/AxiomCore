@@ -11,16 +11,18 @@ a one-shot command (`acore-semantic --root <project> < request.json`). The
 operations, fields and errors are the same on all three.
 
 <StatusNote status="experimental" title="Preview">
-  Read operations and edit operations of v1 are frozen: later versions of v1
-  only add operations, optional fields and values of open strings. Which
-  operations are fully implemented is in the [Support matrix](/semantic-service/support-matrix).
+  The manifest marks `axiom-agent-semantic/v1` as `frozen` and lists the
+  frozen operations in `protocol.frozen_operations`: the 11 read operations
+  (see [Compatibility](#compatibility)). Which operations are fully
+  implemented is in the [Support matrix](/semantic-service/support-matrix).
 </StatusNote>
 
 The protocol is defined by JSON Schema (draft 2020-12) files: an envelope
 schema for requests and responses, `error.json`, shared definitions in
 `common.json` and `edits.json`, and one request and one result schema per
-operation in `operations/`. They live in the `protocol/semantic/schemas/`
-directory of the Acore compiler source. Their `$id`s
+operation in `operations/`. They ship with the Acore compiler source, in
+`protocol/semantic/schemas/`, and this page reproduces their content; there is
+no separate download until release. Their `$id`s
 (`https://schemas.axiomcore.dev/agent-semantic/v1/<file>`) are identifiers
 only; nothing is served at those URLs. The tables marked as generated on this
 page are produced from those schemas and from the service's capability
@@ -148,6 +150,13 @@ state. A snapshot's `semantic_state` says how far compilation got:
 
 {/* END GENERATED semantic-states */}
 
+In this build `unavailable` means there is no node graph, which is not always
+a parse failure: a project whose source parses but that lacks its UI lock is
+also reported as `unavailable` (with status `needs_preparation`). On an
+`unavailable` snapshot, `node.find` answers `compile_failed`, `node.edits`
+answers `compile_failed` (`not_validated`), and `project.overview` still
+returns the diagnostics.
+
 A read on a `syntax` or `resolved` snapshot is `partial` with a
 `broken_source` gap. Edits need a `validated` base, except bounded repairs:
 an edit on a broken base is accepted when it leaves fewer errors and none
@@ -180,7 +189,9 @@ request and response.
 The manifest of what this service serves: each operation and edit kind with
 its status (`implemented`, `partial` or `planned`), profiles, checks, limits,
 publication guarantees and error codes. Call it first, and use only what it
-lists. It needs no workspace.
+lists. It needs no workspace. `acore-semantic --capabilities` prints the same
+manifest, plus `toolchain`, without a request (see the
+[quick start](/semantic-service/quickstart#1-install)).
 
 {/* BEGIN GENERATED operation:capabilities */}
 
@@ -335,7 +346,7 @@ manifest. It never installs, extracts or runs anything.
   "operation": "workspace.open",
   "workspace": "ws-f2b7ec0822ce…",
   "snapshot": {
-    "id": "snap-3c995aab4e94…",
+    "id": "snap-8d409ade6cc9…",
     "semantic_state": "validated",
     …
   },
@@ -398,7 +409,7 @@ for the next page. The cursor stays on the same snapshot.
 ```json title="Response (excerpt)"
 {
   "snapshot": {
-    "id": "snap-3c995aab4e94…",
+    "id": "snap-8d409ade6cc9…",
     …
   },
   "truncation": {
@@ -644,14 +655,14 @@ what is not offered.
         "options": [
           {
             "accepts": "String",
-            "fingerprint": "821350eccaab…",
+            "fingerprint": "8433d5033595…",
             "kind": "set_property",
             "option_id": "o1",
             "property": "label"
           },
           {
             "accepts": "String",
-            "fingerprint": "0c63deec5e84…",
+            "fingerprint": "0777d73f1904…",
             "kind": "bind_property",
             "option_id": "o2",
             "property": "label",
@@ -661,7 +672,7 @@ what is not offered.
           },
           {
             "accepts": "Element",
-            "fingerprint": "9813a397f99b…",
+            "fingerprint": "b35723f8087a…",
             "kind": "list_element",
             "ops": [
               "remove",
@@ -914,7 +925,7 @@ With a limit smaller than the required context:
           "kind": "node",
           "node": "page:Home",
           "reason": "the item page:Home (required context); pass this ref in params.expand to include it as required",
-          "ref": "ctx1:3c995aab4e949381:node:page:Home"
+          "ref": "ctx1:8d409ade6cc951e0:node:page:Home"
         }
       ],
       "required_bytes": 294,
@@ -1108,7 +1119,7 @@ To extend an open candidate, pass `candidate` and `expected_candidate_version`.
 | `files` | yes | array of object (`fileChange`), 1 to any items |  |
 | `diagnostics` | yes | array of object, 0 to 200 items (`diagnostics`) |  |
 | `checks` | yes | array of object (`checkResult`), 1 to any items |  |
-| `evidence` | yes | object (`evidence`) |  |
+| `evidence` | yes | object (`evidence`) | Evidence of a compile. (compiler_identity, target, sources, dependencies_fingerprint) is the reuse key of a check. |
 | `impact` | no | object |  |
 | `repair` | no | object (`repairOutcome`) | Present when the base is not validated (syntax or resolved): the accepted repair's base and result states and error counts. |
 
@@ -1291,7 +1302,7 @@ an exact precondition, `old_value` or `old_text`, copied from `node.get` or
 | `expected_node_version` | no | string | Optional precondition: the node's version from node.get or node.edits. |
 | `option` | no | object (`optionRef`) |  |
 
-**`replace_region`**: The only operation of its batch (invalid_arguments, region_alone, otherwise); never a whole file.
+**`replace_region`**: Fallback: replace the smallest whole-line region around a syntax error, offered by node.edits only on a syntax snapshot. The only operation of its batch (invalid_arguments, region_alone, otherwise); never a whole file.
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
@@ -1401,7 +1412,7 @@ The same `request_id` with a different input:
   "error": {
     "code": "conflict",
     "reason": "request_id_reused",
-    "message": "request_id rename-add-1 was used for a different request (2c8d01ea63af…); use a new request_id",
+    "message": "request_id rename-add-1 was used for a different request (dbd8c03fdeff…); use a new request_id",
     "target": {
       "request_id": "rename-add-1"
     },
@@ -1465,7 +1476,7 @@ full content, affected nodes, risks and checks.
 ```json title="Response (excerpt)"
 {
   "snapshot": {
-    "id": "snap-c3f91ac2416b…",
+    "id": "snap-2d2c561be58b…",
     "overlay": "cand-…",
     …
   },
@@ -1525,7 +1536,7 @@ Runs checks on a candidate, or on a snapshot plus unsaved file contents
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
 | `candidate` | no | string (at most 256 characters) | Opaque id of a private candidate (change.propose). |
-| `files` | no | array of object (`file`), 0 to 64 items | Overlay; only with the envelope snapshot. [] checks the snapshot as is. |
+| `files` | no | array of object (`file`), 0 to 64 items | Overlay files; only with the envelope snapshot. [] checks the snapshot as is. |
 | `checks` | yes | array of string (at most 64 characters), 1 to any items |  |
 
 **Result** (`schemas/operations/check.run.result.json`)
@@ -1635,7 +1646,7 @@ has the base content. See [Apply, receipts and recovery](#apply-receipts-and-rec
   "request_id": "apply-rename-add-1",
   "result": {
     "receipt": {
-      "base_snapshot": "snap-3c995aab4e94…",
+      "base_snapshot": "snap-8d409ade6cc9…",
       "candidate": "cand-…",
       "candidate_version": 1,
       "files": [
@@ -1647,7 +1658,7 @@ has the base content. See [Apply, receipts and recovery](#apply-receipts-and-rec
         }
       ],
       "id_map": [],
-      "input_fingerprint": "8686c4ac35a5…",
+      "input_fingerprint": "8d5fa8246bf6…",
       "journal": {
         "id": "jrnl-…",
         "state": "committed"
@@ -1656,7 +1667,7 @@ has the base content. See [Apply, receipts and recovery](#apply-receipts-and-rec
       "receipt_id": "rcpt-…",
       "recorded_at": "…",
       "request_id": "apply-rename-add-1",
-      "result_snapshot": "snap-c3f91ac2416b…"
+      "result_snapshot": "snap-2d2c561be58b…"
     },
     "replayed": false
   },
@@ -1743,11 +1754,11 @@ to undo, propose a compensating change.
 {
   "result": {
     "candidate": {
-      "base_snapshot": "snap-c3f91ac2416b…",
+      "base_snapshot": "snap-2d2c561be58b…",
       "id": "cand-…",
-      "input_fingerprint": "d17b269a13c4…",
+      "input_fingerprint": "515b95189e61…",
       "request_id": "placeholder-1",
-      "snapshot": "snap-683da73c7205…",
+      "snapshot": "snap-9243a149fdcd…",
       "state": "discarded",
       "version": 1
     },
@@ -1797,7 +1808,7 @@ inferred (`relation: inferred`) from ids, paths and text.
 ```json title="Response (excerpt)"
 {
   "snapshot": {
-    "id": "snap-c3f91ac2416b…",
+    "id": "snap-2d2c561be58b…",
     …
   },
   "result": {
@@ -1820,7 +1831,7 @@ inferred (`relation: inferred`) from ids, paths and text.
       }
     ],
     "relevant": true,
-    "since": "snap-3c995aab4e94…"
+    "since": "snap-8d409ade6cc9…"
   },
   …
 }
@@ -1887,6 +1898,13 @@ request's snapshot, one entry per id in request order. Each entry has a
 An error response has `error` instead of `result`. Decide what to do from
 `code`, `reason`, `retryable` and `next_actions`; `message` is for people and
 may change.
+
+A request that is not valid JSON, is not a JSON object, or has no `protocol`
+field is not a v1 request: the one-shot command and `serve` answer it in the
+service's legacy format, with `error.code` `invalid_request` (not a v1 code)
+and no `operation`, `retryable` or `next_actions`, and `serve` keeps reading
+the next line; over MCP, a message that is not valid JSON gets the JSON-RPC
+parse error `-32700`. Fix the request before sending it again.
 
 {/* BEGIN GENERATED error-object */}
 
@@ -1970,9 +1988,9 @@ from before the apply, touching the file the apply changed:
   "error": {
     "code": "stale_snapshot",
     "reason": "base_not_head",
-    "message": "base_snapshot snap-3c995aab4e94… is not the current snapshot of the workspace (snap-c3f91ac2416b…) and the files this request changes differ there",
+    "message": "base_snapshot snap-8d409ade6cc9… is not the current snapshot of the workspace (snap-2d2c561be58b…) and the files this request changes differ there",
     "target": {
-      "snapshot": "snap-3c995aab4e94…"
+      "snapshot": "snap-8d409ade6cc9…"
     },
     "diagnostics": [],
     "retryable": "after_refresh",
@@ -1998,7 +2016,7 @@ An id that does not exist:
 {
   "error": {
     "code": "not_found",
-    "message": "element:Home/view/9 is not a node of snap-c3f91ac2416b…",
+    "message": "element:Home/view/9 is not a node of snap-2d2c561be58b…",
     "target": {
       "node": "element:Home/view/9"
     },
@@ -2166,12 +2184,15 @@ the [Support matrix](/semantic-service/support-matrix#publication).
 
 ## Compatibility
 
-Within v1, changes are additive: new operations, new optional fields, and new
-values of open strings (node kinds, edge kinds, property types, check ids,
-`reason`, risk kinds). Closed enums such as error `code`, `retryable`,
-statuses and outcomes do not gain values within v1. A client sends an optional
-field only when `capabilities` lists the operation as implemented. A planned
-operation or edit kind answers `unsupported_operation` (`not_implemented`).
+The manifest's `protocol.status` is `frozen`, and `protocol.frozen_operations`
+lists the operations frozen in v1: `capabilities`, `workspace.open`,
+`project.overview`, `node.find`, `node.get`, `node.edits`, `graph.query`,
+`context.build`, `impact.analyze`, `changes.since` and `node.relocate`. Read
+that list from `capabilities` rather than from this page. Error `code` is a
+closed list; `reason` is an open string that can gain values. A client sends
+an optional field only when `capabilities` lists the operation as
+implemented. A planned operation or edit kind answers `unsupported_operation`
+(`not_implemented`).
 
 ## Related pages
 

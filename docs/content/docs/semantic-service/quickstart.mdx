@@ -59,24 +59,55 @@ page Home {
 ## 1. Install
 
 <Callout type="info" title="Available at release">
-  The service is not published yet. At release it installs with Homebrew,
-  and the Axiom CLI gains `axiom mcp` and `axiom semantic`, which run
-  `acore-semantic mcp` and `acore-semantic` unchanged.
+  Nothing is downloadable yet. At release the service is planned to install
+  with Homebrew:
 
   ```bash title="At release: install with Homebrew"
   brew install axiomcore/tap/acore-semantic
   ```
 </Callout>
 
-Until then, place a preview `acore-semantic` binary on your `PATH`. Every
-example on these pages runs that binary directly. Check it:
+Every example on these pages calls `acore-semantic` directly and assumes the
+binary is on your `PATH`. Check it:
 
 ```bash title="Any directory"
 acore-semantic --version
 ```
 
-It prints the service name and version. The examples on these pages were
-recorded with version `0.1.4`.
+```text title="Output"
+acore-semantic@0.1.4 axiom-agent-semantic/v1 studio/v1
+```
+
+The line names the service and its version, then the protocols it speaks.
+`axiom-agent-semantic/v1` is the public protocol these pages describe.
+`studio/v1` is a legacy internal protocol and not part of the public interface.
+
+Ask the binary what it serves. `--capabilities` prints the same manifest as
+the protocol's `capabilities` operation, plus the compiler identity
+(`toolchain`), without opening a project:
+
+```bash title="Any directory"
+acore-semantic --capabilities | jq '{service: .manifest.service, protocol: .manifest.protocol.name, operations: [.manifest.operations[] | "\(.name): \(.status)"]}'
+```
+
+```json title="Output (excerpt)"
+{
+  "service": {
+    "name": "acore-semantic",
+    "version": "0.1.4"
+  },
+  "protocol": "axiom-agent-semantic/v1",
+  "operations": [
+    "capabilities: implemented",
+    "workspace.open: partial",
+    "project.overview: implemented",
+    …
+  ]
+}
+```
+
+The manifest lists 17 operations. `implemented` and `partial` are defined in
+the [support matrix](/semantic-service/support-matrix#status-definitions).
 
 ## 2. Connect an MCP client
 
@@ -145,7 +176,7 @@ SNAP=$(echo "$OPEN" | jq -r .snapshot.id)
 ```json title="Output"
 {
   "workspace": "ws-…",
-  "snapshot": "snap-3c995aab4e949381e50863260bc9416d60269a379504fcbf423ffd8afcea8eee",
+  "snapshot": "snap-8d409ade6cc951e04851fa81e99a8bfea694287837bda4db8220e2a590ab12e2",
   "state": "validated",
   "status": "ready"
 }
@@ -330,7 +361,7 @@ grep -n 'Button' main.acore
     }
   ],
   "id_map": [],
-  "result_snapshot": "snap-c3f91ac2416b07575c7d5174ee5e1708419e3861a3d4ccff068e58f352029437"
+  "result_snapshot": "snap-2d2c561be58b4e2a12c20a0d8d6ef89e71c9b40f61951ad05dc664e823aed2f5"
 }
 20:      Button(label: "Add task", on_press: submit)
 ```
@@ -364,7 +395,7 @@ printf '%s\n' \
 
 ```text title="Output"
 {"operation":"capabilities","snapshot":null,"nodes":[]}
-{"operation":"node.find","snapshot":"snap-c3f91ac2416b07575c7d5174ee5e1708419e3861a3d4ccff068e58f352029437","nodes":["element:Home/view/0/1"]}
+{"operation":"node.find","snapshot":"snap-2d2c561be58b4e2a12c20a0d8d6ef89e71c9b40f61951ad05dc664e823aed2f5","nodes":["element:Home/view/0/1"]}
 ```
 
 `latest` resolved to the snapshot written by the apply. The responses are the
@@ -379,7 +410,6 @@ same as the one-shot command's and the MCP server's.
 | `stale_snapshot` on `change.propose` | The project changed since your `base_snapshot` in a file your edit touches. Read again on `latest` and propose on the new snapshot with a new `request_id`. |
 | `precondition_failed` with reason `old_value_mismatch` | The value in `old_value` is not the current value. Read the node again. |
 | `conflict` with reason `request_id_reused` | You reused a `request_id` for a different request. Use a new one. |
-| `not_found` with reason `snapshot_unknown` after copying a project | The copy carried another project's `.axiom/semantic` state directory. Delete `.axiom/semantic` in the copy; the service recreates it. |
 | The client shows no tools | Run `acore-semantic mcp --root <project>` in a terminal. It should wait silently on standard input (Ctrl-C stops it). `command not found` means the client cannot see the binary; register its absolute path. |
 
 The command-line forms exit with status 0 whenever they wrote a response,

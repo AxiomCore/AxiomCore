@@ -35,10 +35,8 @@ support record. A table entry never claims more than the manifest.
 
 The service works on one root per workspace, the local filesystem, profile
 `acore-ui` and target `web`. It was tested on four Acore UI projects, from the
-one-page example to applications with several pages and components. On
-November 11, 2026, Claude Code and Codex each completed 16 of 17 edit tasks on
-three real projects through the MCP server; neither miss was a wrong or broken
-edit by the service.
+one-page example to applications with several pages and components.
+On 11 Nov 2026, Claude Code and Codex each completed 16 of 17 edit tasks on three real projects through the MCP server; neither miss was a wrong or broken edit by the service.
 
 ## Operations
 
@@ -166,7 +164,9 @@ Other limits of this build:
 
 ## Regenerate this page
 
-From the `docs` directory, with the protocol definition and a service binary:
+From the `docs` directory, with the protocol definition (the
+`protocol/semantic/` directory of the Acore compiler source) and a service
+binary:
 
 ```bash title="docs directory"
 node scripts/generate-semantic-service.mjs --protocol <protocol-dir> --binary <acore-semantic>

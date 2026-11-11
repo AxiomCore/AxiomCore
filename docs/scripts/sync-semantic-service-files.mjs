@@ -40,35 +40,9 @@ const SETS = [
 ];
 
 // [hosted path, text in the source, public replacement, expected matches]
-const FIXES = [
-  ['schemas/common.json',
-    'Protocol string. Draft until the user approves the name (PLAN decision U1); then axiom-agent-semantic/v1.',
-    'Protocol string: axiom-agent-semantic/v1.', 1],
-  ['schemas/common.json', 'Every operation of v1 (Phases 1 to 4).', 'Every operation of v1.', 1],
-  ['schemas/common.json', "Open node kind string. acore's vocabulary:", "Open node kind string. The service's vocabulary:", 1],
-  ['schemas/common.json', " Each kind's source and target are documented in README.md.", '', 1],
-  ['schemas/common.json', 'Digest of the semantic_api sources (the edit rules).', 'Digest of the edit rules.', 1],
-  ['schemas/error.json', 'documented in README.md.', 'documented in the protocol reference.', 1],
-  ['schemas/error.json', '(README.md lists the values in use)', '(the protocol reference lists the values in use)', 1],
-  ['schemas/operations/capabilities.result.json',
-    'with the reason in README.md (Limit conditions)', 'with the reason listed in the protocol reference (Limits)', 2],
-  ['skill/SKILL.md',
-    'a context-then-edit flow on the shopping fixture app.', 'a context-then-edit flow on an example shopping app.', 1],
-  ['skill/SKILL.md',
-    '- Schemas: `protocol/semantic/schemas` in the acore repository.',
-    `- Schemas: ${siteOrigin}/semantic-service/schemas/index.json lists every schema file.`, 1],
-  ['skill/references/operations.md',
-    'The authoritative definitions are the JSON schemas in the acore repository, `protocol/semantic/schemas/operations/<operation>.request.json` (params) and `<operation>.result.json` (result, and the error codes in `x-errors`); `protocol/semantic/README.md` explains them.',
-    `The authoritative definitions are the JSON schemas listed at ${siteOrigin}/semantic-service/schemas/index.json: \`operations/<operation>.request.json\` (params) and \`operations/<operation>.result.json\` (result, and the error codes in \`x-errors\`); the protocol reference, ${siteOrigin}/semantic-service/protocol, explains them.`, 1],
-  ['skill/references/errors.md',
-    'The error object is `protocol/semantic/schemas/error.json`:',
-    `The error object is defined by ${siteOrigin}/semantic-service/schemas/error.json:`, 1],
-  ['skill/references/examples.md',
-    'Both examples use the shopping fixture app (`tests/fixtures/semantic/shopping-app` in the acore repository): the member price button',
-    'Both examples use an example shopping app: the member price button', 1],
-  ['skill/references/examples.md', ' The same requests are in `protocol/semantic/fixtures`.', '', 1],
-  ['skill/references/examples.md', '"/Users/dev/work/shopping-app"', '"/path/to/shopping-app"', 1],
-];
+// Line fixes applied to a hosted copy: [hosted path, from, to, count]. Empty:
+// the hosted files are byte-identical to the source.
+const FIXES = [];
 
 // Names a public reader cannot use: maintainer plans and tasks, repository
 // paths, source symbols, local paths. Matched against every hosted file.

@@ -37,7 +37,19 @@ The service compiles the project and answers from the compiler's results:
 | Write a change, or drop it | `change.apply`, `change.discard` |
 | Follow nodes across changes made by others | `changes.since`, `node.relocate` |
 
-A short example. In this page:
+## Terms
+
+| Term | Meaning |
+| --- | --- |
+| Workspace | One attached project root. One service process serves one root. |
+| Snapshot | An immutable capture of the project's sources and inputs. Every read names one, and the answer describes exactly that state. |
+| Node id | The name of a page, component, state, action or element within one snapshot, such as `element:Home/view/0/1`. Opaque: copy it, do not build it. |
+| Candidate | A proposed change, compiled in a private copy of the project. Nothing is written until it is applied. |
+| Receipt | The record `change.apply` returns: outcome, files with digests before and after, id changes and the new snapshot. |
+
+## Example
+
+Take this excerpt from a page's view:
 
 ```acore title="main.acore (excerpt)"
 Input(value: draft, placeholder: "Add a task")
@@ -51,16 +63,6 @@ with `old_value: "Add"` and `new_value: "Add task"` returns a candidate whose
 compile check passed, and `change.apply` writes exactly one line of
 `main.acore` and returns a receipt with the file's digests before and after.
 The [quick start](/semantic-service/quickstart) runs this flow.
-
-## Terms
-
-| Term | Meaning |
-| --- | --- |
-| Workspace | One attached project root. One service process serves one root. |
-| Snapshot | An immutable capture of the project's sources and inputs. Every read names one, and the answer describes exactly that state. |
-| Node id | The name of a page, component, state, action or element within one snapshot, such as `element:Home/view/0/1`. Opaque: copy it, do not build it. |
-| Candidate | A proposed change, compiled in a private copy of the project. Nothing is written until it is applied. |
-| Receipt | The record `change.apply` returns: outcome, files with digests before and after, id changes and the new snapshot. |
 
 ## How it fits
 
@@ -82,7 +84,12 @@ network and never calls a model.
 
 ## Boundaries
 
-- One project root per workspace, on the local filesystem.
+- One project root per workspace. The project must be on a local
+  filesystem; remote and network filesystems are not supported. (Publishing a
+  change anywhere other than the local files is also not offered.)
+- At most 64 source files per project, counting the entry and every file it
+  imports. A larger project is refused with `resource_limit`
+  (`too_many_modules`).
 - Profile `acore-ui` (pages and components in `.acore` files) and target `web`
   only. Other profiles, targets and backend, data or API code are not served.
 - The service never installs dependencies or runs project code. A project
@@ -95,6 +102,9 @@ network and never calls a model.
   policies.
 - Applying a change replaces files one at a time, each atomically. It is not
   atomic across files for other readers and is not proven against power loss.
+- Idempotency records (one per `request_id` and per discarded candidate)
+  have no retention limit, so `.axiom/semantic` grows with use. See
+  [Clean up](/semantic-service/quickstart#clean-up).
 
 ## Next steps
 

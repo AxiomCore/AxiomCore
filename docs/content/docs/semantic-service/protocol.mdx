@@ -44,10 +44,45 @@ manifest.
   `operation`; the server fills `workspace`. The tool result's structured
   content is the response envelope.
 
-The examples on this page run in order against the one-page project from the
-[quick start](/semantic-service/quickstart#prerequisites). Values in angle
-brackets, such as `<workspace>`, stand for ids from earlier responses. In
-responses, `…` marks text left out, including the end of long hashes.
+The examples on this page run in order against a project directory named
+`task-app` whose page is like the [quick start](/semantic-service/quickstart)
+example, with a query and a mutation of a backend contract `tasks` and a list
+of tasks. It also has the contract and the UI lock the Axiom CLI produces, so
+it shows the contract fields. Ids, versions and digests from your own project
+differ.
+
+```acore title="task-app/main.acore, used by the examples on this page"
+module tasks.app.ui
+
+use contract Tasks from "tasks" audience "mobile"
+
+app TasksApp { route "/" => Home }
+
+page Home {
+  state draft: String = ""
+  query tasks = Tasks.list_tasks()
+  mutation create = Tasks.create_task(title: draft)
+
+  action submit() {
+    create.run()
+    draft = ""
+  }
+
+  view {
+    View {
+      Input(value: draft, placeholder: "Add a task")
+      Button(label: "Add", on_press: submit)
+
+      if tasks.pending { Text("Loading...") }
+      else if tasks.error { Text("Could not load tasks") }
+      else { List(items: tasks.data, key: |task| task.id, list_type: "single", span_count: 1, scroll_orientation: "vertical") { task => Text(task.title) } }
+    }
+  }
+}
+```
+
+Values in angle brackets, such as `<workspace>`, stand for ids from earlier
+responses. In responses, `…` marks text left out, including the end of long hashes.
 
 ## Request envelope
 
@@ -66,11 +101,11 @@ responses, `…` marks text left out, including the end of long hashes.
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `protocol` | yes | `"axiom-agent-semantic/v1"` |  |
+| `protocol` | yes | `"axiom-agent-semantic/v1"` | Always this value. |
 | `operation` | yes | `capabilities`, `workspace.open`, `project.overview`, `node.find`, `node.get`, `node.edits`, `graph.query`, `context.build`, `impact.analyze`, `changes.since`, `node.relocate`, `change.propose`, `change.inspect`, `check.run`, `change.apply`, `change.discard`, `edit.plan` | Every operation of v1. The capability manifest says which are implemented. |
-| `workspace` | no | string (at most 256 characters) | Opaque workspace handle returned by workspace.open. Scoped to the host process and caller. |
+| `workspace` | no | string (at most 256 characters) | Opaque workspace handle returned by `workspace.open`. Scoped to the host process and caller. |
 | `snapshot` | no | string (at most 256 characters) | Read operations: the snapshot to read (id or latest). |
-| `base_snapshot` | no | string (at most 256 characters) | Change.propose and edit.plan: the snapshot the edits are written against. Must be an id, not latest. |
+| `base_snapshot` | no | string (at most 256 characters) | `change.propose` and `edit.plan`: the snapshot the edits are written against. Must be an id, not `latest`. |
 | `request_id` | no | string (at most 128 characters) | Caller-chosen idempotency key, scoped to workspace and caller. Bound to the request's input fingerprint. |
 | `limits` | no | object (`limits`) | Request limits. Omitted fields take the defaults the capability manifest lists. Bytes are authoritative; tokens are never a request limit. |
 | `params` | yes | object | Operation arguments; schemas/operations/&#60;operation&#62;.request.json. |
@@ -184,6 +219,14 @@ The 17 operations, in the order a client usually needs them. Each section
 lists the params and result fields generated from the schemas, then a real
 request and response.
 
+{/* BEGIN GENERATED operation-index */}
+
+- Session and discovery: [`capabilities`](#capabilities), [`workspace.open`](#workspaceopen), [`project.overview`](#projectoverview)
+- Reads: [`node.find`](#nodefind), [`node.get`](#nodeget), [`node.edits`](#nodeedits), [`graph.query`](#graphquery), [`context.build`](#contextbuild), [`impact.analyze`](#impactanalyze), [`changes.since`](#changessince), [`node.relocate`](#noderelocate)
+- Edits and publication: [`edit.plan`](#editplan), [`change.propose`](#changepropose), [`change.inspect`](#changeinspect), [`check.run`](#checkrun), [`change.apply`](#changeapply), [`change.discard`](#changediscard)
+
+{/* END GENERATED operation-index */}
+
 ### capabilities
 
 The manifest of what this service serves: each operation and edit kind with
@@ -205,22 +248,22 @@ manifest, plus `toolchain`, without a request (see the
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `manifest` | yes | object |  |
+| `manifest` | yes | object | The capability manifest: what this build serves. |
 | `manifest_fingerprint` | yes | string | Lowercase hex SHA-256 over a documented canonical input (node version, option fingerprint, input fingerprint). |
 
 `manifest` fields:
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `protocol` | yes | object |  |
-| `service` | yes | object |  |
-| `operations` | yes | array of object |  |
-| `edit_kinds` | yes | array of object |  |
-| `profiles` | yes | array of object |  |
-| `limits` | yes | object |  |
-| `checks` | no | array of object |  |
-| `publication` | yes | array of object |  |
-| `error_codes` | yes | array of `unsupported_operation`, `invalid_arguments`, `ambiguous_owner`, `read_only_origin`, `stale_snapshot`, `precondition_failed`, `compile_failed`, `conflict`, `insufficient_context`, `snapshot_expired`, `permission_denied`, `resource_limit`, `not_found`, `internal` |  |
+| `protocol` | yes | object | Protocol name, status (`frozen`) and the frozen operations. |
+| `service` | yes | object | Service name and version. |
+| `operations` | yes | array of object | Every operation with its status (`implemented`, `partial` or `planned`) and the version that first served it. |
+| `edit_kinds` | yes | array of object | Every edit family with its status. |
+| `profiles` | yes | array of object | Supported language profiles, each with its status and targets. |
+| `limits` | yes | object | Request limit defaults and maximums, and the service bounds (see [Limits](#limits)). |
+| `checks` | no | array of object | Checks that `check.run` and `change.apply` accept, with their status. |
+| `publication` | yes | array of object | Publication profiles (`local_filesystem`) with their status and guarantees. |
+| `error_codes` | yes | array of `unsupported_operation`, `invalid_arguments`, `ambiguous_owner`, `read_only_origin`, `stale_snapshot`, `precondition_failed`, `compile_failed`, `conflict`, `insufficient_context`, `snapshot_expired`, `permission_denied`, `resource_limit`, `not_found`, `internal` | The error codes this build can return. |
 | `external_writes` | no | object | How the service detects writes by editors and tools it does not coordinate (external writers). |
 
 **Error codes:** `internal`, `unsupported_operation`, `invalid_arguments`, `resource_limit`.
@@ -297,39 +340,39 @@ manifest. It never installs, extracts or runs anything.
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `roots` | yes | array of object, 1 to 16 items |  |
-| `language_profile` | no | string (at most 64 characters) |  |
-| `target` | no | string (at most 64 characters) |  |
+| `roots` | yes | array of object, 1 to 16 items | The project root, as `{path}` with an absolute path (`entry` may only be `main.acore`). This build accepts exactly one root, the one the process was started with. |
+| `language_profile` | no | string (at most 64 characters) | Language profile to open the project with. Only `acore-ui` is served; another value reports the project as `unsupported`. |
+| `target` | no | string (at most 64 characters) | Target to compile for. Only `web` is served; another value reports the project as `unsupported`. |
 
 **Result** (`schemas/operations/workspace.open.result.json`)
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `workspace` | yes | object |  |
-| `projects` | yes | array of object, 1 to any items |  |
-| `capabilities` | yes | object (`manifest`) |  |
+| `workspace` | yes | object | The workspace: its id, its roots and where sources come from. |
+| `projects` | yes | array of object, 1 to any items | One entry per project: id (the root directory's name), entry, profile, target, `status` (`ready`, `needs_preparation` or `unsupported`), `preparation` steps and diagnostic counts. |
+| `capabilities` | yes | object (`manifest`) | The capability manifest, as `capabilities` returns it. |
 
 `workspace` fields:
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `id` | yes | string (at most 256 characters) | Opaque workspace handle returned by workspace.open. Scoped to the host process and caller. |
-| `roots` | yes | array of object, 1 to any items |  |
-| `source_authority` | yes | `local_filesystem` |  |
+| `id` | yes | string (at most 256 characters) | Opaque workspace handle returned by `workspace.open`. Scoped to the host process and caller. |
+| `roots` | yes | array of object, 1 to any items | Each root with its `root_id` and canonical absolute path. |
+| `source_authority` | yes | `local_filesystem` | Where sources are read from: always the local filesystem. |
 
 `capabilities` fields:
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `protocol` | yes | object |  |
-| `service` | yes | object |  |
-| `operations` | yes | array of object |  |
-| `edit_kinds` | yes | array of object |  |
-| `profiles` | yes | array of object |  |
-| `limits` | yes | object |  |
-| `checks` | no | array of object |  |
-| `publication` | yes | array of object |  |
-| `error_codes` | yes | array of `unsupported_operation`, `invalid_arguments`, `ambiguous_owner`, `read_only_origin`, `stale_snapshot`, `precondition_failed`, `compile_failed`, `conflict`, `insufficient_context`, `snapshot_expired`, `permission_denied`, `resource_limit`, `not_found`, `internal` |  |
+| `protocol` | yes | object | Protocol name, status (`frozen`) and the frozen operations. |
+| `service` | yes | object | Service name and version. |
+| `operations` | yes | array of object | Every operation with its status (`implemented`, `partial` or `planned`) and the version that first served it. |
+| `edit_kinds` | yes | array of object | Every edit family with its status. |
+| `profiles` | yes | array of object | Supported language profiles, each with its status and targets. |
+| `limits` | yes | object | Request limit defaults and maximums, and the service bounds (see [Limits](#limits)). |
+| `checks` | no | array of object | Checks that `check.run` and `change.apply` accept, with their status. |
+| `publication` | yes | array of object | Publication profiles (`local_filesystem`) with their status and guarantees. |
+| `error_codes` | yes | array of `unsupported_operation`, `invalid_arguments`, `ambiguous_owner`, `read_only_origin`, `stale_snapshot`, `precondition_failed`, `compile_failed`, `conflict`, `insufficient_context`, `snapshot_expired`, `permission_denied`, `resource_limit`, `not_found`, `internal` | The error codes this build can return. |
 | `external_writes` | no | object | How the service detects writes by editors and tools it does not coordinate (external writers). |
 
 **Error codes:** `invalid_arguments`, `not_found`, `permission_denied`, `resource_limit`, `internal`, `unsupported_operation`, `compile_failed`.
@@ -344,7 +387,7 @@ manifest. It never installs, extracts or runs anything.
 ```json title="Response (excerpt)"
 {
   "operation": "workspace.open",
-  "workspace": "ws-f2b7ec0822ce…",
+  "workspace": "ws-…",
   "snapshot": {
     "id": "snap-8d409ade6cc9…",
     "semantic_state": "validated",
@@ -353,14 +396,14 @@ manifest. It never installs, extracts or runs anything.
   "result": {
     "projects": [
       {
-        "project_id": "my-app",
+        "project_id": "task-app",
         "semantic_state": "validated",
         "status": "ready",
         …
       }
     ],
     "workspace": {
-      "id": "ws-f2b7ec0822ce…",
+      "id": "ws-…",
       "source_authority": "local_filesystem",
       …
     },
@@ -383,19 +426,19 @@ for the next page. The cursor stays on the same snapshot.
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `projects` | no | array of string (at most 128 characters) |  |
-| `include` | no | array of `modules`, `entry_points`, `contracts`, `diagnostics` |  |
+| `projects` | no | array of string (at most 128 characters) | Project ids to describe. Default: every project in the workspace (this build has one). |
+| `include` | no | array of `modules`, `entry_points`, `contracts`, `diagnostics` | Which lists to return. Default: all four. |
 | `cursor` | no | string (at most 1024 characters) | Opaque continuation token bound to one snapshot and one request shape. Valid until the snapshot expires. |
 
 **Result** (`schemas/operations/project.overview.result.json`)
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `projects` | yes | array of object |  |
-| `modules` | yes | array of object |  |
-| `entry_points` | yes | array of object (`nodeSummary`) |  |
-| `contracts` | yes | array of object |  |
-| `diagnostics` | yes | array of object, 0 to 200 items (`diagnostics`) |  |
+| `projects` | yes | array of object | Each project with its entry, profile, target, semantic state and diagnostic counts. |
+| `modules` | yes | array of object | Each module (source file) with its owners (pages and components), imports and error and warning counts. |
+| `entry_points` | yes | array of object (`nodeSummary`) | The pages the app's routes name, in route order. |
+| `contracts` | yes | array of object | Imported backend contracts: name, artifact path and SHA-256. |
+| `diagnostics` | yes | array of object, 0 to 200 items (`diagnostics`) | Compiler diagnostics, at most 200. |
 
 **Error codes:** `invalid_arguments`, `not_found`, `internal`, `resource_limit`, `permission_denied`, `unsupported_operation`, `snapshot_expired`, `stale_snapshot`.
 
@@ -444,7 +487,7 @@ for the next page. The cursor stays on the same snapshot.
         },
         "entry": "main.acore",
         "language_profile": "acore-ui",
-        "project_id": "my-app",
+        "project_id": "task-app",
         "semantic_state": "validated",
         "target": "web"
       }
@@ -471,13 +514,13 @@ reported as an omission: narrow the query.
 | `kind` | no | string (at most 64 characters) | Exact kind filter; an unknown kind matches nothing. |
 | `owner` | no | string (at most 1024 characters) | Only nodes owned (transitively) by this page or component. |
 | `path` | no | string (at most 1024 characters) | Only nodes whose authored declaration is in this file. |
-| `limit` | yes | integer (1..50) |  |
+| `limit` | yes | integer (1..50) | Maximum number of nodes to return (1 to 50). More matches are reported as an omission; narrow the query. |
 
 **Result** (`schemas/operations/node.find.result.json`)
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `nodes` | yes | array of object (`nodeSummary`) |  |
+| `nodes` | yes | array of object (`nodeSummary`) | Matching nodes, each with id, kind, name, file and version. |
 | `matches` | no | array of object | One entry per node, same order: why it matched. |
 
 **Error codes:** `invalid_arguments`, `not_found`, `internal`, `resource_limit`, `permission_denied`, `unsupported_operation`, `snapshot_expired`, `stale_snapshot`, `compile_failed`.
@@ -545,7 +588,7 @@ expansion refs.
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `nodes` | yes | array of string (at most 1024 characters), 1 to 50 items |  |
+| `nodes` | yes | array of string (at most 1024 characters), 1 to 50 items | Node ids to read (1 to 50). |
 | `projection` | no | `summary`, `standard`, `full` | Preset. summary: node only. standard (default): properties and edges. full: also body and provenance. |
 | `include` | no | array of `properties`, `edges`, `incoming`, `body`, `provenance`, `edits` | Adds to the preset. |
 | `limit` | no | integer (1..200) | Caps properties and edges per node independently. |
@@ -554,7 +597,7 @@ expansion refs.
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `nodes` | yes | array of object |  |
+| `nodes` | yes | array of object | One entry per requested id: the node with the parts requested (properties, edges, body, provenance, edit summary). |
 
 **Error codes:** `invalid_arguments`, `not_found`, `internal`, `resource_limit`, `permission_denied`, `unsupported_operation`, `snapshot_expired`, `stale_snapshot`, `compile_failed`.
 
@@ -626,15 +669,15 @@ what is not offered.
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `nodes` | yes | array of string (at most 1024 characters), 1 to 20 items |  |
-| `kinds` | no | array of `set_property`, `bind_property`, `list_element`, `declaration`, `set_reference`, `import`, `replace_region` |  |
-| `include_unavailable` | no | boolean | Also list families that do not apply, with the reason. |
+| `nodes` | yes | array of string (at most 1024 characters), 1 to 20 items | Node ids to ask about (1 to 20). |
+| `kinds` | no | array of `set_property`, `bind_property`, `list_element`, `declaration`, `set_reference`, `import`, `replace_region` | Only list options of these edit families. Default: every family. |
+| `include_unavailable` | no | boolean | Also list the edit families that are not offered for the node. The service does not say why. |
 
 **Result** (`schemas/operations/node.edits.result.json`)
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `nodes` | yes | array of object |  |
+| `nodes` | yes | array of object | Per node: its id, `node_version`, the legal `options` (each with `option_id` and `fingerprint`) and, if asked, the families not offered. |
 
 **Error codes:** `invalid_arguments`, `not_found`, `internal`, `resource_limit`, `permission_denied`, `unsupported_operation`, `snapshot_expired`, `stale_snapshot`, `compile_failed`.
 
@@ -721,30 +764,30 @@ compiler cannot see, such as foreign extension actions, are reported as
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `from` | yes | array of string (at most 1024 characters), 1 to 20 items |  |
-| `mode` | yes | `dependencies`, `dependents`, `references`, `paths` | Dependencies: outgoing; dependents: incoming; references: incoming use sites; paths: connecting paths from -&#62; to. |
-| `to` | no | array of string (at most 1024 characters), 1 to 20 items |  |
-| `edge_kinds` | no | array of string | Restrict to these relations. Omitted: the profile's default dependency relations, disclosed in result.traversed. |
-| `layers` | no | array of `declared`, `resolved`, `observed` |  |
-| `transitive` | no | boolean |  |
+| `from` | yes | array of string (at most 1024 characters), 1 to 20 items | Start node ids (1 to 20). |
+| `mode` | yes | `dependencies`, `dependents`, `references`, `paths` | `dependencies`: outgoing; dependents: incoming; references: incoming use sites; paths: connecting paths from -&#62; to. |
+| `to` | no | array of string (at most 1024 characters), 1 to 20 items | For `mode: paths`: the end node ids (1 to 20). |
+| `edge_kinds` | no | array of string | Restrict to these relations. Omitted: the profile's default dependency relations, disclosed in `result.traversed`. |
+| `layers` | no | array of `declared`, `resolved`, `observed` | Fact layers to follow. This build has `declared` and `resolved` facts only. |
+| `transitive` | no | boolean | Follow relationships beyond the first step, up to `limits.max_depth`. |
 
 **Result** (`schemas/operations/graph.query.result.json`)
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `traversed` | yes | object |  |
-| `nodes` | yes | array of object (`nodeSummary`) |  |
-| `edges` | yes | array of object |  |
-| `paths` | no | array of object |  |
+| `traversed` | yes | object | What was followed: direction, edge kinds and layers. |
+| `nodes` | yes | array of object (`nodeSummary`) | Summaries of the nodes the answer mentions. |
+| `edges` | yes | array of object | Each relationship found: from, kind, to, layer, depth and source site. |
+| `paths` | no | array of object | For `mode: paths`: each path as a list of node ids. |
 | `boundaries` | yes | array of object | Where the walk met something it cannot see through (foreign implementation, unresolved reference). Not an empty dependency set. |
 
 `traversed` fields:
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `direction` | yes | `outgoing`, `incoming`, `both` |  |
-| `edge_kinds` | yes | array of string |  |
-| `layers` | yes | array of `declared`, `resolved`, `observed` |  |
+| `direction` | yes | `outgoing`, `incoming`, `both` | `outgoing`, `incoming` or `both`. |
+| `edge_kinds` | yes | array of string | Edge kinds that were followed. |
+| `layers` | yes | array of `declared`, `resolved`, `observed` | Fact layers that were followed. |
 
 **Error codes:** `invalid_arguments`, `not_found`, `internal`, `resource_limit`, `permission_denied`, `unsupported_operation`, `snapshot_expired`, `stale_snapshot`, `compile_failed`.
 
@@ -820,17 +863,17 @@ with the bytes it needs and refs you can pass in `expand`.
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `focus` | yes | array of string (at most 1024 characters), 1 to 20 items |  |
-| `purpose` | yes | `understand`, `change_input`, `change_behavior`, `change_schema`, `diagnose` | Deterministic recipe. |
-| `include` | no | array of `signature`, `implementation`, `input_constraints`, `callers`, `consumers`, `authorization`, `diagnostics`, `tests` |  |
+| `focus` | yes | array of string (at most 1024 characters), 1 to 20 items | Node ids the task is about (1 to 20). |
+| `purpose` | yes | `understand`, `change_input`, `change_behavior`, `change_schema`, `diagnose` | The recipe that chooses what to include. `change_schema` needs a backend profile and answers `unsupported_operation` in this profile. |
+| `include` | no | array of `signature`, `implementation`, `input_constraints`, `callers`, `consumers`, `authorization`, `diagnostics`, `tests` | Kinds of context to add. `tests` and `authorization` produce coverage gaps in this profile. |
 | `expand` | no | array of string (at most 512 characters), 0 to 50 items | ExpansionRef.ref values from an earlier response on the same snapshot. |
 
 **Result** (`schemas/operations/context.build.result.json`)
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `items` | yes | array of object |  |
-| `edges` | yes | array of object |  |
+| `items` | yes | array of object | Each included node with its depth from the focus, whether it is `required`, and why it is included. |
+| `edges` | yes | array of object | Relationships between the included nodes. |
 
 **Error codes:** `invalid_arguments`, `not_found`, `internal`, `resource_limit`, `permission_denied`, `unsupported_operation`, `snapshot_expired`, `stale_snapshot`, `compile_failed`, `insufficient_context`.
 
@@ -947,16 +990,16 @@ levels, with the edge that links each impacted node.
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `targets` | yes | array of string (at most 1024 characters), 1 to 20 items |  |
-| `direction` | yes | `dependents`, `dependencies`, `both` |  |
-| `edge_kinds` | no | array of string |  |
+| `targets` | yes | array of string (at most 1024 characters), 1 to 20 items | Node ids to analyse (1 to 20). |
+| `direction` | yes | `dependents`, `dependencies`, `both` | `dependents` (what a change would affect), `dependencies`, or `both`. |
+| `edge_kinds` | no | array of string | Only follow these edge kinds. Default: all. |
 
 **Result** (`schemas/operations/impact.analyze.result.json`)
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `impacted` | yes | array of object |  |
-| `tests` | no | array of object |  |
+| `impacted` | yes | array of object | Each affected node with its depth, the node it was reached from, the edge kind and the layer. |
+| `tests` | no | array of object | Test associations. Not returned by this build (no test associations in this profile). |
 
 **Error codes:** `invalid_arguments`, `not_found`, `internal`, `resource_limit`, `permission_denied`, `unsupported_operation`, `snapshot_expired`, `stale_snapshot`, `compile_failed`.
 
@@ -1029,19 +1072,19 @@ takes no `request_id`.
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `operations` | yes | array of object or object or object or object or object or object or object or object or object or object or object, 1 to 50 items |  |
+| `operations` | yes | array of object or object or object or object or object or object or object or object or object or object or object, 1 to 50 items | Edit operations (1 to 50), as for `change.propose`. |
 
 **Result** (`schemas/operations/edit.plan.result.json`)
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `outcome` | yes | `supported`, `required_but_missing`, `unsupported` |  |
-| `reason` | no | string (at most 2000 characters) |  |
-| `owners` | yes | array of object |  |
-| `operations` | yes | array of object |  |
-| `id_map` | no | array of object (`idMap`) | Optional: the id_map change.propose would return, composed over the batch from base_snapshot; present when the outcome is supported. |
-| `files` | yes | array of string (at most 1024 characters) |  |
-| `required_checks` | no | array of string (at most 64 characters) |  |
+| `outcome` | yes | `supported`, `required_but_missing`, `unsupported` | `supported`; `unsupported` when an operation is refused as not offered (see `reason`); `required_but_missing` when the batch needs an edit family this build does not implement. |
+| `reason` | no | string (at most 2000 characters) | Why the outcome is not `supported`. |
+| `owners` | yes | array of object | Pages and components the batch changes, with their files. |
+| `operations` | yes | array of object | Per operation: index, kind, file and outcome. |
+| `id_map` | no | array of object (`idMap`) | Optional: the `id_map` `change.propose` would return, composed over the batch from `base_snapshot`; present when the outcome is supported. |
+| `files` | yes | array of string (at most 1024 characters) | Files the batch would change. |
+| `required_checks` | no | array of string (at most 64 characters) | Checks a candidate of this batch would need to pass. |
 
 **Error codes:** `invalid_arguments`, `not_found`, `internal`, `resource_limit`, `permission_denied`, `unsupported_operation`, `stale_snapshot`, `snapshot_expired`, `precondition_failed`, `ambiguous_owner`, `read_only_origin`, `compile_failed`.
 
@@ -1103,36 +1146,36 @@ To extend an open candidate, pass `candidate` and `expected_candidate_version`.
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `candidate` | no | string (at most 256 characters) | Extend this open candidate instead of starting one. Its base must equal base_snapshot. |
+| `candidate` | no | string (at most 256 characters) | Extend this open candidate instead of starting one. Its base must equal `base_snapshot`. |
 | `expected_candidate_version` | no | integer (1..) | Required with candidate. |
-| `operations` | yes | array of object or object or object or object or object or object or object or object or object or object or object, 1 to 50 items |  |
+| `operations` | yes | array of object or object or object or object or object or object or object or object or object or object or object, 1 to 50 items | Edit operations (1 to 50), applied in order, all or nothing. Each kind of operation is described after the error codes of this section. |
 | `checks` | no | array of string (at most 64 characters) | Checks to run on the final candidate before returning; compile always runs. |
 
 **Result** (`schemas/operations/change.propose.result.json`)
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `candidate` | yes | object (`candidate`) |  |
-| `replayed` | yes | boolean |  |
-| `operations` | yes | array of object (`operationOutcome`), 1 to any items |  |
-| `id_map` | yes | array of object (`idMap`) | Composed over the batch, from base_snapshot (or the previous candidate version) to this version. |
-| `files` | yes | array of object (`fileChange`), 1 to any items |  |
-| `diagnostics` | yes | array of object, 0 to 200 items (`diagnostics`) |  |
-| `checks` | yes | array of object (`checkResult`), 1 to any items |  |
-| `evidence` | yes | object (`evidence`) | Evidence of a compile. (compiler_identity, target, sources, dependencies_fingerprint) is the reuse key of a check. |
-| `impact` | no | object |  |
+| `candidate` | yes | object (`candidate`) | The candidate: id, version, state, base snapshot, candidate snapshot, `request_id` and input fingerprint. |
+| `replayed` | yes | boolean | `true` when this answer is the recorded result of an earlier identical request. |
+| `operations` | yes | array of object (`operationOutcome`), 1 to any items | Per operation: index, kind, outcome, created node and its own `id_map`. |
+| `id_map` | yes | array of object (`idMap`) | Composed over the batch, from `base_snapshot` (or the previous candidate version) to this version. |
+| `files` | yes | array of object (`fileChange`), 1 to any items | Files the candidate changes, with SHA-256 before and after. |
+| `diagnostics` | yes | array of object, 0 to 200 items (`diagnostics`) | Diagnostics of the candidate's compile, at most 200. |
+| `checks` | yes | array of object (`checkResult`), 1 to any items | Result of each check run on the candidate. |
+| `evidence` | yes | object (`evidence`) | Evidence of a compile. (`compiler_identity`, target, sources, `dependencies_fingerprint`) is the reuse key of a check. |
+| `impact` | no | object | Nodes the change affects. |
 | `repair` | no | object (`repairOutcome`) | Present when the base is not validated (syntax or resolved): the accepted repair's base and result states and error counts. |
 
 `candidate` fields:
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `id` | yes | string (at most 256 characters) | Opaque id of a private candidate (change.propose). |
-| `version` | yes | integer (1..) | Increases with every successful change.propose on the candidate. |
-| `state` | yes | `open`, `applied`, `discarded`, `expired` |  |
+| `id` | yes | string (at most 256 characters) | Opaque id of a private candidate (`change.propose`). |
+| `version` | yes | integer (1..) | Increases with every successful `change.propose` on the candidate. |
+| `state` | yes | `open`, `applied`, `discarded`, `expired` | The candidate's state: `open`, `applied`, `discarded` or `expired`. |
 | `base_snapshot` | yes | string (at most 256 characters) | Opaque id of one immutable captured snapshot. Never the reserved word latest. |
 | `snapshot` | yes | string (at most 256 characters) | Snapshot id of base plus overlay; readable by the owning caller. |
-| `request_id` | yes | string (at most 128 characters) | The request_id of the change.propose that produced this version. |
+| `request_id` | yes | string (at most 128 characters) | The `request_id` of the `change.propose` that produced this version. |
 | `input_fingerprint` | yes | string | Lowercase hex SHA-256 over a documented canonical input (node version, option fingerprint, input fingerprint). |
 | `expires_at` | no | string | RFC 3339 with an explicit offset, uppercase T and Z. |
 
@@ -1140,24 +1183,24 @@ To extend an open candidate, pass `candidate` and `expected_candidate_version`.
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `toolchain` | yes | object (`toolchain`) |  |
-| `inputs` | yes | object |  |
+| `toolchain` | yes | object (`toolchain`) | The compiler identity the candidate was checked with. |
+| `inputs` | yes | object | The inputs the compile read, with their digests. |
 
 `impact` fields:
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `nodes` | yes | array of string (at most 1024 characters), 0 to 200 items |  |
-| `more` | no | boolean |  |
+| `nodes` | yes | array of string (at most 1024 characters), 0 to 200 items | Affected node ids, at most 200. |
+| `more` | no | boolean | `true` when more nodes are affected than listed. |
 
 `repair` fields:
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
 | `base_state` | yes | `syntax`, `resolved`, `validated`, `unavailable` | How far the snapshot got: syntax (parsed only), resolved (names resolved, not validated), validated (compiled without errors), unavailable (not even parsed). |
-| `base_errors` | yes | integer (0..) |  |
+| `base_errors` | yes | integer (0..) | Number of error diagnostics in the base snapshot. |
 | `result_state` | yes | `syntax`, `resolved`, `validated`, `unavailable` | How far the snapshot got: syntax (parsed only), resolved (names resolved, not validated), validated (compiled without errors), unavailable (not even parsed). |
-| `result_errors` | yes | integer (0..) |  |
+| `result_errors` | yes | integer (0..) | Number of error diagnostics after the repair. |
 | `touched` | yes | array of string (at most 1024 characters), 0 to 50 items | Declarations the candidate changed, as &#60;path&#62;: &#60;kind&#62; &#60;name&#62;. |
 | `regressed` | no | array of string (at most 1024 characters), 0 to 50 items | In a refusal's details only: declarations that gained errors outside the broken ones the candidate changed. |
 
@@ -1175,144 +1218,144 @@ an exact precondition, `old_value` or `old_text`, copied from `node.get` or
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `kind` | yes | `"set_property"` |  |
+| `kind` | yes | `"set_property"` | Always this value. |
 | `node` | yes | string (at most 1024 characters) or object | A node id of the base snapshot, or &#123;handle&#125; naming a node an earlier operation of the same batch created. |
-| `property` | yes | string (at most 256 characters) |  |
-| `old_value` | yes | any JSON value | Exact precondition, as node.get returned it. |
+| `property` | yes | string (at most 256 characters) | Name of the property to set, as `node.edits` lists it. |
+| `old_value` | yes | any JSON value | Exact precondition, as `node.get` returned it. |
 | `new_value` | yes | any JSON value | Any JSON value, including null. |
 | `handle` | no | string | Names this operation's created node for later operations in the same batch (intra-batch handle). |
-| `expected_node_version` | no | string | Optional precondition: the node's version from node.get or node.edits. |
-| `option` | no | object (`optionRef`) |  |
+| `expected_node_version` | no | string | Optional precondition: the node's version from `node.get` or `node.edits`. |
+| `option` | no | object (`optionRef`) | Optional: the `option_id` and `fingerprint` of the matching `node.edits` option. A fingerprint that no longer matches is `precondition_failed` (`option_stale`). |
 
 **`bind_property`**: Bind one authored property to a state of the same owner.
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `kind` | yes | `"bind_property"` |  |
+| `kind` | yes | `"bind_property"` | Always this value. |
 | `node` | yes | string (at most 1024 characters) or object | A node id of the base snapshot, or &#123;handle&#125; naming a node an earlier operation of the same batch created. |
-| `property` | yes | string (at most 256 characters) |  |
+| `property` | yes | string (at most 256 characters) | Name of the property to bind. |
 | `old_value` | yes | any JSON value | Any JSON value, including null. |
 | `target` | yes | string (at most 1024 characters) or object | A state node of the element's owner. |
 | `handle` | no | string | Names this operation's created node for later operations in the same batch (intra-batch handle). |
-| `expected_node_version` | no | string | Optional precondition: the node's version from node.get or node.edits. |
-| `option` | no | object (`optionRef`) |  |
+| `expected_node_version` | no | string | Optional precondition: the node's version from `node.get` or `node.edits`. |
+| `option` | no | object (`optionRef`) | Optional: the `option_id` and `fingerprint` of the matching `node.edits` option. A fingerprint that no longer matches is `precondition_failed` (`option_stale`). |
 
 **`list_element`, `op: remove`**: Remove one element or conditional from a view children list.
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `kind` | yes | `"list_element"` |  |
-| `op` | yes | `"remove"` |  |
+| `kind` | yes | `"list_element"` | Always this value. |
+| `op` | yes | `"remove"` | Always this value. |
 | `node` | yes | string (at most 1024 characters) or object | A node id of the base snapshot, or &#123;handle&#125; naming a node an earlier operation of the same batch created. |
-| `old_text` | yes | string (at most 4096 characters) | Exact tight-span text (node.edits option text). |
+| `old_text` | yes | string (at most 4096 characters) | Exact tight-span text (`node.edits` option text). |
 | `handle` | no | string | Names this operation's created node for later operations in the same batch (intra-batch handle). |
-| `expected_node_version` | no | string | Optional precondition: the node's version from node.get or node.edits. |
-| `option` | no | object (`optionRef`) |  |
+| `expected_node_version` | no | string | Optional precondition: the node's version from `node.get` or `node.edits`. |
+| `option` | no | object (`optionRef`) | Optional: the `option_id` and `fingerprint` of the matching `node.edits` option. A fingerprint that no longer matches is `precondition_failed` (`option_stale`). |
 
 **`list_element`, `op: insert`**: Insert one view element before or after an anchor.
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `kind` | yes | `"list_element"` |  |
-| `op` | yes | `"insert"` |  |
+| `kind` | yes | `"list_element"` | Always this value. |
+| `op` | yes | `"insert"` | Always this value. |
 | `anchor` | yes | string (at most 1024 characters) or object | A node id of the base snapshot, or &#123;handle&#125; naming a node an earlier operation of the same batch created. |
-| `position` | yes | `before`, `after` |  |
-| `old_text` | yes | string (at most 4096 characters) |  |
+| `position` | yes | `before`, `after` | Insert `before` or `after` the anchor. |
+| `old_text` | yes | string (at most 4096 characters) | The anchor's exact current text, from its `node.edits` option. |
 | `element` | yes | string (at most 16384 characters) | Source of one view element, no indentation on its first line. |
 | `handle` | no | string | Names this operation's created node for later operations in the same batch (intra-batch handle). |
-| `expected_node_version` | no | string | Optional precondition: the node's version from node.get or node.edits. |
-| `option` | no | object (`optionRef`) |  |
+| `expected_node_version` | no | string | Optional precondition: the node's version from `node.get` or `node.edits`. |
+| `option` | no | object (`optionRef`) | Optional: the `option_id` and `fingerprint` of the matching `node.edits` option. A fingerprint that no longer matches is `precondition_failed` (`option_stale`). |
 
 **`declaration`, `op: create`**: Create a state or action in a page or component.
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `kind` | yes | `"declaration"` |  |
-| `op` | yes | `"create"` |  |
+| `kind` | yes | `"declaration"` | Always this value. |
+| `op` | yes | `"create"` | Always this value. |
 | `anchor` | yes | string (at most 1024 characters) or object | A node id of the base snapshot, or &#123;handle&#125; naming a node an earlier operation of the same batch created. |
-| `position` | yes | `before`, `after`, `first` |  |
+| `position` | yes | `before`, `after`, `first` | `before` or `after` the anchor, or `first` in the owner. |
 | `old_text` | yes | string (at most 4096 characters) | The anchor's tight text, or the owner's header line for position first. |
-| `declaration` | yes | string (at most 20000 characters) |  |
+| `declaration` | yes | string (at most 20000 characters) | Source of the new state or action declaration (at most 20,000 characters). |
 | `handle` | no | string | Names this operation's created node for later operations in the same batch (intra-batch handle). |
-| `expected_node_version` | no | string | Optional precondition: the node's version from node.get or node.edits. |
-| `option` | no | object (`optionRef`) |  |
+| `expected_node_version` | no | string | Optional precondition: the node's version from `node.get` or `node.edits`. |
+| `option` | no | object (`optionRef`) | Optional: the `option_id` and `fingerprint` of the matching `node.edits` option. A fingerprint that no longer matches is `precondition_failed` (`option_stale`). |
 
 **`declaration`, `op: update`**: Replace a state or action declaration, keeping kind and name.
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `kind` | yes | `"declaration"` |  |
-| `op` | yes | `"update"` |  |
+| `kind` | yes | `"declaration"` | Always this value. |
+| `op` | yes | `"update"` | Always this value. |
 | `node` | yes | string (at most 1024 characters) or object | A node id of the base snapshot, or &#123;handle&#125; naming a node an earlier operation of the same batch created. |
-| `old_text` | yes | string (at most 20000 characters) |  |
-| `declaration` | yes | string (at most 20000 characters) |  |
+| `old_text` | yes | string (at most 20000 characters) | The declaration's exact current text. |
+| `declaration` | yes | string (at most 20000 characters) | The replacement source of the whole declaration. |
 | `handle` | no | string | Names this operation's created node for later operations in the same batch (intra-batch handle). |
-| `expected_node_version` | no | string | Optional precondition: the node's version from node.get or node.edits. |
-| `option` | no | object (`optionRef`) |  |
+| `expected_node_version` | no | string | Optional precondition: the node's version from `node.get` or `node.edits`. |
+| `option` | no | object (`optionRef`) | Optional: the `option_id` and `fingerprint` of the matching `node.edits` option. A fingerprint that no longer matches is `precondition_failed` (`option_stale`). |
 
 **`declaration`, `op: remove`**: Remove an unreferenced state or action.
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `kind` | yes | `"declaration"` |  |
-| `op` | yes | `"remove"` |  |
+| `kind` | yes | `"declaration"` | Always this value. |
+| `op` | yes | `"remove"` | Always this value. |
 | `node` | yes | string (at most 1024 characters) or object | A node id of the base snapshot, or &#123;handle&#125; naming a node an earlier operation of the same batch created. |
-| `old_text` | yes | string (at most 20000 characters) |  |
+| `old_text` | yes | string (at most 20000 characters) | The declaration's exact current text. |
 | `handle` | no | string | Names this operation's created node for later operations in the same batch (intra-batch handle). |
-| `expected_node_version` | no | string | Optional precondition: the node's version from node.get or node.edits. |
-| `option` | no | object (`optionRef`) |  |
+| `expected_node_version` | no | string | Optional precondition: the node's version from `node.get` or `node.edits`. |
+| `option` | no | object (`optionRef`) | Optional: the `option_id` and `fingerprint` of the matching `node.edits` option. A fingerprint that no longer matches is `precondition_failed` (`option_stale`). |
 
-**`set_reference`**: Point an on_* handler at another action of the same owner.
+**`set_reference`**: Point an `on_*` handler at another action of the same owner.
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `kind` | yes | `"set_reference"` |  |
+| `kind` | yes | `"set_reference"` | Always this value. |
 | `node` | yes | string (at most 1024 characters) or object | A node id of the base snapshot, or &#123;handle&#125; naming a node an earlier operation of the same batch created. |
-| `property` | yes | string (at most 256 characters) |  |
+| `property` | yes | string (at most 256 characters) | Name of the handler property, such as `on_press`. |
 | `old_value` | yes | string (at most 256 characters) | The current action identifier. |
 | `target` | yes | string (at most 1024 characters) or object | A node id of the base snapshot, or &#123;handle&#125; naming a node an earlier operation of the same batch created. |
 | `handle` | no | string | Names this operation's created node for later operations in the same batch (intra-batch handle). |
-| `expected_node_version` | no | string | Optional precondition: the node's version from node.get or node.edits. |
-| `option` | no | object (`optionRef`) |  |
+| `expected_node_version` | no | string | Optional precondition: the node's version from `node.get` or `node.edits`. |
+| `option` | no | object (`optionRef`) | Optional: the `option_id` and `fingerprint` of the matching `node.edits` option. A fingerprint that no longer matches is `precondition_failed` (`option_stale`). |
 
 **`import`, `op: add`**: Add one use line to a file.
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `kind` | yes | `"import"` |  |
-| `op` | yes | `"add"` |  |
+| `kind` | yes | `"import"` | Always this value. |
+| `op` | yes | `"add"` | Always this value. |
 | `path` | yes | string (at most 1024 characters) | Project-relative file path: forward slashes, no leading slash, no empty, . or .. segment, no backslash or control character. |
-| `import_kind` | yes | `component`, `model` |  |
-| `symbol` | yes | string (at most 256 characters) |  |
+| `import_kind` | yes | `component`, `model` | What the `use` line imports: `component` or `model`. |
+| `symbol` | yes | string (at most 256 characters) | Name of the component or model to import. |
 | `from` | yes | string (at most 1024 characters) | Relative path of the module that exports symbol. |
 | `handle` | no | string | Names this operation's created node for later operations in the same batch (intra-batch handle). |
-| `expected_node_version` | no | string | Optional precondition: the node's version from node.get or node.edits. |
-| `option` | no | object (`optionRef`) |  |
+| `expected_node_version` | no | string | Optional precondition: the node's version from `node.get` or `node.edits`. |
+| `option` | no | object (`optionRef`) | Optional: the `option_id` and `fingerprint` of the matching `node.edits` option. A fingerprint that no longer matches is `precondition_failed` (`option_stale`). |
 
 **`import`, `op: remove`**: Remove one use line whose symbol the file no longer references.
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `kind` | yes | `"import"` |  |
-| `op` | yes | `"remove"` |  |
+| `kind` | yes | `"import"` | Always this value. |
+| `op` | yes | `"remove"` | Always this value. |
 | `path` | yes | string (at most 1024 characters) | Project-relative file path: forward slashes, no leading slash, no empty, . or .. segment, no backslash or control character. |
-| `symbol` | yes | string (at most 256 characters) |  |
+| `symbol` | yes | string (at most 256 characters) | Name of the imported component or model to remove. |
 | `old_text` | yes | string (at most 1024 characters) | The exact use line. |
 | `handle` | no | string | Names this operation's created node for later operations in the same batch (intra-batch handle). |
-| `expected_node_version` | no | string | Optional precondition: the node's version from node.get or node.edits. |
-| `option` | no | object (`optionRef`) |  |
+| `expected_node_version` | no | string | Optional precondition: the node's version from `node.get` or `node.edits`. |
+| `option` | no | object (`optionRef`) | Optional: the `option_id` and `fingerprint` of the matching `node.edits` option. A fingerprint that no longer matches is `precondition_failed` (`option_stale`). |
 
-**`replace_region`**: Fallback: replace the smallest whole-line region around a syntax error, offered by node.edits only on a syntax snapshot. The only operation of its batch (invalid_arguments, region_alone, otherwise); never a whole file.
+**`replace_region`**: Fallback: replace the smallest whole-line region around a syntax error, offered by `node.edits` only on a syntax snapshot. The only operation of its batch (`invalid_arguments`, `region_alone`, otherwise); never a whole file.
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `kind` | yes | `"replace_region"` |  |
+| `kind` | yes | `"replace_region"` | Always this value. |
 | `path` | yes | string (at most 1024 characters) | Project-relative file path: forward slashes, no leading slash, no empty, . or .. segment, no backslash or control character. |
 | `start_line` | yes | integer (1..) | 1-based first line of the region. |
 | `end_line` | yes | integer (1..) | 1-based last line of the region (inclusive); at most 200 lines in all. |
-| `old_text` | yes | string (at most 16384 characters) | The region's exact text (node.edits option region.old_text): lines start_line..=end_line without the last newline. |
+| `old_text` | yes | string (at most 16384 characters) | The region's exact text (`node.edits` option `region.old_text`): lines `start_line`..=`end_line` without the last newline. |
 | `new_text` | yes | string (at most 16384 characters) | Replaces exactly the region's bytes; at most 200 lines and 16384 bytes (empty removes the lines' text). |
-| `option` | yes | object (`optionRef`) | Required: the region option (option_id r&#60;N&#62; and fingerprint) node.edits offered on this snapshot. |
+| `option` | yes | object (`optionRef`) | Required: the region option (`option_id` r&#60;N&#62; and fingerprint) `node.edits` offered on this snapshot. |
 
 {/* END GENERATED edit-operations */}
 
@@ -1412,7 +1455,7 @@ The same `request_id` with a different input:
   "error": {
     "code": "conflict",
     "reason": "request_id_reused",
-    "message": "request_id rename-add-1 was used for a different request (dbd8c03fdeff…); use a new request_id",
+    "message": "request_id rename-add-1 was used for a different request (…); use a new request_id",
     "target": {
       "request_id": "rename-add-1"
     },
@@ -1436,31 +1479,31 @@ full content, affected nodes, risks and checks.
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `candidate` | yes | string (at most 256 characters) | Opaque id of a private candidate (change.propose). |
-| `include` | no | array of `semantic_diff`, `source_diff`, `content`, `affected`, `checks` |  |
+| `candidate` | yes | string (at most 256 characters) | Opaque id of a private candidate (`change.propose`). |
+| `include` | no | array of `semantic_diff`, `source_diff`, `content`, `affected`, `checks` | Which parts to return: `semantic_diff`, `source_diff`, `content` (full file content), `affected`, `checks`. |
 
 **Result** (`schemas/operations/change.inspect.result.json`)
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `candidate` | yes | object (`candidate`) |  |
-| `files` | yes | array of object (`fileChange`), 1 to any items |  |
-| `semantic_diff` | no | array of object |  |
-| `source_diff` | no | array of object |  |
-| `affected` | no | array of object (`nodeSummary`) |  |
-| `risks` | no | array of object |  |
-| `checks` | no | array of object (`checkResult`) |  |
+| `candidate` | yes | object (`candidate`) | The candidate: id, version, state, snapshots, `request_id` and input fingerprint. |
+| `files` | yes | array of object (`fileChange`), 1 to any items | Files the candidate changes, with SHA-256 before and after. |
+| `semantic_diff` | no | array of object | Each changed node: `added`, `removed`, `modified` or `relocated`, with property values before and after, and whether an operation asked for it (`expected`). |
+| `source_diff` | no | array of object | Per file, the changed lines as hunks. Bounded in size. |
+| `affected` | no | array of object (`nodeSummary`) | Summaries of the nodes the change affects. |
+| `risks` | no | array of object | Things to review, each with a kind, a detail and optionally a node. |
+| `checks` | no | array of object (`checkResult`) | Result of each check on the candidate's current version. |
 
 `candidate` fields:
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `id` | yes | string (at most 256 characters) | Opaque id of a private candidate (change.propose). |
-| `version` | yes | integer (1..) | Increases with every successful change.propose on the candidate. |
-| `state` | yes | `open`, `applied`, `discarded`, `expired` |  |
+| `id` | yes | string (at most 256 characters) | Opaque id of a private candidate (`change.propose`). |
+| `version` | yes | integer (1..) | Increases with every successful `change.propose` on the candidate. |
+| `state` | yes | `open`, `applied`, `discarded`, `expired` | The candidate's state: `open`, `applied`, `discarded` or `expired`. |
 | `base_snapshot` | yes | string (at most 256 characters) | Opaque id of one immutable captured snapshot. Never the reserved word latest. |
 | `snapshot` | yes | string (at most 256 characters) | Snapshot id of base plus overlay; readable by the owning caller. |
-| `request_id` | yes | string (at most 128 characters) | The request_id of the change.propose that produced this version. |
+| `request_id` | yes | string (at most 128 characters) | The `request_id` of the `change.propose` that produced this version. |
 | `input_fingerprint` | yes | string | Lowercase hex SHA-256 over a documented canonical input (node version, option fingerprint, input fingerprint). |
 | `expires_at` | no | string | RFC 3339 with an explicit offset, uppercase T and Z. |
 
@@ -1535,17 +1578,17 @@ Runs checks on a candidate, or on a snapshot plus unsaved file contents
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `candidate` | no | string (at most 256 characters) | Opaque id of a private candidate (change.propose). |
+| `candidate` | no | string (at most 256 characters) | Opaque id of a private candidate (`change.propose`). |
 | `files` | no | array of object (`file`), 0 to 64 items | Overlay files; only with the envelope snapshot. [] checks the snapshot as is. |
-| `checks` | yes | array of string (at most 64 characters), 1 to any items |  |
+| `checks` | yes | array of string (at most 64 characters), 1 to any items | Checks to run: `compile` or `repair`. |
 
 **Result** (`schemas/operations/check.run.result.json`)
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
 | `ok` | yes | boolean | True when every requested check passed. |
-| `candidate` | no | string (at most 256 characters) | Opaque id of a private candidate (change.propose). |
-| `checks` | yes | array of object (`checkResult`), 1 to any items |  |
+| `candidate` | no | string (at most 256 characters) | Opaque id of a private candidate (`change.propose`). |
+| `checks` | yes | array of object (`checkResult`), 1 to any items | One result per check: `passed`, `failed`, `not_run` or `unavailable`, with diagnostics. |
 
 **Error codes:** `invalid_arguments`, `not_found`, `internal`, `resource_limit`, `permission_denied`, `unsupported_operation`, `stale_snapshot`, `snapshot_expired`.
 
@@ -1601,8 +1644,8 @@ has the base content. See [Apply, receipts and recovery](#apply-receipts-and-rec
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `candidate` | yes | string (at most 256 characters) | Opaque id of a private candidate (change.propose). |
-| `expected_candidate_version` | yes | integer (1..) |  |
+| `candidate` | yes | string (at most 256 characters) | Opaque id of a private candidate (`change.propose`). |
+| `expected_candidate_version` | yes | integer (1..) | The candidate version you reviewed. Another version is `precondition_failed` (`candidate_version_mismatch`). |
 | `preconditions` | no | array of object, 1 to any items | Explicit content preconditions (sha256 null: the file must not exist). Must include every written file when given. |
 | `require_checks` | no | array of string (at most 64 characters) | Checks that must have passed on this exact candidate version. |
 
@@ -1611,24 +1654,24 @@ has the base content. See [Apply, receipts and recovery](#apply-receipts-and-rec
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
 | `replayed` | yes | boolean | True when this is the recorded receipt of an earlier identical request. |
-| `receipt` | yes | object |  |
+| `receipt` | yes | object | The receipt: what was written (see [Apply, receipts and recovery](#apply-receipts-and-recovery)). |
 | `base_changes` | no | array of object (`inputChange`), 0 to 50 items | Inputs of the candidate's base snapshot that the candidate does not write and that differed on disk when it was applied (allowed by the content rule; a deleted or renamed one is refused instead). The published head is then not exactly the base plus the candidate. Absent when none, and on replays (replayed: true). |
 
 `receipt` fields:
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `receipt_id` | yes | string (at most 128 characters) |  |
+| `receipt_id` | yes | string (at most 128 characters) | Id of this receipt. |
 | `request_id` | yes | string (at most 128 characters) | Caller-chosen idempotency key, scoped to workspace and caller. Bound to the request's input fingerprint. |
 | `input_fingerprint` | yes | string | Lowercase hex SHA-256 over a documented canonical input (node version, option fingerprint, input fingerprint). |
-| `outcome` | yes | `applied`, `not_applied`, `unknown` |  |
-| `candidate` | yes | string (at most 256 characters) | Opaque id of a private candidate (change.propose). |
-| `candidate_version` | yes | integer (1..) |  |
+| `outcome` | yes | `applied`, `not_applied`, `unknown` | `applied` (files written), `not_applied` (nothing written) or `unknown` (send the same request again with the same `request_id`). |
+| `candidate` | yes | string (at most 256 characters) | Opaque id of a private candidate (`change.propose`). |
+| `candidate_version` | yes | integer (1..) | The candidate version that was applied. |
 | `base_snapshot` | yes | string (at most 256 characters) | Opaque id of one immutable captured snapshot. Never the reserved word latest. |
 | `result_snapshot` | no | string (at most 256 characters) | Captured after publication; present when applied. |
-| `files` | yes | array of object (`fileChange`), 1 to any items |  |
+| `files` | yes | array of object (`fileChange`), 1 to any items | Each written file with its SHA-256 before and after. |
 | `id_map` | yes | array of object (`idMap`) | Every node id the edit changed (completeness guarantee: an unlisted node keeps its id). [] when none. |
-| `journal` | yes | object |  |
+| `journal` | yes | object | The apply journal entry: its id and state (`committed`, `rolled_back` or `pending_reconcile`). |
 | `recorded_at` | yes | string | RFC 3339 with an explicit offset, uppercase T and Z. |
 
 **Error codes:** `invalid_arguments`, `not_found`, `internal`, `resource_limit`, `permission_denied`, `unsupported_operation`, `snapshot_expired`, `precondition_failed`, `conflict`, `compile_failed`.
@@ -1658,7 +1701,7 @@ has the base content. See [Apply, receipts and recovery](#apply-receipts-and-rec
         }
       ],
       "id_map": [],
-      "input_fingerprint": "8d5fa8246bf6…",
+      "input_fingerprint": "…",
       "journal": {
         "id": "jrnl-…",
         "state": "committed"
@@ -1711,26 +1754,26 @@ to undo, propose a compensating change.
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `candidate` | yes | string (at most 256 characters) | Opaque id of a private candidate (change.propose). |
-| `expected_candidate_version` | no | integer (1..) |  |
+| `candidate` | yes | string (at most 256 characters) | Opaque id of a private candidate (`change.propose`). |
+| `expected_candidate_version` | no | integer (1..) | Optional: the candidate version you expect. Another version is `precondition_failed`. |
 
 **Result** (`schemas/operations/change.discard.result.json`)
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `candidate` | yes | object (`candidate`) |  |
+| `candidate` | yes | object (`candidate`) | The candidate, now `discarded`. |
 | `released` | yes | boolean | Overlay resources were freed. |
 
 `candidate` fields:
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `id` | yes | string (at most 256 characters) | Opaque id of a private candidate (change.propose). |
-| `version` | yes | integer (1..) | Increases with every successful change.propose on the candidate. |
-| `state` | yes | `open`, `applied`, `discarded`, `expired` |  |
+| `id` | yes | string (at most 256 characters) | Opaque id of a private candidate (`change.propose`). |
+| `version` | yes | integer (1..) | Increases with every successful `change.propose` on the candidate. |
+| `state` | yes | `open`, `applied`, `discarded`, `expired` | The candidate's state: `open`, `applied`, `discarded` or `expired`. |
 | `base_snapshot` | yes | string (at most 256 characters) | Opaque id of one immutable captured snapshot. Never the reserved word latest. |
 | `snapshot` | yes | string (at most 256 characters) | Snapshot id of base plus overlay; readable by the owning caller. |
-| `request_id` | yes | string (at most 128 characters) | The request_id of the change.propose that produced this version. |
+| `request_id` | yes | string (at most 128 characters) | The `request_id` of the `change.propose` that produced this version. |
 | `input_fingerprint` | yes | string | Lowercase hex SHA-256 over a documented canonical input (node version, option fingerprint, input fingerprint). |
 | `expires_at` | no | string | RFC 3339 with an explicit offset, uppercase T and Z. |
 
@@ -1756,7 +1799,7 @@ to undo, propose a compensating change.
     "candidate": {
       "base_snapshot": "snap-2d2c561be58b…",
       "id": "cand-…",
-      "input_fingerprint": "515b95189e61…",
+      "input_fingerprint": "…",
       "request_id": "placeholder-1",
       "snapshot": "snap-9243a149fdcd…",
       "state": "discarded",
@@ -1782,7 +1825,7 @@ inferred (`relation: inferred`) from ids, paths and text.
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
 | `since` | yes | string (at most 256 characters) | Opaque id of one immutable captured snapshot. Never the reserved word latest. |
-| `scope` | no | object |  |
+| `scope` | no | object | Limit the answer to these node ids and paths. |
 | `cursor` | no | string (at most 1024 characters) | Opaque continuation token bound to one snapshot and one request shape. Valid until the snapshot expires. |
 
 **Result** (`schemas/operations/changes.since.result.json`)
@@ -1790,10 +1833,10 @@ inferred (`relation: inferred`) from ids, paths and text.
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
 | `since` | yes | string (at most 256 characters) | Opaque id of one immutable captured snapshot. Never the reserved word latest. |
-| `history` | yes | `known`, `unknown`, `expired` | Known: deltas below are complete for scope. unknown: since is not related to this snapshot by captured history. expired: since was evicted; deltas are empty. |
-| `files` | yes | array of object (`fileChange`) |  |
-| `nodes` | yes | array of object (`relocation`) |  |
-| `relevant` | yes | boolean | True when anything in scope changed (with scope.candidate: anything the candidate read or wrote). |
+| `history` | yes | `known`, `unknown`, `expired` | `known`: deltas below are complete for scope. unknown: since is not related to this snapshot by captured history. expired: since was evicted; deltas are empty. |
+| `files` | yes | array of object (`fileChange`) | Files changed between the two snapshots, with digests before and after. |
+| `nodes` | yes | array of object (`relocation`) | Where each node id you hold went, with the relation and basis (always inferred in this build). |
+| `relevant` | yes | boolean | True when anything in scope changed (with `scope.candidate`: anything the candidate read or wrote). |
 
 **Error codes:** `invalid_arguments`, `not_found`, `internal`, `resource_limit`, `permission_denied`, `unsupported_operation`, `snapshot_expired`, `stale_snapshot`.
 
@@ -1851,13 +1894,13 @@ request's snapshot, one entry per id in request order. Each entry has a
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
 | `from_snapshot` | yes | string (at most 256 characters) | Opaque id of one immutable captured snapshot. Never the reserved word latest. |
-| `nodes` | yes | array of string (at most 1024 characters), 1 to 200 items |  |
+| `nodes` | yes | array of string (at most 1024 characters), 1 to 200 items | Node ids from `from_snapshot` to map (1 to 200). |
 
 **Result** (`schemas/operations/node.relocate.result.json`)
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `relocations` | yes | array of object (`relocation`), 1 to 200 items |  |
+| `relocations` | yes | array of object (`relocation`), 1 to 200 items | One entry per requested id, in request order: the new id or none, with relation and basis. |
 
 **Error codes:** `invalid_arguments`, `not_found`, `internal`, `resource_limit`, `permission_denied`, `unsupported_operation`, `snapshot_expired`, `stale_snapshot`, `compile_failed`.
 
@@ -1899,25 +1942,30 @@ An error response has `error` instead of `result`. Decide what to do from
 `code`, `reason`, `retryable` and `next_actions`; `message` is for people and
 may change.
 
-A request that is not valid JSON, is not a JSON object, or has no `protocol`
-field is not a v1 request: the one-shot command and `serve` answer it in the
-service's legacy format, with `error.code` `invalid_request` (not a v1 code)
-and no `operation`, `retryable` or `next_actions`, and `serve` keeps reading
-the next line; over MCP, a message that is not valid JSON gets the JSON-RPC
-parse error `-32700`. Fix the request before sending it again.
+The one-shot command and `serve` answer a request that is not valid JSON, is
+not a JSON object, or has no `protocol` field in the service's legacy format:
+`error.code` is `invalid_request` (not a v1 code), and there is no
+`operation`, `retryable` or `next_actions`. `serve` keeps reading the next
+line. For a request without a `protocol` field, the message is
+`protocol is missing; it must be "studio/v1"`.
+
+Over MCP, `acore-semantic mcp` answers a message that is not valid JSON with
+the JSON-RPC parse error `-32700`.
+
+Ignore the `studio/v1` named in that message: send `axiom-agent-semantic/v1`.
 
 {/* BEGIN GENERATED error-object */}
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `code` | yes | `unsupported_operation`, `invalid_arguments`, `ambiguous_owner`, `read_only_origin`, `stale_snapshot`, `precondition_failed`, `compile_failed`, `conflict`, `insufficient_context`, `snapshot_expired`, `permission_denied`, `resource_limit`, `not_found`, `internal` |  |
-| `reason` | no | string | Open refinement of code, for example old_value_mismatch, request_id_reused, external_write. |
-| `message` | yes | string (at most 4000 characters) |  |
-| `operation_index` | no | integer (0..) | Index in params.operations of the operation that failed (batched edits). |
+| `code` | yes | `unsupported_operation`, `invalid_arguments`, `ambiguous_owner`, `read_only_origin`, `stale_snapshot`, `precondition_failed`, `compile_failed`, `conflict`, `insufficient_context`, `snapshot_expired`, `permission_denied`, `resource_limit`, `not_found`, `internal` | One of the closed list of error codes (see [Error codes and what to do](#error-codes-and-what-to-do)). |
+| `reason` | no | string | Open refinement of code, for example `old_value_mismatch`, `request_id_reused`, `external_write`. |
+| `message` | yes | string (at most 4000 characters) | A sentence for people. Do not parse it; use `code` and `reason`. |
+| `operation_index` | no | integer (0..) | Index in `params.operations` of the operation that failed (batched edits). |
 | `target` | no | object (`target`) | What the error is about. |
-| `diagnostics` | yes | array of object, 0 to 200 items (`diagnostics`) |  |
-| `retryable` | yes | `none`, `same_request`, `after_refresh` | None: the same request will fail again. same_request: retry unchanged (transient). after_refresh: re-read (new snapshot, node versions, options) and rebuild the request. |
-| `next_actions` | yes | array of object (`nextAction`), 0 to 10 items |  |
+| `diagnostics` | yes | array of object, 0 to 200 items (`diagnostics`) | Compiler diagnostics, for example the errors of a candidate that did not compile. |
+| `retryable` | yes | `none`, `same_request`, `after_refresh` | `none`: the same request will fail again. `same_request`: retry unchanged (transient). `after_refresh`: re-read (new snapshot, node versions, options) and rebuild the request. |
+| `next_actions` | yes | array of object (`nextAction`), 0 to 10 items | Suggested next requests, each with the operation, why, and params when the service can fill them. |
 | `details` | no | object | Code-specific structured data (current value, expansion refs, conflicting paths, receipt). |
 
 {/* END GENERATED error-object */}

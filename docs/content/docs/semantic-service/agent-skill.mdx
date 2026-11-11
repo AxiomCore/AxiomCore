@@ -18,7 +18,7 @@ is available.
 ## Install the skill
 
 You need the MCP server registered first; see
-[Connect an MCP client](/semantic-service/quickstart#2-connect-an-mcp-client).
+[Connect an MCP client](/semantic-service/quickstart#3-connect-an-mcp-client).
 
 Create the skill directory for your client. For all projects:
 
@@ -94,8 +94,8 @@ Node ids are opaque and valid within one snapshot. Never build or edit an id by 
 1. **Attach.** `workspace.open` with `roots: [{path: "<absolute project dir>"}]` (the directory the server serves). Check each project's `status`: `ready` is usable; `needs_preparation` lists `preparation` steps (for example a missing UI lock) that the user must run, because the service never installs anything; `unsupported` means stop and tell the user.
 2. **Orient.** `project.overview` lists modules, entry points, contracts and diagnostics. If the project does not compile, start from these diagnostics.
 3. **Find.** `node.find` with a `query` (name, id or literal text), an optional `kind` and a `limit`. Each node comes with a `version`. For relationships use `graph.query` (`mode`: `dependencies`, `dependents`, `references` or `paths`) or `impact.analyze`. Use `node.get` for properties and edges of known ids.
-4. **Build context.** `context.build` with `focus` (node ids), a `purpose` (`understand`, `change_input`, `change_behavior`, `diagnose`) and `limits.max_bytes`. Every item says why it is included and whether it is `required`. Start small; expand with `expand` refs from the response rather than raising limits blindly.
-5. **Discover legal edits.** `node.edits` on the nodes you will change. Each option has an `option_id`, a `fingerprint`, the `kind`, the `property` and what it `accepts` (and for `bind_property` the allowed `states`). Anything not offered is not legal now; `include_unavailable: true` says what is not offered. For a multi-step change, `edit.plan` dry-runs the batch and returns owners, files and `required_checks` without creating a candidate.
+4. **Build context.** `context.build` with `focus` (node ids), a `purpose` (`understand`, `change_input`, `change_behavior`, `diagnose`) and `limits.max_bytes`. The purpose `change_schema` needs a backend profile and answers `unsupported_operation` here. Every item says why it is included and whether it is `required`. Start small; expand with `expand` refs from the response rather than raising limits blindly.
+5. **Discover legal edits.** `node.edits` on the nodes you will change. Each option has an `option_id`, a `fingerprint`, the `kind`, the `property` and what it `accepts` (and for `bind_property` the allowed `states`). Anything not offered is not legal now; `include_unavailable: true` lists the edit kinds that are not offered for the node (the service does not say why). For a multi-step change, `edit.plan` dry-runs the batch and returns owners, files and `required_checks` without creating a candidate.
 6. **Propose.** `change.propose` with `base_snapshot`, `request_id` and ordered `operations`. Give each operation its exact precondition (`old_value` or `old_text`, copied from `node.get` or `node.edits`), the `expected_node_version`, and `option: {option_id, fingerprint}` when you took it from `node.edits`. The batch is all-or-nothing. The result is a `candidate` (`id`, `version`), per-operation outcomes, the composed `id_map`, file digests, diagnostics and `checks`. Nothing is on disk yet.
 7. **Inspect and check.** `change.inspect` the candidate (`include`: `semantic_diff`, `source_diff`, `affected`, `checks`) and confirm the semantic diff is exactly what you meant; an entry with `expected: false` is a surprise to investigate. `check.run` with the candidate and the checks you need (compile always runs on propose). A failed check is a result with `ok: false`, not an error: fix by proposing again, extending the candidate with `candidate` and `expected_candidate_version`.
 8. **Apply.** `change.apply` with `candidate`, `expected_candidate_version`, a new `request_id` and `require_checks` (at least `compile`). Read the `receipt`: `outcome` is `applied`, `not_applied` or `unknown`. After `applied`, use `result_snapshot` and the receipt's `id_map` for further work. On `unknown`, repeat the same `change.apply` with the same `request_id`; the service reconciles from its journal. If `change.apply` fails with `resource_limit` and reason `timeout`, the change may be on disk even though you have no receipt (`details.outcome` is `unknown`, or `not_applied` when this attempt wrote nothing; an earlier attempt with the same `request_id` may still have): repeat the identical `change.apply` with the same `request_id` once. It returns the receipt or applies the candidate exactly once. The server exits after a timeout, so reconnect it first if its tools are gone. Never re-propose, use a new `request_id`, or edit the files by hand to "retry" an apply.
@@ -107,7 +107,7 @@ Tell the user what you applied: the files from the receipt and the semantic diff
 
 - `coverage.completeness` other than `complete` means gaps; an empty answer proves absence only when `coverage.exhaustive` is true.
 - `truncation.truncated` with a `continuation` means there is another page on the same snapshot; omissions carry expansion refs.
-- Edges have a `layer`; inferred relations are labelled. Do not present them as proven.
+- Edges have a `layer`; inferred relations are labelled. Do not present them as proven. Test associations are not served in this profile; a request for them comes back as a coverage gap.
 
 ## When an error comes back
 

@@ -1,20 +1,31 @@
 // Regenerates the tables of the Semantic service pages from the protocol
 // definition and the service's capability manifest, so that enum lists,
 // fields, statuses and limits are derived rather than copied by hand.
+// Maintainer tool: the public pages never point at it.
 //
-// Usage (from docs/):
+// Regenerate (from docs/):
 //   node scripts/generate-semantic-service.mjs --protocol <dir> --binary <acore-semantic> [--check]
 //
-// <dir> holds the protocol definition: README.md, schemas/ and
-// support-matrix.json. The binary is asked for its v1 manifest (the
-// `capabilities` operation) and every status in support-matrix.json must agree
-// with it. Generated regions sit between BEGIN/END GENERATED comments in the
-// pages below. --check fails instead of writing when a region is out of date.
+// <dir> is the protocol definition, the protocol/semantic/ directory of the
+// Acore compiler source: README.md, schemas/ and support-matrix.json. The
+// binary is an acore-semantic build; it is asked for its v1 manifest (the
+// `capabilities` operation, run on an empty temporary root) and every status,
+// guarantee, operation and error code in support-matrix.json must agree with
+// it, or the script fails. Generated regions sit between BEGIN/END GENERATED
+// comments in protocol.mdx and support-matrix.mdx. --check fails instead of
+// writing when a region is out of date.
+//
+// Every run prints the clauses the public-text filter dropped (with their
+// source location) and the generated rows that still have no meaning. Review
+// the dropped list after each protocol change; meanings for schema fields
+// without a description live in semantic-service-meanings.mjs.
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import process from 'node:process';
+import GithubSlugger from 'github-slugger';
+import { MEANINGS } from './semantic-service-meanings.mjs';
 
 const args = process.argv.slice(2);
 const option = (name) => {
@@ -52,21 +63,61 @@ function v1Manifest() {
 // ---------------------------------------------------------------- text hygiene
 
 // Schema and matrix prose is written for maintainers. Keep only sentences that
-// make sense to a public reader, and drop maintainer cross-references.
+// make sense to a public reader, and drop maintainer cross-references. Every
+// dropped clause is recorded with its source location and printed at the end
+// of every run, so that a limitation is never lost silently: review the list,
+// and restore anything a reader needs through REWRITES (below) or by hand
+// outside the generated regions.
 const internal = /pinned project|unit-tested|project-management|shopping-app|dashboard|studio\/v1|studio|\bSVC-|\bPhases?\b|approves the name|PLAN decision|D-05|follow-up|protocol gap|README|semantic_|tests\/|trials?\b|\bacore's\b|U1\b/i;
 
-function publicText(text) {
+// Maintainer wording with a public equivalent. Applied before the filter, so a
+// clause that carries a real limitation is reworded instead of dropped.
+const REWRITES = [
+  [/\s*\((?:protocol gap \d+|SVC-[\d.]+(?: follow-up)?|D-05\.\d+)\)/g, ''],
+  [/\bacore does not report why\b/g, 'the service does not say why'],
+  [/\bacore's\b/g, "the service's"],
+  [/\bFloat is unit-tested, no pinned project has one\./g, '`Float` values are covered by unit tests only, not yet on a real project.'],
+  [/\bRecipes understand, change_input, change_behavior, diagnose\b/g, 'Purposes `understand`, `change_input`, `change_behavior` and `diagnose`'],
+  [/\bInclude tests and authorization produce\b/g, 'Including `tests` or `authorization` produces'],
+  [/\bbasis exact, text, path or missing\b/g, 'basis `exact`, `text`, `path` or `missing`'],
+  [/\bChecks compile and repair\b/g, 'Checks `compile` and `repair`'],
+  [/\bnot latest\b/g, 'not `latest`'],
+];
+
+const dropped = [];
+const knownIdentifiers = new Set();
+const isIdentifier = (token) => /^--[a-z]/.test(token) || /[a-z0-9][._][a-z0-9*]/.test(token) || /_\*$/.test(token) || knownIdentifiers.has(token);
+
+// Put identifiers (operation, field and file names, error codes, reasons) in
+// backticks exactly as written. Never change their case.
+function codeIdentifiers(text) {
+  return text.split('`').map((part, index) => (index % 2 ? part : part.replace(
+    /(?<![\w`.\-*])((?:--)?[a-z][a-z0-9]*(?:[._\-][a-z0-9*]+)*(?:_\*)?)(?![\w`*])/g,
+    (token) => (isIdentifier(token) ? `\`${token}\`` : token),
+  ))).join('`');
+}
+
+// Capitalise the first letter of a prose sentence; leave identifiers alone. A
+// sentence that starts with a lowercase label ("none: ...") names a value, so
+// the label goes in backticks instead.
+const capitalise = (sentence) => (/^[a-z][a-z0-9_]*:/.test(sentence)
+  ? sentence.replace(/^([a-z][a-z0-9_]*):/, '`$1`:')
+  : sentence.replace(/^[a-z]/, (char) => char.toUpperCase()));
+
+function publicText(text, where = '?') {
   if (!text) return '';
-  let value = String(text).replace(/\bSVC-\d+(?:\.\d+)?(?: follow-up)?:\s*/g, '');
-  value = value.charAt(0).toUpperCase() + value.slice(1);
+  let value = String(text);
+  for (const [pattern, replacement] of REWRITES) value = value.replace(pattern, replacement);
+  const drop = (clause) => { dropped.push({ where, clause: clause.trim() }); return false; };
   // Remove parentheticals that only cite internal records.
   for (let pass = 0; pass < 3; pass += 1) {
-    value = value.replace(/\s*\(([^()]*)\)/g, (match, inner) => (internal.test(inner) ? '' : match));
+    value = value.replace(/\s*\(([^()]*)\)/g, (match, inner) => (internal.test(inner) ? (drop(`(${inner})`), '') : match));
   }
   const sentences = value.split(/(?<=[.;])\s+(?=[A-Z`])/)
-    .map((sentence) => sentence.split(/;\s+(?![^(]*\))/).filter((clause) => !internal.test(clause)).join('; '))
-    .filter((sentence) => sentence && !internal.test(sentence))
-    .map((sentence) => sentence.replace(/;$/, '.')).map((sentence) => (/[.:]$/.test(sentence) ? sentence : `${sentence}.`));
+    .map((sentence) => sentence.split(/;\s+(?![^(]*\))/).filter((clause) => !internal.test(clause) || drop(clause)).join('; '))
+    .filter((sentence) => sentence && (!internal.test(sentence) || drop(sentence)))
+    .map((sentence) => sentence.replace(/;$/, '.')).map((sentence) => (/[.:]$/.test(sentence) ? sentence : `${sentence}.`))
+    .map((sentence) => capitalise(codeIdentifiers(sentence)));
   return sentences.join(' ').replace(/\s+/g, ' ').replace(/;\./g, '.').trim();
 }
 
@@ -125,21 +176,33 @@ function describeType(schema, file, depth = 0) {
   return `${type ?? 'object'}${bounds.length ? ` (${bounds.join(', ')})` : ''}`;
 }
 
-function fieldDescription(schema, file) {
-  if (schema.const !== undefined || (schema.$ref && resolveRef(schema.$ref, file).schema.const !== undefined)) return '';
+const relative = (file) => file.slice(schemasDir.length + 1);
+
+function fieldDescription(schema, file, key) {
+  if (MEANINGS[key]) return MEANINGS[key];
+  if (schema.const !== undefined || (schema.$ref && resolveRef(schema.$ref, file).schema.const !== undefined)) return 'Always this value.';
   let text = schema.description;
   if (!text && schema.$ref) text = resolveRef(schema.$ref, file).schema.description;
-  return publicText(text);
+  return publicText(text, `${relative(file)} ${key}`);
 }
 
-function fieldTable(schema, file, emptyText) {
+// Rows of generated field tables, for the --check report of missing meanings.
+const meaningRows = [];
+
+// tableId names the table in MEANINGS keys: "<operation>.request",
+// "<operation>.result", "<operation>.result.<field>", "envelope", "error",
+// "edit.<kind>[.<op>]".
+function fieldTable(schema, file, emptyText, tableId) {
   const properties = schema.properties ?? {};
   const required = new Set(schema.required ?? []);
   const names = Object.keys(properties);
   if (!names.length) return emptyText;
   const rows = names.map((name) => {
     const property = properties[name];
-    return `| ${code(name)} | ${required.has(name) ? 'yes' : 'no'} | ${cell(describeType(property, file))} | ${cell(fieldDescription(property, file))} |`;
+    const key = `${tableId}.${name}`;
+    const meaning = fieldDescription(property, file, key);
+    meaningRows.push({ key, meaning });
+    return `| ${code(name)} | ${required.has(name) ? 'yes' : 'no'} | ${cell(describeType(property, file))} | ${cell(meaning)} |`;
   });
   return ['| Field | Required | Type | Meaning |', '| --- | --- | --- | --- |', ...rows].join('\n');
 }
@@ -150,6 +213,22 @@ const envelopePath = join(schemasDir, 'envelope.request.json');
 const envelope = loadSchema(envelopePath);
 const operationsEnum = resolveRef(envelope.properties.operation.$ref, envelopePath).schema.enum;
 const envelopeFields = ['workspace', 'snapshot', 'base_snapshot', 'request_id'];
+// Identifiers without a "." or "_" that the filter would not recognise.
+for (const name of ['acore-ui', 'web']) knownIdentifiers.add(name);
+
+// The linked index at the top of "## Operations", grouped for readers.
+const OPERATION_GROUPS = [
+  ['Session and discovery', ['capabilities', 'workspace.open', 'project.overview']],
+  ['Reads', ['node.find', 'node.get', 'node.edits', 'graph.query', 'context.build', 'impact.analyze', 'changes.since', 'node.relocate']],
+  ['Edits and publication', ['edit.plan', 'change.propose', 'change.inspect', 'check.run', 'change.apply', 'change.discard']],
+];
+
+function operationIndex() {
+  const grouped = OPERATION_GROUPS.flatMap(([, names]) => names);
+  if ([...grouped].sort().join() !== [...operationsEnum].sort().join()) throw new Error('OPERATION_GROUPS does not list every operation exactly once');
+  const slugger = new GithubSlugger();
+  return OPERATION_GROUPS.map(([title, names]) => `- ${title}: ${names.map((name) => `[${code(name)}](#${slugger.slug(name)})`).join(', ')}`).join('\n');
+}
 
 function envelopeRules(operation) {
   const rules = Object.fromEntries(envelopeFields.map((field) => [field, 'optional']));
@@ -171,7 +250,7 @@ function envelopeTable() {
 }
 
 function envelopeFieldTable() {
-  return fieldTable(envelope, envelopePath, '');
+  return fieldTable(envelope, envelopePath, '', 'envelope');
 }
 
 // ---------------------------------------------------------------- operations
@@ -182,13 +261,13 @@ const operationSchema = (operation, side) => {
 };
 
 // Object-valued result fields (such as the apply receipt) get their own table.
-function nestedTables(schema, file) {
+function nestedTables(schema, file, tableId) {
   const tables = [];
   for (const [name, property] of Object.entries(schema.properties ?? {})) {
     let target = { schema: property, file };
     if (property.$ref) target = resolveRef(property.$ref, file);
     if (target.schema.type === 'object' && target.schema.properties && Object.keys(target.schema.properties).length > 1) {
-      tables.push('', `\`${name}\` fields:`, '', fieldTable(target.schema, target.file, ''));
+      tables.push('', `\`${name}\` fields:`, '', fieldTable(target.schema, target.file, '', `${tableId}.${name}`));
     }
   }
   return tables;
@@ -201,12 +280,12 @@ function operationSection(operation) {
   return [
     `**Params** (\`schemas/operations/${operation}.request.json\`)`,
     '',
-    fieldTable(request.schema, request.path, 'No params: send `"params": {}`.'),
+    fieldTable(request.schema, request.path, 'No params: send `"params": {}`.', `${operation}.request`),
     '',
     `**Result** (\`schemas/operations/${operation}.result.json\`)`,
     '',
-    fieldTable(result.schema, result.path, 'An empty object.'),
-    ...nestedTables(result.schema, result.path),
+    fieldTable(result.schema, result.path, 'An empty object.', `${operation}.result`),
+    ...nestedTables(result.schema, result.path, `${operation}.result`),
     '',
     `**Error codes:** ${errors.map(code).join(', ')}.`,
   ].join('\n');
@@ -218,7 +297,7 @@ function errorCodeList() {
   return [
     '| Field | Required | Type | Meaning |',
     '| --- | --- | --- | --- |',
-    ...fieldTable(schema, path, '').split('\n').slice(2),
+    ...fieldTable(schema, path, '', 'error').split('\n').slice(2),
   ].join('\n');
 }
 
@@ -239,8 +318,9 @@ function editOperations() {
     const target = resolveRef(variant.$ref, path);
     const { kind, op } = target.schema.properties;
     const label = op?.const ? `${code(kind.const)}, ${code(`op: ${op.const}`)}` : code(kind.const);
-    const description = publicText(target.schema.description);
-    return [`**${label}**${description ? `: ${cell(description)}` : ''}`, '', fieldTable(target.schema, target.file, '')].join('\n');
+    const description = publicText(target.schema.description, `edits.json ${target.name}`);
+    const tableId = `edit.${kind.const}${op?.const ? `.${op.const}` : ''}`;
+    return [`**${label}**${description ? `: ${cell(description)}` : ''}`, '', fieldTable(target.schema, target.file, '', tableId)].join('\n');
   }).join('\n\n');
 }
 
@@ -266,11 +346,12 @@ function limitsTable(manifest) {
 
 // ---------------------------------------------------------------- support matrix
 
-function statusTable(entries, manifestEntries, key) {
+function statusTable(entries, manifestEntries, key, label) {
   const served = new Map(manifestEntries.map((entry) => [entry[key], entry.status]));
   const rows = entries.map((entry) => {
-    const limits = entry.limits.map(publicText).filter(Boolean).join(' ');
-    const missing = entry.missing.map(publicText).filter(Boolean).join(' ');
+    const where = (part, index) => `support-matrix.json ${label}[${entry.name}].${part}[${index}]`;
+    const limits = entry.limits.map((text, index) => publicText(text, where('limits', index))).filter(Boolean).join(' ');
+    const missing = entry.missing.map((text, index) => publicText(text, where('missing', index))).filter(Boolean).join(' ');
     return `| ${code(entry.name)} | ${served.get(entry.name)} | ${cell(limits)} | ${cell(missing)} |`;
   });
   return ['| Name | Status | Limits | Missing (partial only) |', '| --- | --- | --- | --- |', ...rows].join('\n');
@@ -333,6 +414,7 @@ if (operationFiles.sort().join() !== [...operationsEnum].sort().join()) {
 }
 
 const protocolRegions = {
+  'operation-index': operationIndex(),
   'envelope-fields': envelopeFieldTable(),
   'envelope-rules': envelopeTable(),
   'error-object': errorCodeList(),
@@ -356,12 +438,12 @@ const matrixRegions = {
     `- Operations: ${count(matrix.operations)}. Edit families: ${count(matrix.edit_kinds)}. Checks: ${count(matrix.checks)}.`,
     `- Publication: ${code(matrix.publication.profile)}, ${matrix.publication.status}. Not provided: ${matrix.publication.missing.map((item) => item.charAt(0).toLowerCase() + item.slice(1)).join('; ')}.`,
   ].join('\n'),
-  operations: statusTable(matrix.operations, manifest.operations, 'name'),
-  'edit-kinds': statusTable(matrix.edit_kinds, manifest.edit_kinds, 'kind'),
-  checks: statusTable(matrix.checks, manifest.checks, 'check'),
+  operations: statusTable(matrix.operations, manifest.operations, 'name', 'operations'),
+  'edit-kinds': statusTable(matrix.edit_kinds, manifest.edit_kinds, 'kind', 'edit_kinds'),
+  checks: statusTable(matrix.checks, manifest.checks, 'check', 'checks'),
   publication: guaranteeList(manifest.publication[0].guarantees),
   'external-writes': guaranteeList(manifest.external_writes.guarantees),
-  unsupported: matrix.unsupported.map((item) => `- ${publicText(item) || item.replace(/\s*\(D-05[^)]*\)/, '')}`).join('\n'),
+  unsupported: matrix.unsupported.map((item, index) => `- ${publicText(item, `support-matrix.json unsupported[${index}]`)}`).join('\n'),
 };
 
 // The hand-written error guidance must cover exactly the closed code list.
@@ -371,6 +453,18 @@ const covered = [...guidance.matchAll(/^\| `([a-z_]+)` \|/gm)].map((match) => ma
 const codes = loadSchema(join(schemasDir, 'error.json')).$defs.code.enum;
 if ([...covered].sort().join() !== [...codes].sort().join()) {
   console.error(`Error guidance table covers ${covered.join(', ')}; error.json has ${codes.join(', ')}`);
+  process.exit(1);
+}
+
+// Report what the text filter dropped and which rows still have no meaning.
+console.log(`Clauses dropped from public text (${dropped.length}):`);
+for (const { where, clause } of dropped) console.log(`- ${where}: ${clause}`);
+const empty = meaningRows.filter((row) => !row.meaning);
+const unused = Object.keys(MEANINGS).filter((key) => !meaningRows.some((row) => row.key === key));
+console.log(`Generated rows without a meaning: ${empty.length} of ${meaningRows.length}${empty.length ? ':' : '.'}`);
+for (const row of empty) console.log(`- ${row.key}`);
+if (unused.length) {
+  console.error(`MEANINGS keys that match no row: ${unused.join(', ')}`);
   process.exit(1);
 }
 

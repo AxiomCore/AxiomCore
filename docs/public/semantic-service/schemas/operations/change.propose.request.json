@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.axiomcore.dev/agent-semantic/v1/operations/change.propose.request.json",
+  "title": "change.propose request",
+  "description": "params of change.propose: an ordered, all-or-nothing batch applied as one private candidate on base_snapshot (or on an open candidate). request_id plus the input fingerprint make it idempotent.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "operations"
+  ],
+  "properties": {
+    "candidate": {
+      "description": "Extend this open candidate instead of starting one. Its base must equal base_snapshot.",
+      "$ref": "../common.json#/$defs/candidateId"
+    },
+    "expected_candidate_version": {
+      "description": "Required with candidate.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "operations": {
+      "type": "array",
+      "items": {
+        "$ref": "../edits.json#/$defs/editOperation"
+      },
+      "minItems": 1,
+      "maxItems": 50
+    },
+    "checks": {
+      "description": "Checks to run on the final candidate before returning; compile always runs.",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64
+      },
+      "uniqueItems": true
+    }
+  },
+  "dependentRequired": {
+    "candidate": [
+      "expected_candidate_version"
+    ]
+  }
+}

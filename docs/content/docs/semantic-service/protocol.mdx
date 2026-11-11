@@ -17,16 +17,35 @@ operations, fields and errors are the same on all three.
   implemented is in the [Support matrix](/semantic-service/support-matrix).
 </StatusNote>
 
-The protocol is defined by JSON Schema (draft 2020-12) files: an envelope
-schema for requests and responses, `error.json`, shared definitions in
-`common.json` and `edits.json`, and one request and one result schema per
-operation in `operations/`. They ship with the Acore compiler source, in
-`protocol/semantic/schemas/`, and this page reproduces their content; there is
-no separate download until release. Their `$id`s
-(`https://schemas.axiomcore.dev/agent-semantic/v1/<file>`) are identifiers
-only; nothing is served at those URLs. The tables marked as generated on this
-page are produced from those schemas and from the service's capability
+The protocol is defined by JSON Schema (draft 2020-12) files, published on
+this site (see [Schema files](#schema-files)). The tables marked as generated
+on this page are produced from those schemas and from the service's capability
 manifest.
+
+## Schema files
+
+Each schema is a static file under
+`https://docs.axiomcore.dev/semantic-service/schemas/`.
+[`index.json`](https://docs.axiomcore.dev/semantic-service/schemas/index.json) lists every file with its URL, `$id` and title.
+
+| File | Defines |
+| --- | --- |
+| [`envelope.request.json`](https://docs.axiomcore.dev/semantic-service/schemas/envelope.request.json) | Every request: the envelope fields each operation takes |
+| [`envelope.response.json`](https://docs.axiomcore.dev/semantic-service/schemas/envelope.response.json) | Every response, success or error |
+| [`error.json`](https://docs.axiomcore.dev/semantic-service/schemas/error.json) | The error object and its code vocabulary |
+| [`common.json`](https://docs.axiomcore.dev/semantic-service/schemas/common.json) | Ids, workspace and snapshot identity, node references, limits, truncation, coverage, diagnostics |
+| [`edits.json`](https://docs.axiomcore.dev/semantic-service/schemas/edits.json) | Edit operations, edit options, id maps, relocations, candidates, checks |
+| `operations/<operation>.request.json` | The `params` of one operation (linked from each operation below) |
+| `operations/<operation>.result.json` | The `result` of one operation; `x-errors` lists its error codes |
+
+Each file's `$id` has the form
+`https://schemas.axiomcore.dev/agent-semantic/v1/<file>`. The `$id` is the
+schema's identifier, not a download location: nothing is served at
+`schemas.axiomcore.dev`. The files on this site are the authoritative,
+published copies. References between files are relative (for example
+`../common.json#/$defs/path` from `operations/`), so they resolve against the
+`$id` and against the URL on this site alike. To validate, load all 39 schema
+files into your validator, which then resolves references by `$id`.
 
 ## Conventions
 
@@ -238,13 +257,13 @@ manifest, plus `toolchain`, without a request (see the
 
 {/* BEGIN GENERATED operation:capabilities */}
 
-**Params** (`schemas/operations/capabilities.request.json`)
+**Params** ([`schemas/operations/capabilities.request.json`](https://docs.axiomcore.dev/semantic-service/schemas/operations/capabilities.request.json))
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
 | `profiles` | no | array of string (at most 64 characters) | Restrict the manifest to these language profiles. |
 
-**Result** (`schemas/operations/capabilities.result.json`)
+**Result** ([`schemas/operations/capabilities.result.json`](https://docs.axiomcore.dev/semantic-service/schemas/operations/capabilities.result.json))
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
@@ -336,7 +355,7 @@ manifest. It never installs, extracts or runs anything.
 
 {/* BEGIN GENERATED operation:workspace.open */}
 
-**Params** (`schemas/operations/workspace.open.request.json`)
+**Params** ([`schemas/operations/workspace.open.request.json`](https://docs.axiomcore.dev/semantic-service/schemas/operations/workspace.open.request.json))
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
@@ -344,7 +363,7 @@ manifest. It never installs, extracts or runs anything.
 | `language_profile` | no | string (at most 64 characters) | Language profile to open the project with. Only `acore-ui` is served; another value reports the project as `unsupported`. |
 | `target` | no | string (at most 64 characters) | Target to compile for. Only `web` is served; another value reports the project as `unsupported`. |
 
-**Result** (`schemas/operations/workspace.open.result.json`)
+**Result** ([`schemas/operations/workspace.open.result.json`](https://docs.axiomcore.dev/semantic-service/schemas/operations/workspace.open.result.json))
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
@@ -422,7 +441,7 @@ for the next page. The cursor stays on the same snapshot.
 
 {/* BEGIN GENERATED operation:project.overview */}
 
-**Params** (`schemas/operations/project.overview.request.json`)
+**Params** ([`schemas/operations/project.overview.request.json`](https://docs.axiomcore.dev/semantic-service/schemas/operations/project.overview.request.json))
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
@@ -430,7 +449,7 @@ for the next page. The cursor stays on the same snapshot.
 | `include` | no | array of `modules`, `entry_points`, `contracts`, `diagnostics` | Which lists to return. Default: all four. |
 | `cursor` | no | string (at most 1024 characters) | Opaque continuation token bound to one snapshot and one request shape. Valid until the snapshot expires. |
 
-**Result** (`schemas/operations/project.overview.result.json`)
+**Result** ([`schemas/operations/project.overview.result.json`](https://docs.axiomcore.dev/semantic-service/schemas/operations/project.overview.result.json))
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
@@ -506,7 +525,7 @@ reported as an omission: narrow the query.
 
 {/* BEGIN GENERATED operation:node.find */}
 
-**Params** (`schemas/operations/node.find.request.json`)
+**Params** ([`schemas/operations/node.find.request.json`](https://docs.axiomcore.dev/semantic-service/schemas/operations/node.find.request.json))
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
@@ -516,7 +535,7 @@ reported as an omission: narrow the query.
 | `path` | no | string (at most 1024 characters) | Only nodes whose authored declaration is in this file. |
 | `limit` | yes | integer (1..50) | Maximum number of nodes to return (1 to 50). More matches are reported as an omission; narrow the query. |
 
-**Result** (`schemas/operations/node.find.result.json`)
+**Result** ([`schemas/operations/node.find.result.json`](https://docs.axiomcore.dev/semantic-service/schemas/operations/node.find.result.json))
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
@@ -584,7 +603,7 @@ expansion refs.
 
 {/* BEGIN GENERATED operation:node.get */}
 
-**Params** (`schemas/operations/node.get.request.json`)
+**Params** ([`schemas/operations/node.get.request.json`](https://docs.axiomcore.dev/semantic-service/schemas/operations/node.get.request.json))
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
@@ -593,7 +612,7 @@ expansion refs.
 | `include` | no | array of `properties`, `edges`, `incoming`, `body`, `provenance`, `edits` | Adds to the preset. |
 | `limit` | no | integer (1..200) | Caps properties and edges per node independently. |
 
-**Result** (`schemas/operations/node.get.result.json`)
+**Result** ([`schemas/operations/node.get.result.json`](https://docs.axiomcore.dev/semantic-service/schemas/operations/node.get.result.json))
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
@@ -665,7 +684,7 @@ what is not offered.
 
 {/* BEGIN GENERATED operation:node.edits */}
 
-**Params** (`schemas/operations/node.edits.request.json`)
+**Params** ([`schemas/operations/node.edits.request.json`](https://docs.axiomcore.dev/semantic-service/schemas/operations/node.edits.request.json))
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
@@ -673,7 +692,7 @@ what is not offered.
 | `kinds` | no | array of `set_property`, `bind_property`, `list_element`, `declaration`, `set_reference`, `import`, `replace_region` | Only list options of these edit families. Default: every family. |
 | `include_unavailable` | no | boolean | Also list the edit families that are not offered for the node. The service does not say why. |
 
-**Result** (`schemas/operations/node.edits.result.json`)
+**Result** ([`schemas/operations/node.edits.result.json`](https://docs.axiomcore.dev/semantic-service/schemas/operations/node.edits.result.json))
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
@@ -760,7 +779,7 @@ compiler cannot see, such as foreign extension actions, are reported as
 
 {/* BEGIN GENERATED operation:graph.query */}
 
-**Params** (`schemas/operations/graph.query.request.json`)
+**Params** ([`schemas/operations/graph.query.request.json`](https://docs.axiomcore.dev/semantic-service/schemas/operations/graph.query.request.json))
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
@@ -771,7 +790,7 @@ compiler cannot see, such as foreign extension actions, are reported as
 | `layers` | no | array of `declared`, `resolved`, `observed` | Fact layers to follow. This build has `declared` and `resolved` facts only. |
 | `transitive` | no | boolean | Follow relationships beyond the first step, up to `limits.max_depth`. |
 
-**Result** (`schemas/operations/graph.query.result.json`)
+**Result** ([`schemas/operations/graph.query.result.json`](https://docs.axiomcore.dev/semantic-service/schemas/operations/graph.query.result.json))
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
@@ -859,7 +878,7 @@ with the bytes it needs and refs you can pass in `expand`.
 
 {/* BEGIN GENERATED operation:context.build */}
 
-**Params** (`schemas/operations/context.build.request.json`)
+**Params** ([`schemas/operations/context.build.request.json`](https://docs.axiomcore.dev/semantic-service/schemas/operations/context.build.request.json))
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
@@ -868,7 +887,7 @@ with the bytes it needs and refs you can pass in `expand`.
 | `include` | no | array of `signature`, `implementation`, `input_constraints`, `callers`, `consumers`, `authorization`, `diagnostics`, `tests` | Kinds of context to add. `tests` and `authorization` produce coverage gaps in this profile. |
 | `expand` | no | array of string (at most 512 characters), 0 to 50 items | ExpansionRef.ref values from an earlier response on the same snapshot. |
 
-**Result** (`schemas/operations/context.build.result.json`)
+**Result** ([`schemas/operations/context.build.result.json`](https://docs.axiomcore.dev/semantic-service/schemas/operations/context.build.result.json))
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
@@ -986,7 +1005,7 @@ levels, with the edge that links each impacted node.
 
 {/* BEGIN GENERATED operation:impact.analyze */}
 
-**Params** (`schemas/operations/impact.analyze.request.json`)
+**Params** ([`schemas/operations/impact.analyze.request.json`](https://docs.axiomcore.dev/semantic-service/schemas/operations/impact.analyze.request.json))
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
@@ -994,7 +1013,7 @@ levels, with the edge that links each impacted node.
 | `direction` | yes | `dependents`, `dependencies`, `both` | `dependents` (what a change would affect), `dependencies`, or `both`. |
 | `edge_kinds` | no | array of string | Only follow these edge kinds. Default: all. |
 
-**Result** (`schemas/operations/impact.analyze.result.json`)
+**Result** ([`schemas/operations/impact.analyze.result.json`](https://docs.axiomcore.dev/semantic-service/schemas/operations/impact.analyze.result.json))
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
@@ -1068,13 +1087,13 @@ takes no `request_id`.
 
 {/* BEGIN GENERATED operation:edit.plan */}
 
-**Params** (`schemas/operations/edit.plan.request.json`)
+**Params** ([`schemas/operations/edit.plan.request.json`](https://docs.axiomcore.dev/semantic-service/schemas/operations/edit.plan.request.json))
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
 | `operations` | yes | array of object or object or object or object or object or object or object or object or object or object or object, 1 to 50 items | Edit operations (1 to 50), as for `change.propose`. |
 
-**Result** (`schemas/operations/edit.plan.result.json`)
+**Result** ([`schemas/operations/edit.plan.result.json`](https://docs.axiomcore.dev/semantic-service/schemas/operations/edit.plan.result.json))
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
@@ -1142,7 +1161,7 @@ To extend an open candidate, pass `candidate` and `expected_candidate_version`.
 
 {/* BEGIN GENERATED operation:change.propose */}
 
-**Params** (`schemas/operations/change.propose.request.json`)
+**Params** ([`schemas/operations/change.propose.request.json`](https://docs.axiomcore.dev/semantic-service/schemas/operations/change.propose.request.json))
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
@@ -1151,7 +1170,7 @@ To extend an open candidate, pass `candidate` and `expected_candidate_version`.
 | `operations` | yes | array of object or object or object or object or object or object or object or object or object or object or object, 1 to 50 items | Edit operations (1 to 50), applied in order, all or nothing. Each kind of operation is described after the error codes of this section. |
 | `checks` | no | array of string (at most 64 characters) | Checks to run on the final candidate before returning; compile always runs. |
 
-**Result** (`schemas/operations/change.propose.result.json`)
+**Result** ([`schemas/operations/change.propose.result.json`](https://docs.axiomcore.dev/semantic-service/schemas/operations/change.propose.result.json))
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
@@ -1208,7 +1227,7 @@ To extend an open candidate, pass `candidate` and `expected_candidate_version`.
 
 {/* END GENERATED operation:change.propose */}
 
-The edit operations (generated from `edits.json`). Every operation carries
+The edit operations (generated from [`edits.json`](https://docs.axiomcore.dev/semantic-service/schemas/edits.json)). Every operation carries
 an exact precondition, `old_value` or `old_text`, copied from `node.get` or
 `node.edits`:
 
@@ -1475,14 +1494,14 @@ full content, affected nodes, risks and checks.
 
 {/* BEGIN GENERATED operation:change.inspect */}
 
-**Params** (`schemas/operations/change.inspect.request.json`)
+**Params** ([`schemas/operations/change.inspect.request.json`](https://docs.axiomcore.dev/semantic-service/schemas/operations/change.inspect.request.json))
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
 | `candidate` | yes | string (at most 256 characters) | Opaque id of a private candidate (`change.propose`). |
 | `include` | no | array of `semantic_diff`, `source_diff`, `content`, `affected`, `checks` | Which parts to return: `semantic_diff`, `source_diff`, `content` (full file content), `affected`, `checks`. |
 
-**Result** (`schemas/operations/change.inspect.result.json`)
+**Result** ([`schemas/operations/change.inspect.result.json`](https://docs.axiomcore.dev/semantic-service/schemas/operations/change.inspect.result.json))
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
@@ -1574,7 +1593,7 @@ Runs checks on a candidate, or on a snapshot plus unsaved file contents
 
 {/* BEGIN GENERATED operation:check.run */}
 
-**Params** (`schemas/operations/check.run.request.json`)
+**Params** ([`schemas/operations/check.run.request.json`](https://docs.axiomcore.dev/semantic-service/schemas/operations/check.run.request.json))
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
@@ -1582,7 +1601,7 @@ Runs checks on a candidate, or on a snapshot plus unsaved file contents
 | `files` | no | array of object (`file`), 0 to 64 items | Overlay files; only with the envelope snapshot. [] checks the snapshot as is. |
 | `checks` | yes | array of string (at most 64 characters), 1 to any items | Checks to run: `compile` or `repair`. |
 
-**Result** (`schemas/operations/check.run.result.json`)
+**Result** ([`schemas/operations/check.run.result.json`](https://docs.axiomcore.dev/semantic-service/schemas/operations/check.run.result.json))
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
@@ -1640,7 +1659,7 @@ has the base content. See [Apply, receipts and recovery](#apply-receipts-and-rec
 
 {/* BEGIN GENERATED operation:change.apply */}
 
-**Params** (`schemas/operations/change.apply.request.json`)
+**Params** ([`schemas/operations/change.apply.request.json`](https://docs.axiomcore.dev/semantic-service/schemas/operations/change.apply.request.json))
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
@@ -1649,7 +1668,7 @@ has the base content. See [Apply, receipts and recovery](#apply-receipts-and-rec
 | `preconditions` | no | array of object, 1 to any items | Explicit content preconditions (sha256 null: the file must not exist). Must include every written file when given. |
 | `require_checks` | no | array of string (at most 64 characters) | Checks that must have passed on this exact candidate version. |
 
-**Result** (`schemas/operations/change.apply.result.json`)
+**Result** ([`schemas/operations/change.apply.result.json`](https://docs.axiomcore.dev/semantic-service/schemas/operations/change.apply.result.json))
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
@@ -1750,14 +1769,14 @@ to undo, propose a compensating change.
 
 {/* BEGIN GENERATED operation:change.discard */}
 
-**Params** (`schemas/operations/change.discard.request.json`)
+**Params** ([`schemas/operations/change.discard.request.json`](https://docs.axiomcore.dev/semantic-service/schemas/operations/change.discard.request.json))
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
 | `candidate` | yes | string (at most 256 characters) | Opaque id of a private candidate (`change.propose`). |
 | `expected_candidate_version` | no | integer (1..) | Optional: the candidate version you expect. Another version is `precondition_failed`. |
 
-**Result** (`schemas/operations/change.discard.result.json`)
+**Result** ([`schemas/operations/change.discard.result.json`](https://docs.axiomcore.dev/semantic-service/schemas/operations/change.discard.result.json))
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
@@ -1820,7 +1839,7 @@ inferred (`relation: inferred`) from ids, paths and text.
 
 {/* BEGIN GENERATED operation:changes.since */}
 
-**Params** (`schemas/operations/changes.since.request.json`)
+**Params** ([`schemas/operations/changes.since.request.json`](https://docs.axiomcore.dev/semantic-service/schemas/operations/changes.since.request.json))
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
@@ -1828,7 +1847,7 @@ inferred (`relation: inferred`) from ids, paths and text.
 | `scope` | no | object | Limit the answer to these node ids and paths. |
 | `cursor` | no | string (at most 1024 characters) | Opaque continuation token bound to one snapshot and one request shape. Valid until the snapshot expires. |
 
-**Result** (`schemas/operations/changes.since.result.json`)
+**Result** ([`schemas/operations/changes.since.result.json`](https://docs.axiomcore.dev/semantic-service/schemas/operations/changes.since.result.json))
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
@@ -1889,14 +1908,14 @@ request's snapshot, one entry per id in request order. Each entry has a
 
 {/* BEGIN GENERATED operation:node.relocate */}
 
-**Params** (`schemas/operations/node.relocate.request.json`)
+**Params** ([`schemas/operations/node.relocate.request.json`](https://docs.axiomcore.dev/semantic-service/schemas/operations/node.relocate.request.json))
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
 | `from_snapshot` | yes | string (at most 256 characters) | Opaque id of one immutable captured snapshot. Never the reserved word latest. |
 | `nodes` | yes | array of string (at most 1024 characters), 1 to 200 items | Node ids from `from_snapshot` to map (1 to 200). |
 
-**Result** (`schemas/operations/node.relocate.result.json`)
+**Result** ([`schemas/operations/node.relocate.result.json`](https://docs.axiomcore.dev/semantic-service/schemas/operations/node.relocate.result.json))
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |

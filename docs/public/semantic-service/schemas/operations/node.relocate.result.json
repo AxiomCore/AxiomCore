@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.axiomcore.dev/agent-semantic/v1/operations/node.relocate.result.json",
+  "title": "node.relocate result",
+  "description": "Exactly one relocation per requested id, in request order, unchanged nodes included.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "relocations"
+  ],
+  "properties": {
+    "relocations": {
+      "type": "array",
+      "items": {
+        "$ref": "../edits.json#/$defs/relocation"
+      },
+      "minItems": 1,
+      "maxItems": 200
+    }
+  },
+  "x-errors": [
+    "invalid_arguments",
+    "not_found",
+    "internal",
+    "resource_limit",
+    "permission_denied",
+    "unsupported_operation",
+    "snapshot_expired",
+    "stale_snapshot",
+    "compile_failed"
+  ]
+}

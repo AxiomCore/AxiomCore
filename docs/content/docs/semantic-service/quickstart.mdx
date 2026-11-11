@@ -34,14 +34,39 @@ missing.
 
 ## 1. Install
 
-<Callout type="info" title="Available at release">
-  Nothing is downloadable yet. Once the first release is published, the
-  command to install it will be `brew install axiomcore/tap/acore-semantic`.
-  That command does not work today.
-</Callout>
+`acore-semantic` 0.1.4 is a preview release for macOS on Apple silicon. Install
+it with [Homebrew](https://brew.sh):
+
+```bash title="Any directory"
+brew install axiomcore/tap/acore-semantic
+```
+
+Without Homebrew, download the archive from the
+[GitHub release](https://github.com/AxiomCore/AxiomCore/releases/tag/acore-semantic-v0.1.4),
+check it against the published SHA-256 checksum, and put the binary in a
+directory on your `PATH`. These commands use `~/.local/bin`:
+
+```bash title="Direct download, an empty directory"
+curl -fsSLO https://github.com/AxiomCore/AxiomCore/releases/download/acore-semantic-v0.1.4/acore-semantic-macos-arm64.tar.gz
+curl -fsSLO https://github.com/AxiomCore/AxiomCore/releases/download/acore-semantic-v0.1.4/acore-semantic-macos-arm64.tar.gz.sha256
+shasum -a 256 -c acore-semantic-macos-arm64.tar.gz.sha256
+tar -xzf acore-semantic-macos-arm64.tar.gz
+mkdir -p ~/.local/bin
+mv acore-semantic ~/.local/bin/
+```
+
+```text title="Output"
+acore-semantic-macos-arm64.tar.gz: OK
+```
+
+Stop if `shasum` prints anything other than `OK`. The archive holds one file,
+the `acore-semantic` binary. If `~/.local/bin` is not on your `PATH`, add
+`export PATH="$HOME/.local/bin:$PATH"` to your shell profile and open a new
+terminal. Use `curl` as shown: the binary is not notarized, so macOS may
+refuse to run it if a web browser downloaded the archive.
 
 Every example on these pages calls `acore-semantic` directly and assumes the
-binary is on your `PATH`. Check it:
+binary is on your `PATH`. Check it from any directory:
 
 ```bash title="Any directory"
 acore-semantic --version
@@ -514,6 +539,9 @@ service creates the directory again on the next request. Deleting it loses:
 Remove a registered server with `claude mcp remove acore-semantic` or
 `codex mcp remove acore-semantic`. To remove the example, delete the
 `task-app` directory.
+
+To uninstall the service, run `brew uninstall acore-semantic`, or delete
+`~/.local/bin/acore-semantic` if you downloaded it directly.
 
 ## Next steps
 

@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.axiomcore.dev/agent-semantic/v1/operations/node.find.result.json",
+  "title": "node.find result",
+  "description": "Matches in document order (file, start offset, outermost first, then id). Not ranked. More matches than limit sets truncation (reason max_items).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "nodes"
+  ],
+  "properties": {
+    "nodes": {
+      "type": "array",
+      "items": {
+        "$ref": "../common.json#/$defs/nodeSummary"
+      }
+    },
+    "matches": {
+      "description": "One entry per node, same order: why it matched.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "node",
+          "reasons"
+        ],
+        "properties": {
+          "node": {
+            "$ref": "../common.json#/$defs/nodeId"
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "name",
+                "id",
+                "property_value",
+                "filter_only"
+              ]
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          }
+        }
+      }
+    }
+  },
+  "x-errors": [
+    "invalid_arguments",
+    "not_found",
+    "internal",
+    "resource_limit",
+    "permission_denied",
+    "unsupported_operation",
+    "snapshot_expired",
+    "stale_snapshot",
+    "compile_failed"
+  ]
+}

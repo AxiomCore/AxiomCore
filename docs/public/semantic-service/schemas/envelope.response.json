@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.axiomcore.dev/agent-semantic/v1/envelope.response.json",
+  "title": "Response envelope",
+  "description": "Every response: exactly one of result or error, plus workspace and snapshot identity, toolchain (compiler, language profile, target), coverage and truncation, success or failure alike.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol",
+    "operation",
+    "workspace",
+    "snapshot",
+    "toolchain",
+    "coverage",
+    "truncation"
+  ],
+  "properties": {
+    "protocol": {
+      "$ref": "common.json#/$defs/protocol"
+    },
+    "operation": {
+      "description": "Echo of the request's operation.",
+      "$ref": "common.json#/$defs/operation"
+    },
+    "request_id": {
+      "description": "Echo of the request's request_id, when it had one.",
+      "$ref": "common.json#/$defs/requestId"
+    },
+    "workspace": {
+      "description": "null only for capabilities and for errors raised before a workspace was resolved.",
+      "anyOf": [
+        {
+          "$ref": "common.json#/$defs/workspaceId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "snapshot": {
+      "description": "The snapshot this response was computed on (for edits, the base). null only when none was resolved (capabilities, early errors).",
+      "anyOf": [
+        {
+          "$ref": "common.json#/$defs/snapshotIdentity"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "toolchain": {
+      "$ref": "common.json#/$defs/toolchain"
+    },
+    "coverage": {
+      "$ref": "common.json#/$defs/coverage"
+    },
+    "truncation": {
+      "$ref": "common.json#/$defs/truncation"
+    },
+    "result": {
+      "description": "schemas/operations/<operation>.result.json.",
+      "type": "object"
+    },
+    "error": {
+      "$ref": "error.json"
+    }
+  },
+  "oneOf": [
+    {
+      "required": [
+        "result"
+      ]
+    },
+    {
+      "required": [
+        "error"
+      ]
+    }
+  ]
+}

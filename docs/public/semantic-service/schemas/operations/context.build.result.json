@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.axiomcore.dev/agent-semantic/v1/operations/context.build.result.json",
+  "title": "context.build result",
+  "description": "A bounded task slice. Every item says why it is included. Optional parts that did not fit are in truncation.omissions; required context that does not fit is insufficient_context, never silent truncation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "items",
+    "edges"
+  ],
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "node",
+          "depth",
+          "required",
+          "reasons"
+        ],
+        "properties": {
+          "node": {
+            "$ref": "../common.json#/$defs/nodeSummary"
+          },
+          "depth": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "text"
+              ],
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "focus",
+                    "signature",
+                    "accepted_input",
+                    "constraint",
+                    "caller",
+                    "consumer",
+                    "policy",
+                    "diagnostic",
+                    "test"
+                  ]
+                },
+                "text": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                },
+                "via": {
+                  "$ref": "../common.json#/$defs/nodeId"
+                }
+              }
+            },
+            "minItems": 1
+          },
+          "signature": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "source": {
+            "description": "Authored text, when the recipe includes it and it fit.",
+            "type": "string"
+          },
+          "diagnostics": {
+            "$ref": "../common.json#/$defs/diagnostics"
+          },
+          "tests": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "path",
+                "association"
+              ],
+              "properties": {
+                "path": {
+                  "$ref": "../common.json#/$defs/path"
+                },
+                "association": {
+                  "enum": [
+                    "proven",
+                    "configured",
+                    "heuristic"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "from",
+          "kind",
+          "to"
+        ],
+        "properties": {
+          "from": {
+            "$ref": "../common.json#/$defs/nodeId"
+          },
+          "kind": {
+            "$ref": "../common.json#/$defs/edgeKind"
+          },
+          "to": {
+            "$ref": "../common.json#/$defs/nodeId"
+          },
+          "layer": {
+            "$ref": "../common.json#/$defs/edgeLayer"
+          }
+        }
+      }
+    }
+  },
+  "x-errors": [
+    "invalid_arguments",
+    "not_found",
+    "internal",
+    "resource_limit",
+    "permission_denied",
+    "unsupported_operation",
+    "snapshot_expired",
+    "stale_snapshot",
+    "compile_failed",
+    "insufficient_context"
+  ]
+}

@@ -1,0 +1,183 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.axiomcore.dev/agent-semantic/v1/operations/edit.plan.result.json",
+  "title": "edit.plan result",
+  "description": "Outcome over the batch, the owners, the per-operation plan and the files it would change.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "outcome",
+    "owners",
+    "operations",
+    "files"
+  ],
+  "properties": {
+    "outcome": {
+      "enum": [
+        "supported",
+        "required_but_missing",
+        "unsupported"
+      ]
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "owners": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "node",
+          "kind",
+          "path"
+        ],
+        "properties": {
+          "node": {
+            "$ref": "../common.json#/$defs/nodeId"
+          },
+          "kind": {
+            "$ref": "../common.json#/$defs/nodeKind"
+          },
+          "path": {
+            "$ref": "../common.json#/$defs/path"
+          }
+        }
+      }
+    },
+    "operations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "index",
+          "kind",
+          "path",
+          "outcome"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "kind": {
+            "$ref": "../edits.json#/$defs/editKind"
+          },
+          "op": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32
+          },
+          "node": {
+            "$ref": "../common.json#/$defs/nodeId"
+          },
+          "property": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "path": {
+            "$ref": "../common.json#/$defs/path"
+          },
+          "outcome": {
+            "enum": [
+              "supported",
+              "required_but_missing",
+              "unsupported"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "created_node": {
+            "description": "The node this operation would create (list_element insert, declaration create), as change.propose names it.",
+            "$ref": "../common.json#/$defs/nodeId"
+          }
+        }
+      }
+    },
+    "id_map": {
+      "description": "Optional: the id_map change.propose would return, composed over the batch from base_snapshot; present when the outcome is supported.",
+      "$ref": "../edits.json#/$defs/idMap"
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "$ref": "../common.json#/$defs/path"
+      },
+      "uniqueItems": true
+    },
+    "required_checks": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64
+      },
+      "uniqueItems": true
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "type": "object",
+        "required": [
+          "outcome"
+        ],
+        "properties": {
+          "outcome": {
+            "const": "supported"
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "reason"
+              ]
+            }
+          ]
+        },
+        "properties": {
+          "operations": {
+            "minItems": 1
+          },
+          "files": {
+            "minItems": 1
+          }
+        }
+      },
+      "else": {
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "files": {
+            "maxItems": 0
+          }
+        }
+      }
+    }
+  ],
+  "x-errors": [
+    "invalid_arguments",
+    "not_found",
+    "internal",
+    "resource_limit",
+    "permission_denied",
+    "unsupported_operation",
+    "stale_snapshot",
+    "snapshot_expired",
+    "precondition_failed",
+    "ambiguous_owner",
+    "read_only_origin",
+    "compile_failed"
+  ]
+}

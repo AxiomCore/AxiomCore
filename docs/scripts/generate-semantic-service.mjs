@@ -273,16 +273,19 @@ function nestedTables(schema, file, tableId) {
   return tables;
 }
 
+// The hosted copies of the schemas (scripts/sync-semantic-service-files.mjs).
+const schemaUrl = 'https://docs.axiomcore.dev/semantic-service/schemas/';
+
 function operationSection(operation) {
   const request = operationSchema(operation, 'request');
   const result = operationSchema(operation, 'result');
   const errors = result.schema['x-errors'] ?? [];
   return [
-    `**Params** (\`schemas/operations/${operation}.request.json\`)`,
+    `**Params** ([\`schemas/operations/${operation}.request.json\`](${schemaUrl}operations/${operation}.request.json))`,
     '',
     fieldTable(request.schema, request.path, 'No params: send `"params": {}`.', `${operation}.request`),
     '',
-    `**Result** (\`schemas/operations/${operation}.result.json\`)`,
+    `**Result** ([\`schemas/operations/${operation}.result.json\`](${schemaUrl}operations/${operation}.result.json))`,
     '',
     fieldTable(result.schema, result.path, 'An empty object.', `${operation}.result`),
     ...nestedTables(result.schema, result.path, `${operation}.result`),

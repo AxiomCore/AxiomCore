@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.axiomcore.dev/agent-semantic/v1/operations/workspace.open.request.json",
+  "title": "workspace.open request",
+  "description": "params of workspace.open: attach explicit roots. Nothing is installed or executed.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "roots"
+  ],
+  "properties": {
+    "roots": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "path": {
+            "$ref": "../common.json#/$defs/hostPath"
+          },
+          "entry": {
+            "description": "Entry file, default main.acore.",
+            "$ref": "../common.json#/$defs/path"
+          }
+        }
+      },
+      "minItems": 1,
+      "maxItems": 16
+    },
+    "language_profile": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "target": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    }
+  }
+}

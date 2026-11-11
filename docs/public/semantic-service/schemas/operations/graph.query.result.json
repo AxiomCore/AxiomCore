@@ -1,0 +1,169 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.axiomcore.dev/agent-semantic/v1/operations/graph.query.result.json",
+  "title": "graph.query result",
+  "description": "Typed edges with their layer and use site, the nodes they touch, and explicit boundaries.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "traversed",
+    "nodes",
+    "edges",
+    "boundaries"
+  ],
+  "properties": {
+    "traversed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "direction",
+        "edge_kinds",
+        "layers"
+      ],
+      "properties": {
+        "direction": {
+          "enum": [
+            "outgoing",
+            "incoming",
+            "both"
+          ]
+        },
+        "edge_kinds": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/edgeKind"
+          }
+        },
+        "layers": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/edgeLayer"
+          }
+        }
+      }
+    },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "$ref": "../common.json#/$defs/nodeSummary"
+      }
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "from",
+          "kind",
+          "to",
+          "layer",
+          "depth"
+        ],
+        "properties": {
+          "from": {
+            "$ref": "../common.json#/$defs/nodeId"
+          },
+          "kind": {
+            "$ref": "../common.json#/$defs/edgeKind"
+          },
+          "to": {
+            "$ref": "../common.json#/$defs/nodeId"
+          },
+          "layer": {
+            "$ref": "../common.json#/$defs/edgeLayer"
+          },
+          "depth": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "site": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "path",
+              "line",
+              "column"
+            ],
+            "properties": {
+              "path": {
+                "$ref": "../common.json#/$defs/path"
+              },
+              "line": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "column": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "node": {
+                "$ref": "../common.json#/$defs/nodeId"
+              }
+            }
+          }
+        }
+      }
+    },
+    "paths": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "nodes"
+        ],
+        "properties": {
+          "nodes": {
+            "type": "array",
+            "items": {
+              "$ref": "../common.json#/$defs/nodeId"
+            },
+            "minItems": 2
+          }
+        }
+      }
+    },
+    "boundaries": {
+      "description": "Where the walk met something it cannot see through (foreign implementation, unresolved reference). Not an empty dependency set.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "node",
+          "kind",
+          "detail"
+        ],
+        "properties": {
+          "node": {
+            "$ref": "../common.json#/$defs/nodeId"
+          },
+          "kind": {
+            "enum": [
+              "foreign",
+              "unresolved",
+              "unsupported"
+            ]
+          },
+          "detail": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          }
+        }
+      }
+    }
+  },
+  "x-errors": [
+    "invalid_arguments",
+    "not_found",
+    "internal",
+    "resource_limit",
+    "permission_denied",
+    "unsupported_operation",
+    "snapshot_expired",
+    "stale_snapshot",
+    "compile_failed"
+  ]
+}

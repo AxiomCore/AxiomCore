@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.axiomcore.dev/agent-semantic/v1/operations/check.run.result.json",
+  "title": "check.run result",
+  "description": "One result per requested check. A failed check is status failed, never an error.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "ok",
+    "checks"
+  ],
+  "properties": {
+    "ok": {
+      "description": "True when every requested check passed.",
+      "type": "boolean"
+    },
+    "candidate": {
+      "$ref": "../common.json#/$defs/candidateId"
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "$ref": "../edits.json#/$defs/checkResult"
+      },
+      "minItems": 1
+    }
+  },
+  "x-errors": [
+    "invalid_arguments",
+    "not_found",
+    "internal",
+    "resource_limit",
+    "permission_denied",
+    "unsupported_operation",
+    "stale_snapshot",
+    "snapshot_expired"
+  ]
+}

@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.axiomcore.dev/agent-semantic/v1/operations/change.propose.result.json",
+  "title": "change.propose result",
+  "description": "The candidate, per-operation outcomes, the composed id_map, changed files (digests only; content via change.inspect), diagnostics, checks and evidence. A replay of the same request_id and input returns the recorded result with replayed true.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "candidate",
+    "replayed",
+    "operations",
+    "id_map",
+    "files",
+    "diagnostics",
+    "checks",
+    "evidence"
+  ],
+  "properties": {
+    "candidate": {
+      "$ref": "../edits.json#/$defs/candidate"
+    },
+    "replayed": {
+      "type": "boolean"
+    },
+    "operations": {
+      "type": "array",
+      "items": {
+        "$ref": "../edits.json#/$defs/operationOutcome"
+      },
+      "minItems": 1
+    },
+    "id_map": {
+      "description": "Composed over the batch, from base_snapshot (or the previous candidate version) to this version.",
+      "$ref": "../edits.json#/$defs/idMap"
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "$ref": "../edits.json#/$defs/fileChange"
+      },
+      "minItems": 1
+    },
+    "diagnostics": {
+      "$ref": "../common.json#/$defs/diagnostics"
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "$ref": "../edits.json#/$defs/checkResult"
+      },
+      "minItems": 1
+    },
+    "evidence": {
+      "$ref": "../edits.json#/$defs/evidence"
+    },
+    "impact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "nodes"
+      ],
+      "properties": {
+        "nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/nodeId"
+          },
+          "maxItems": 200
+        },
+        "more": {
+          "type": "boolean"
+        }
+      }
+    },
+    "repair": {
+      "description": "Present when the base is not validated (syntax or resolved): the accepted repair's base and result states and error counts.",
+      "$ref": "../edits.json#/$defs/repairOutcome"
+    }
+  },
+  "x-errors": [
+    "invalid_arguments",
+    "not_found",
+    "internal",
+    "resource_limit",
+    "permission_denied",
+    "unsupported_operation",
+    "stale_snapshot",
+    "snapshot_expired",
+    "precondition_failed",
+    "ambiguous_owner",
+    "read_only_origin",
+    "compile_failed",
+    "conflict"
+  ]
+}

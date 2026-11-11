@@ -1,0 +1,177 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.axiomcore.dev/agent-semantic/v1/operations/change.apply.result.json",
+  "title": "change.apply result",
+  "description": "The receipt. outcome unknown means the service could not tell whether publication completed; the next change.apply with the same request_id reconciles from the journal before doing anything.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "receipt",
+    "replayed"
+  ],
+  "properties": {
+    "replayed": {
+      "description": "True when this is the recorded receipt of an earlier identical request.",
+      "type": "boolean"
+    },
+    "receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "receipt_id",
+        "request_id",
+        "input_fingerprint",
+        "outcome",
+        "candidate",
+        "candidate_version",
+        "base_snapshot",
+        "files",
+        "id_map",
+        "journal",
+        "recorded_at"
+      ],
+      "properties": {
+        "receipt_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "request_id": {
+          "$ref": "../common.json#/$defs/requestId"
+        },
+        "input_fingerprint": {
+          "$ref": "../common.json#/$defs/fingerprint"
+        },
+        "outcome": {
+          "enum": [
+            "applied",
+            "not_applied",
+            "unknown"
+          ]
+        },
+        "candidate": {
+          "$ref": "../common.json#/$defs/candidateId"
+        },
+        "candidate_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "base_snapshot": {
+          "$ref": "../common.json#/$defs/snapshotId"
+        },
+        "result_snapshot": {
+          "description": "Captured after publication; present when applied.",
+          "$ref": "../common.json#/$defs/snapshotId"
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "$ref": "../edits.json#/$defs/fileChange"
+          },
+          "minItems": 1
+        },
+        "id_map": {
+          "$ref": "../edits.json#/$defs/idMap"
+        },
+        "journal": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "state"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "state": {
+              "enum": [
+                "committed",
+                "rolled_back",
+                "pending_reconcile"
+              ]
+            }
+          }
+        },
+        "recorded_at": {
+          "$ref": "../common.json#/$defs/timestamp"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "required": [
+              "outcome"
+            ],
+            "properties": {
+              "outcome": {
+                "const": "applied"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "result_snapshot"
+            ],
+            "properties": {
+              "journal": {
+                "properties": {
+                  "state": {
+                    "const": "committed"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "required": [
+              "outcome"
+            ],
+            "properties": {
+              "outcome": {
+                "const": "unknown"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "journal": {
+                "properties": {
+                  "state": {
+                    "const": "pending_reconcile"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "base_changes": {
+      "description": "Inputs of the candidate's base snapshot that the candidate does not write and that differed on disk when it was applied (allowed by the content rule; a deleted or renamed one is refused instead). The published head is then not exactly the base plus the candidate. Absent when none, and on replays (replayed: true).",
+      "type": "array",
+      "items": {
+        "$ref": "../common.json#/$defs/inputChange"
+      },
+      "maxItems": 50
+    }
+  },
+  "x-errors": [
+    "invalid_arguments",
+    "not_found",
+    "internal",
+    "resource_limit",
+    "permission_denied",
+    "unsupported_operation",
+    "snapshot_expired",
+    "precondition_failed",
+    "conflict",
+    "compile_failed"
+  ]
+}

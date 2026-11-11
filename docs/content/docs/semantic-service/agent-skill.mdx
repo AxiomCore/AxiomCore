@@ -20,22 +20,35 @@ is available.
 You need the MCP server registered first; see
 [Connect an MCP client](/semantic-service/quickstart#3-connect-an-mcp-client).
 
-Create the skill directory for your client. For all projects:
+The skill is four Markdown files published on this site:
+[`SKILL.md`](https://docs.axiomcore.dev/semantic-service/skill/SKILL.md) and the three optional reference files it links,
+[`references/operations.md`](https://docs.axiomcore.dev/semantic-service/skill/references/operations.md),
+[`references/errors.md`](https://docs.axiomcore.dev/semantic-service/skill/references/errors.md) and
+[`references/examples.md`](https://docs.axiomcore.dev/semantic-service/skill/references/examples.md).
+Download them into your client's skills directory. For all your projects:
 
 ```bash title="Claude Code, any directory"
-mkdir -p ~/.claude/skills/acore-semantic
+dir=~/.claude/skills/acore-semantic
+mkdir -p "$dir/references"
+for f in SKILL.md references/operations.md references/errors.md references/examples.md; do
+  curl -fsSL -o "$dir/$f" "https://docs.axiomcore.dev/semantic-service/skill/$f"
+done
 ```
 
 ```bash title="Codex, any directory"
-mkdir -p ~/.codex/skills/acore-semantic
+dir=~/.agents/skills/acore-semantic
+mkdir -p "$dir/references"
+for f in SKILL.md references/operations.md references/errors.md references/examples.md; do
+  curl -fsSL -o "$dir/$f" "https://docs.axiomcore.dev/semantic-service/skill/$f"
+done
 ```
 
-For one project only, use `.claude/skills/acore-semantic` (Claude Code) or
-`.agents/skills/acore-semantic` (Codex) inside the project instead.
-
-Save the content in [the skill](#the-skill) below as `SKILL.md` in that
-directory. The client loads it when a task matches its description. Ask the
-agent to "use the acore-semantic skill" if it does not pick it up.
+For one project only, run the same commands from the project root with
+`dir=.claude/skills/acore-semantic` (Claude Code) or
+`dir=.agents/skills/acore-semantic` (Codex). Each client loads the skill when
+a task matches its description. Ask the agent to "use the acore-semantic
+skill" if it does not pick it up. To update the skill, run the commands again;
+to remove it, delete the directory.
 
 A skill cannot stop an agent from editing files directly. If you need that
 guarantee, restrict file edit tools in your client's permission settings.
@@ -56,10 +69,10 @@ guarantee, restrict file edit tools in your client's permission settings.
 
 ## The skill
 
-The skill ships with the Acore compiler source in `skills/acore-semantic/`,
-next to reference files on operations, errors and examples. It is reproduced
-below, adapted to what the preview service serves and with its references
-pointing to these pages. There is no separate download until release.
+This is the text of the published [`SKILL.md`](https://docs.axiomcore.dev/semantic-service/skill/SKILL.md),
+the same file the commands above download.
+
+{/* BEGIN GENERATED skill */}
 
 ```text title="SKILL.md"
 ---
@@ -81,7 +94,7 @@ This file is workflow guidance. It is not live state and not a language manual. 
 3. Never assume an operation exists because this skill mentions it. A `planned` operation answers `unsupported_operation` (`not_implemented`).
 4. Read `limits.defaults` and `limits.maximums` from the manifest; do not guess them.
 
-The MCP tools are named after the operations with `_` instead of `.` (`node_find` for `node.find`). Match each tool by its operation name and follow its input schema exactly. The server fills in the workspace.
+The MCP tool list is generated from the same schemas. A client may show a tool under a slightly different name (for example with `_` instead of `.`); match it by its operation name and follow its input schema exactly.
 
 ## Request shape
 
@@ -91,7 +104,7 @@ Node ids are opaque and valid within one snapshot. Never build or edit an id by 
 
 ## Workflow
 
-1. **Attach.** `workspace.open` with `roots: [{path: "<absolute project dir>"}]` (the directory the server serves). Check each project's `status`: `ready` is usable; `needs_preparation` lists `preparation` steps (for example a missing UI lock) that the user must run, because the service never installs anything; `unsupported` means stop and tell the user.
+1. **Attach.** `workspace.open` with `roots: [{path: "<absolute project dir>"}]`. Check each project's `status`: `ready` is usable; `needs_preparation` lists `preparation` steps (for example a missing UI lock) that the user must run, because the service never installs anything; `unsupported` means stop and tell the user.
 2. **Orient.** `project.overview` lists modules, entry points, contracts and diagnostics. If the project does not compile, start from these diagnostics.
 3. **Find.** `node.find` with a `query` (name, id or literal text), an optional `kind` and a `limit`. Each node comes with a `version`. For relationships use `graph.query` (`mode`: `dependencies`, `dependents`, `references` or `paths`) or `impact.analyze`. Use `node.get` for properties and edges of known ids.
 4. **Build context.** `context.build` with `focus` (node ids), a `purpose` (`understand`, `change_input`, `change_behavior`, `diagnose`) and `limits.max_bytes`. The purpose `change_schema` needs a backend profile and answers `unsupported_operation` here. Every item says why it is included and whether it is `required`. Start small; expand with `expand` refs from the response rather than raising limits blindly.
@@ -111,7 +124,7 @@ Tell the user what you applied: the files from the receipt and the semantic diff
 
 ## When an error comes back
 
-Errors carry `code`, `reason`, `retryable` (`none`, `same_request`, `after_refresh`) and `next_actions`. Decide from those fields, never from `message`. Follow `next_actions` when present.
+Errors carry `code`, `reason`, `retryable` (`none`, `same_request`, `after_refresh`) and `next_actions`. Decide from those fields, never from `message`. Follow `next_actions` when present. Details: `references/errors.md`.
 
 | Code | What to do |
 | --- | --- |
@@ -136,11 +149,15 @@ Do not fall back to grep and hand edits because an edit failed; every error abov
 
 Non-Acore files (docs, configs, other languages) are outside this service; edit them normally.
 
-## References
+## References (optional)
 
-- Protocol reference: https://docs.axiomcore.dev/semantic-service/protocol
-- Support matrix: https://docs.axiomcore.dev/semantic-service/support-matrix
+- `references/operations.md`: one entry per operation (purpose, key params, result, errors).
+- `references/errors.md`: retry semantics and reasons per code.
+- `references/examples.md`: a `bind_property` change and a context-then-edit flow on an example shopping app.
+- Schemas: https://docs.axiomcore.dev/semantic-service/schemas/index.json lists every schema file.
 ```
+
+{/* END GENERATED skill */}
 
 ## Next steps
 

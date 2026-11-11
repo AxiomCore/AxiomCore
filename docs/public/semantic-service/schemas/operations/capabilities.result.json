@@ -1,0 +1,825 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.axiomcore.dev/agent-semantic/v1/operations/capabilities.result.json",
+  "title": "capabilities result",
+  "description": "The capability manifest, generated from the dispatch table. Lists implemented, partial and planned operations, edit kinds, profiles, limits and publication guarantees.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "manifest",
+    "manifest_fingerprint"
+  ],
+  "properties": {
+    "manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocol",
+        "service",
+        "operations",
+        "edit_kinds",
+        "profiles",
+        "limits",
+        "publication",
+        "error_codes"
+      ],
+      "properties": {
+        "protocol": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "status"
+          ],
+          "properties": {
+            "name": {
+              "$ref": "../common.json#/$defs/protocol"
+            },
+            "status": {
+              "enum": [
+                "draft",
+                "frozen"
+              ]
+            },
+            "frozen_operations": {
+              "type": "array",
+              "items": {
+                "$ref": "../common.json#/$defs/operation"
+              },
+              "uniqueItems": true
+            }
+          }
+        },
+        "service": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "version"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          }
+        },
+        "operations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "status"
+            ],
+            "properties": {
+              "name": {
+                "$ref": "../common.json#/$defs/operation"
+              },
+              "status": {
+                "description": "implemented: served and its conformance cases pass. partial: served for a declared subset (notes). planned: in the protocol, not served (unsupported_operation).",
+                "enum": [
+                  "implemented",
+                  "partial",
+                  "planned"
+                ]
+              },
+              "since": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 32
+              },
+              "notes": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              }
+            }
+          }
+        },
+        "edit_kinds": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "status"
+            ],
+            "properties": {
+              "kind": {
+                "$ref": "../edits.json#/$defs/editKind"
+              },
+              "status": {
+                "description": "implemented: served and its conformance cases pass. partial: served for a declared subset (notes). planned: in the protocol, not served (unsupported_operation).",
+                "enum": [
+                  "implemented",
+                  "partial",
+                  "planned"
+                ]
+              },
+              "ops": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 32
+                },
+                "uniqueItems": true
+              },
+              "profiles": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                }
+              },
+              "notes": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              "fallback": {
+                "description": "A fallback capability, offered only where the semantic families cannot address the source (replace_region: syntax snapshots).",
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "profiles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "targets",
+              "status",
+              "node_kinds"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "targets": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                },
+                "minItems": 1
+              },
+              "status": {
+                "description": "implemented: served and its conformance cases pass. partial: served for a declared subset (notes). planned: in the protocol, not served (unsupported_operation).",
+                "enum": [
+                  "implemented",
+                  "partial",
+                  "planned"
+                ]
+              },
+              "node_kinds": {
+                "type": "array",
+                "items": {
+                  "$ref": "../common.json#/$defs/nodeKind"
+                }
+              },
+              "edge_kinds": {
+                "type": "array",
+                "items": {
+                  "$ref": "../common.json#/$defs/edgeKind"
+                }
+              }
+            }
+          }
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "defaults",
+            "maximums"
+          ],
+          "properties": {
+            "defaults": {
+              "$ref": "../common.json#/$defs/effectiveLimits"
+            },
+            "maximums": {
+              "$ref": "../common.json#/$defs/effectiveLimits"
+            },
+            "request_max_bytes": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "timeout_ms": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "input": {
+              "description": "The input bounds the service enforces. Over each one the answer is resource_limit with the reason listed in the protocol reference (Limits); check_files_max is a schema bound (invalid_arguments).",
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "json_depth_max": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "operations_max": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "check_files_max": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "check_content_max_bytes": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "snapshot_bytes_max": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "source_file_bytes_max": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "sources_bytes_max": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "source_files_max": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "import_depth_max": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "nesting_max": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "brackets_max": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "brackets_total_max": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "group_compile_budget_ms": {
+              "description": "Wall-time budget of a batch's intermediate compiles (grouped edits); past it an operation that needs one is resource_limit (budget_exhausted).",
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "check",
+              "status"
+            ],
+            "properties": {
+              "check": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "status": {
+                "description": "implemented: served and its conformance cases pass. partial: served for a declared subset (notes). planned: in the protocol, not served (unsupported_operation).",
+                "enum": [
+                  "implemented",
+                  "partial",
+                  "planned"
+                ]
+              },
+              "notes": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              }
+            }
+          }
+        },
+        "publication": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "profile",
+              "status",
+              "guarantees"
+            ],
+            "properties": {
+              "profile": {
+                "enum": [
+                  "local_filesystem",
+                  "cloud_managed"
+                ]
+              },
+              "status": {
+                "description": "implemented: served and its conformance cases pass. partial: served for a declared subset (notes). planned: in the protocol, not served (unsupported_operation).",
+                "enum": [
+                  "implemented",
+                  "partial",
+                  "planned"
+                ]
+              },
+              "guarantees": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                }
+              },
+              "notes": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              }
+            }
+          }
+        },
+        "error_codes": {
+          "type": "array",
+          "items": {
+            "$ref": "../error.json#/$defs/code"
+          },
+          "uniqueItems": true
+        },
+        "external_writes": {
+          "description": "How the service detects writes by editors and tools it does not coordinate (external writers).",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "detection",
+            "guarantees"
+          ],
+          "properties": {
+            "detection": {
+              "description": "revalidation: freshness is established only by comparing a snapshot's inputs with the disk at request time (stat, then content hash); a watcher never establishes it.",
+              "enum": [
+                "revalidation"
+              ]
+            },
+            "watcher": {
+              "description": "optional_polling: persistent hosts poll the head to pre-hash changed files; it may be off or unavailable without changing any answer. none: no watcher.",
+              "enum": [
+                "optional_polling",
+                "none"
+              ]
+            },
+            "since": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32
+            },
+            "guarantees": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "notes": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 600
+            }
+          }
+        }
+      }
+    },
+    "manifest_fingerprint": {
+      "$ref": "../common.json#/$defs/fingerprint"
+    }
+  },
+  "$defs": {
+    "manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocol",
+        "service",
+        "operations",
+        "edit_kinds",
+        "profiles",
+        "limits",
+        "publication",
+        "error_codes"
+      ],
+      "properties": {
+        "protocol": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "status"
+          ],
+          "properties": {
+            "name": {
+              "$ref": "../common.json#/$defs/protocol"
+            },
+            "status": {
+              "enum": [
+                "draft",
+                "frozen"
+              ]
+            },
+            "frozen_operations": {
+              "type": "array",
+              "items": {
+                "$ref": "../common.json#/$defs/operation"
+              },
+              "uniqueItems": true
+            }
+          }
+        },
+        "service": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "version"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          }
+        },
+        "operations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "status"
+            ],
+            "properties": {
+              "name": {
+                "$ref": "../common.json#/$defs/operation"
+              },
+              "status": {
+                "description": "implemented: served and its conformance cases pass. partial: served for a declared subset (notes). planned: in the protocol, not served (unsupported_operation).",
+                "enum": [
+                  "implemented",
+                  "partial",
+                  "planned"
+                ]
+              },
+              "since": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 32
+              },
+              "notes": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              }
+            }
+          }
+        },
+        "edit_kinds": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "status"
+            ],
+            "properties": {
+              "kind": {
+                "$ref": "../edits.json#/$defs/editKind"
+              },
+              "status": {
+                "description": "implemented: served and its conformance cases pass. partial: served for a declared subset (notes). planned: in the protocol, not served (unsupported_operation).",
+                "enum": [
+                  "implemented",
+                  "partial",
+                  "planned"
+                ]
+              },
+              "ops": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 32
+                },
+                "uniqueItems": true
+              },
+              "profiles": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                }
+              },
+              "notes": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              "fallback": {
+                "description": "A fallback capability, offered only where the semantic families cannot address the source (replace_region: syntax snapshots).",
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "profiles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "targets",
+              "status",
+              "node_kinds"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "targets": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                },
+                "minItems": 1
+              },
+              "status": {
+                "description": "implemented: served and its conformance cases pass. partial: served for a declared subset (notes). planned: in the protocol, not served (unsupported_operation).",
+                "enum": [
+                  "implemented",
+                  "partial",
+                  "planned"
+                ]
+              },
+              "node_kinds": {
+                "type": "array",
+                "items": {
+                  "$ref": "../common.json#/$defs/nodeKind"
+                }
+              },
+              "edge_kinds": {
+                "type": "array",
+                "items": {
+                  "$ref": "../common.json#/$defs/edgeKind"
+                }
+              }
+            }
+          }
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "defaults",
+            "maximums"
+          ],
+          "properties": {
+            "defaults": {
+              "$ref": "../common.json#/$defs/effectiveLimits"
+            },
+            "maximums": {
+              "$ref": "../common.json#/$defs/effectiveLimits"
+            },
+            "request_max_bytes": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "timeout_ms": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "input": {
+              "description": "The input bounds the service enforces. Over each one the answer is resource_limit with the reason listed in the protocol reference (Limits); check_files_max is a schema bound (invalid_arguments).",
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "json_depth_max": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "operations_max": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "check_files_max": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "check_content_max_bytes": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "snapshot_bytes_max": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "source_file_bytes_max": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "sources_bytes_max": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "source_files_max": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "import_depth_max": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "nesting_max": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "brackets_max": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "brackets_total_max": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "group_compile_budget_ms": {
+              "description": "Wall-time budget of a batch's intermediate compiles (grouped edits); past it an operation that needs one is resource_limit (budget_exhausted).",
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "check",
+              "status"
+            ],
+            "properties": {
+              "check": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "status": {
+                "description": "implemented: served and its conformance cases pass. partial: served for a declared subset (notes). planned: in the protocol, not served (unsupported_operation).",
+                "enum": [
+                  "implemented",
+                  "partial",
+                  "planned"
+                ]
+              },
+              "notes": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              }
+            }
+          }
+        },
+        "publication": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "profile",
+              "status",
+              "guarantees"
+            ],
+            "properties": {
+              "profile": {
+                "enum": [
+                  "local_filesystem",
+                  "cloud_managed"
+                ]
+              },
+              "status": {
+                "description": "implemented: served and its conformance cases pass. partial: served for a declared subset (notes). planned: in the protocol, not served (unsupported_operation).",
+                "enum": [
+                  "implemented",
+                  "partial",
+                  "planned"
+                ]
+              },
+              "guarantees": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                }
+              },
+              "notes": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              }
+            }
+          }
+        },
+        "error_codes": {
+          "type": "array",
+          "items": {
+            "$ref": "../error.json#/$defs/code"
+          },
+          "uniqueItems": true
+        },
+        "external_writes": {
+          "description": "How the service detects writes by editors and tools it does not coordinate (external writers).",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "detection",
+            "guarantees"
+          ],
+          "properties": {
+            "detection": {
+              "description": "revalidation: freshness is established only by comparing a snapshot's inputs with the disk at request time (stat, then content hash); a watcher never establishes it.",
+              "enum": [
+                "revalidation"
+              ]
+            },
+            "watcher": {
+              "description": "optional_polling: persistent hosts poll the head to pre-hash changed files; it may be off or unavailable without changing any answer. none: no watcher.",
+              "enum": [
+                "optional_polling",
+                "none"
+              ]
+            },
+            "since": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32
+            },
+            "guarantees": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "notes": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 600
+            }
+          }
+        }
+      }
+    }
+  },
+  "x-errors": [
+    "internal",
+    "unsupported_operation",
+    "invalid_arguments",
+    "resource_limit"
+  ]
+}

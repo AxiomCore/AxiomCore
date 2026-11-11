@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.axiomcore.dev/agent-semantic/v1/operations/change.discard.request.json",
+  "title": "change.discard request",
+  "description": "params of change.discard. Never undoes an applied change.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "candidate"
+  ],
+  "properties": {
+    "candidate": {
+      "$ref": "../common.json#/$defs/candidateId"
+    },
+    "expected_candidate_version": {
+      "type": "integer",
+      "minimum": 1
+    }
+  }
+}

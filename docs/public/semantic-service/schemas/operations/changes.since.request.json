@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.axiomcore.dev/agent-semantic/v1/operations/changes.since.request.json",
+  "title": "changes.since request",
+  "description": "params of changes.since. The envelope snapshot is the newer side (often latest).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "since"
+  ],
+  "properties": {
+    "since": {
+      "$ref": "../common.json#/$defs/snapshotId"
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {
+        "nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/nodeId"
+          },
+          "maxItems": 200,
+          "uniqueItems": true
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/path"
+          },
+          "maxItems": 200,
+          "uniqueItems": true
+        },
+        "candidate": {
+          "$ref": "../common.json#/$defs/candidateId"
+        }
+      }
+    },
+    "cursor": {
+      "$ref": "../common.json#/$defs/cursor"
+    }
+  }
+}

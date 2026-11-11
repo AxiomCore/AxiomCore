@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.axiomcore.dev/agent-semantic/v1/operations/project.overview.request.json",
+  "title": "project.overview request",
+  "description": "params of project.overview (paginated by limits.max_items and cursor).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [],
+  "properties": {
+    "projects": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "uniqueItems": true
+    },
+    "include": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "modules",
+          "entry_points",
+          "contracts",
+          "diagnostics"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "cursor": {
+      "$ref": "../common.json#/$defs/cursor"
+    }
+  }
+}

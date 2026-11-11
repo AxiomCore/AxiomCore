@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.axiomcore.dev/agent-semantic/v1/operations/change.inspect.request.json",
+  "title": "change.inspect request",
+  "description": "params of change.inspect.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "candidate"
+  ],
+  "properties": {
+    "candidate": {
+      "$ref": "../common.json#/$defs/candidateId"
+    },
+    "include": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "semantic_diff",
+          "source_diff",
+          "content",
+          "affected",
+          "checks"
+        ]
+      },
+      "uniqueItems": true
+    }
+  }
+}

@@ -33,6 +33,10 @@ for (const path of [
   '/robots.txt',
   '/.well-known/security.txt',
   '/docs/reference/versioning-and-deprecation.mdx',
+  '/semantic-service/schemas/index.json',
+  '/semantic-service/schemas/operations/node.find.request.json',
+  '/semantic-service/skill/SKILL.md',
+  '/semantic-service/skill/references/operations.md',
 ]) {
   if (!hasExportedPath(path)) throw new Error(`Static export is missing route output for ${path}`);
 }
@@ -46,6 +50,8 @@ for (const required of [
   'Content-Type: application/json; charset=utf-8',
   'Cache-Control: no-store',
   '/api/search',
+  '/semantic-service/schemas/*',
+  '/semantic-service/skill/*',
 ]) {
   if (!headers.includes(required)) throw new Error(`Cloudflare _headers is missing ${required}`);
 }

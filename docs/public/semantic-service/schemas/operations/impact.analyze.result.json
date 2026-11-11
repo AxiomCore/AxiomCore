@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.axiomcore.dev/agent-semantic/v1/operations/impact.analyze.result.json",
+  "title": "impact.analyze result",
+  "description": "Nodes an edit of the targets could affect (targets not listed), with the edge that reached each, and test associations.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "impacted"
+  ],
+  "properties": {
+    "impacted": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "node",
+          "depth",
+          "from",
+          "edge_kind",
+          "layer"
+        ],
+        "properties": {
+          "node": {
+            "$ref": "../common.json#/$defs/nodeSummary"
+          },
+          "depth": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "from": {
+            "$ref": "../common.json#/$defs/nodeId"
+          },
+          "edge_kind": {
+            "$ref": "../common.json#/$defs/edgeKind"
+          },
+          "layer": {
+            "$ref": "../common.json#/$defs/edgeLayer"
+          }
+        }
+      }
+    },
+    "tests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "association"
+        ],
+        "properties": {
+          "path": {
+            "$ref": "../common.json#/$defs/path"
+          },
+          "association": {
+            "enum": [
+              "proven",
+              "configured",
+              "heuristic"
+            ]
+          },
+          "node": {
+            "$ref": "../common.json#/$defs/nodeId"
+          }
+        }
+      }
+    }
+  },
+  "x-errors": [
+    "invalid_arguments",
+    "not_found",
+    "internal",
+    "resource_limit",
+    "permission_denied",
+    "unsupported_operation",
+    "snapshot_expired",
+    "stale_snapshot",
+    "compile_failed"
+  ]
+}

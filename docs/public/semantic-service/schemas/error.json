@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.axiomcore.dev/agent-semantic/v1/error.json",
+  "title": "Error",
+  "description": "The one error object of v1. code is a closed vocabulary; reason refines it with an open snake_case string documented in the protocol reference. Clients decide retries from retryable, never from message.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "code",
+    "message",
+    "diagnostics",
+    "retryable",
+    "next_actions"
+  ],
+  "properties": {
+    "code": {
+      "$ref": "#/$defs/code"
+    },
+    "reason": {
+      "description": "Open refinement of code (the protocol reference lists the values in use), for example old_value_mismatch, request_id_reused, external_write.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,63}$"
+    },
+    "message": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "operation_index": {
+      "description": "Index in params.operations of the operation that failed (batched edits).",
+      "type": "integer",
+      "minimum": 0
+    },
+    "target": {
+      "$ref": "#/$defs/target"
+    },
+    "diagnostics": {
+      "$ref": "common.json#/$defs/diagnostics"
+    },
+    "retryable": {
+      "$ref": "#/$defs/retryable"
+    },
+    "next_actions": {
+      "type": "array",
+      "items": {
+        "$ref": "common.json#/$defs/nextAction"
+      },
+      "maxItems": 10
+    },
+    "details": {
+      "description": "Code-specific structured data (current value, expansion refs, conflicting paths, receipt).",
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "const": "insufficient_context"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "details"
+        ],
+        "properties": {
+          "details": {
+            "type": "object",
+            "required": [
+              "required_bytes",
+              "expand"
+            ],
+            "properties": {
+              "required_bytes": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "expand": {
+                "type": "array",
+                "items": {
+                  "$ref": "common.json#/$defs/expansionRef"
+                },
+                "minItems": 1,
+                "maxItems": 50
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "code": {
+      "enum": [
+        "unsupported_operation",
+        "invalid_arguments",
+        "ambiguous_owner",
+        "read_only_origin",
+        "stale_snapshot",
+        "precondition_failed",
+        "compile_failed",
+        "conflict",
+        "insufficient_context",
+        "snapshot_expired",
+        "permission_denied",
+        "resource_limit",
+        "not_found",
+        "internal"
+      ]
+    },
+    "retryable": {
+      "description": "none: the same request will fail again. same_request: retry unchanged (transient). after_refresh: re-read (new snapshot, node versions, options) and rebuild the request.",
+      "enum": [
+        "none",
+        "same_request",
+        "after_refresh"
+      ]
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {
+        "node": {
+          "$ref": "common.json#/$defs/nodeId"
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/nodeId"
+          },
+          "maxItems": 50
+        },
+        "property": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "path": {
+          "$ref": "common.json#/$defs/path"
+        },
+        "candidate": {
+          "$ref": "common.json#/$defs/candidateId"
+        },
+        "snapshot": {
+          "$ref": "common.json#/$defs/snapshotSelector"
+        },
+        "request_id": {
+          "$ref": "common.json#/$defs/requestId"
+        },
+        "handle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      },
+      "description": "What the error is about."
+    }
+  }
+}

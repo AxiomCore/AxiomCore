@@ -60,7 +60,12 @@ pub fn delegate(arguments: &[OsString]) -> Result<Infallible> {
 
 /// Lookup order: `AXIOM_ACORE_SEMANTIC` (no fallthrough when set), the
 /// directory of the resolved `axiom` executable, the directory it was invoked
-/// from when that is a symlink elsewhere, then `PATH`.
+/// from when that is a symlink elsewhere (macOS only: `current_exe` is already
+/// resolved on Linux), then the absolute directories of `PATH`.
+///
+/// The result is always an absolute path, so the file that was checked is the
+/// file that runs, and nothing is ever taken from the current directory: an
+/// empty or relative `PATH` entry is skipped.
 pub fn locate() -> Result<PathBuf> {
     let current = std::env::current_exe().ok();
     locate_from(
@@ -76,8 +81,14 @@ fn locate_from(
     path: Option<&OsStr>,
 ) -> Result<PathBuf> {
     if let Some(explicit) = explicit {
-        let explicit = PathBuf::from(explicit);
-        if explicit.is_file() {
+        // A relative value names a file under the current directory; it
+        // must not be searched for on `PATH` when it runs.
+        let explicit = if explicit.is_empty() {
+            PathBuf::new()
+        } else {
+            std::path::absolute(explicit).unwrap_or_else(|_| PathBuf::from(explicit))
+        };
+        if explicit.is_absolute() && explicit.is_file() {
             return Ok(explicit);
         }
         bail!(
@@ -98,7 +109,7 @@ fn locate_from(
             directories.push(parent.to_path_buf());
         }
         if let Some(parent) = current_exe.parent() {
-            if !directories.iter().any(|directory| directory == parent) {
+            if parent.is_absolute() && !directories.iter().any(|directory| directory == parent) {
                 directories.push(parent.to_path_buf());
             }
         }
@@ -111,7 +122,7 @@ fn locate_from(
         searched.push(candidate.display().to_string());
     }
     if let Some(path) = path {
-        for directory in std::env::split_paths(path) {
+        for directory in absolute_directories(path) {
             let candidate = directory.join(&name);
             if candidate.is_file() {
                 return Ok(candidate);
@@ -125,6 +136,14 @@ fn locate_from(
          or set {BINARY_ENV} to its path.",
         searched.join(", ")
     );
+}
+
+/// The `PATH` entries that name an absolute directory. An empty entry and
+/// `.` mean the current directory, where a project could plant a binary.
+fn absolute_directories(path: &OsStr) -> Vec<PathBuf> {
+    std::env::split_paths(path)
+        .filter(|directory| directory.is_absolute())
+        .collect()
 }
 
 #[cfg(test)]
@@ -153,6 +172,54 @@ mod tests {
             .to_string();
         assert!(error.contains(BINARY_ENV), "{error}");
         assert!(sibling.is_file());
+    }
+
+    #[test]
+    fn relative_explicit_path_is_resolved_before_it_runs() {
+        // A file under the current directory, named relatively.
+        let directory = tempfile::tempdir_in(".").unwrap();
+        executable(directory.path(), "custom");
+        let relative = Path::new(directory.path().file_name().unwrap()).join("custom");
+        assert!(relative.is_relative());
+        let found = locate_from(Some(relative.as_os_str()), None, None).unwrap();
+        assert!(found.is_absolute(), "{}", found.display());
+        assert_eq!(found, std::env::current_dir().unwrap().join(&relative));
+        // An empty value and a directory are errors, with no fallthrough.
+        let on_path = tempfile::tempdir().unwrap();
+        executable(on_path.path(), &binary_name());
+        let path = std::env::join_paths([on_path.path()]).unwrap();
+        for value in [OsStr::new(""), directory.path().as_os_str()] {
+            let error = locate_from(Some(value), None, Some(&path))
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(BINARY_ENV), "{error}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn empty_and_relative_path_entries_are_never_searched() {
+        // The binary exists under the current directory; `PATH` reaches it
+        // only through an empty entry, `.` and a relative directory.
+        let directory = tempfile::tempdir_in(".").unwrap();
+        executable(directory.path(), &binary_name());
+        let relative = PathBuf::from(directory.path().file_name().unwrap());
+        assert!(relative.join(binary_name()).is_file());
+        let mut path = OsString::from(":.:");
+        path.push(relative.as_os_str());
+        path.push(":");
+        assert!(absolute_directories(&path).is_empty());
+        let error = locate_from(None, None, Some(&path))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("is not installed"), "{error}");
+        // An absolute entry next to them is still searched.
+        let absolute = std::env::current_dir().unwrap().join(&relative);
+        path.push(absolute.as_os_str());
+        assert_eq!(
+            locate_from(None, None, Some(&path)).unwrap(),
+            absolute.join(binary_name())
+        );
     }
 
     #[test]

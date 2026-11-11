@@ -43,9 +43,13 @@ Each file's `$id` has the form
 schema's identifier, not a download location: nothing is served at
 `schemas.axiomcore.dev`. The files on this site are the authoritative,
 published copies. References between files are relative (for example
-`../common.json#/$defs/path` from `operations/`), so they resolve against the
-`$id` and against the URL on this site alike. To validate, load all 39 schema
-files into your validator, which then resolves references by `$id`.
+`../common.json#/$defs/path` from `operations/`), and a validator resolves
+them against the `$id`, not against the URL a file was downloaded from. A
+validator that fetches references on demand therefore tries
+`schemas.axiomcore.dev` and fails. To validate, either load all 39 schema
+files into your validator first, so it finds each one by its `$id`, or
+configure it to map `https://schemas.axiomcore.dev/agent-semantic/v1/` to
+`https://docs.axiomcore.dev/semantic-service/schemas/`.
 
 ## Conventions
 

@@ -62,8 +62,10 @@ acore-semantic-macos-arm64.tar.gz: OK
 Stop if `shasum` prints anything other than `OK`. The archive holds one file,
 the `acore-semantic` binary. If `~/.local/bin` is not on your `PATH`, add
 `export PATH="$HOME/.local/bin:$PATH"` to your shell profile and open a new
-terminal. Use `curl` as shown: the binary is not notarized, so macOS may
-refuse to run it if a web browser downloaded the archive.
+terminal. Use `curl` as shown: the binary is not notarized, so macOS blocks
+it when a web browser downloaded the archive. If that happened, download it
+again with `curl`, or remove the mark the browser added with
+`xattr -d com.apple.quarantine ~/.local/bin/acore-semantic`.
 
 Every example on these pages calls `acore-semantic` directly and assumes the
 binary is on your `PATH`. Check it from any directory:

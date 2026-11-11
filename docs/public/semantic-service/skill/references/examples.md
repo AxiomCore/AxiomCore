@@ -102,7 +102,7 @@ If the server answers `insufficient_context` instead (for example with `focus` `
    "option": {"option_id": "o2", "fingerprint": "eba80e54..."}}]}}
 ```
 
-**Check and apply.** `change.inspect` with `include: ["semantic_diff", "source_diff", "checks"]` shows one property change, `label` `"Apply member price"` to `"Apply member pricing"`, and a one-line source hunk in `pages/home.acore`. If you want an explicit check run as well:
+**Check and apply.** The propose result names the new candidate; here it is `cand-1`. `change.inspect` with `include: ["semantic_diff", "source_diff", "checks"]` shows one property change, `label` `"Apply member price"` to `"Apply member pricing"`, and a one-line source hunk in `pages/home.acore`. If you want an explicit check run as well:
 
 ```json
 {"protocol": "axiom-agent-semantic/v1", "operation": "check.run", "workspace": "ws-shop-1",

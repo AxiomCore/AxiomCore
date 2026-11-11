@@ -119,7 +119,7 @@ for (const [path, schema] of schemas) {
 if (idBase.size !== 1) failures.push(`schemas: expected one $id base, found ${[...idBase].join(', ')}`);
 
 const index = {
-  description: 'JSON Schema (draft 2020-12) files of the axiom-agent-semantic/v1 protocol, as served by acore-semantic. Each $id is an identifier, not a download location; these files are the published copies. References between files are relative, so they resolve against either the $id or the URL.',
+  description: 'JSON Schema (draft 2020-12) files of the axiom-agent-semantic/v1 protocol, as served by acore-semantic. Each $id is an identifier, not a download location; these files are the published copies. References between files are relative and resolve against the $id, so load every file into your validator first, or map the $id base to url_base.',
   protocol: 'axiom-agent-semantic/v1',
   id_base: [...idBase][0],
   url_base: `${siteOrigin}/semantic-service/schemas/`,

@@ -1,79 +1,182 @@
 ---
 title: Releases and environments
-description: Immutable artifacts, durable release evidence, latest-channel activation, rollback, sandboxes, and tests.
+description: Follow a contract release through the Axiom Cloud pipeline, activate or roll back the latest channel, use the managed sandbox and keep project environments isolated.
 pageType: guide
 ---
 
+<span id="understand-the-scopes" />
+<span id="isolation" />
+<span id="review-the-destination" />
+
 <StatusNote status="alpha" title="Release control plane">
   The service and dashboard implement the lifecycle described here. Managed
-  environment execution also requires its deployment-time Cloud Run resources
-  and can be disabled in a local control plane.
+  environment execution also needs its deployment-time Cloud Run resources and
+  can be turned off in a local control plane.
 </StatusNote>
+
+This page explains what Axiom Cloud does after `axiom release` uploads a
+contract: how it stores the artifact, which checks run, when the release
+becomes `latest`, and how the managed sandbox and project environments fit in.
+To create a release, see [Releases and upgrades](/delivery/releases).
+
+Cloud uses "environment" for two different things:
+
+| Term | What it is | Created by |
+| --- | --- | --- |
+| Managed sandbox | A temporary mock deployment of one release, with its own lifecycle, used for contract tests. | The release pipeline or the **Sandbox** page |
+| Project environment | A long-lived data, authentication and configuration scope, such as `development`, `staging` or `production`. Secret values and a hosted database belong to one. | The **Secrets** page, or database preferences |
+
+Local development needs neither and allocates no hosted storage. Creating one
+kind never provisions, fills or authorizes the other. Deleting a sandbox never
+deletes database data or an environment's secret values.
 
 ## Immutable release identity
 
-The server computes SHA-256 from uploaded `.axiom` bytes. A project/version
-pair is immutable: retrying the exact bytes can resolve to the existing
-artifact, while different bytes under the same version are rejected. A source
-URL is provenance metadata, not the stored artifact itself.
+The server computes the SHA-256 hash of the uploaded `.axiom` bytes. A project
+and version pair is immutable:
+
+- Uploading the exact same bytes again resolves to the existing release.
+- Uploading different bytes under an existing version is rejected with a
+  version conflict and a suggested next version.
+
+A source URL is provenance metadata, not the stored artifact.
 
 ```bash title="Terminal"
 axiom build axiom.acore --out backend.axiom
 axiom release backend.axiom --version 1.2.0
 ```
 
-## Durable pipeline
+<span id="durable-pipeline" />
 
-```text title="Conceptual example"
-uploaded -> verifying -> verified -> testing -> deployable
-    \            \           \           \          \
-     +------------+-----------+-----------+--------> failed
+## The release pipeline
+
+```mermaid title="States of a contract release in the Axiom Cloud pipeline"
+flowchart TD
+  U[uploaded] --> V[verifying]
+  V --> VD[verified]
+  VD --> T[testing]
+  VD --> D[deployable]
+  T --> D
+  D --> DG[deploying]
+  DG --> DD[deployed]
+  U --> F[failed]
+  V --> F
+  VD --> F
+  T --> F
+  D --> F
+  DG --> F
 ```
 
-The worker persists evidence for structural and signature verification,
-semantic analysis, sandbox state, declared tests, and release policy. A queued
-or skipped stage remains explicit; the dashboard must not present it as a
-success.
+A release moves from `uploaded` through verification and testing to
+`deployable`. Any state before `deployed` can end in `failed`. Activation on
+the `latest` channel moves a release through `deploying` to `deployed`.
 
-`deployable` means the configured evidence and policy allow activation. It
-does not claim that an arbitrary backend binary or mobile application was
-deployed.
+The release worker saves evidence for each stage of each attempt: artifact
+ingest, manifest validation, Cloud signature, semantic diff against every
+earlier release, policy validation, sandbox provision, contract tests and
+channel activation. The semantic stage also rejects a Security Mode `strict`
+release that has error findings. **CI/CD Actions** in the project settings
+shows each run and its stages. A queued or skipped stage stays visible as
+queued or skipped; the dashboard never shows it as a success. Retrying a
+failed release creates a new attempt for the same artifact. It never rewrites
+the earlier attempt.
 
-## Latest channel
+`deployable` means the evidence and policy allow activation. `deployed` means
+the release was activated on `latest`. Neither claims that a backend binary or
+mobile application was deployed.
 
-The `latest` reference is a mutable pointer to an eligible immutable release.
-It returns no artifact before an eligible version is activated. Activation and
-rollback are owner operations protected by an idempotency key and a channel
-generation guard so stale decisions cannot overwrite newer ones.
+## Release policy
 
-Rollback moves the pointer to an older eligible release; it does not edit
-either artifact.
+Projects use this default release policy:
+
+| Evidence | Effect on the release |
+| --- | --- |
+| A declared test fails, expires or is cancelled | Blocks the release attempt. |
+| No declared test suites | Recorded as skipped. Allowed by default. |
+| A risky or breaking semantic change | A warning. Activation needs an owner to acknowledge it. |
+| All required evidence passes | Activated on `latest` automatically. |
+
+<span id="latest-channel" />
+
+## The latest channel
+
+`latest` is a pointer to one eligible immutable release. Consumers that pull
+without a version get the release it points to. Before the first activation it
+points to nothing, and a pull without a version finds no release.
+
+- Activation and rollback are **owner** operations.
+- Each request carries the channel generation you reviewed, so a stale
+  decision cannot overwrite a newer one. Repeating the same request is safe.
+- Rollback moves the pointer to an earlier eligible release. It never edits
+  either artifact.
 
 ## Managed sandbox
 
-Where enabled, one project sandbox tracks a verified artifact and synthetic
-mock configuration. Provision, reset, expiry, deletion, health, and revision
-events are persisted. The stable environment can receive a new Cloud Run
-revision without creating a second ambiguous sandbox.
+A managed sandbox runs a synthetic mock of one verified release, so contract
+tests and early consumers have something to call. Each project has one live
+sandbox.
 
-Access-controlled sandboxes use `X-Axiom-Sandbox-Key`. Reveal that key only
-through the authorized connection action, keep it out of logs and local
-storage, and use only synthetic or developer-safe data. A sandbox is not a
-production data plane.
+- Launch it from the **Sandbox** page with **Launch from active release**, or
+  let the release pipeline start it to run declared tests. The dashboard
+  starts a token-protected sandbox that expires after 24 hours. The API
+  accepts expiries from 5 minutes to 7 days.
+- Provisioning, health, reset, expiry and deletion are saved as lifecycle
+  events. Saving new mock configuration while a sandbox is live deploys a new
+  revision of the same sandbox instead of a second one.
+- Protected requests need the `X-Axiom-Sandbox-Key` header. Maintainers and
+  owners see the key with **Reveal connection** once the sandbox is ready. It
+  stays in that page's memory only. Keep it out of logs and local storage.
+- Use only synthetic or developer-safe data. A sandbox is not a production
+  data plane.
+
+To author the mock behavior, see [Cloud mocks](/cloud/deploying-mocks).
 
 ## Contract tests
 
-Declared suites run against the ready sandbox for the same immutable artifact.
-Results are retained independently from the worker invocation. A missing suite
-is recorded as skipped; project policy decides whether that is allowed.
+Declared suites run against the ready sandbox for the same immutable artifact
+and release attempt. Results are saved independently of the runner. The
+**Tests** page lists runs with passed, failed and skipped counts. You can also
+run the active signed release's suites manually. To write tests, see
+[Contract tests](/testing/contracts).
 
-| Evidence | Default release meaning |
-| --- | --- |
-| Declared test failure or executor expiry | Blocks the release attempt |
-| No declared suites | Recorded as skipped; allowed unless the project requires tests |
-| Risky or breaking semantic change | Warning by default; owner acknowledgement required for activation |
-| All required evidence passes | Eligible for automatic or explicit latest-channel activation |
+## Project environments
 
-Use [Testing contracts](/testing/contracts) for authoring and local
-test guidance, and [Contract pull requests](/delivery/contract-pull-requests)
-for review workflow.
+**Alpha:** the dashboard assigns a managed database to a project environment
+when you save database preferences. Managed application authentication and
+hosted database runtime connections are **Coming soon**.
+[Secret environments](/cloud/secrets) keep their documented support.
+
+Database preferences and the Secrets page share the same project
+environments. The environment name you enter with database preferences
+(default `development`) creates or reuses an environment. The names
+`production` and `staging` get those kinds, and `production` is always
+protected. Any other name becomes a development environment.
+
+### Keep environments isolated
+
+- Environments never automatically share application users, sessions,
+  credentials or secret values.
+- Start previews from synthetic or sanitized data.
+- A database branch is a separate resource. It does not automatically merge
+  schema or data into production.
+- Managed SQLite uses table and action permissions to protect authentication
+  and migration tables. Those permissions do not replace row-ownership checks
+  in your application. PostgreSQL uses protected schemas and restricted roles,
+  with row policies where supported.
+- Managed authentication databases must not be replicated into browsers or
+  mobile devices. Clients use authenticated application operations.
+
+Before you change a hosted resource, check its project, environment, profile,
+location and current state. Changing a subscription never silently converts
+the database engine or moves data across regions.
+
+The initial allowance is one hosted environment per project. Additional
+environments, migration test databases and restore targets use hosting
+capacity even when temporary.
+
+## Next steps
+
+- [Review two releases in a contract pull request](/delivery/contract-pull-requests)
+- [Author mock behavior for the sandbox](/cloud/deploying-mocks)
+- [Provision a managed database](/cloud/project-resources)
+- [Store secrets for an environment](/cloud/secrets)

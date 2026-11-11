@@ -1,120 +1,235 @@
 ---
 title: Inspect an application
-description: Explore frontend, backend, state, styles, operations, data, accessibility, exposure, and cache behavior from one workspace.
-pageType: guide
+description: Tutorial that inspects the documentation task app's frontend, state, backend operations and data lineage with axiom inspect.
+pageType: tutorial
 ---
 
-Use the high-level Inspector commands to learn the shape of a project before
-following individual relationships.
+<span id="begin-with-the-overview" />
+<span id="follow-data-lineage" />
+<span id="compare-targets" />
 
-## Begin with the overview
+In this tutorial you inspect the documentation task app: an Acore UI frontend,
+an Acore backend and a SQLite database contract. You list its facts, find what
+writes a piece of state, add the backend contract to the evidence and follow a
+field to the operations that return it. No application runs: Inspector reads source and
+artifacts only.
+
+## Prerequisites
+
+- Axiom CLI 0.149.1 (this tutorial was verified on macOS arm64). See
+  [Install the Axiom CLI](/getting-started/installation).
+- `git`.
+- No UI host, database or running server is needed.
+
+## 1. Get the task app
+
+```bash title="Terminal"
+git clone --depth 1 https://github.com/AxiomCore/AxiomCore.git
+cd AxiomCore/examples/documentation/task-app
+```
+
+The directory has `backend/`, `frontend/` and `database/` folders. Run every
+later command from `task-app` unless a step says otherwise.
+
+## 2. Prepare the evidence
+
+Inspector reads compiled evidence. Build the backend contract, then resolve the
+frontend's contract lock so the UI compiler can check the frontend:
+
+```bash title="Terminal"
+axiom build backend/sqlite.acore
+cd frontend
+axiom contract resolve
+cd ..
+```
+
+```text title="Expected output"
+Built backend contract: <task-app>/backend/.axiom/contracts/backend.axiom
+Warning: contract `tasks` uses unsigned local artifact contracts/tasks.axiom. Allowed for development; release it through Axiom Cloud before production use.
+Resolved 1 UI contract alias(es) into .axiom/axiom.ui.lock.json
+```
+
+The warning is expected: local development contracts are unsigned. See
+[Artifact trust](/core-concepts/trust-and-security).
+
+## 3. Summarize the application
 
 ```bash title="Terminal"
 axiom inspect overview .
 ```
 
-The overview discovers available frontend source, backend artifacts, contracts,
-packages, extensions, and targets. It reports verification and completeness
-rather than treating every workspace as a full-stack application.
+```text title="Expected output"
+Axiom Inspector
+Graph revision 18be964eb0eb528277b270e4b48bf6aa7a444ebd76195f273454b1f961cae3fa
+Facts 100  Relationships 155  Truncated false
 
-Use a machine format when another tool consumes the result:
-
-```bash title="Terminal"
-axiom inspect overview . --format json
+FACTS
+- Accessibility  accessibility_label [android,ios,web]
+...
 ```
 
-## Frontend views
+The **graph revision** is a hash of the complete evidence; it changes whenever
+the source changes. Each fact shows its kind, label and targets, then its
+semantic ID, truth layer (Declared or Resolved here) and verification state,
+then any attributes and evidence references.
+
+Inspector discovers `.acore` sources, `.axiom` artifacts, `*.server.json`
+plans and the `AxiomDeps.toml`, `AxiomDeps.lock`, `AxiomContracts.toml`,
+`AxiomPackages.lock`, `AxiomExtensions.toml` and `axiom.ui.lock.json` files. It
+skips symbolic links and the `.git`, `.axiom`, `target`, `node_modules`,
+`.dart_tool`, `build` and `dist` directories; the UI compiler still reads each
+frontend's lock from `.axiom/`. Inspector reports what it found and how
+complete it is, instead of assuming every workspace is full-stack.
+
+<span id="frontend-views" />
+
+## 4. Explore the frontend
 
 ```bash title="Terminal"
-axiom inspect frontend .
-axiom inspect ui .
 axiom inspect state .
-axiom inspect styles .
-axiom inspect accessibility .
 ```
 
-| Command | Questions it helps answer |
+```text title="Expected output"
+Axiom Inspector
+Graph revision 18be964eb0eb528277b270e4b48bf6aa7a444ebd76195f273454b1f961cae3fa
+Facts 5  Relationships 0  Truncated false
+
+FACTS
+- State  Home.message [android,ios,web]
+  state:42ed3fd139f610b5494f09ce  Resolved / Verified
+  {"initializer":"\"\"","name":"message","path":"message","renderedSemanticId":"state:a1995aa970770323","scope":null,"span":{"end":704,"start":678},"type":"String"}
+  evidence: frontend/main.acore (source-span)
+...
+```
+
+The other frontend views work the same way:
+
+| Command | Question it answers |
 | --- | --- |
-| `frontend` | Which modules, routes, pages, actions, state and operations exist? |
-| `ui` | What semantic component and primitive tree is rendered, and which actions are bound? |
-| `state` | Which state facts exist, and which proven facts read or write them? |
-| `styles` | Which typed variables, rules, classes, and responsive branches are compiled? |
-| `accessibility` | Which roles, labels, and other declared accessibility semantics are attached? |
+| `axiom inspect frontend .` | Which modules, routes, pages, actions, state and operations exist? |
+| `axiom inspect ui .` | Which components and primitives render, and which actions are bound? |
+| `axiom inspect state .` | Which state exists, and which proven facts read or write it? |
+| `axiom inspect styles .` | Which typed variables, rules and responsive branches are compiled? |
+| `axiom inspect accessibility .` | Which roles, labels and other accessibility semantics are declared? |
 
-Frontend evidence is produced by the Axiom UI compiler for supported targets.
-Inspector does not derive behavior from visual similarity or DOM conventions.
+Frontend evidence comes from the Acore UI compiler for the web, iOS and Android
+targets. Inspector never infers behavior from visual similarity or DOM
+conventions.
 
-## Backend views
+## 5. Find what writes a state value
 
 ```bash title="Terminal"
+axiom inspect ask "what can write Home.apiKey" .
+```
+
+```text title="Expected output"
+AXIOM INSPECTOR ANSWER
+Status: Incomplete
+1 canonical write relationship can modify `home.apikey`.
+...
+FACTS
+- actionstep · write apiKey · action-step:515fae9aae8646e5d0ff8ad7
+- state · Home.apiKey · state:beb6895899277ccd1fbb36b3
+```
+
+`Incomplete` means runtime evidence was not collected, not that the static
+answer is wrong. To see the whole upstream path, including the `Home.connect`
+action and the button that triggers it, run
+`axiom inspect trace Home.apiKey . --direction upstream`.
+
+<span id="backend-views" />
+
+## 6. Add the backend contract
+
+Inspector skips `.axiom/` directories, so the backend artifact from step 2 is
+not part of the evidence yet. Export a copy into the workspace:
+
+```bash title="Terminal"
+axiom build backend/sqlite.acore --out backend/tasks.axiom
 axiom inspect backend .
-axiom inspect operation list_products .
-axiom inspect data .
-axiom inspect exposure .
-axiom inspect cache .
 ```
 
-| Command | Questions it helps answer |
+```text title="Expected output"
+Built backend contract: backend/tasks.axiom
+Axiom Inspector
+Graph revision e4a226e9740c93558fbd8feffc0efe32c4e9cba082d4829eec1d47648ea9875e
+Facts 75  Relationships 98  Truncated false
+
+FACTS
+- Operation  list_tasks [server]
+...
+```
+
+The build also wrote the private server plan `backend/tasks.server.json`, which
+adds actions, implementation bindings and auth policies. The overview now
+reports 176 facts and 279 relationships.
+
+| Command | Question it answers |
 | --- | --- |
-| `backend` | Which services, operations, data facts, policies and implementation bindings are present? |
-| `operation` | How does one frontend or backend operation cross a verified contract boundary? |
-| `data` | Which models, fields, entities, projections and relationships exist? |
-| `exposure` | Which endpoint facts are explicitly public or restricted? |
-| `cache` | Which operations own cache identities and strategies? |
+| `axiom inspect backend .` | Which services, operations, models, policies and bindings exist? |
+| `axiom inspect operation list_tasks .` | How does one operation cross the contract boundary? |
+| `axiom inspect data .` | Which models, fields, projections and relationships exist? |
+| `axiom inspect exposure .` | Which endpoints are explicitly public or restricted? |
+| `axiom inspect cache .` | Which operations own cache identities and strategies? |
+| `axiom inspect server backend/tasks.axiom backend/tasks.server.json` | Is the private plan compatible with a target, and what is still unobserved? |
 
-Backend implementation bodies remain opaque when the verified artifact does not
-contain that evidence. Inspector can show a declared endpoint, projection, or
-binding without claiming to know arbitrary external code behind it.
+Backend implementation bodies stay opaque when the artifact does not contain
+them. In this app `exposure` and `cache` return no facts: there is no explicit
+exposure declaration or cache-policy association. That does not prove an
+endpoint is private or uncached.
 
-## Follow data lineage
+Without `--deployment` and `--bindings`, `inspect server` reports
+`compatible=false` because provider review is pending, and it labels request
+evidence and provider internals as not captured or unknown. Add `--session`
+with a redacted startup observation to include observed execution facts.
 
-Use a unique label or semantic ID:
-
-```bash title="Terminal"
-axiom inspect data . --lineage Product.price_label
-axiom inspect lineage Product.price_label .
-```
-
-A cross-layer lineage can connect a domain field to a projection, endpoint,
-locked contract operation, frontend query, component, and rendered value. Each
-step remains a typed relationship with its own evidence.
-
-## Compare targets
-
-Target comparison shows how the selected fact's verified neighborhood differs:
+## 7. Follow a field
 
 ```bash title="Terminal"
-axiom inspect target-compare Home \
-  . --targets web,ios,android
+axiom inspect lineage Task.title .
 ```
 
-Use it for target availability, responsive or lowering differences, and
-target-effective authority. It does not claim pixel-identical rendering.
+The result connects the `Task.title` field to the `taskPublic` projection and
+the `list_tasks`, `create_task`, `update_task` and `delete_task` operations.
+`axiom inspect data . --lineage Task.title` returns the same result. Each step is
+a typed relationship with its own evidence.
 
-## Selectors
+<span id="selectors" />
+<span id="output-formats" />
 
-Most focused commands accept either:
+## Selectors and output formats
 
-- a unique human label, such as `Home.total_label` or `pricing`; or
-- an exact semantic ID copied from Inspector output.
+Focused commands accept a unique label such as `Home.apiKey`, or an exact
+semantic ID copied from any output. Labels can be ambiguous (`Home.add` matches
+two facts in this app), so prefer IDs in CI and agent workflows.
 
-Prefer IDs in CI and agent workflows. Labels can become ambiguous as the
-application grows.
+| `--format` | Use it for |
+| --- | --- |
+| `human` (default for most commands) | Reading; never parse it |
+| `json` | One complete, bounded result for tools |
+| `jsonl` | One record per line for streamed facts or paths |
 
-## Output formats
+Machine results keep the format version, graph revision, semantic IDs,
+completeness and evidence references.
 
-Where documented, Inspector supports:
+## Common failures
 
-```bash title="Terminal"
---format human
---format json
---format jsonl
-```
+| Symptom | Cause and fix |
+| --- | --- |
+| Overview shows about 13 facts and no pages | The frontend lock is missing. Run `axiom contract resolve` in `frontend/`. `axiom inspect snapshot` records the compiler error (`AUI010`) in its `diagnostics` list. |
+| `selector ... is ambiguous; use a semantic ID` | Copy the ID from `inspect node`, `inspect graph` or the dashboard. |
+| `no evidence fact matches ...` | Check the label spelling, or rebuild so the fact exists. |
+| `workspace exceeds the 20000 file inspection limit` | Inspect a smaller directory. Discovery also stops at 24 directory levels. |
 
-Human output is for reading, not parsing. JSON carries the complete bounded
-result. JSONL is useful when a result contains streamed fact or path records.
-All machine results retain version, graph revision, semantic IDs, completeness,
-and evidence references appropriate to that command.
+## Clean up
 
-Next, learn how to inspect [contracts and executable dependencies](/inspector/contracts-and-dependencies)
-or [trace one fact through the graph](/inspector/trace-and-explain).
+Inspector and the build wrote only inside the clone: `.axiom/` folders (ignored
+by the example's `.gitignore`), `backend/tasks.axiom` and
+`backend/tasks.server.json`. Delete the cloned `AxiomCore` directory when you
+are done.
+
+## Next steps
+
+- [Local dashboard](/inspector/local-dashboard)
+- [Trace relationships](/inspector/trace-and-explain)
+- [Changes and impact](/inspector/changes-impact-and-ci)

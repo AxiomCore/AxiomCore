@@ -3,6 +3,8 @@ import { join, relative, resolve } from 'node:path';
 import { createCloudflareHeaders } from '../lib/deployment-policy.mjs';
 import { legacyRedirects, legacyReaderRedirects } from '../lib/legacy-redirects.mjs';
 import { parseDocument, toReaderMarkdown } from '../lib/content-model.mjs';
+import { loadDocsCorpus } from '../lib/ask-ai/corpus.mjs';
+import { ASK_AI_INDEX_PATH, buildDocsIndex } from '../lib/ask-ai/docs-index.mjs';
 
 const docsRoot = resolve(import.meta.dirname, '..');
 const outputRoot = join(docsRoot, 'out');
@@ -59,10 +61,18 @@ if (!readerAssets.length) {
   throw new Error('No static machine-reader assets were generated.');
 }
 
+// Search index read by the Ask AI Pages Function (functions/api/chat.ts).
+const askAiIndex = buildDocsIndex(loadDocsCorpus(docsRoot));
+const askAiIndexFile = join(outputRoot, ASK_AI_INDEX_PATH.slice(1));
+mkdirSync(resolve(askAiIndexFile, '..'), { recursive: true });
+writeFileSync(askAiIndexFile, JSON.stringify(askAiIndex), 'utf8');
+
 console.log(
   'Prepared Cloudflare Pages assets: ' +
     legacyRedirects.length +
     ' redirect(s), ' +
     readerAssets.length +
-    ' machine-reader file(s), shared security headers.',
+    ' machine-reader file(s), Ask AI index (' +
+    askAiIndex.chunks.length +
+    ' sections), shared security headers.',
 );

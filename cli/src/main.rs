@@ -39,6 +39,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Runtime secret sources and Cloud metadata; values never enter compilation.
+    Secrets {
+        #[command(subcommand)]
+        action: commands::secrets::Action,
+    },
     /// Offline saved-source checking and editor compatibility metadata
     Editor {
         #[command(subcommand)]
@@ -350,6 +355,9 @@ enum Commands {
     Run {
         /// Backend/frontend .acore source or a packaged .axiomapp
         source: PathBuf,
+        /// Explicit protected secret profile for backend execution
+        #[arg(long)]
+        environment: Option<String>,
         /// Advanced UI lock override; normal development locks are prepared automatically
         #[arg(long)]
         lock: Option<PathBuf>,
@@ -777,11 +785,83 @@ enum DatabaseTargetAction {
 
 #[derive(Subcommand)]
 enum PackagesAction {
+    /// Verify exact upstream bytes, licenses, dependency pins and selected exports
+    AdaptationInputs { inputs: PathBuf },
+    /// Check a complete I06 report; this never grants runtime qualification
+    CheckAdaptation {
+        #[arg(long)]
+        inputs: PathBuf,
+        report: PathBuf,
+    },
+    /// Build an isolated ordinary-source adaptation candidate without editing locks
+    AdaptLibrary {
+        #[arg(long)]
+        inputs: PathBuf,
+        #[arg(long)]
+        recipe: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Compare pinned adaptation candidates and require manual semantic review
+    DiffAdaptation {
+        before: PathBuf,
+        after: PathBuf,
+        #[arg(long)]
+        before_inputs: PathBuf,
+        #[arg(long)]
+        after_inputs: PathBuf,
+    },
+    /// Copy validated author source into a new independently versioned package
+    ForkLibrary {
+        #[arg(long)]
+        source_manifest: PathBuf,
+        #[arg(long)]
+        name: String,
+        #[arg(long, default_value = "1.0.0")]
+        version: String,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Validate typed pilot API surfaces, profile bindings and brand role meanings
+    CheckLibraryApi {
+        #[arg(long)]
+        inputs: PathBuf,
+        api: PathBuf,
+    },
+    /// Write a complete I06 API review plan without claiming implementation
+    PlanAdaptation {
+        #[arg(long)]
+        inputs: PathBuf,
+        #[arg(long)]
+        api: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Create ordinary Acore library source, typed themes and an explicit profile
+    InitLibrary {
+        directory: PathBuf,
+        #[arg(long, default_value = "example.widgets")]
+        name: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Check a source library through all declared targets and the actual reader
+    CheckLibrary {
+        #[arg(long, default_value = "AxiomLibrary.toml")]
+        source_manifest: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
     /// Validate and canonically encode a typed package envelope
     Build {
-        source: PathBuf,
+        #[arg(required_unless_present = "source_manifest")]
+        source: Option<PathBuf>,
+        #[arg(long, conflicts_with = "source")]
+        source_manifest: Option<PathBuf>,
         #[arg(short, long)]
         out: PathBuf,
+        #[arg(long)]
+        json: bool,
     },
     /// Resolve frontend package dependencies into a canonical committed lock
     Resolve {
@@ -819,6 +899,8 @@ enum PackagesAction {
         ui_lock: PathBuf,
         #[arg(long, default_value = "ios")]
         target: String,
+        #[arg(long)]
+        json: bool,
     },
     /// Run the package-backed source through the normal target host/session
     Run {
@@ -1122,6 +1204,21 @@ enum DependenciesAction {
         #[command(subcommand)]
         action: DependencyCacheAction,
     },
+    /// Check whether an npm package can run in a TypeScript extension:
+    /// resolve, build a probe that imports it, and run it in the sandbox
+    CheckCompat {
+        /// The package and exact version, e.g. zod@4.1.12 or @scope/name@1.0.0
+        package: String,
+        #[arg(long, default_value = "AxiomDeps.toml")]
+        deps: PathBuf,
+        /// TypeScript registry to resolve from when several are declared
+        #[arg(long)]
+        registry: Option<String>,
+        #[arg(long)]
+        cache: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1190,6 +1287,9 @@ enum UiAction {
         #[arg(value_enum)]
         view: commands::ui::UiInspectView,
         source: PathBuf,
+        /// Verify frontend component libraries through this exact lock
+        #[arg(long)]
+        package_lock: Option<PathBuf>,
         #[arg(long, default_value = ".axiom/axiom.ui.lock.json")]
         lock: PathBuf,
         #[arg(long, default_value = "ios")]
@@ -1259,6 +1359,9 @@ enum UiAction {
     /// Build a deterministic, target-specific Axiom application artifact
     Build {
         source: PathBuf,
+        /// Exact frontend component-library lock for package-backed source
+        #[arg(long)]
+        package_lock: Option<PathBuf>,
         #[arg(long, default_value = ".axiom/axiom.ui.lock.json")]
         lock: PathBuf,
         #[arg(long, default_value = "ios")]
@@ -1338,6 +1441,12 @@ enum DeployTarget {
 #[derive(Subcommand)]
 enum ProjectAction {
     List,
+    Resources {
+        #[arg(long)]
+        project: String,
+        #[command(subcommand)]
+        action: Option<commands::resources::Action>,
+    },
     Create {
         #[arg(long)]
         name: Option<String>,
@@ -1348,6 +1457,14 @@ enum ProjectAction {
         description: Option<String>,
         #[arg(long)]
         path: Option<PathBuf>,
+        #[arg(long, default_value="free",value_parser=["free","pro"])]
+        tier: String,
+        #[arg(long,value_parser=["sqlite","postgres"])]
+        database: Option<String>,
+        #[arg(long)]
+        region: Option<String>,
+        #[arg(long, default_value = "development")]
+        environment: String,
     },
     Link {
         #[arg(long)]
@@ -1559,6 +1676,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Extract command name for logging
     let cmd_name = match &*cli.command {
+        Commands::Secrets { .. } => "secrets",
         Commands::Editor { .. } => "editor",
         Commands::Init { .. } => "init",
         Commands::Doctor { .. } => "doctor",
@@ -1623,6 +1741,7 @@ async fn main() -> anyhow::Result<()> {
 /// that publish or retrieve cloud data retain their existing access checks.
 fn is_local_command(command: &Commands) -> bool {
     match command {
+        Commands::Secrets { .. } => true,
         Commands::Editor { .. } => true,
         Commands::Scenario { .. } => true,
         Commands::Package { .. }
@@ -1667,6 +1786,7 @@ fn is_local_command(command: &Commands) -> bool {
 
 async fn execute_command(command: &Commands) -> anyhow::Result<()> {
     match command {
+        Commands::Secrets { action } => commands::secrets::handle(action).await,
         Commands::Editor { action } => commands::editor::handle(action),
         Commands::Check {
             file,
@@ -1762,8 +1882,84 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             }
         },
         Commands::Packages { action } => match action {
-            PackagesAction::Build { source, out } => {
-                commands::packages::handle_build(source.clone(), out.clone()).await
+            PackagesAction::AdaptationInputs { inputs } => {
+                commands::packages::handle_adaptation_inputs(inputs.clone()).await
+            }
+            PackagesAction::CheckAdaptation { inputs, report } => {
+                commands::packages::handle_check_adaptation(inputs.clone(), report.clone()).await
+            }
+            PackagesAction::AdaptLibrary {
+                inputs,
+                recipe,
+                out,
+            } => {
+                commands::packages::handle_adapt_library(
+                    inputs.clone(),
+                    recipe.clone(),
+                    out.clone(),
+                )
+                .await
+            }
+            PackagesAction::DiffAdaptation {
+                before,
+                after,
+                before_inputs,
+                after_inputs,
+            } => {
+                commands::packages::handle_diff_adaptation(
+                    before.clone(),
+                    after.clone(),
+                    before_inputs.clone(),
+                    after_inputs.clone(),
+                )
+                .await
+            }
+            PackagesAction::ForkLibrary {
+                source_manifest,
+                name,
+                version,
+                out,
+            } => {
+                commands::packages::handle_fork_library(
+                    source_manifest.clone(),
+                    name.clone(),
+                    version.clone(),
+                    out.clone(),
+                )
+                .await
+            }
+            PackagesAction::CheckLibraryApi { inputs, api } => {
+                commands::packages::handle_check_library_api(inputs.clone(), api.clone()).await
+            }
+            PackagesAction::PlanAdaptation { inputs, api, out } => {
+                commands::packages::handle_plan_adaptation(inputs.clone(), api.clone(), out.clone())
+                    .await
+            }
+            PackagesAction::InitLibrary {
+                directory,
+                name,
+                json,
+            } => {
+                commands::packages::handle_init_library(directory.clone(), name.clone(), *json)
+                    .await
+            }
+            PackagesAction::CheckLibrary {
+                source_manifest,
+                json,
+            } => commands::packages::handle_check_library(source_manifest.clone(), *json).await,
+            PackagesAction::Build {
+                source,
+                source_manifest,
+                out,
+                json,
+            } => {
+                commands::packages::handle_build_input(
+                    source.clone(),
+                    source_manifest.clone(),
+                    out.clone(),
+                    *json,
+                )
+                .await
             }
             PackagesAction::Resolve { deps, lock } => {
                 commands::packages::handle_resolve(deps.clone(), lock.clone()).await
@@ -1787,12 +1983,14 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                 package_lock,
                 ui_lock,
                 target,
+                json,
             } => {
                 commands::packages::handle_check_source(
                     source.clone(),
                     package_lock.clone(),
                     ui_lock.clone(),
                     target.clone(),
+                    *json,
                 )
                 .await
             }
@@ -2053,6 +2251,22 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             DependenciesAction::Inspect { lock, json } => {
                 commands::dependencies::handle_inspect(lock.clone(), *json).await
             }
+            DependenciesAction::CheckCompat {
+                package,
+                deps,
+                registry,
+                cache,
+                json,
+            } => {
+                commands::dependencies::handle_check_compat(
+                    package.clone(),
+                    deps.clone(),
+                    registry.clone(),
+                    cache.clone(),
+                    *json,
+                )
+                .await
+            }
             DependenciesAction::Cache { action } => match action {
                 DependencyCacheAction::Verify { cache, json } => {
                     commands::dependencies::handle_cache_verify(cache.clone(), *json).await
@@ -2068,7 +2282,9 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             },
         },
         Commands::Database { action } => match action {
-            DatabaseAction::Migrate(args) => commands::database_dev::migrate(args, false, None).await,
+            DatabaseAction::Migrate(args) => {
+                commands::database_dev::migrate(args, false, None).await
+            }
             DatabaseAction::Rollback(args) => commands::database_dev::rollback(args).await,
             DatabaseAction::Status(args) => commands::database_dev::read(args, false).await,
             DatabaseAction::Runtime { command } => commands::database_runtime::run(command),
@@ -2079,13 +2295,25 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                 commands::database::build(source, out.as_deref())
             }
             DatabaseAction::Inspect { source } => commands::database::inspect(source),
-            DatabaseAction::Diff { before, after, from, to, json } => {
+            DatabaseAction::Diff {
+                before,
+                after,
+                from,
+                to,
+                json,
+            } => {
                 if let Some(after) = after {
                     commands::database::diff(before, after)
                 } else {
-                    commands::database_dev::diff(before, from.as_deref().ok_or_else(||anyhow::anyhow!("provide --from VERSION"))?, to.as_deref().unwrap_or("working"), *json)
+                    commands::database_dev::diff(
+                        before,
+                        from.as_deref()
+                            .ok_or_else(|| anyhow::anyhow!("provide --from VERSION"))?,
+                        to.as_deref().unwrap_or("working"),
+                        *json,
+                    )
                 }
-            },
+            }
             DatabaseAction::Fmt { source, write } => commands::database::format(source, *write),
             DatabaseAction::Catalog => commands::database::catalog(),
             DatabaseAction::BindingCheck { deployment } => {
@@ -2166,11 +2394,28 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                 )
                 .await
             }
-            DatabaseAction::History { action, source, connection, json, watch } => match action {
-                None => commands::database_dev::read(&commands::database_dev::ReadArgs {
-                    source: source.clone().ok_or_else(||anyhow::anyhow!("provide a database contract path"))?,
-                    connection: connection.clone(), json: *json, watch: *watch, check: false,
-                }, true).await,
+            DatabaseAction::History {
+                action,
+                source,
+                connection,
+                json,
+                watch,
+            } => match action {
+                None => {
+                    commands::database_dev::read(
+                        &commands::database_dev::ReadArgs {
+                            source: source.clone().ok_or_else(|| {
+                                anyhow::anyhow!("provide a database contract path")
+                            })?,
+                            connection: connection.clone(),
+                            json: *json,
+                            watch: *watch,
+                            check: false,
+                        },
+                        true,
+                    )
+                    .await
+                }
                 Some(DatabaseHistoryAction::Export { source, head, out }) => {
                     commands::database::history_export(source, head.as_deref(), out)
                 }
@@ -2305,11 +2550,29 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                 UiHostAction::Recover { target } => {
                     commands::ui::handle_host_recover(target.clone()).await
                 }
-                UiHostAction::Rollback { target, version, variant } => {
-                    commands::ui::handle_host_rollback(target.clone(), version.clone(), variant.clone()).await
+                UiHostAction::Rollback {
+                    target,
+                    version,
+                    variant,
+                } => {
+                    commands::ui::handle_host_rollback(
+                        target.clone(),
+                        version.clone(),
+                        variant.clone(),
+                    )
+                    .await
                 }
-                UiHostAction::Quarantine { target, version, incident } => {
-                    commands::ui::handle_host_quarantine(target.clone(),version.clone(),incident.clone()).await
+                UiHostAction::Quarantine {
+                    target,
+                    version,
+                    incident,
+                } => {
+                    commands::ui::handle_host_quarantine(
+                        target.clone(),
+                        version.clone(),
+                        incident.clone(),
+                    )
+                    .await
                 }
             },
             UiAction::Init { directory, target } => {
@@ -2342,6 +2605,7 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                 lock,
                 target,
                 max_symbols,
+                package_lock,
             } => {
                 commands::ui::handle_inspect(
                     view.clone(),
@@ -2349,6 +2613,7 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                     lock.clone(),
                     target.clone(),
                     *max_symbols,
+                    package_lock.clone(),
                 )
                 .await
             }
@@ -2417,19 +2682,22 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                 target,
                 out,
                 development,
+                package_lock,
             } => {
-                commands::ui::handle_build(
+                commands::ui::handle_build_with_packages(
                     source.clone(),
                     lock.clone(),
                     target.clone(),
                     out.clone(),
                     *development,
+                    package_lock.clone(),
                 )
                 .await
             }
         },
         Commands::Run {
             source,
+            environment,
             lock,
             target,
             mode,
@@ -2450,7 +2718,8 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             watch,
         } => {
             if commands::app::is_axiom_application(source) {
-                if mode.is_some()
+                if environment.is_some()
+                    || mode.is_some()
                     || variant.is_some()
                     || deployment.is_some()
                     || bindings.is_some()
@@ -2468,10 +2737,23 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             } else {
                 match commands::run::classify_acore_source(source)? {
                     commands::run::AcoreSourceKind::Database => {
-                        if target.is_some() || mode.is_some() || *launch || *watch {
+                        if environment.is_some()
+                            || target.is_some()
+                            || mode.is_some()
+                            || *launch
+                            || *watch
+                        {
                             anyhow::bail!("database run accepts connection, migration and SQL options; use database status --watch to monitor changes");
                         }
-                        commands::database_dev::run(source, connection, database_policy, *frozen, *no_shell || *once, execute.as_deref()).await
+                        commands::database_dev::run(
+                            source,
+                            connection,
+                            database_policy,
+                            *frozen,
+                            *no_shell || *once,
+                            execute.as_deref(),
+                        )
+                        .await
                     }
                     commands::run::AcoreSourceKind::Backend => {
                         if target.is_some() {
@@ -2485,27 +2767,47 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                         if *launch {
                             anyhow::bail!("--launch applies to frontend .acore sources, not backend execution");
                         }
-                        if commands::database_dev::has_storage(source) && deployment.is_none() && mode.unwrap_or(commands::run::RunMode::Service)==commands::run::RunMode::Service {
-                            commands::database_dev::run_backend(source,connection,database_policy,variant.as_deref(),connection.host.as_deref().unwrap_or("127.0.0.1"),connection.port.unwrap_or(8080),*debug).await
-                        } else { commands::run::handle_backend(
-                            source.clone(),
-                            mode.unwrap_or(commands::run::RunMode::Service),
-                            connection.host.clone().unwrap_or_else(||"127.0.0.1".into()),
-                            connection.port.unwrap_or(8080),
-                            *debug,
-                            variant.clone(),
-                            deployment.clone(),
-                            bindings.clone(),
-                            delivery.clone(),
-                            fixtures.clone(),
-                            identities.clone(),
-                            *watch,
-                        )
-                        .await
+                        if environment.is_none()
+                            && commands::database_dev::has_storage(source)
+                            && deployment.is_none()
+                            && mode.unwrap_or(commands::run::RunMode::Service)
+                                == commands::run::RunMode::Service
+                        {
+                            commands::database_dev::run_backend(
+                                source,
+                                connection,
+                                database_policy,
+                                variant.as_deref(),
+                                connection.host.as_deref().unwrap_or("127.0.0.1"),
+                                connection.port.unwrap_or(8080),
+                                *debug,
+                            )
+                            .await
+                        } else {
+                            commands::run::handle_backend(
+                                source.clone(),
+                                mode.unwrap_or(commands::run::RunMode::Service),
+                                environment.clone(),
+                                connection
+                                    .host
+                                    .clone()
+                                    .unwrap_or_else(|| "127.0.0.1".into()),
+                                connection.port.unwrap_or(8080),
+                                *debug,
+                                variant.clone(),
+                                deployment.clone(),
+                                bindings.clone(),
+                                delivery.clone(),
+                                fixtures.clone(),
+                                identities.clone(),
+                                *watch,
+                            )
+                            .await
                         }
                     }
                     commands::run::AcoreSourceKind::Frontend => {
-                        if mode.is_some()
+                        if environment.is_some()
+                            || mode.is_some()
                             || variant.is_some()
                             || deployment.is_some()
                             || bindings.is_some()
@@ -2521,7 +2823,8 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                         let prepared_lock =
                             commands::run::prepare_frontend(source, lock.as_deref(), *frozen)
                                 .await?;
-                        let selected_target = commands::run::frontend_target(source, target.as_deref())?;
+                        let selected_target =
+                            commands::run::frontend_target(source, target.as_deref())?;
                         if selected_target == "web" {
                             if let Some(port) = connection.port {
                                 std::env::set_var("AXIOM_UI_WEB_PORT", port.to_string());
@@ -2712,17 +3015,31 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
         }
         Commands::Project { action } => match action {
             ProjectAction::List => commands::project::handle_project_list().await,
+            ProjectAction::Resources { project, action } => {
+                commands::resources::handle(&project, action.as_ref()).await
+            }
             ProjectAction::Create {
                 name,
                 slug,
                 description,
                 path,
+                tier,
+                database,
+                region,
+                environment,
             } => {
+                let selection = axiom_cloud::resources::ResourceSelection::new(
+                    &tier,
+                    database.as_deref(),
+                    region.as_deref(),
+                    &environment,
+                )?;
                 commands::project::handle_project_create(
                     name.clone(),
                     slug.clone(),
                     description.clone(),
                     path.clone(),
+                    selection,
                 )
                 .await
             }
@@ -3354,10 +3671,50 @@ mod development_scenario_commands {
     #[test]
     fn development_scenarios_are_offline_and_require_explicit_artifacts() {
         for args in [
-            vec!["axiom", "scenario", "catalog", "axiom.axiom", "--plan", "axiom.server.json"],
-            vec!["axiom", "scenario", "check", "axiom.axiom", "--plan", "axiom.server.json", "--scenario", "test.scenario.json"],
-            vec!["axiom", "scenario", "run", "axiom.axiom", "--plan", "axiom.server.json", "--deployment", "deployment.json", "--scenario", "test.scenario.json"],
-        ] { let cli=Cli::try_parse_from(args).unwrap();assert!(is_local_command(&cli.command)); }
-        assert!(Cli::try_parse_from(["axiom","scenario","run","axiom.axiom","--plan","axiom.server.json","--scenario","test.scenario.json"]).is_err());
+            vec![
+                "axiom",
+                "scenario",
+                "catalog",
+                "axiom.axiom",
+                "--plan",
+                "axiom.server.json",
+            ],
+            vec![
+                "axiom",
+                "scenario",
+                "check",
+                "axiom.axiom",
+                "--plan",
+                "axiom.server.json",
+                "--scenario",
+                "test.scenario.json",
+            ],
+            vec![
+                "axiom",
+                "scenario",
+                "run",
+                "axiom.axiom",
+                "--plan",
+                "axiom.server.json",
+                "--deployment",
+                "deployment.json",
+                "--scenario",
+                "test.scenario.json",
+            ],
+        ] {
+            let cli = Cli::try_parse_from(args).unwrap();
+            assert!(is_local_command(&cli.command));
+        }
+        assert!(Cli::try_parse_from([
+            "axiom",
+            "scenario",
+            "run",
+            "axiom.axiom",
+            "--plan",
+            "axiom.server.json",
+            "--scenario",
+            "test.scenario.json"
+        ])
+        .is_err());
     }
 }

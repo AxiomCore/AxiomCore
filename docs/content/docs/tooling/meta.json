@@ -1,9 +1,16 @@
 {
-  "title": "CLI and tools",
+  "title": "CLI",
   "pages": [
-    "doctor-and-onboarding",
     "cli-reference",
-    "interactive-dashboards",
-    "security-check"
+    "cli-project",
+    "cli-build-and-run",
+    "cli-testing",
+    "cli-server",
+    "cli-database",
+    "cli-ui",
+    "cli-contracts",
+    "cli-extensions",
+    "cli-inspect",
+    "secrets-cli"
   ]
 }

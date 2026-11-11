@@ -1,35 +1,145 @@
 ---
-title: Integrate with your stack
-description: Add a contract boundary while retaining your existing frontend, backend, and database.
+title: Use your existing stack
+description: Add a typed contract between the backend, database and frontend you already run, one boundary at a time.
 pageType: overview
 ---
 
-Adopt one boundary first. Keep the code and operational responsibilities your
-application already owns, and prove one request through a supported client.
+<span id="1-select-a-contract-source-and-target" />
+<span id="2-commit-dependency-intent" />
+<span id="3-integrate-the-generated-surface" />
+<span id="4-test-the-real-application-boundary" />
+<span id="2-diagnose-without-changing-the-project" />
+<span id="3-build-a-local-proof" />
+<span id="4-prove-one-consumer" />
+<span id="5-make-change-review-deterministic" />
+<span id="6-expand-only-after-the-boundary-is-stable" />
+<span id="own-the-integration-explicitly" />
 
-| Your starting point | AxiomCore adds | First guide |
-| --- | --- | --- |
-| FastAPI service | Extracted contract, review, tests, supported client | [FastAPI to web](/guides/fastapi-to-web) |
-| Go service | Router/type extraction and a reviewed contract | [Go to web](/guides/go-to-web) |
-| Existing browser or mobile frontend | Generated client and runtime boundary | [Frontend integrations](/frontend) |
-| Existing PostgreSQL or SQLite database | Explicit inspection/adoption and schema history | [Existing database](/guides/existing-database) |
-| Mixed Acore and existing code | A versioned artifact shared by the parts | [Incremental adoption](/guides/incremental-adoption) |
+You can adopt AxiomCore without a rewrite. Extract a **contract** (the `.axiom`
+artifact that describes your API's endpoints, models, validation and errors)
+from the backend you already run, generate a client for the frontend you
+already have, and review every contract change before release. **Extraction**
+reads a supported backend and produces the Acore declarations the contract is
+built from. Acore is optional at each layer.
 
-## Own the integration explicitly
+```mermaid title="Incremental adoption: each layer keeps its code, and Acore is optional per layer"
+flowchart TD
+  BE[Existing FastAPI or Go backend] --> EX[Extraction]
+  EX --> SRC[axiom.acore]
+  AB[Optional Acore backend source] -.-> SRC
+  SRC --> C[.axiom contract]
+  C --> GEN[axiom pull generates a client]
+  GEN --> FE[Existing web, React or Flutter frontend]
+  C -.-> AU[Optional Acore UI]
+  C --> CI[Semantic diff and tests in CI]
+  DB[Existing database and migrations] --- BE
+  AD[Optional Acore database contract] -.-> DB
+```
 
-| Concern | Application responsibility |
+Your backend keeps serving requests and your database keeps its migrations.
+The CLI builds the contract from the extracted surface plus any Acore in
+`axiom.acore`; `axiom pull` turns it into a client; CI compares each new
+contract with the last accepted one. Dashed lines are optional moves to Acore.
+
+<span id="1-choose-authority" />
+
+## Choose a starting point
+
+| You have | AxiomCore adds | Status | Guide |
+| --- | --- | --- | --- |
+| A FastAPI service | Extracted contract, review, tests, a generated client | Available | [FastAPI](/guides/fastapi-to-web) |
+| A Go service | Route and type extraction, a reviewed contract | Alpha | [Go](/guides/go-to-web) |
+| A web, React or Flutter frontend | A generated client and runtime for a contract | Web Available; React, Flutter and Dart Alpha | [Client SDKs](/sdks) |
+| A PostgreSQL or SQLite database | Explicit inspection, exact-match adoption, version history | Experimental | [Existing database](/guides/existing-database) |
+| An OpenAPI JSON document or SQL DDL | Reviewable domain suggestions, not runtime parity | Experimental | [How extraction works](/guides/backend-extraction) |
+
+Framework support comes from the [support matrix](/introduction/support-matrix),
+not from the portability of the contract alone.
+
+## Decide who owns each fact
+
+Record which input owns each fact before you generate anything, so generated
+Acore and your framework never become two authorities for one route or model.
+Use `extend`, an explicit policy or a reviewed projection only for facts Acore
+is meant to own.
+
+| Concern | Your application stays responsible for |
 | --- | --- |
-| Source of truth | Decide whether the API originates in existing code or authored Acore |
-| Authentication | Issue and rotate credentials; configure authorization and error UI |
-| Data | Choose ownership, migrations, backup, and recovery |
-| Client lifecycle | Configure startup, base URLs, CORS/cookies, cache privacy, and disposal |
-| Delivery | Deploy the executable service and its compatible consumers |
+| Source of truth | Whether the API originates in existing code or in authored Acore |
+| Authentication | Issuing and rotating credentials, authorization, error UI |
+| Data | Ownership, migrations, backup and recovery |
+| Client lifecycle | Startup, base URLs, CORS and cookies, cache privacy, disposal |
+| Delivery | Deploying the service and its compatible consumers |
 
-Acore is optional at supported integration edges. Framework support is bounded
-by the [support matrix](/introduction/support-matrix), not by the portability of
-the contract alone.
+## Adopt one boundary at a time
 
-After one working request, add a [CI contract check](/testing/ci), review
-[production readiness](/delivery/production-readiness), and document your
-application's failure and recovery paths. For agent-assisted work, use the
-[AI agent workflow](/guides/using-ai-agents).
+Start with one service, one audience and one consumer you can verify.
+
+1. **Diagnose.** `axiom doctor` reports prerequisites without changing files
+   (add `--json --strict` in CI). `axiom onboard` detects the repository's role
+   and prints a plan; it writes `axiom.acore` only with `--apply` and pulls a
+   client only with `--contract`.
+2. **Build a local proof.** Run the domain and security checks only if the
+   source declares those optional models. A build proves the source can be
+   evaluated and packaged, not that the backend behaves correctly.
+   ```bash title="Backend directory"
+   axiom eval axiom.acore
+   axiom domain validate axiom.acore
+   axiom security check axiom.acore
+   axiom test axiom.acore
+   axiom build axiom.acore --out backend.axiom
+   axiom inspect overview .
+   ```
+3. **Prove one consumer.** [Pull a client](#connect-an-existing-frontend) from
+   the local artifact. Start your backend, or `axiom serve axiom.acore` with a
+   reviewed deployment when the source uses managed or sandboxed actions. Test
+   base URL, CORS, credentials, request validation, error mapping, caching, and
+   one success and one failure.
+4. **Review changes deterministically.** Commit the source with its lock and
+   compare each candidate with the last accepted input:
+   `axiom diff previous.acore axiom.acore --format semantic`. Review removals,
+   validation, authentication and package dependency changes separately. Never
+   resolve an unpinned `latest` in the build that creates release evidence.
+5. **Expand after the boundary is stable.** Add a consumer, target or package
+   only after the first path has a repeatable CI gate and a rollback artifact.
+   Moving a frontend to Acore UI is a separate decision, not a prerequisite.
+
+After the first working request, add a [CI contract check](/testing/ci),
+review [production readiness](/delivery/production-readiness), and document
+your failure and recovery paths. For agent-assisted work, see
+[AI coding agents](/guides/using-ai-agents).
+
+## Connect an existing frontend
+
+`axiom pull` accepts a local `.axiom` file, a URL, an `AxiomDeps.toml` or JSON
+config, or an `organization/project[/version]` release reference. Named
+targets are `atmx-web`, `atmx-react`, `flutter` and `dart`.
+
+```bash title="Frontend directory"
+axiom pull ../backend/backend.axiom --framework atmx-web --out src/generated
+axiom pull organization/project/1.2.0 --framework flutter
+```
+
+Pull records the dependency in `AxiomDeps.toml` under an alias (`--name`).
+Commit it with a `source` that works on other machines. A release build uses
+the pinned artifact and never falls back to live backend introspection.
+
+```toml title="AxiomDeps.toml"
+[contracts.tasks]
+source = "../backend/backend.axiom"
+```
+
+Do not hand-edit generated code into a second schema. Generated APIs differ
+between ATMX and Flutter or Dart and can change while a target is Alpha. Test
+runtime startup and an artifact integrity failure, one query and one declared
+error, authentication headers (no secrets in the contract), cache identity and
+invalidation, the stream lifecycle where supported, and a release build, not
+only hot reload. To upgrade, pull the new immutable version, read the semantic
+diff, run the consumer tests, and commit the change with its lock.
+
+## Next steps
+
+- [Connect FastAPI to a web client](/guides/fastapi-to-web)
+- [Connect Go to a web client](/guides/go-to-web)
+- [How extraction works](/guides/backend-extraction)
+- [Add contract checks to CI](/testing/ci)

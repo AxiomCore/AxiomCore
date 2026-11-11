@@ -1,22 +1,38 @@
 ---
-title: Mocking APIs
-description: Run deterministic static, conditional, stateful, and fault-injected responses from a contract.
+title: Mocks
+description: Serve deterministic static, conditional, stateful and fault-injected responses from endpoint MockConfig declarations with axiom mock.
 pageType: guide
 ---
 
-The local mock server reads endpoint-level `MockConfig` declarations from an
-Acore contract for development and contract tests.
+A contract mock answers requests from `mock(MockConfig(...))` declarations on
+your endpoints, so you can build and test a client before the backend exists.
+`axiom mock FILE.acore --profile contract` starts the mock engine locally.
 
-This page describes the explicit `axiom mock FILE.acore --profile contract`
-profile. It does not run private server actions or establish that their guards
-and providers were executed. `axiom mock` selects full server simulation when
-compilation supplies a private server plan; `axiom serve --mock` always requires
-that plan and bound fixtures. See [Full server simulation](/testing/server-simulation)
-and the [real server workflow](/backend/local-development).
+<StatusNote status="alpha" title="Alpha">
+Local contract mocks are part of the Alpha `.axiom` service contract workflow.
+The contract profile never runs private server actions, so it cannot show that
+their guards and providers ran. To simulate managed actions inside the real
+server boundary, use [server simulation](/testing/server-simulation).
+</StatusNote>
+
+## Pick a mock profile
+
+| Command | Profile | Serves |
+| --- | --- | --- |
+| `axiom mock FILE.acore --profile contract` | Contract | Endpoint `MockConfig` responses from source |
+| `axiom mock FILE.acore` | `auto` (default) | Full server simulation when compiling the source produces a private server plan; contract mocks otherwise |
+| `axiom mock --cloud` | Cloud contract mocks | Mocks of the linked Cloud project; needs a linked project and a Cloud session |
+| `axiom serve FILE.acore --mock` | Server simulation only | Always requires a server plan and bound fixtures |
+
+`auto` never downgrades: a broken or unsupported server plan fails instead of
+falling back to contract mocks. `axiom serve` starts real backend execution,
+defaults to local `axiom.acore`, and never downloads Cloud mocks. With no input,
+`axiom mock` uses `axiom.acore` in the current directory. Cloud mocks keep the
+configuration cache and its ETag; see [Cloud mocks](/cloud/deploying-mocks).
 
 ## Declare an endpoint response
 
-```acore title="Acore excerpt"
+```acore title="axiom.acore (excerpt)"
 endpoint listTasks(method: GET, path: "/tasks") {
   response(type: Json)
   mock(MockConfig(
@@ -29,24 +45,44 @@ endpoint listTasks(method: GET, path: "/tasks") {
 }
 ```
 
-Start the server with the contract as a positional argument:
-
-```bash title="Terminal"
+```bash title="Terminal: project root"
 axiom mock axiom.acore --profile contract --port 8080 --debug
 ```
 
-For local source reload, add `--watch` on a fixed loopback port. Invalid source
-leaves the last valid scenarios running; successful reload starts fresh state.
-Cloud/artifact watch and changes that add a private server plan require a restart.
+The server listens on `127.0.0.1:8080` by default (`--host`, `--port`).
+`--debug` prints redacted startup diagnostics, never raw credentials or
+request and response bodies.
 
-## Conditional selection
+| Route | Purpose |
+| --- | --- |
+| Your endpoints | Mock responses |
+| `GET /axdoc`, `GET /axdoc/openapi.json` | Generated API docs and OpenAPI |
+| `GET /_axiom/health` | Health check |
+| `POST /_axiom/state/reset` | Restore the initial state and reset sequential selection |
 
-`MockConfig.selectionStrategy` supports `first_match`, `random`, `sequential`,
-and `weighted`. Conditions can inspect headers, query/path values, body paths,
-or mock state and can be combined with all/any/not conditions.
+On a loopback listener these routes are open. On a non-loopback listener the
+server issues a private `X-Axiom-Sandbox-Key`, writes it to an owner-only
+`credentials.json` reported at startup, and requires it on every route, docs,
+health and reset. Only the landing page at `/` stays open.
 
-```acore title="Acore excerpt"
-// The responses argument of MockConfig(...).
+<span id="conditional-selection" />
+
+## Responses and selection
+
+| `MockResponse` field | Default | Meaning |
+| --- | --- | --- |
+| `status`, `headers` | 200, none | Response status and headers |
+| `data` | Empty `StaticData` | The body strategy (see below) |
+| `conditions` | None | All must match for this response to be eligible |
+| `delayMs`, `delayJitterMs` | 0 | Fixed and random added latency |
+| `weight` | 1 | Used by `weighted` selection |
+| `label` | None | Name used by state changes |
+
+`MockConfig` has `enabled` (default `true`), `responses`, `selectionStrategy`
+(`first_match` by default, or `random`, `sequential`, `weighted`), `fallback`,
+`state` and `fault`.
+
+```acore title="Acore excerpt: the responses argument of MockConfig(...)"
 MockConfig(responses: [
   MockResponse(
     label: "missing",
@@ -56,24 +92,53 @@ MockConfig(responses: [
 ])
 ```
 
+| Condition | Inspects |
+| --- | --- |
+| `HeaderCondition(key, op, value)` | A request header (default op `exists`) |
+| `QueryCondition(key, op, value)` | A query parameter |
+| `PathCondition(key, op, value)` | A path parameter |
+| `BodyCondition(path, op, value)` | A value in the JSON body |
+| `StoreCondition(key, op, value)` | Mock state (default op `gt`) |
+| `AllCondition`, `AnyCondition`, `NotCondition` | Combine other conditions |
+
+Condition operators are `eq`, `neq`, `exists`, `missing`, `contains`,
+`matches`, `gt` and `lt`.
+
+| Data strategy | Produces |
+| --- | --- |
+| `StaticData(body)` | A fixed body |
+| `TemplateData(body)` | A body with placeholders such as `{{ request.path.id }}`, `{{ request.body.title }}`, `{{ store.tasks }}` or generated `{{ faker.uuid }}` values |
+| `CollectionData(item, count, paging)` | A list of `count` items (default 20); `PagingConfig` reads `limit` and `offset` |
+| `EchoData(body)` | Values copied from the request or state |
+| `StoreQueryData(key, filterKey, filterValue, returnAll)` | Items read from mock state |
+
+Generated `faker` values change on every request. Use `StaticData` when a test
+asserts exact values.
+
 ## Stateful behavior
 
-```acore title="Acore excerpt"
-// The state argument of MockConfig(...).
+```acore title="Acore excerpt: the state argument of MockConfig(...)"
 MockConfig(state: MockStateConfig(
   initial: { tasks: [] },
   onReceive: [StoreMutation(type: "append", key: "tasks", value: { id: "1" })]
 ))
 ```
 
-State changes run in declaration order. The more detailed `changes` form can
-match a selected response, mutate state, and append activity events. Restart or
-explicit reset behavior should be part of the test setup when isolation matters.
+- `StoreMutation` types are `increment`, `increment_fields`, `set`, `update`,
+  `update_all`, `append` and `delete`, with optional `by`, `filterKey` and
+  `filterValue`.
+- Mutations run in declaration order.
+- `MockStateConfig.changes` holds conditional `StateChange` entries. Each can
+  match a selected response by `responseLabel`, test `when` conditions, apply
+  `mutations` and append `events` to the activity list named by `activityKey`
+  (default `activity`). Every matching change runs in order, so a later change
+  can read state an earlier one wrote.
+- State is shared and in memory. Reset it with `POST /_axiom/state/reset` or a
+  restart when a test needs isolation.
 
 ## Fault injection
 
-```acore title="Acore excerpt"
-// The fault argument of MockConfig(...).
+```acore title="Acore excerpt: the fault argument of MockConfig(...)"
 MockConfig(fault: FaultConfig(
   errorRate: 0.1,
   errorResponse: MockResponse(status: 503),
@@ -81,13 +146,40 @@ MockConfig(fault: FaultConfig(
 ))
 ```
 
-Probabilities must be between 0 and 1. Fault injection demonstrates consumer
-handling; it does not estimate a production service's reliability.
+| `NetworkFault` type | Behavior |
+| --- | --- |
+| `slow_response` | Adds `delayMs` before responding |
+| `timeout` | Waits 30 seconds, then returns 408 |
+| `connection_reset` | Returns 502 |
 
-## Validation checklist
+`errorRate` and `probability` must be between 0 and 1 (`probability` defaults to
+1). Fault injection shows how a consumer handles failures; it does not estimate
+a production service's reliability.
 
-- inspect the evaluated contract before starting the server;
-- test response selection and fallback explicitly;
-- reset state between tests that require isolation;
-- avoid real credentials in headers or templates; and
-- run the same client suite against the real backend before release.
+## Reload on save
+
+```bash title="Terminal: project root"
+axiom mock axiom.acore --profile contract --watch --port 8080
+```
+
+`--watch` needs `.acore` source and a fixed loopback port. Invalid source keeps
+the last valid mock running; a successful reload starts with fresh state. A
+reload cannot switch profiles, so a change that adds a private server plan
+needs a restart. Cloud and artifact inputs do not support `--watch`.
+
+<span id="validation-checklist" />
+
+## Checklist
+
+- Inspect the evaluated contract (`axiom eval`) before starting the server.
+- Test response selection and the fallback explicitly.
+- Reset state between tests that need isolation.
+- Keep real credentials out of headers and templates.
+- Run the same client suite against the real backend before release.
+
+## Next steps
+
+- Simulate managed actions with [server simulation](/testing/server-simulation).
+- Assert on mock responses with [contract tests](/testing/contracts).
+- Look up every mock class in the [Acore schema reference](/reference/acore-schema-reference).
+- Host mocks in [Axiom Cloud](/cloud/deploying-mocks).

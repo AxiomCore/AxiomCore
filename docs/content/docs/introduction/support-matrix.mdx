@@ -1,17 +1,24 @@
 ---
 title: Support and availability
-description: Choose a supported AxiomCore path and check its framework, target, and distribution limits.
+description: Choose a supported AxiomCore path and check its framework, target, platform and distribution limits.
 pageType: reference
 ---
 
-Capability support is specific to a framework, database, target, and tool
-version. The general feature matrix was last reviewed against the repositories on
+Support is specific to a framework, database, target, platform and tool
+version. Find your path below before you rely on it. The general feature matrix
+was last reviewed against the repositories on
 **September 22, 2026**.
 
-The distribution and new local app walkthroughs were checked on **October 15,
-2026** with published CLI 0.149.0 and signed web host 0.6.12 on macOS arm64.
-Detailed database and advanced-language qualifications retain their own review
-baselines in the [capability reference](/reference/capability-boundaries).
+Other review dates:
+
+- **Distribution and platforms** were checked on October 21, 2026 against the
+  published release assets.
+- **Run your first app** was run end to end on October 21, 2026 with published
+  CLI 0.149.1 and signed web UI host 0.6.12 on macOS arm64.
+- The backend, frontend and database quickstarts were checked on October 15,
+  2026 with published CLI 0.149.0 and web UI host 0.6.12 on macOS arm64.
+- Detailed database and advanced-language qualifications keep their own
+  baselines in [Capability boundaries](/reference/capability-boundaries).
 
 ## Status definitions
 
@@ -19,16 +26,42 @@ baselines in the [capability reference](/reference/capability-boundaries).
 | --- | --- |
 | **Available** | Usable on the stated path. This does not imply a stable major release or universal production certification. |
 | **Alpha** | Implemented and testable; APIs or workflows may change. |
-| **Experimental** | A bounded implementation exists; compatibility, parity, or distribution is incomplete. |
+| **Experimental** | A bounded implementation exists; compatibility, parity or distribution is incomplete. |
 | **Coming soon** | No supported runnable workflow is available. |
 
-## Language, contracts, and packages
+## Distribution and platforms
+
+The Axiom CLI release is **0.149.1** (October 15, 2026).
+
+| Platform | Status | CLI 0.149.1 | Boundary |
+| --- | --- | --- | --- |
+| macOS arm64 (Apple silicon) | Alpha | Archive published | Installer script, Homebrew or manual download. All walkthroughs are checked here. |
+| Linux amd64 | Experimental | Archive published | Installer script only. Needs glibc 2.36 or newer (for example Debian 12 or Ubuntu 24.04). Includes a managed PostgreSQL 17 validator. Walkthroughs, extractors and UI hosts are not checked on Linux. |
+| Linux arm64 | Experimental | Archive published | Same as Linux amd64. |
+| macOS on Intel (x86_64) | No build | None | The installer detects the platform but finds no archive. |
+| Windows | No build | None | No native build; the installer rejects Windows. WSL2 is not checked. |
+| Alpine and other musl Linux | No build | None | The installer requires glibc. |
+
+Installer platform detection does not establish artifact availability. Other
+published tools have narrower platforms:
+
+| Tool | Version | Published platforms |
+| --- | --- | --- |
+| Web UI host | 0.6.12 (signed) | Web browser host; Android Emulator and iOS Simulator hosts |
+| FastAPI extractor | 0.1.4 | macOS arm64 |
+| Go extractor | 2026.10.14.2 | macOS arm64 |
+| Acore language server (`acore-lsp`) | 0.1.4 | Bundled in the CLI; standalone build for macOS arm64 |
+
+See [Install the Axiom CLI](/getting-started/installation) for commands and
+checksums.
+
+## Language, contracts and packages
 
 | Capability | Status | Scope |
 | --- | --- | --- |
 | Acore language, `.axiom` contracts, typed packages, resolution and semantic diff | Alpha | Use compatible tools and pinned locks |
-| Managed logic, concurrency, caching, streams, scenarios, and typed failures | Experimental | Requirements vary by feature and host; see [exact boundaries](/reference/capability-boundaries#language-contracts-and-packages) |
-| Executable extensions | Experimental | Selected Rust, TypeScript, and Python profiles; no arbitrary ecosystem compatibility |
+| Managed logic, concurrency, caching, streams, scenarios and typed failures | Experimental | Requirements vary by feature and host; see [Capability boundaries](/reference/capability-boundaries) |
+| Executable extensions | Experimental | Selected Rust, TypeScript and Python profiles; no arbitrary ecosystem compatibility |
 | Inspector | Alpha | Canonical facts, relationships, impact and recorded execution evidence |
 | Optional Jev question planning | Experimental | Remote intent planning; local evidence remains authoritative |
 
@@ -36,40 +69,65 @@ baselines in the [capability reference](/reference/capability-boundaries).
 
 | Path | Status | Main boundary |
 | --- | --- | --- |
-| FastAPI extraction | Available | Imports the application; install its dependencies and keep initialization safe |
-| Go extraction | Alpha | Check the selected router and extracted types |
+| FastAPI extraction | Available | Imports the application's own modules, so keep their initialization safe. The extractor bundles FastAPI, Starlette and Pydantic; other third-party imports become placeholders. Install the extractor [manually](/getting-started/installation#backend-extractors) in 0.149.1. Published extractor build: macOS arm64 |
+| Go extraction | Alpha | Check the selected router and extracted types. Published extractor build: macOS arm64 |
 | OpenAPI and SQL bootstrap | Experimental | Bounded imports, not full behavior or runtime parity |
-| PostgreSQL and SQLite contracts/persistence | Experimental | [Engine, platform, and workflow limits](/reference/capability-boundaries#backend-and-schema-inputs) |
-| Named PostgreSQL production profile | Available | Only its exact qualified release, recovery admission, and measured workload |
+| PostgreSQL and SQLite contracts and persistence | Experimental | Engine, platform and workflow limits in [Capability boundaries](/reference/capability-boundaries) |
+| Named PostgreSQL production profile | Available | Only its exact qualified release, recovery admission and measured workload |
 | Other first-party backend extractors | Coming soon | No supported extractor workflow is documented |
+| Backend deployment targets `native-server`, `container-amd64`, `container-arm64`, `cloudflare-workers-local` | Experimental | Local conformance only. Container and Worker packaging need runtime source that is not distributed with the CLI; see [Deployment targets](/backend/deployment) |
+| Hosted Cloudflare Workers, `serverless` and `edge` targets | Coming soon | `axiom server targets` reports them unavailable |
 
 ## Frontend and application targets
 
 | Path | Status | Main boundary |
 | --- | --- | --- |
 | Vanilla web / ATMX | Available | Verify browser startup, runtime, CORS and application behavior |
-| React / ATMX | Alpha | Verify bundler, provider, and application lifecycle |
-| Flutter / Dart | Alpha | Verify assets, native runtime, storage and release builds |
-| Swift / Apple | Experimental | Distribution foundations; full binding/lifecycle parity is incomplete |
-| Acore UI | Alpha | Browser and qualified emulator/simulator development paths |
-| Extension hosts and foreign web islands | Experimental | [Target-specific limits](/reference/capability-boundaries#frontend-and-application-targets) |
+| React / ATMX | Alpha | Verify bundler, provider and application lifecycle |
+| Flutter / Dart | Alpha | `axiom_flutter` 0.147.5 bundles native runtimes for iOS and macOS only; verify assets, storage and release builds. See [Flutter and Dart](/sdks/flutter) |
+| Swift / Apple | Experimental | Distribution foundations; full binding and lifecycle parity is incomplete |
+| Acore UI | Alpha | Browser and qualified emulator or simulator development paths |
+| Extension hosts and foreign web islands | Experimental | Target-specific limits in [Capability boundaries](/reference/capability-boundaries) |
 | Physical devices and app-store distribution | Coming soon | No general certification claim |
 
 ## Cloud and applications
 
-Connected accounts, projects, releases, environments, tests, observability, and
-the Cloud Dashboard are **Alpha** and require their configured services.
-Axiom Studio, Acode, and Axiom Marketplace are **Coming soon**.
+Connected accounts, projects, releases, environments, tests, observability and
+the Cloud Dashboard are **Alpha** and need their configured services. Axiom
+Studio, Acode and Axiom Marketplace are **Coming soon**.
 
-## Database DX delivery
+Project environment secret management is **Alpha** in the deployed Dashboard.
+Protected local and Cloud consumption is **Experimental** in the matching
+source preview on macOS arm64 with native ActionHost and server WASM. The
+source web frontend uses delegated backend operations. Native mobile runtime
+parity and container or Worker consumption are unqualified. Published CLI
+0.149.0 and 0.149.1 and host 0.6.12 do not include this qualification. See
+[Secrets at runtime](/backend/runtime-secrets).
 
-CLI 0.149.0 provides versioned run, migrate, rollback, status, history,
-comparison, and typed application storage. PostgreSQL needs a reachable server
-and a matching validator. SQLite uses a local file. Browser previews simulate
-storage and history; they do not perform native migrations.
+[Cloud secrets](/cloud/secrets) describes the deployed inventory, candidate
+review, runtime access and activity workflow, and secret environment
+protection and expiry. The [Secrets commands](/tooling/secrets-cli) reference
+covers the explicitly qualified source-preview commands.
 
-The current 0.149.0 release has a macOS arm64 binary. It does not include Linux
-or native Windows downloads. Installer platform detection does not establish
-artifact availability. See [installation](/getting-started/installation) and
-[the detailed reference](/reference/capability-boundaries#database-developer-workflow)
-for constraints outside the checked local path.
+<span id="database-dx-delivery" />
+
+## Local database workflow
+
+CLI 0.149.0 and later, including 0.149.1, provide versioned run, migrate,
+rollback, status, history, comparison and typed application storage.
+PostgreSQL needs a reachable server and a matching validator; the Linux CLI
+archives include a PostgreSQL 17 validator. SQLite uses a local file. Browser
+previews simulate storage and history; they do not perform native migrations.
+See [Capability boundaries](/reference/capability-boundaries) for constraints
+outside the checked local path.
+
+## Managed project databases
+
+Dashboard database preferences, managed storage provisioning and resource
+lifecycle controls, including qualified access rotation, are **Alpha**, checked
+on October 20, 2026. Customers select SQLite or PostgreSQL; allocation depends
+on location, capacity and entitlement. Hosted runtime connections, migrations,
+managed application authentication and public paid checkout are
+**Coming soon**. New resource-management CLI commands are source-only. See
+[Managed resources](/cloud/project-resources) and the local
+[database workflow](/database).

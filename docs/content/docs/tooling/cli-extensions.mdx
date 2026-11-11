@@ -1,0 +1,461 @@
+---
+title: axiom extensions
+description: Reference for every axiom extensions subcommand that builds, signs, resolves, verifies, reviews and runs sandboxed executable extensions.
+pageType: reference
+---
+
+`axiom extensions` builds sandboxed executable extensions from Rust, TypeScript
+or Python source, signs and resolves their packages, reviews the authority they
+request, and verifies or runs them for a target host. This page covers all 19
+subcommands in Axiom CLI 0.149.1.
+
+<StatusNote status="experimental" title="Executable extensions">
+  Executable extensions are **Experimental**: selected Rust, TypeScript and
+  Python profiles, with no arbitrary ecosystem compatibility. Extension hosts
+  have server and headless, Chromium Worker, Android Emulator and iOS Simulator
+  conformance. Physical-device, durable-store and broad browser-engine
+  certification is not claimed. See
+  [Extensions](/extensions) and
+  [Capability boundaries](/reference/capability-boundaries).
+</StatusNote>
+
+All `axiom extensions` commands run locally without Cloud login. `verify`,
+`test`, `inspect`, `permissions`, `graph` and `run` work offline.
+
+```mermaid title="Extension commands from source to a verified host handoff"
+flowchart LR
+  SRC[Extension source] --> SB[source-build]
+  SRC --> SR[source-release]
+  DRAFT[Package draft] --> B[build]
+  B --> SG[sign]
+  SG --> RS[resolve]
+  SR --> WF[AxiomExtensions.toml]
+  RS --> WF
+  WF --> V[verify]
+  WF --> P[permissions and diff]
+  V --> T[test]
+  T --> RUN[run]
+```
+
+There are two paths to a release workflow. `source-release` compiles one
+registered source module, signs it with local keys and writes the workflow file
+in one step. The manual path builds a package from a draft, signs it, and
+resolves it into the package lock that your workflow file references. Either
+way, `verify` and `test` check the workflow offline, `permissions` and `diff`
+review authority, and `run` emits the exact descriptor a target host receives.
+
+## axiom extensions
+
+```text title="Usage"
+axiom extensions <COMMAND>
+```
+
+| Subcommand | Purpose |
+| --- | --- |
+| [`prepare-ide`](#axiom-extensions-prepare-ide) | Write digest-bound IDE helpers without compiling guests. |
+| [`rust-inspect`](#axiom-extensions-rust-inspect) | Inspect Rust macro lowering, bindings and workspace. |
+| [`typescript-inspect`](#axiom-extensions-typescript-inspect) | Inspect generated TypeScript declarations and bridge entry. |
+| [`python-inspect`](#axiom-extensions-python-inspect) | Inspect generated Python stubs, lowering and source map. |
+| [`migrate-rust`](#axiom-extensions-migrate-rust) | Move a legacy low-level Rust extension to the raw compatibility surface. |
+| [`interface`](#axiom-extensions-interface) | Emit the language-neutral SDK interface. |
+| [`interface-diff`](#axiom-extensions-interface-diff) | Compare two SDK interface artifacts. |
+| [`source-build`](#axiom-extensions-source-build) | Compile one source module into verified WASM. |
+| [`source-release`](#axiom-extensions-source-release) | Build, sign and register one source module in a local release workflow. |
+| [`build`](#axiom-extensions-build) | Encode an extension package draft. |
+| [`sign`](#axiom-extensions-sign) | Sign a package and write a detached proof. |
+| [`resolve`](#axiom-extensions-resolve) | Resolve local extension packages into the package lock. |
+| [`verify`](#axiom-extensions-verify) | Verify the release workflow offline. |
+| [`inspect`](#axiom-extensions-inspect) | Explain one extension's identity, provenance and authority. |
+| [`permissions`](#axiom-extensions-permissions) | Show requested, granted and effective authority. |
+| [`graph`](#axiom-extensions-graph) | Show extension dependencies and origins. |
+| [`diff`](#axiom-extensions-diff) | Diff two authority locks and enforce approval of increases. |
+| [`test`](#axiom-extensions-test) | Run offline release conformance checks. |
+| [`run`](#axiom-extensions-run) | Emit or execute the verified host handoff. |
+
+### Shared inputs
+
+| Input | Meaning |
+| --- | --- |
+| `<ALIAS>` | Extension alias. Source commands look it up in `AxiomDeps.toml`; workflow commands look it up in `AxiomExtensions.toml`. |
+| `--deps` | Authored dependency manifest that registers source extensions. Default `AxiomDeps.toml`. |
+| `--manifest` | Release workflow file (`axiom-extension-workflow/v1`). It names the application, package manifest and lock, and for each extension its authority lock and digest, signed request, signed grant, signed per-target policies, dependencies and runtime identities. Default `AxiomExtensions.toml`. Ordinary `axiom run` commands consume the same file. |
+| `--target` | Target host: `android`, `ios`, `web` or `server`. |
+
+Third-party packages used inside extension source are managed separately with
+[`axiom dependencies`](/tooling/cli-contracts#axiom-dependencies).
+
+## Author and inspect source
+
+### axiom extensions prepare-ide
+
+Generate editor helpers for one extension so the editor can check calls into it.
+No guest compiler, extractor, runtime or package script runs. Helpers and a
+receipt bound to input digests are written under
+`.axiom/extensions/ide/<alias>/`.
+
+```text title="Usage"
+axiom extensions prepare-ide [OPTIONS] <ALIAS>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<ALIAS>` | alias | required | Source extension in `AxiomDeps.toml`, or a locked packaged extension. |
+| `--deps` | path | `AxiomDeps.toml` | Dependency manifest. |
+| `--interface` | path | none | Canonical SDK interface artifact inside the project. Omitted means the interface generated from the manifest. Required for packaged extensions. |
+| `--json` | flag | off | Print the full result as JSON instead of a one-line receipt. |
+
+### axiom extensions rust-inspect
+
+Show how a Rust source extension lowers: its macros, generated bindings, SDK
+interface and hidden build workspace.
+
+```text title="Usage"
+axiom extensions rust-inspect [OPTIONS] <ALIAS>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<ALIAS>` | alias | required | Rust extension in `AxiomDeps.toml`. |
+| `--deps` | path | `AxiomDeps.toml` | Dependency manifest. |
+| `--view` | `summary`, `macros`, `interface`, `workspace`, `bindings` | `summary` | Evidence to print. |
+| `--json` | flag | off | JSON output. |
+
+```bash title="Terminal"
+axiom extensions rust-inspect pricing
+```
+
+### axiom extensions typescript-inspect
+
+Show the generated TypeScript declarations, bridge entry, SDK interface and
+dependencies of a TypeScript source extension.
+
+```text title="Usage"
+axiom extensions typescript-inspect [OPTIONS] <ALIAS>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<ALIAS>` | alias | required | TypeScript extension in `AxiomDeps.toml`. |
+| `--deps` | path | `AxiomDeps.toml` | Dependency manifest. |
+| `--view` | `summary`, `declarations`, `entry`, `interface` | `summary` | Evidence to print. |
+| `--json` | flag | off | JSON output. |
+
+### axiom extensions python-inspect
+
+Show the generated Python stubs, ahead-of-time lowering, source map, SDK
+interface and dependencies of a Python source extension.
+
+```text title="Usage"
+axiom extensions python-inspect [OPTIONS] <ALIAS>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<ALIAS>` | alias | required | Python extension in `AxiomDeps.toml`. |
+| `--deps` | path | `AxiomDeps.toml` | Dependency manifest. |
+| `--view` | `summary`, `stubs`, `lowering`, `source-map`, `interface` | `summary` | Evidence to print. |
+| `--json` | flag | off | JSON output. |
+
+### axiom extensions migrate-rust
+
+Move a legacy low-level Rust extension onto the explicit raw compatibility
+surface while preserving behavior. Without `--out`, `--write` or `--check` it is
+a dry run that prints the planned changes.
+
+```text title="Usage"
+axiom extensions migrate-rust [OPTIONS] <ALIAS>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<ALIAS>` | alias | required | Registered Rust extension alias. |
+| `--deps` | path | `AxiomDeps.toml` | Dependency manifest. |
+| `--out` | path | none | Write the migrated source to a new file. The file must not exist. |
+| `--write` | flag | off | Atomically replace the registered source. |
+| `--check` | flag | off | Fail when legacy top-level SDK imports remain. Use in CI. |
+| `--json` | flag | off | JSON report. |
+
+`--out`, `--write` and `--check` are mutually exclusive.
+
+```bash title="Terminal"
+axiom extensions migrate-rust pricing
+axiom extensions migrate-rust pricing --check
+```
+
+## Interfaces
+
+### axiom extensions interface
+
+Emit the canonical, language-neutral SDK interface of one authored extension:
+exports, requested imports, types and language mappings. Add an authority lock
+and target to see the surface that target actually receives.
+
+```text title="Usage"
+axiom extensions interface [OPTIONS] <ALIAS>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<ALIAS>` | alias | required | Source extension in `AxiomDeps.toml`. |
+| `--deps` | path | `AxiomDeps.toml` | Dependency manifest. |
+| `--authority-lock` | path | none | Resolved authority lock used to show a target-effective surface. Its interface digest must match. |
+| `--target` | target | none | Target for the effective surface. Required with `--authority-lock`. |
+| `-o, --out` | path | none | Write the canonical requested-interface artifact. |
+| `--json` | flag | off | JSON output instead of a summary. |
+
+### axiom extensions interface-diff
+
+Compare two SDK interface artifacts semantically. Each change is classified as
+`compatible`, `authority-increase` or `breaking`.
+
+```text title="Usage"
+axiom extensions interface-diff [OPTIONS] <BEFORE> <AFTER>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<BEFORE>` | path | required | Earlier interface artifact. |
+| `<AFTER>` | path | required | Later interface artifact. |
+| `--json` | flag | off | JSON output. |
+
+## Build, sign and resolve
+
+### axiom extensions source-build
+
+Compile one registered Rust, TypeScript or Python source module into verified
+WASM. It needs the language toolchain and the matching Axiom extension SDK
+installed in the extension project; see [Build an extension](/extensions/build).
+
+```text title="Usage"
+axiom extensions source-build [OPTIONS] <ALIAS>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<ALIAS>` | alias | required | Registered `AxiomDeps.toml` extension alias. |
+| `--deps` | path | `AxiomDeps.toml` | Dependency manifest. |
+| `--out` | directory | `.axiom/extensions` | Application-local generated artifact and cache directory. |
+| `--target` | target | `web` | Target to build for. |
+| `--clean` | flag | off | Ignore a matching verified build cache entry. |
+
+The build result prints as JSON.
+
+```bash title="Terminal"
+axiom extensions source-build pricing --target web
+```
+
+### axiom extensions source-release
+
+Build and sign one registered source module into a local release workflow that
+ordinary `axiom run` commands consume. The grant covers exactly the authority
+the module requests for its declared targets.
+
+```text title="Usage"
+axiom extensions source-release [OPTIONS] --application <APPLICATION> <ALIAS>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<ALIAS>` | alias | required | Registered `AxiomDeps.toml` extension alias. |
+| `--deps` | path | `AxiomDeps.toml` | Dependency manifest. |
+| `--out` | directory | `.axiom/extensions` | Application-local generated artifact and cache directory. |
+| `--workflow` | path | `AxiomExtensions.toml` | Workflow file to write. It must sit in the `AxiomDeps.toml` directory. |
+| `--application` | ID | required | Application identity the grant is issued to. |
+| `--application-version` | version | `0.1.0` | Application version. |
+| `--clean` | flag | off | Ignore a matching verified build cache entry. |
+
+Release files go to `<out>/release/<alias>/`. Locally generated owner-only
+signing keys go to `<out>/keys/<alias>/`; keep them out of source control. An
+extension with dependencies needs those modules released separately first.
+
+```bash title="Terminal"
+axiom extensions source-release checkout --deps AxiomDeps.toml --application example.checkout
+```
+
+### axiom extensions build
+
+Validate an extension package draft (a JSON package envelope with extension
+contents) and write its canonical encoding. It prints the output path and
+SHA-256 digest.
+
+```text title="Usage"
+axiom extensions build --out <OUT> <SOURCE>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<SOURCE>` | path | required | Extension package draft. |
+| `-o, --out` | path | required | Canonical package to write. |
+
+```bash title="Terminal"
+axiom extensions build pricing.draft.json --out pricing.axiom
+```
+
+### axiom extensions sign
+
+Sign a canonical package and write a detached `axiom-package-proof/v1` document
+with the artifact digest, signature and public key.
+
+```text title="Usage"
+axiom extensions sign --key <KEY> --out <OUT> <ARTIFACT>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<ARTIFACT>` | path | required | Canonical package to sign. |
+| `--key` | path | required | File containing a hex-encoded 32-byte Ed25519 seed. Keep it owner-only and out of source control. |
+| `-o, --out` | path | required | Proof document to write. |
+
+```bash title="Terminal"
+axiom extensions sign pricing.axiom --key pricing.key --out pricing.proof.json
+```
+
+### axiom extensions resolve
+
+Resolve local extension packages from the dependency manifest into the
+committed package lock.
+
+```text title="Usage"
+axiom extensions resolve [OPTIONS]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--deps` | path | `AxiomDeps.toml` | Dependency manifest. |
+| `--lock` | path | `.axiom/AxiomPackages.lock` | Package lock to write. |
+
+```bash title="Terminal"
+axiom extensions resolve
+```
+
+## Verify and review authority
+
+### axiom extensions verify
+
+Verify every signed package, authority input, lock, target policy and
+provenance record in the workflow, offline. Run it in CI before release.
+
+```text title="Usage"
+axiom extensions verify [OPTIONS]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--manifest` | path | `AxiomExtensions.toml` | Release workflow file. |
+
+```bash title="Terminal"
+axiom extensions verify --manifest AxiomExtensions.toml
+```
+
+### axiom extensions inspect
+
+Explain one extension's identity, provenance and authority as JSON.
+
+```text title="Usage"
+axiom extensions inspect [OPTIONS] <ALIAS>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<ALIAS>` | alias | required | Extension in the workflow. |
+| `--manifest` | path | `AxiomExtensions.toml` | Release workflow file. |
+
+### axiom extensions permissions
+
+Show the authority an extension requests, what the application grants, and what
+each target effectively allows, with dependency paths and whether the grant is
+development-only.
+
+```text title="Usage"
+axiom extensions permissions [OPTIONS] <ALIAS>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<ALIAS>` | alias | required | Extension in the workflow. |
+| `--manifest` | path | `AxiomExtensions.toml` | Release workflow file. |
+
+```bash title="Terminal"
+axiom extensions permissions pricing --manifest AxiomExtensions.toml
+```
+
+### axiom extensions graph
+
+Show extension dependencies and their transitive origins as JSON.
+
+```text title="Usage"
+axiom extensions graph [OPTIONS]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--manifest` | path | `AxiomExtensions.toml` | Release workflow file. |
+
+### axiom extensions diff
+
+Diff two canonical authority locks. The report always prints; the command exits
+non-zero when authority increases unless you approve the increase explicitly.
+
+```text title="Usage"
+axiom extensions diff [OPTIONS] <BEFORE> <AFTER>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<BEFORE>` | path | required | Earlier authority lock. |
+| `<AFTER>` | path | required | Later authority lock. |
+| `--approve` | `permission-increase` | none | Accept authority increases. Any other value is rejected. |
+
+```bash title="Terminal"
+axiom extensions diff before.authority.lock.json after.authority.lock.json
+```
+
+## Test and run
+
+### axiom extensions test
+
+Run deterministic, offline release conformance checks: the same verification as
+`verify`, plus a failure for any extension without an executable target or
+effective authority.
+
+```text title="Usage"
+axiom extensions test [OPTIONS]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--manifest` | path | `AxiomExtensions.toml` | Release workflow file. |
+
+### axiom extensions run
+
+Verify one extension and print the exact descriptor handed to the selected
+target host (`axiom-extension-run-handoff/v1`) without running guest code. With
+`--export`, execute one verified export in the server reference host instead.
+
+```text title="Usage"
+axiom extensions run [OPTIONS] <ALIAS>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<ALIAS>` | alias | required | Extension in the workflow. |
+| `--manifest` | path | `AxiomExtensions.toml` | Release workflow file. |
+| `--target` | target | `server` | Target host. `--export` works only with `server`. |
+| `--export` | export name | none | Execute this verified export in the server reference host. Omit to inspect the handoff only. |
+| `--input` | JSON | `null` | ABI input for `--export`. ABI v1 rejects floating-point values. |
+| `--state` | path | none | Deterministic UI or store fixture for a server reference invocation. Guest code never receives a native state reference. |
+| `--audit-out` | path | none | Also write canonical, redacted, correlated execution evidence to this path. |
+
+```bash title="Terminal"
+axiom extensions run pricing --target web
+axiom extensions run pricing --export quote --input '{"sku":"A1"}'
+```
+
+Frontend exports run inside the application with `axiom run <app>.acore --target android|ios|web`.
+
+## Related pages
+
+- [Build an extension](/extensions/build)
+- [Extension reference](/extensions/reference)
+- [Extension dependencies](/extensions/dependencies)
+- [Contract, package and security commands](/tooling/cli-contracts)

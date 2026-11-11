@@ -1,17 +1,27 @@
 ---
-title: Database quickstart
-description: Create a SQLite schema, insert a row, migrate a change, and inspect version history.
+title: Create your first database
+description: Define a SQLite schema in Acore, insert a row, migrate a change and inspect the version history.
 pageType: tutorial
-testedWith: Published Axiom CLI 0.149.0 on macOS arm64
 ---
 
-Create a local SQLite database from Acore and make one versioned schema change.
-No `sqlite3` command or database server is needed.
+Create a local SQLite database from an Acore schema, then make one versioned
+schema change and see how rollback works. You need no `sqlite3` command and no
+database server.
+
+```mermaid title="Each schema change is a new version; rollback adds a compensating version"
+flowchart LR
+  A[Version 1.0.0: tasks table] -->|axiom database migrate| B[Version 1.0.1: adds note]
+  B -->|axiom database rollback| C[New compensating version: removes note]
+```
+
+## Prerequisites
+
+- [Axiom CLI 0.149.1](/getting-started/installation). This walkthrough is
+  checked on macOS arm64. Local SQLite and PostgreSQL contracts are
+  **Experimental**; see the [support matrix](/introduction/support-matrix).
+- An empty directory named `database-demo`. Run every command from it.
 
 ## 1. Define a database
-
-[Install CLI 0.149.0](/getting-started/installation). Create an empty directory
-named `database-demo`; run all commands from that directory.
 
 ```toml title="AxiomDeps.toml"
 type = "database"
@@ -34,6 +44,9 @@ database tasks(engine: DatabaseEngine.sqlite) {
 }
 ```
 
+The project version is the schema version. `manage` tells the CLI it owns the
+objects in schema `main`.
+
 ## 2. Create the database and a record
 
 ```bash title="Terminal: database-demo"
@@ -44,18 +57,26 @@ axiom database status schema.acore
 axiom database history schema.acore
 ```
 
-The first run validates and applies version `1.0.0`. The query returns the row
-`1 | Learn Acore`; status reports **Drift: none**. Repeating the insert produces
-a primary-key conflict, so omit it on subsequent runs.
+What you should see:
 
-For an interactive console, run `axiom run schema.acore`. Use `\dt` to list
-tables, ordinary SQL to inspect rows, and `\q` to exit. The CLI prints the
-SQLite file path for external database viewers. Use `--database-file ./tasks.sqlite`
-on every command if you want an explicit persistent file location.
+- `axiom check` prints `Valid database contract: schema.acore`.
+- The first `axiom run` validates and applies version `1.0.0`, then the query
+  returns the row `1 | Learn Acore`.
+- `status` reports **Drift: none**, and `history` lists version `1.0.0`.
+
+Running the insert again fails with a primary-key conflict, so leave it out of
+later runs. Unsetting `DATABASE_URL` keeps the CLI from connecting to another
+database from your shell.
+
+For an interactive SQL console, run `axiom run schema.acore`. Use `\dt` to list
+tables, ordinary SQL to read rows and `\q` to exit. The CLI prints the SQLite
+file path for external viewers. To choose the file location, pass
+`--database-file ./tasks.sqlite` on every command.
 
 ## 3. Make a schema change
 
-Change the project version to `1.0.1`, then add a nullable field after `title`:
+Change the project version to `1.0.1` and add a nullable `note` column after
+`title`:
 
 ```acore title="schema.acore: changed lines"
 project(id: "docs.database", version: "1.0.1") // [!code highlight]
@@ -63,7 +84,7 @@ project(id: "docs.database", version: "1.0.1") // [!code highlight]
 note: Sqlite.Text(nullable: true) // [!code highlight]
 ```
 
-This is an excerpt, not a replacement file. Keep the remaining schema intact.
+This is an excerpt; keep the rest of the schema.
 
 ```bash title="Terminal: database-demo"
 axiom database migrate schema.acore
@@ -71,9 +92,10 @@ axiom database diff schema.acore --from 1.0.0 --to 1.0.1
 axiom database history schema.acore
 ```
 
-The migration adds `note`; the existing task remains. Published schema versions
-are immutable. If you change an already-used version, the CLI asks for a new
-one rather than silently replacing its history.
+The migration adds `note`, and the existing task remains. `diff` shows the
+added column, and `history` lists both versions. Published schema versions are
+immutable: if you change a version that was already applied, the CLI asks for
+a new version instead of replacing its history.
 
 ## 4. Understand rollback
 
@@ -81,18 +103,33 @@ one rather than silently replacing its history.
 axiom database rollback schema.acore --steps 1
 ```
 
-Review the prompt before accepting: removing `note` can delete values. Rollback
-publishes a **new compensating version**, retains prior history, and preserves
-your working source. It does not restore deleted data. See
-[rollback and CI flags](/database/contracts#roll-back-through-a-new-version)
-for automated use.
+Read the prompt before you accept: removing `note` deletes its values. Rollback
+publishes a **new compensating version**, keeps the earlier history and leaves
+your source file unchanged. It does not restore deleted data. For flags used in
+automation, see [Database contracts](/database/contracts).
 
-## Next steps and cleanup
+## Troubleshooting
 
-Use the [task app](/examples/task-app) to connect this pattern to an API and UI.
-For an existing PostgreSQL server, follow [database contracts](/database/contracts).
-For an existing schema, use the [adoption guide](/guides/existing-database).
+| Symptom | Fix |
+| --- | --- |
+| Primary-key conflict on `INSERT` | The row already exists. Run without the insert. |
+| The CLI connects to a different database | Run `unset DATABASE_URL`, or pass `--database-file`. |
+| A migration asks for a new version | You changed an applied version. Raise the project version. |
+| The rollback prompt warns about data loss | Expected when a step drops a column. Accept only for disposable data. |
 
-All data in this guide belongs to your disposable `database-demo` directory.
-Retain it to continue experimenting, or remove it once you no longer need its
-SQLite data and migration history.
+<span id="next-steps-and-cleanup" />
+
+## Cleanup
+
+All data from this guide lives in the `database-demo` directory. Keep it to
+continue experimenting, or delete it when you no longer need its SQLite data
+and migration history.
+
+## Next steps
+
+- [Run your first app](/getting-started/quickstart) to connect a schema to an
+  API and UI
+- [Database contracts](/database/contracts) for PostgreSQL and the full
+  schema syntax
+- [Existing database](/guides/existing-database) to adopt a schema you
+  already have

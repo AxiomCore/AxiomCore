@@ -1,35 +1,137 @@
 ---
-title: Trace and explain relationships
-description: Use graph, trace, why, access, reachability, lineage, evidence, and target comparison to answer focused application questions.
+title: Trace relationships
+description: Read Inspector facts, truth layers and typed relationships, then trace, explain, compare targets and review dependency closure.
 pageType: guide
 ---
 
-Start from one semantic fact and choose the question you want Inspector to
-answer.
+<span id="list-the-dependency-graph" />
+<span id="inspect-one-contract" />
+<span id="find-executable-code-behind-a-dependency" />
+<span id="review-a-third-party-contract" />
+<span id="trace-a-contract-operation" />
+<span id="relationship" />
+<span id="inspect-one-fact" />
+<span id="candidate-observation-envelopes" />
+<span id="classified-application-fields" />
+<span id="compare-target-neighborhoods" />
 
-## Inspect one fact
+Axiom Inspector models your application as **facts** connected by typed
+**relationships**. Start from one fact, pick the question you want answered, and
+read the result together with its evidence and completeness.
+
+<span id="four-truth-layers" />
+
+## Truth layers
+
+Every fact and relationship belongs to one truth layer. The layers answer
+different questions and are not interchangeable.
+
+<ConceptDiagram kind="evidence" />
+
+| Layer | Meaning | Example |
+| --- | --- | --- |
+| Declared | What an author wrote in source or a package | An extension requests write access to `cart.total_label` |
+| Resolved | What Axiom compiled, verified, connected and authorized | The application and web target policy make that write effective |
+| Observed | What one captured execution did | Invocation 19 proposed a patch to `cart.total_label` and the host accepted it |
+| Changed | How two compatible snapshots differ | A release adds a network permission or removes an operation |
+
+An allowed limit is not observed usage. An operation reachable from a button is
+not proof that anyone pressed it. A package's maximum permission request is not
+an application grant.
+
+## Facts and semantic IDs
+
+<span id="fact" />
+
+A **fact** is one normalized semantic node: a page such as `Home`, a state value
+such as `Home.apiKey`, an operation, a backend endpoint, an extension, one
+requested or effective permission, a style rule, or one runtime invocation.
+Each fact carries:
+
+- a stable semantic ID, such as `state:beb6895899277ccd1fbb36b3`;
+- a display label, kind and target list;
+- a truth layer and a verification state (`verified`, `declared`,
+  `unverified` or `unavailable`);
+- attributes and evidence references, where available.
+
+Commands accept a label when it resolves to exactly one fact. Semantic IDs are
+the durable choice for automation.
 
 ```bash title="Terminal"
-axiom inspect node Home.total_label .
-axiom inspect evidence Home.total_label .
+axiom inspect node Home.apiKey .
+axiom inspect node state:beb6895899277ccd1fbb36b3 .
 ```
 
-`node` shows the fact and immediate semantic neighborhood. `evidence` focuses on
-the source, artifact, lock, or runtime references supporting that fact.
+If a label is ambiguous, the command fails with `selector ... is ambiguous; use
+a semantic ID`. Copy the ID from `inspect node`, `inspect graph` or the
+dashboard drawer.
+
+## Relationships
+
+A **relationship** is a directed, typed edge between two facts, produced by the
+compiler, resolver, verifier or runtime. JSON output uses these kebab-case
+names; human output capitalizes them.
+
+| Group | Relationships |
+| --- | --- |
+| Structure | `contains`, `declares`, `exposes`, `renders`, `navigates-to`, `lowered-to` |
+| Behavior | `triggers`, `invokes`, `calls`, `reads`, `writes`, `subscribes`, `dispatches` |
+| Data | `projects`, `returns`, `validates`, `cached-by`, `invalidates` |
+| Dependencies | `imports`, `depends-on`, `resolves-to`, `implemented-by`, `built-with`, `licensed-under`, `included-in` |
+| Authority and policy | `requests`, `grants`, `authorizes`, `denies`, `protected-by`, `governed-by`, `violates` |
+| Evidence and change | `sourced-from`, `supports`, `observed-as`, `affected-by`, `impacts` |
+
+The dashboard graph lays out these edges; it is not an inferred architecture
+diagram.
+
+<span id="evidence" />
+
+## Evidence references
+
+An evidence reference explains why a fact or relationship exists. Depending on
+the producer it points to an Acore source span, a verified `.axiom` artifact and
+digest, a lock entry, an extension module, interface, request, grant or policy
+digest, a compiler source map, or a normalized runtime session and trace.
+
+```bash title="Terminal"
+axiom inspect evidence Home.apiKey .
+```
+
+The dashboard renders a source snippet only after it validates the referenced
+path and digest. Binary or out-of-workspace paths fail closed.
+
+## Choose a command
+
+All commands take `[PATH]` (default `.`) and `--format human|json|jsonl`.
+
+| Question | Command | Defaults |
+| --- | --- | --- |
+| What is this fact and its immediate neighborhood? | `node SELECTOR` | |
+| What evidence supports it? | `evidence SELECTOR` | |
+| What establishes or depends on it? | `trace SELECTOR --direction DIRECTION` (`upstream`, `downstream` or `both`) | `downstream`, depth 8, 500 results |
+| Which adjacent facts make it true? | `why SELECTOR` | |
+| Who requests, grants or holds access? | `access SELECTOR` | |
+| Is there a path from A to B? | `reachability FROM TO` | depth 16 |
+| Where does this data come from and go? | `lineage SELECTOR` | depth 16 |
+| What is around this fact? | `graph --root SELECTOR` | `both`, depth 8, 500 results |
+| How does this fact differ by target? | `target-compare SELECTOR --targets a,b` | |
+| A versioned, repeatable query | `query FILE` | JSON output |
+
+<span id="upstream-and-downstream" />
 
 ## Trace upstream or downstream
 
 ```bash title="Terminal"
-axiom inspect trace Home.total_label . --direction upstream
-axiom inspect trace Home.apply_member_price . --direction downstream
-axiom inspect trace pricing . --direction both --max-depth 6
+axiom inspect trace Home.apiKey . --direction upstream
+axiom inspect trace action:bc32bddfdfcab1ed7da14f57 . --direction both --max-depth 6
 ```
 
-Use upstream to ask “what establishes or can affect this?” Use downstream to ask
-“what can this reach or affect?” Increase depth deliberately; large traversals
-are bounded and report truncation.
-
-For the shopping example, an upstream state trace can connect:
+The examples use the task app from [Inspect an application](/inspector/inspect-an-application);
+`action:bc32bddfdfcab1ed7da14f57` is its `Home.connect` action. Upstream asks
+what establishes, calls, writes or authorizes a fact. Downstream
+asks what it can call, render, mutate, return or affect. In the task app, the
+upstream trace of `Home.apiKey` reaches a button that `triggers` the
+`Home.connect` action, which `contains` the step that `writes` the state.
 
 ```text title="Conceptual example"
 Apply member price button
@@ -39,179 +141,173 @@ Apply member price button
         -> Home.total_label
 ```
 
-Every arrow is a typed relationship. The path is not produced from label
-similarity.
+Every arrow is a typed relationship, never label similarity. Direction follows
+the edge, not time, unless the evidence is an observed runtime trace. Traversals
+are bounded: increase `--max-depth` and `--max-results` deliberately and check
+`Truncated` in the result. If the selector is not a fact but matches a recorded
+runtime trace ID, `trace` prints the observed events for that trace instead.
 
-Cache declarations and invalidation references describe dependencies; static
-inspection does not read a live cache. The native host's bounded observations
-distinguish `cache.hit`, `cache.fill`, `cache.join` and `cache.invalidate`.
-An invalidation observation means accepted action success, not an independently
-observed database commit. Labels use declared policy names and exclude cache
-keys, inputs, credentials and verified principal values.
+Cache declarations and invalidation references describe dependencies. Static
+inspection never reads a live cache; use
+[runtime evidence](/inspector/runtime-and-audits) for cache hits and fills.
 
-## Candidate observation envelopes
+<span id="inspect-provenance" />
+<span id="ask-why" />
+<span id="inspect-access" />
 
-### Classified application fields
-
-Applications can opt in to a small, typed field catalog in the private plan:
-
-```acore title="Acore excerpt"
-serverTelemetry(maxSeries: 32, maxEvents: 128, applicationFields: {
-  stage: {type: "enum", classification: "public", values: ["started", "complete"]},
-  count: {type: "int32", classification: "public"},
-  draft: {type: "string", classification: "private"},
-  credential: {type: "string", classification: "secret"}
-})
-```
-
-The trusted native telemetry producer checks the compiled action and field
-catalog before emitting an event. Public
-values support Boolean, Int32 and finite enums; arbitrary public strings are
-rejected. Private and secret values become the literal `[redacted]` before
-collection. At most 16 fields and 32 enum cases are permitted. Unknown fields,
-wrong types and undeclared enum values fail without emitting a partial event.
-These fields never become metric labels. No request, guest or transport payload
-is collected automatically, and hashing private values is not used as redaction.
-
-Inspector imports only the exact compiled field catalog and rejects unredacted
-private values. Field declarations convey no guest capability: sandbox events
-remain host-owned. Passive editor analysis checks the catalog and cannot emit
-telemetry. Existing declarations without `applicationFields` retain their
-default payload-free behavior.
-
-A compatible server can export a local `axiom-observation/v2` snapshot.
-Its identity contains the exact compiled contract
-and private plan digests, plus the execution layer (`native-host` or
-`scripted-provider`). This is a trusted host API; a static Inspector trace does
-not fetch it or start application work.
-
-Retained events have an ordered sequence, an explicit `observed` evidence label,
-and a terminal cause: `success`, `businessFailure`, `abort`, `fault`,
-`cleanupFailure`, or `indeterminate`. Owned events include the runtime's actual
-root and operation IDs, attempt, owner generation, inherited deadline tick and
-remaining shared work. A cleanup failure also gets a separate event, preserving
-the primary business or fault outcome. These values describe the executed
-boundary; they do not imply that an external commit succeeded.
-
-Resource evidence records entry into the checked provider dispatch boundary,
-including a typed failure or an unknown outcome. Admission denial is not a
-dispatch. For aggregation, only included items acquire dispatch evidence;
-canceled items removed before flushing do not. The physical batch count advances
-at dispatch, and a malformed reply cannot erase a dispatch that already happened.
-Native provider internals retain `unknown` evidence.
-
-The native collector bounds series and retained events using `serverTelemetry`.
-Labels are validated against the exact plan's actions, resources, endpoints,
-cache policies and qualified batch operations. Unknown labels aggregate into
-overflow. Payloads, credential bytes, principal claims, error messages and
-submission keys are absent. Retention saturation reports `droppedEvents`.
-
-Portable and generated frontend owners emit `acore-observation/v2` events with
-opaque owner correlation, checked semantic/operation identities, generations and
-safe event metadata. Route item keys and arbitrary provider text are excluded.
-The portable collector tests, generated adapter tests, native action-host tests,
-mounted targets and installed editor views are separate qualification levels.
-The complete cross-transport timeline and editor delivery remain under
-qualification.
-
-For explicit native observation import, the candidate CLI joins through the
-exact compiler-owned contract/plan catalog. It preserves source event order and
-links each supported event's `semanticId` to its captured graph fact. Wrong or
-ambiguous catalogs fail; source labels alone cannot reconnect a stale run.
-See [native managed observation import](/inspector/runtime-and-audits).
-
-The candidate frontend capture envelope also binds the complete compiled UI IR
-digest to an exact source catalog. It retains bounded capture order and separate
-coordinator/owner sequences, with logical trace IDs and shared physical-request
-links. Secure transport parents allow correlation with native observations;
-producer ordering stays separate. Portable tests and mounted captures retain
-distinct execution layers. See [frontend owner observations](/inspector/runtime-and-audits).
-
-## Ask why
+## Ask why and inspect access
 
 ```bash title="Terminal"
-axiom inspect why Home.total_label .
-axiom inspect why pricing .
+axiom inspect why Home.apiKey .
+axiom inspect access Home.apiKey .
 ```
 
-`why` returns the authoritative adjacent facts that establish the selected
-fact. For a permission, this can include its request, application grant, target
-policy, effective authorization, and declaration evidence.
+`why` returns the authoritative adjacent facts that establish the selected fact.
+For a permission this can include its request, application grant, target policy,
+effective authorization and declaration evidence. `access` separates who
+requests authority, what the application grants, what a target policy enables,
+which exact state, store, service or resource is authorized, and whether
+matching observed evidence exists.
 
-## Inspect access
+<span id="prove-reachability" />
+<span id="follow-lineage" />
+
+## Prove reachability and follow lineage
 
 ```bash title="Terminal"
-axiom inspect access Home.total_label .
-axiom inspect access pricing .
+axiom inspect reachability action:bc32bddfdfcab1ed7da14f57 Home.apiKey .
+axiom inspect lineage Task.title .
 ```
 
-Use `access` to separate:
-
-- who requests authority;
-- what the application grants;
-- what a target policy enables;
-- which exact state, store, service, or resource fact is authorized; and
-- whether matching observed evidence is available.
-
-## Prove reachability
-
-```bash title="Terminal"
-axiom inspect reachability \
-  Home.apply_member_price \
-  Home.total_label .
-```
-
-This returns a deterministic shortest downstream path within the requested
-depth. No result means no path was found inside the available bounded graph; it
-does not prove that unavailable external implementation code has no path.
-
-## Follow lineage
-
-```bash title="Terminal"
-axiom inspect lineage Product.price_label .
-```
-
-Lineage is useful for data questions such as:
-
-- where a rendered value originates;
-- which projection exposes a field;
-- which operation returns it;
-- which UI consumes it; or
-- what could be affected if it changes.
+`reachability` returns a deterministic shortest downstream path within the
+depth. No path means none was found in the available bounded graph; it does
+not prove that unavailable external code has no path. `lineage` answers data
+questions: where a rendered value originates, which projection exposes a field,
+which operation returns it, which UI consumes it and what a change could affect.
 
 ## Query a neighborhood
 
 ```bash title="Terminal"
-axiom inspect graph . \
-  --root Shop.list_products \
-  --direction both \
-  --max-depth 4 \
-  --max-results 200
-```
-
-Use `graph` when you want a broader neighborhood rather than complete paths.
-For repeatable agent queries, submit a versioned query document:
-
-```bash title="Terminal"
+axiom inspect graph . --root Home.apiKey --direction both --max-depth 4 --max-results 200
 axiom inspect query question.json . --format json
 ```
 
-The file must conform to `axiom-query/v1`; malformed, unknown, or over-budget
-requests fail validation.
+Use `graph` for a broad neighborhood rather than complete paths. For repeatable
+agent queries, write an `axiom-query/v1` document:
 
-## Compare target neighborhoods
-
-```bash title="Terminal"
-axiom inspect target-compare pricing \
-  . --targets web,ios,android
+```json title="question.json"
+{
+  "format": "axiom-query/v1",
+  "operation": { "kind": "trace", "root": "state:beb6895899277ccd1fbb36b3", "direction": "upstream" },
+  "maxDepth": 4,
+  "maxResults": 100
+}
 ```
 
-Target comparison is appropriate for effective permissions, lowering support,
-and target-scoped evidence. It does not compare screenshots or infer visual
-parity.
+Operation kinds are `overview`, `node`, `search`, `graph`, `trace`, `why`,
+`access` and `reachability`. `maxDepth` defaults to 8 (maximum 64) and
+`maxResults` to 500 (1 to 10,000). Malformed, unknown or over-budget documents
+fail validation.
 
-## Use the dashboard for the same workflow
+## Compare targets
 
-In the local dashboard, select any semantic card and choose **Trace upstream**,
-**Trace downstream**, **Trace both**, or **Why?**. The visual result uses the
-same semantic IDs, relationships, bounds, and graph revision as these commands.
+```bash title="Terminal"
+axiom inspect target-compare Home.apiKey . --targets web,ios,android
+```
+
+The result keeps facts that apply to the listed targets, and its JSON summary
+adds `comparedTargets`, `factsByTarget` and `divergentFactCount`. Use it for
+target availability, lowering differences and target-effective authority. It
+does not compare screenshots or claim pixel-identical rendering. `target-diff`
+is an alias.
+
+## Review contracts and dependencies
+
+An imported contract can bring packages and executable extensions whose
+authority depends on the consuming application. These examples use a shopping
+application with a `shop` contract alias and a `pricing` extension.
+
+```bash title="Terminal"
+axiom inspect dependencies .
+axiom inspect contract shop . --closure
+axiom inspect executable-closure shop . --target web
+axiom inspect provenance pricing .
+```
+
+- `dependencies` lists direct and transitive contracts, packages and executable
+  extensions found in the workspace and its verified locks. It does not scan
+  other package managers.
+- `contract ALIAS` shows one imported contract by its manifest alias.
+  `--closure` adds reachable dependency facts: artifact and lock identity,
+  audiences, operations, inputs, outputs, errors, projections, policies, cache
+  and streaming declarations, and verification state.
+- `executable-closure ALIAS` shows sandboxed code reachable from a dependency
+  and its authority, optionally for one `--target`.
+- `provenance SELECTOR` connects source and digest, package and module
+  identity, interface and SDK, signature or unsigned state, lock origin,
+  authority documents and the including release.
+
+Inspector keeps each authority stage separate:
+
+```text title="Conceptual example"
+package maximum request
+        ∩ application grant
+        ∩ target policy
+        ∩ runtime limits
+        = target-effective authority
+```
+
+A valid digest or signature proves integrity, not correctness, and not that
+every requested permission should be granted. If extension source is
+unavailable, Inspector says so; it never reconstructs it or calls it audited.
+
+Before you accept a third-party contract:
+
+1. Run `inspect contract ALIAS --closure`.
+2. Run `inspect executable-closure ALIAS` for each target you ship.
+3. Review `inspect provenance` for reachable packages and extensions.
+4. Review requested, granted and effective permissions with `inspect access`
+   and `inspect authority`.
+5. Trace important operations into your application.
+6. Save a snapshot for review, and compare it whenever the lock changes.
+
+Where verified identities match, a trace can connect a UI query to an imported
+contract operation, a backend endpoint, a response projection and domain fields.
+That is static reachability; use runtime evidence to show a call happened.
+
+<span id="graph-revision" />
+<span id="completeness-and-bounds" />
+
+## Graph revision and completeness
+
+A **graph revision** identifies one complete evidence snapshot. Queries, live
+targets, runtime sessions and diffs carry it so facts from different builds are
+never mixed. A live target on an older revision stays visible as partial
+evidence, but Inspector will not correlate it as current until you reload it.
+
+Treat completeness as part of the answer:
+
+- a complete static trace does not prove execution;
+- an empty runtime session does not prove an operation is unreachable;
+- an unavailable source body stays opaque;
+- a truncated graph cannot prove that no other path exists.
+
+<span id="use-the-dashboard-for-the-same-workflow" />
+
+## Use the dashboard
+
+In the [local dashboard](/inspector/local-dashboard), select any fact and choose
+**Trace upstream**, **Trace downstream**, **Trace both** or **Why?**. The Graph
+view uses the same semantic IDs, relationships, bounds and graph revision as
+the CLI.
+
+![Inspector Relationship graph view focused on the task-app application fact, direction downstream, depth 1, with relationship filters and contains edges to the workspace and source units](/images/docs/inspector-graph.jpg)
+
+The Graph view for the documentation task app, tracing `contains` edges from
+the application fact.
+
+## Next steps
+
+- [Changes and impact](/inspector/changes-impact-and-ci)
+- [Runtime evidence, security and audits](/inspector/runtime-and-audits)
+- [Ask questions](/inspector/ask-axiom)

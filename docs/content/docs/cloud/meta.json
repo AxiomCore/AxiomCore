@@ -4,6 +4,8 @@
     "index",
     "project-management",
     "releases-and-environments",
+    "secrets",
+    "project-resources",
     "deploying-mocks",
     "telemetry-and-observability"
   ]

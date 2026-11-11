@@ -1,16 +1,19 @@
 ---
-title: Add a contract gate to CI
-description: Turn diagnostics, evaluation, domain and security analysis, tests, artifact construction, and semantic diff into reviewable checks.
+title: CI checks
+description: Build a CI contract gate with separate commands for diagnostics, tests, artifacts, semantic diffs, dependency locks and database promotion.
 pageType: guide
 ---
 
-A useful gate answers separate questions with separate commands. Keep the
-commands explicit so a parser failure cannot be confused with a test or policy
-failure.
+<span id="versioned-database-preparation-and-promotion" />
+
+A CI gate should answer separate questions with separate commands, so a parser
+failure is never confused with a test or policy failure. This page gives a
+recommended sequence, then shows how to review semantic changes, verify
+dependency locks, promote database releases and keep the evidence.
 
 ## Recommended sequence
 
-```bash title="Terminal"
+```bash title="ci.sh"
 set -euo pipefail
 export CI=1
 
@@ -22,30 +25,128 @@ axiom test axiom.acore
 axiom build axiom.acore --out backend.axiom
 ```
 
-Remove the domain or security line when that optional model is not part of the
-source. Run the job in an environment containing the same extractor and
-application dependencies used locally. For FastAPI, remember that extraction
-imports the module.
+| Command | Fails when |
+| --- | --- |
+| `axiom doctor --json --strict` | A required local prerequisite fails. `--json` is a stable report for CI or support tickets. |
+| `axiom eval axiom.acore` | The source does not evaluate |
+| `axiom domain validate axiom.acore --json` | Domain references are invalid. Without a domain block it reports `No optional domain block is declared.` and exits 0. |
+| `axiom security check axiom.acore --json --fail-on-warning` | Strict mode finds an error, or `--fail-on-warning` is set and any warning exists. Audit mode alone never blocks. Without Security Mode it reports `"enabled": false` and exits 0. |
+| `axiom test axiom.acore` | Any check fails. A `--tag` that matches no suite exits 0. |
+| `axiom build axiom.acore --out backend.axiom` | The contract does not build |
+
+- With `CI` set (to anything but empty, `0` or `false`), database commands
+  never show the interactive version prompt.
+- `axiom build --frozen-interface FILE` rejects public interface drift from an
+  approved backend artifact, and `--compatibility-baseline FILE` keeps
+  FlatBuffers field slots compatible with an existing artifact.
+  `axiom check --json` prints a machine-readable validation report, including
+  on failure.
+- Add `axiom ui test main.acore --suite ...` for an Acore UI and
+  `axiom database status ... --check` for a database contract.
+- Run the job with the same extractor and application dependencies you use
+  locally. FastAPI extraction imports the application module.
+
+<span id="review-evidence" />
 
 ## Review semantic changes
 
-Materialize the accepted base input or artifact as a pinned file, then compare
-it with the candidate:
+Text diffs show source edits. A semantic diff shows the contract or package
+impact after evaluation and normalization.
 
-```bash title="Terminal"
+<span id="contract-source-and-lock" />
+
+### Contract source
+
+Materialize the accepted base source or artifact as a pinned file, then
+compare it with the candidate:
+
+```bash title="Terminal: project root"
 axiom diff ./ci/base.acore ./axiom.acore --format semantic
+axiom diff axiom.acore --format changelog
 ```
 
-Store the output as review evidence. A diff is an aid to approval, not an
-automatic compatibility promise: review target audience, validation,
-authorization, defaults, errors, and generated-client behavior.
+```text title="Output (excerpt) after changing an endpoint path and a field limit"
+Semantic State Changes:
+
++ $.models.Greeting.fields.message.validate = {"max":200,"type":"string"}
+~ $.endpoints.hello.path : "/hello" -> "/greeting"
+```
+
+| `--format` | Output |
+| --- | --- |
+| `changelog` (default) | Markdown grouped into breaking changes and fixes or minor updates |
+| `semantic` | One line per added (`+`) or changed (`~`) JSON path |
+| `atom` | JSON operations (`replace`, `add`) with old and new values |
+| `text` | A line diff of the source |
+
+- The two-file form compares explicit inputs. The one-file form compares the
+  source with the baseline lockfile that `axiom build` writes under
+  `.axiom/baselines/`; without one, it asks you to build first.
+- `--variant` evaluates a variant before diffing (default `default`).
+- Semantic and atom output also list source-position changes inside managed
+  programs.
+- `axiom diff` exits 0 even when it reports breaking changes. Store the output
+  as review evidence, and use `axiom inspect diff --fail-on` or package
+  approvals to block a merge.
+
+A diff aids approval; it is not an automatic compatibility promise. Review the
+target audience, validation, authorization, defaults, errors and
+generated-client behavior. It is evidence about declared semantics, not proof
+that arbitrary backend code or separately distributed extension bytes are safe.
+
+### Locked UI contracts
+
+```bash title="Terminal: project root"
+axiom contract diff before.ui.lock.json after.ui.lock.json
+axiom contract verify
+```
+
+The contract lock is the right boundary for operation, audience, projection and
+artifact-integrity changes consumed by an Acore UI.
+
+### Typed packages
+
+```bash title="Terminal: project root"
+axiom packages diff before.axiom after.axiom
+axiom packages diff before.axiom after.axiom --approve permission-increase
+```
+
+Package diff classifies kind-specific changes such as target reduction, new
+required theme roles, component prop or slot changes and capability increases.
+When a change needs approval, the command fails until you pass the named
+`--approve` value: `breaking-change`, `target-reduction`,
+`new-required-theme-role` or `permission-increase`.
+
+### Whole-application snapshots and impact
+
+```bash title="Terminal: project root"
+axiom inspect snapshot . --output before.evidence.json
+# make the reviewed change
+axiom inspect snapshot . --output after.evidence.json
+
+axiom inspect diff before.evidence.json after.evidence.json \
+  --fail-on breaking,permission-increase
+
+axiom inspect impact Product.price_label \
+  . --against after.evidence.json
+```
+
+Inspector compares semantic identities across UI, state, contracts, backend,
+packages, extensions, authority, targets and optional normalized runtime
+evidence. `--fail-on` accepts `breaking`, `approval-required`,
+`permission-increase` and `warning`; `--output` writes a byte-stable CI
+artifact. Impact traversal is bounded (`--max-depth` 16 and `--max-results`
+10,000 by default) and reports its completeness; it makes no claim about
+external implementation code it cannot see. See
+[Changes and impact](/inspector/changes-impact-and-ci) for snapshot validation,
+change classes and runtime comparison.
 
 ## Verify dependency locks
 
-If the source consumes contract or package dependencies, add the corresponding
-verification before build:
+If the source consumes contract or package dependencies, verify them before
+building. Use only the block that matches the project:
 
-```bash title="Terminal"
+```bash title="Terminal: project root"
 axiom contract verify
 axiom contract check-source main.acore
 
@@ -53,29 +154,17 @@ axiom packages verify
 axiom packages check-source main.acore --target web
 ```
 
-Use only the block that matches the project. Commit the relevant lock and
-reject unexpected lock changes. Verification can require authenticated access
-to private dependencies.
+Contract commands read `AxiomDeps.toml` and `.axiom/axiom.ui.lock.json`;
+package commands read `.axiom/AxiomPackages.lock`. `packages check-source`
+defaults to `--target ios`. Commit the relevant lock and reject unexpected lock
+changes. Verification can need authenticated access to private dependencies.
 
-## Preserve evidence safely
+## Prepare and promote database releases
 
-Retain:
+Pin the CLI version and its matching runtime assets. One serialized authoring
+job prepares the release; later jobs promote the exact bundle:
 
-- CLI version and coarse environment information;
-- source revision, source contract, and committed lock;
-- machine-readable domain/security results when used;
-- test result and the exact built artifact; and
-- semantic diff and explicit human approval for breaking changes.
-
-Do not publish credentials, raw authorization headers, cookies, sandbox keys,
-private source, or developer home-directory paths as CI artifacts. Release to
-Cloud in a distinct authorized job after the local gate has passed.
-
-## Versioned database preparation and promotion
-
-Pin CLI 0.149.0 and its matching runtime assets. Serialize contract publication in one authoring job. Source declares its database ID/version; Axiom manages isolated validation and hidden state.
-
-```sh title="Terminal"
+```bash title="Terminal: CI job"
 axiom database migrate database/schema.acore --database-url "$CI_DATABASE_URL" \
   --auto-version --non-interactive --export release.axiom
 axiom database migrate release.axiom --database-url "$STAGING_DATABASE_URL" \
@@ -83,4 +172,33 @@ axiom database migrate release.axiom --database-url "$STAGING_DATABASE_URL" \
 axiom database status release.axiom --database-url "$STAGING_DATABASE_URL" --check
 ```
 
-Use `--allow-destructive`, `--allow-data-dependent` and `--allow-security-changes` only for reviewed categories. CI never prompts or waits for missing credentials/version approval. Unchanged source does not bump; frozen promotion never allocates independently in each environment. Retain the source edit/non-secret hidden migration catalog or exact exported bundle. Inject signing authorization through the CI secret provider and retain enrolled trust; do not commit keys or connection bindings. PostgreSQL production delivery continues to require its separately qualified admission/recovery policy.
+Add the risk flags only for reviewed categories; CI never prompts or waits for
+credentials or version approval. Inject signing keys through the CI secret
+provider and never commit keys or connection bindings. PostgreSQL production
+delivery also needs its [admission and recovery policy](/database/fleets).
+[Migrations and persistence](/database/persistence) explains each step and
+flag.
+
+<span id="preserve-evidence-safely" />
+
+## Keep evidence safely
+
+Retain:
+
+- the CLI version and coarse environment information;
+- the source revision, source contract and committed lock;
+- machine-readable domain and security results, when used;
+- the test result and the exact built artifact; and
+- the semantic diff and explicit human approval for breaking changes.
+
+Keep the before and after identities, semantic output, approvals and test
+results together. Do not publish credentials, raw authorization headers,
+cookies, sandbox keys, private source or developer home-directory paths as CI
+artifacts. Release to Axiom Cloud in a separate, authorized job after the gate
+passes.
+
+## Next steps
+
+- Review changes across an application with [Changes and impact](/inspector/changes-impact-and-ci).
+- Turn the gate into a review step with [Contract pull requests](/delivery/contract-pull-requests).
+- Look up every flag in [Contract, package and security commands](/tooling/cli-contracts).

@@ -1,43 +1,103 @@
 ---
-title: Work with databases
-description: Define PostgreSQL or SQLite schemas, connect an application, and review versioned migrations.
+title: Databases
+description: Declare PostgreSQL or SQLite schemas in Acore, apply versioned migrations with the Axiom CLI and give a backend typed storage.
 pageType: overview
 ---
 
-Acore database contracts describe a desired schema and its version. Use the
-CLI to connect, apply a reviewed change, inspect history, and compare versions.
-Connect the schema to an Acore backend through typed storage mappings.
+An Acore database contract declares the schema you want and its version. The
+Axiom CLI checks and builds it offline, applies it to a PostgreSQL or SQLite
+database as a versioned migration, and reports status and history. An Acore
+backend then reads and writes those tables through typed storage declarations
+instead of SQL strings.
 
-| Goal | Guide |
-| --- | --- |
-| Start with a local database | [Database quickstart](/getting-started/quickstart-database) |
-| Build an app with persisted records | [Task app](/examples/task-app) |
-| Author PostgreSQL schemas and migrations | [Database contracts](/database/contracts) |
-| Use SQLite files | [SQLite contracts](/database/sqlite) |
-| Retain an existing database | [Existing database adoption](/guides/existing-database) |
-| Connect endpoints to data | [Typed persistence](/database/persistence) |
-| Experiment in the browser | [Browser preview](/database/browser-preview) |
-| Coordinate multiple qualified targets | [Fleet operations](/database/fleets) |
+<StatusNote status="experimental" title="Experimental">
+PostgreSQL and SQLite contracts and persistence are Experimental. The named
+PostgreSQL production profile is Available only for its exact qualified
+release, recovery admission and measured workload. Database qualifications
+were last reviewed on October 5, 2026. See
+[Capability boundaries](/reference/capability-boundaries).
+</StatusNote>
 
-```mermaid title="Review a schema change before applying it"
+## The contract lifecycle
+
+```mermaid title="A database contract from Acore source to typed application storage"
 flowchart TD
-  A[Versioned Acore schema] --> B[Validate and compare]
-  B --> C[Review risks]
-  C --> D[Apply to selected database]
-  D --> E[Check status and history]
-  E --> F[Keep or publish a compensating version]
+  A[Schema and version in Acore] --> B[axiom database check and build]
+  B --> C[axiom database migrate]
+  C --> D[status and history]
+  D --> E{Next change}
+  E -->|Edit the schema| F[New version in source]
+  F --> B
+  E -->|Undo| G[rollback publishes a new version]
+  G --> D
+  D --> H[Backend storage declarations]
+  H --> I[Typed application storage]
 ```
 
-Validation and review precede application to the selected database. Rollback
-creates another version; it does not reconstruct deleted values. Keep backups
-and verify recovery for data you need to retain.
+1. **Declare** the schema in an `.acore` file beside an `AxiomDeps.toml` with
+   `type = "database"`. `project(id: ..., version: ...)` names the contract and
+   its version.
+2. **Check and build** offline with `axiom database check` and
+   `axiom database build`. Neither connects to a database.
+3. **Migrate** with `axiom database migrate` (or `axiom run`). The change is
+   validated on a disposable copy, then applied as one versioned migration.
+4. **Observe** with `status` (applied and working versions, pending changes,
+   drift) and `history` (migrations, compensating rollbacks, failed attempts).
+5. **Change or undo.** Every schema change needs a new version. `rollback`
+   publishes another new version; it never rewrites history or restores
+   deleted values.
+6. **Use** the tables from a backend through `storage` declarations. The CLI
+   checks them against the compiled schema and migrates the linked database
+   before the backend accepts requests.
+
+Validation and review always come before a change reaches your database. Keep
+backups and test recovery for data you need to retain.
+
+## From a request to a table
+
+```mermaid title="How the task app's list endpoint reaches its SQLite table"
+flowchart LR
+  A[GET /tasks endpoint] --> B[listTasks action]
+  B --> C[Resources.tasks.list operation]
+  C --> D[storage tasks: select list]
+  D --> E[main.tasks table]
+```
+
+In the [task app](/examples/task-app), the endpoint calls a managed action. The
+action awaits a resource operation, and the `storage` declaration implements
+that operation as a typed `select` on `main.tasks`. The runtime binds every
+input as a parameter and adds the authenticated tenant to the query. You never
+write SQL text for application queries.
 
 ## Choose an engine
 
-| Engine | Local path | Boundary |
+| | SQLite | PostgreSQL |
 | --- | --- | --- |
-| SQLite | CLI 0.149.0 resolves SQLite and creates the local file | Selected Unix adapters require SQLite 3.37+; check platform and production limits |
-| PostgreSQL | Connect to an existing 17/18 server with the matching validator | The CLI does not provision or restart the database server |
+| Supported versions | SQLite 3.37 or newer | PostgreSQL 17 and 18 |
+| Target | A local file. `migrate` and `run` create it. | An existing server you can reach. The CLI never provisions, starts or restarts it. |
+| Connection | `--database-file`, a `sqlite:` URL, or the project's default file | `--database-url`, `DATABASE_URL`, or host, port, database and user fields |
+| Pre-apply validation | On a copy of the file, including a populated backup for table rebuilds | On a disposable PostgreSQL of the same major version: bundled with the Linux CLI archives (PostgreSQL 17), otherwise a matching local installation |
+| Checked platforms | macOS arm64 and Linux arm64 acceptance | Declared Unix platforms |
 
-Database contracts, application persistence, browser simulations, and qualified
-production recovery have separate [availability boundaries](/introduction/support-matrix).
+Both engines use the same commands, version rules and storage declarations.
+Windows, hosted-provider capabilities and nontransactional migration stages keep
+their own qualification gates. There is no MySQL or MariaDB adapter.
+
+## Where database work runs
+
+| Path | What it shows | Status |
+| --- | --- | --- |
+| Axiom CLI against SQLite or PostgreSQL | Real migrations, history and typed application storage on your target | Experimental |
+| [Browser preview](/database/browser-preview) in the playground | Simulated storage and history; no native migration, file or connection | Experimental |
+| [Fleet delivery](/database/fleets) | Reviewed, frozen rollout to many enrolled targets | Experimental |
+| Named PostgreSQL production profile | Admission for one exact build, platform and recovery procedure | Available |
+
+A passing browser preview does not prove database persistence, and a local run
+does not qualify a production deployment.
+
+## Next steps
+
+- [Create your first database](/getting-started/quickstart-database) with SQLite.
+- Read the [database contract reference](/database/contracts).
+- Connect a backend in [Migrations and persistence](/database/persistence).
+- Keep an existing schema with the [existing database guide](/guides/existing-database).

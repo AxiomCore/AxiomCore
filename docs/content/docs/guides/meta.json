@@ -1,10 +1,10 @@
 {
-  "title": "Integrate your stack",
+  "title": "Existing stack",
   "pages": [
     "index",
-    "incremental-adoption",
     "fastapi-to-web",
     "go-to-web",
+    "backend-extraction",
     "existing-database",
     "using-ai-agents"
   ]

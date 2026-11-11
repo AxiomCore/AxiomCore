@@ -1,78 +1,150 @@
 ---
-title: Frontend quickstart
-description: Run a local Acore web UI or choose a client for your existing frontend.
+title: Build your first UI
+description: Run a starter Acore web UI, or generate a contract client inside your existing web, React, Flutter or Swift app.
 pageType: tutorial
-testedWith: Published Axiom CLI 0.149.0 and signed web UI Host 0.6.12 on macOS arm64
 ---
 
-Choose an **existing frontend integration** or an **Acore-authored UI**. Both
-consume a contract; they have different setup and lifecycle requirements.
+Run a small UI written in Acore, or add a generated client to the frontend you
+already have. Both consume a backend contract; they differ in setup and
+lifecycle.
 
-## Existing framework application
+```mermaid title="An Acore UI and an existing app both consume the backend contract"
+flowchart LR
+  A[Backend .axiom contract] --> B[Acore UI app]
+  A --> C[Generated client in your existing app]
+```
 
-Keep your application and select its supported client:
+<span id="authored-acore-ui" />
+
+## Option A: run an Acore UI
+
+Acore UI is **Alpha** on the web, and on qualified Android Emulator and iOS
+Simulator paths.
+
+### Prerequisites
+
+- [Axiom CLI 0.149.1](/getting-started/installation) and the web UI host 0.6.12
+  (`axiom ui host install --target web --version 0.6.12 --non-interactive`).
+- A browser. Port 5173 free.
+
+### 1. Create the starter
+
+```bash title="Terminal"
+axiom ui init hello --target web
+cd hello
+```
+
+```text title="Expected output"
+Created authored Acore UI starter at hello. Next: axiom run src/main.acore --target web
+```
+
+The directory must be empty or new. It now holds `axiom.app.toml`,
+`src/main.acore` (a page with a greeting and a **Reset** button),
+`tests/smoke.acore` and a `README.md`. Pass `--target web`: `axiom ui init`
+defaults to `ios`.
+
+### 2. Check and run it
+
+```bash title="Terminal: hello"
+axiom ui check src/main.acore --target web
+axiom run src/main.acore --target web --port 5173
+```
+
+```text title="Expected output (excerpt)"
+Checked UI module starter.app.ui (17 virtual read-only file(s), graph <hash>).
+UI compiled (#1).
+Axiom UI is ready at http://127.0.0.1:5173/ (pass --launch to open a browser)
+```
+
+### 3. Verify and edit
+
+Open `http://127.0.0.1:5173`. The page shows **Welcome to Axiom** and a
+**Reset** button. Change the greeting text in `src/main.acore` and save; the
+running app reloads. This starter has no backend dependency. Stop it with
+Ctrl-C, and delete the `hello` directory when you are done.
+
+### Connect a backend
+
+For a full-stack UI, keep a `type = "frontend"` manifest in the frontend's own
+directory and declare each backend under `[contracts.<alias>]`. The backend
+keeps its own `type = "backend"` manifest. This is the task app's frontend
+manifest:
+
+```toml title="frontend/AxiomDeps.toml"
+type = "frontend"
+targets = ["web"]
+
+[contracts.tasks]
+artifact = "../backend/.axiom/contracts/backend.axiom"
+baseUrl = "http://127.0.0.1:8080"
+audience = "web"
+operations = ["create_task", "delete_task", "list_tasks", "update_task"]
+```
+
+`axiom run` finds the manifests, rebuilds stale local Acore dependencies and
+maintains the development lock. Explicit lock paths are an advanced override.
+Registered sandbox modules need their compatible toolchain and verification.
+See [Imports, amends and variants](/acore-language/imports-and-contracts) for
+`use contract`.
+
+`android` and `ios` targets need a compatible signed UI host and an emulator
+or simulator. Check each target separately before you claim parity; generated
+adapter tests do not prove a mounted native app.
+
+<span id="existing-framework-application" />
+
+## Option B: use your existing frontend
+
+Keep your application and generate a client for its framework:
 
 | Framework | Guide | Status |
 | --- | --- | --- |
-| Web / ATMX | [Vanilla web](/frontend/web) | Available |
-| React / ATMX | [React](/frontend/react) | Alpha |
-| Flutter / Dart | [Flutter and Dart](/frontend/flutter-dart) | Alpha |
-| Swift | [Apple platforms](/frontend/swift) | Experimental; binding parity is incomplete |
+| Web / ATMX | [Web (atmx-web)](/sdks/web) | Available |
+| React / ATMX | [React (atmx-react)](/sdks/react) | Alpha |
+| Flutter / Dart | [Flutter and Dart](/sdks/flutter) | Alpha |
+| Swift | [Swift](/sdks/swift) | Experimental; binding parity is incomplete |
 
-For web/React, install a compatible local generator before pulling. CLI
-0.149.0 has no matching automatic npm companion; the
-[complete web example](/guides/fastapi-to-web#pull-the-web-client) pins and tests
-`atmx-cli` 0.146.7. Qualify React separately. With that preparation and a local
-contract from your backend:
+For web and React, `axiom pull` runs the project's own `atmx` generator when
+it is installed. Otherwise it fetches `atmx-cli` at the CLI's version, and
+there is no `atmx-cli` 0.149.1 on npm. Install the published generator first.
+With a local contract built from your backend:
 
 ```bash title="Existing frontend directory"
+npm install --save-dev atmx-cli@0.146.7
 axiom doctor
 axiom onboard --role frontend --framework atmx-web
 axiom pull --contract ../backend/backend.axiom --framework atmx-web
 ```
 
-Select `atmx-react`, `flutter`, or `dart` only for the matching supported path.
-Keep the dependency declaration and generated lock together. Follow the
-emitted integration instructions and the [integration workflow](/frontend/integration-workflow)
-for initialization, authentication, errors, caching, and disposal.
+`axiom pull` writes the dependency declaration and generates the client. Keep
+the declaration and its lock together. Use `atmx-react`, `flutter` or `dart`
+only on the matching supported path, and qualify React separately. The
+[FastAPI guide](/guides/fastapi-to-web) is a complete, tested web example. The
+SDK guides cover initialization, authentication, errors, caching and disposal.
 
-## Authored Acore UI
+## Troubleshooting
 
-Install the [CLI and compatible web host](/getting-started/installation), then:
-
-```bash title="Terminal"
-axiom ui init hello --target web
-cd hello
-axiom ui check src/main.acore --target web
-axiom run src/main.acore --target web --port 5173
-```
-
-Open `http://127.0.0.1:5173`. The generated starter displays a greeting and a
-Reset button. Edit the greeting in `src/main.acore`; the running app reloads.
-This starter has no backend dependency. Stop it with Ctrl-C.
-
-For a full-stack UI, keep the frontend's `type = "frontend"` manifest in its
-own directory. Declare backend dependencies under `[contracts.<alias>]` in
-that manifest. A backend keeps its separate `type = "backend"` manifest.
-See [contract imports](/acore-language/imports-and-contracts#compiled-contracts-use-contract).
-
-`axiom run` discovers manifests, rebuilds stale local Acore dependencies, and
-maintains its development lock. Explicit lock paths are advanced overrides.
-Registered sandbox modules need their compatible toolchain and verification.
+| Symptom | Fix |
+| --- | --- |
+| `refusing to initialize non-empty directory` | Choose a new or empty directory for `axiom ui init`. |
+| The UI host is missing or incompatible | Install web UI host 0.6.12 with `--target web`. |
+| The app starts for the wrong target | Pass `--target web`; UI commands default to `ios`. |
+| Port 5173 is in use | Pass another `--port`. |
+| `atmx-cli generation failed` | Install `atmx-cli@0.146.7` in the project, and check Node.js and npm with `axiom doctor`. |
 
 <span id="complete-candidate-task-project" />
 
-## Add data, forms, and tests
+## Add data, forms and tests
 
-Run the [persisted task app](/getting-started/quickstart) to see queries,
-contract-backed form validation, mutations, typed errors, and list refresh.
-Then follow the [application lifecycle](/frontend/application-lifecycle) and
-[frontend testing guide](/testing/frontend-applications).
+[Run your first app](/getting-started/quickstart) shows queries, contract-backed
+form validation, mutations, typed errors and list refresh. For browser-only
+experiments, the playground's database task and inventory examples let you edit
+source and inspect tables; [Browser preview](/database/browser-preview)
+explains their simulated storage.
 
-For browser-only experiments, use the playground's database task or inventory
-example. [Browser preview](/database/browser-preview) explains editable source,
-table inspection, and the limits of its simulated storage.
+## Next steps
 
-Check `android` and `ios` separately before claiming parity. Their development
-paths require a compatible signed UI host and an emulator or simulator.
-Generated adapter tests do not prove a mounted native application.
+- [Run your first app](/getting-started/quickstart)
+- [Acore UI reference](/frontend/acore-ui)
+- [App lifecycle and targets](/frontend/application-lifecycle)
+- [Frontend tests](/testing/frontend-applications)

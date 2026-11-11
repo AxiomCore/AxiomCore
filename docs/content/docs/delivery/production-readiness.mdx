@@ -1,53 +1,130 @@
 ---
-title: Production-readiness checklist
-description: Review contract proof, consumers, security, configuration, observability, rollback, and operational ownership before promotion.
+title: Production readiness
+description: Check contract provenance, consumers, security, data, operations and rollback before you promote a release, and review Security Mode changes.
 pageType: guide
 ---
 
-Passing `axiom build` is necessary but not sufficient for production. Use this
-checklist for the exact backend, consumer, target, and environment being
-promoted.
+Use this checklist before you promote a backend, contract or consumer to
+production. Passing `axiom build` is necessary but not sufficient. Work through
+the list for the exact backend, consumer, target and environment you are
+promoting.
 
 ## Contract and provenance
 
-- [ ] The authoritative input is identified and reviewable.
-- [ ] CLI, extractor, and package versions are pinned for the release job.
+- [ ] The authoritative input (Acore source or extracted backend) is
+  identified and reviewable.
+- [ ] CLI, extractor and package versions are pinned for the release job.
 - [ ] Contract and package locks are committed and verified.
-- [ ] The candidate artifact digest matches the artifact tested by consumers.
+- [ ] The candidate artifact digest matches the artifact your consumers tested.
 - [ ] The semantic diff from the accepted version has an explicit owner.
-- [ ] Production policy requires the intended signature/proof boundary.
+- [ ] Production policy requires the intended signature and proof boundary.
 
 ## Behavior and consumers
 
-- [ ] Contract tests cover representative success, validation, auth, and error paths.
-- [ ] At least one test reaches the real backend through `axiom serve` or the adapted application, including its real providers; contract mock tests alone are insufficient.
+- [ ] Contract tests cover representative success, validation, authentication
+  and error paths.
+- [ ] At least one test reaches the real backend through `axiom serve` or the
+  adapted application, including its real providers. Contract mock tests alone
+  are not enough.
 - [ ] Every generated client is rebuilt from the candidate artifact.
-- [ ] Web CORS/CSP and browser support are verified.
+- [ ] Web CORS, CSP and browser support are verified.
 - [ ] Flutter or native consumers are tested in their release configuration.
-- [ ] Loading, empty, retry, cancellation, cache, and reconnect behavior is owned.
+- [ ] Someone owns loading, empty, retry, cancellation, cache and reconnect
+  behavior.
 
 ## Security and data
 
-- [ ] `axiom security check` policy matches the intended enforcement mode.
-- [ ] Public routes are explicit; protected routes have the expected guard.
-- [ ] Secrets come from the deployment environment and do not appear in source, locks, artifacts, examples, logs, or CI evidence.
+- [ ] The `axiom security check` result matches the intended enforcement mode.
+- [ ] Public routes are explicit, and protected routes have the expected guard.
+- [ ] Secrets come from the deployment environment. They do not appear in
+  source, locks, artifacts, examples, logs or CI evidence.
 - [ ] Sandbox and test data are synthetic and isolated from production.
 - [ ] Sensitive fields and telemetry attributes are redacted or excluded.
 
 ## Operations
 
-- [ ] Environment endpoints, timeouts, retry policy, and credential transport are reviewed.
-- [ ] Logs, traces, traffic metrics, alert ownership, and retention are configured for the deployed path.
+- [ ] Environment endpoints, timeouts, retry policy and credential transport
+  are reviewed.
+- [ ] Logs, traces, traffic metrics, alert ownership and retention are
+  configured for the deployed path.
 - [ ] A release health signal is defined before promotion.
 - [ ] The previous immutable artifact and dependency lock remain available.
 - [ ] Rollback has been rehearsed without resolving new dependencies.
-- [ ] Backend, contract, frontend, and control-plane ownership is recorded.
+- [ ] Ownership of the backend, contract, frontend and Cloud project is
+  recorded.
+
+<span id="review-flow" />
+<span id="review-questions" />
+
+## Review security changes
+
+**Security Mode** is an opt-in contract setting. With it enabled, the compiler
+records AXSEC findings, endpoint coverage, the policy graph and source evidence
+in the artifact. A contract pull request then compares the signed security
+manifests of two releases, not a scan run in the browser.
+
+| Mode | Build and release behavior |
+| --- | --- |
+| `audit` | Findings are warnings. The build and release continue. |
+| `strict` | A finding with error severity rejects the build. Cloud release processing also rejects the release. |
+
+Check locally before you build:
+
+```bash title="Terminal"
+axiom security check axiom.acore
+```
+
+```text title="Output"
+Security Mode strict · 1 error(s), 0 warning(s) · 0 of 1 endpoints covered (0 direct, 0 default-policy)
+AXSEC-001 ERROR [list] `list` is externally reachable but has no explicit public declaration or authorization policy.
+  → Declare `security.endpoints[endpoint]` as public or bind it to a user-defined policy.
+Error: security check found 1 error(s) and 0 warning(s)
+```
+
+Review flow:
+
+1. Build and release a candidate contract with Security Mode enabled.
+2. Open a [contract pull request](/delivery/contract-pull-requests) between the
+   accepted release and the candidate.
+3. Select the **Security** view. Each change is labeled as a policy change or a
+   finding change. Removing a policy is breaking; other policy and finding
+   changes are risky.
+4. Record reviewer comments in the pull request.
+5. Promote the reviewed release.
+
+In the dashboard, the contract page shows the Security Mode, the manifest hash,
+counts of protected and uncovered routes, and each finding with a suggested
+next step. **Security Audit** shows the current contract posture. Client
+runtime traces record the signed security hash, mode and declared policy,
+authentication and permission context. Trace detail shows this as **Security
+decision context**: declared policy bindings and AXSEC posture, not a
+reconstructed server-side authorization decision.
+
+Questions to answer in review:
+
+- Is every reachable endpoint explicitly public or protected?
+- Which relation proves that a requester may access a resource addressed by ID?
+- Does a changed projection expose classified data to a new audience?
+- Are egress, uploads, paths, processes, CORS, cache and logs constrained?
+- Is each `declared_unproven` finding backed by real trusted middleware or an
+  adapter?
+
+This review gives governance and reproducibility. It does not replace threat
+modeling, code review, penetration testing, dependency scanning or trusted
+runtime enforcement. See [Security rules](/reference/security-rules) for every
+AXSEC rule.
 
 ## Platform boundary
 
-Do not use a **Coming soon** product as a release dependency. Axiom Studio,
-Acode, and Axiom Marketplace are product direction, not supported production
-workflows today. Acore UI hosts are alpha development paths; physical-device
+Do not make a **Coming soon** product a release dependency. Axiom Studio, Acode
+and Axiom Marketplace are product direction, not supported production
+workflows. Acore UI hosts are **Alpha** development paths, and physical-device
 certification and app-store publishing are not claimed. Check the
-[support matrix](/introduction/support-matrix) again when the CLI or runtime
-version changes.
+[support matrix](/introduction/support-matrix) again whenever the CLI or
+runtime version changes.
+
+## Next steps
+
+- [Release a version and upgrade consumers](/delivery/releases)
+- [Set up observability for the deployed path](/cloud/telemetry-and-observability)
+- [Write the Security Mode declarations](/acore-language/domain-and-security-models)

@@ -1,104 +1,139 @@
 ---
-title: Contract Pull Requests
-description: Review two immutable Axiom contract releases inside AxiomCore, without a Git provider integration.
+title: Contract pull requests
+description: Open, review, discuss and complete a review of two immutable contract releases in Axiom Cloud, without a Git provider.
 pageType: guide
 ---
 
-AxiomCore contract pull requests are native project records. They do not
-require a repository, branch, webhook, or GitHub account connection.
+<span id="discuss-and-complete" />
 
-Each request permanently records one ordered pair of signed releases:
+<StatusNote status="alpha" title="Contract pull requests">
+  Proposals, semantic changes, review comments and the review-state workflow
+  are implemented in Axiom Cloud. APIs and limits may change.
+</StatusNote>
 
-```text title="Conceptual example"
-earlier immutable release  ->  later immutable release
-```
+A contract pull request is a review of what changed between two released
+versions of a contract. It is a native Axiom Cloud project record. It does not
+need a repository, branch, webhook or GitHub connection.
 
-The pair cannot be edited after creation. If a newer artifact is released,
-open another request rather than mutating the evidence under an existing
-review.
+Each request permanently records one ordered pair of signed releases: an
+earlier **From release** and a later **To release**. The pair cannot be edited
+after creation. If you release a newer artifact, open another request instead
+of changing the evidence under an existing review.
+
+## Who can do what
+
+| Action | Reader | Maintainer | Owner |
+| --- | :---: | :---: | :---: |
+| View requests, changes and discussion | Yes | Yes | Yes |
+| Comment and reply | Yes | Yes | Yes |
+| Create a request and change its state | No | Yes | Yes |
 
 ## Open a review
 
-1. Release at least two contract versions to the same project.
-2. Open **Pull requests** in the project dashboard.
-3. Select **New pull request**.
-4. Choose the earlier **From release** and newer **To release**, add a title,
-   and open the review or save it as a draft.
+Prerequisite: at least two releases in the same project. See
+[Releases and upgrades](/delivery/releases).
 
-Project owners and maintainers can create and change review state. Every
-project member can participate in the discussion.
+1. Open **Pull Requests** in the project dashboard.
+2. Select **New pull request**.
+3. Choose the earlier **From release** and the newer **To release**. The From
+   release must be earlier than the To release.
+4. Enter a **Title** and an optional **Description**.
+5. Set **Initial state** to **Open for review** or **Draft**, then select
+   **Open pull request**.
 
-## Review the evidence
+<span id="review-the-evidence" />
 
-The detail page presents the existing persisted semantic comparison in five
-purposeful views:
+## Review the changes
 
-- **All changes** ,  a plain-language summary of each persisted change with
-  its compatibility level.
-- **Domain** ,  entities, relationships, invariants, safe projections, and
-  endpoint bindings compiled from Domain Model v1.
-- **Security** ,  signed policy and deterministic finding changes.
-- **Runtime configuration** ,  authentication, field validation, streaming,
-  cache, retry, and other runtime behavior.
-- **Raw change data** ,  the technical before/after JSON, opened only when
-  needed.
+The review page shows the semantic comparison that Cloud saved when it
+processed the releases. It has five views:
 
-Every change can carry its own discussion thread. A project member can add a
-comment directly below the affected change, then reply within that thread;
-general review notes remain in the discussion panel.
+| View | What it shows |
+| --- | --- |
+| **All changes** | A plain-language summary of each change with its compatibility level. |
+| **Domain** | Entities, relationships, invariants, safe projections and endpoint bindings from the Domain Model v1 layer. |
+| **Security** | Signed security policy changes and finding changes, each labeled with its category. |
+| **Runtime configuration** | Authentication, field validation, streaming, cache, retry and other runtime behavior. |
+| **Raw change data** | The technical before and after JSON, loaded only when you open this view. |
 
-Breaking, risky, and compatible counts are shown immediately from the saved
-analysis. The page loads individual changes in cursor pages of at most 50
-rows, so a very large contract diff never blocks the initial review screen or
-creates an unbounded browser DOM. Raw values are requested only by **Raw
-change data** and are capped at 4 KiB per before/after side; use the immutable
-artifact or a focused local diff for a larger value.
+Breaking, risky and compatible counts appear immediately from the saved
+analysis. The dashboard loads changes in pages of 50, so a very large diff
+never blocks the first screen. Raw values are capped at 4 KiB for each side of
+a change. For a larger value, inspect the immutable artifact or run a focused
+local diff.
 
-The diff is generated by the release worker from the two stored contract
-artifacts. A browser never calculates a compatibility result, and opening a
-review never recomputes the comparison.
+The release worker computes the diff from the two stored artifacts. Your
+browser never calculates a compatibility result, and opening a review never
+recomputes the comparison.
 
-When a comparison has Domain Model v1 evidence, the review sidebar calls a
-separate compact impact endpoint. It follows the signed dependency graph to
-the affected endpoint routes and combines that with bounded, attributable
-source-release telemetry. This is intentionally not the full diff endpoint:
-large patches remain cursor-paged and the impact panel never causes a large
-browser download.
+### How changes are classified
 
-Domain removals and changed relationship/projection boundaries are marked
-**breaking**. Invariant changes are marked **risky** because an application
-must review the enforcement effect. The absence of observed consumers remains
-unknown usage, not proof of safety.
+| Change | Level |
+| --- | --- |
+| A removed domain entity, relationship, projection or binding | Breaking |
+| A replaced relationship, projection or endpoint binding | Breaking |
+| Any invariant change | Risky, because you must review its enforcement effect |
+| A removed security policy | Breaking |
+| Another security policy change, or a security finding change | Risky |
+| A new optional model field, with its matching validation index update | Compatible |
 
-An optional model-field addition remains **compatible**, including its
-compiler-generated mirrored validator-index update. The comparison engine
-recognizes that pairing so a new optional field (and its own validation rule)
-is not mislabeled as a risky whole-model validation change.
+The comparison recognizes that a new optional field also updates the
+compiler-generated validator index, so the addition is not mislabeled as a
+risky whole-model validation change.
 
-## Discuss and complete
+### Impact on consumers
 
-Comments and replies are persisted with the request and visible to project
-members. The review lifecycle is explicit:
+When the comparison has Domain Model v1 evidence, the sidebar shows an impact
+panel. It follows the signed dependency graph to the endpoint routes a change
+affects. It adds runtime telemetry attributed to the earlier release, from the
+last 30 days and for at most 50 consumers. The panel is separate from the
+change list, so it never causes a large browser download.
 
-```text title="Conceptual example"
-draft <-> open -> merged
-           \-> closed <-> open/draft
+An empty list of observed consumers is not proof that a breaking change is
+safe. It means Cloud has no attributable runtime evidence for that window.
+
+## Discuss
+
+- Comment directly below a change to start a thread about it. Replies attach
+  to that thread and go one level deep.
+- Use **Review discussion** for general notes.
+
+Comments and replies are saved with the request and visible to every project
+member.
+
+## Complete the review
+
+```mermaid title="Review states of a contract pull request"
+flowchart LR
+  D[Draft] -->|Open for review| O[Open]
+  O -->|Convert to draft| D
+  O -->|Mark review merged| M[Merged]
+  D -->|Close review| C[Closed]
+  O -->|Close review| C
+  C -->|Reopen review| O
 ```
 
-`merged` records that the review has been accepted. It deliberately does not
-move the project’s `/latest` release channel: release promotion remains an
-explicit, auditable pipeline operation.
+A draft can be opened or closed. An open review can return to draft, close or
+be marked merged. A closed review can be reopened. **Merged** is final. The
+dashboard buttons match the arrow labels. The API also allows a closed review
+to return to draft.
+
+**Merged** records that the review was accepted. It does not move the
+project's `latest` release channel. Promotion stays an explicit, audited
+release operation. See [Releases and environments](/cloud/releases-and-environments).
 
 ## Evidence chain
 
-```text title="Conceptual example"
-native contract pull request
-  -> two immutable signed releases
-  -> persisted semantic diff
-  -> release attempt
-  -> runtime trace and artifact SHA-256
-```
+Each step points at immutable evidence from the step before:
 
-An empty list of observed consumers is not proof that a breaking change is
-safe. It means AxiomCore has no attributable runtime evidence for the bounded
-observation window.
+1. The contract pull request names two releases.
+2. Each release is an immutable, Cloud-signed artifact with a SHA-256 hash.
+3. The persisted semantic diff compares those two artifacts.
+4. A release attempt records verification, tests and policy for the To release.
+5. Runtime traces name the contract version that produced them.
+
+## Next steps
+
+- [Release a version and upgrade consumers](/delivery/releases)
+- [Review security changes before promotion](/delivery/production-readiness)
+- [Run the same semantic diff in CI](/testing/ci)

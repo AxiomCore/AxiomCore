@@ -1,0 +1,417 @@
+---
+title: axiom database
+description: Reference for every axiom database subcommand that checks, builds, migrates, rolls back and inspects versioned PostgreSQL and SQLite contracts.
+pageType: reference
+---
+
+`axiom database` checks and builds database contracts offline, then applies
+them to a PostgreSQL or SQLite target as immutable, versioned migrations. This
+page covers all 9 subcommands and the 5 `history` subcommands in Axiom CLI
+0.149.1.
+
+<StatusNote status="experimental" title="Database workflows">
+  Versioned migrations and typed storage for PostgreSQL and SQLite are
+  **Experimental**. The developer path accepts PostgreSQL 17 or 18 and SQLite
+  3.37 or later on the supported Unix platforms. See
+  [Install the Axiom CLI](/getting-started/installation) for published
+  platforms, [Support and availability](/introduction/support-matrix) and
+  [Capability boundaries](/reference/capability-boundaries).
+</StatusNote>
+
+```mermaid title="Offline checks first, then versioned changes against a target"
+flowchart LR
+  S[database source] --> C[database check]
+  C --> B[database build]
+  C --> D[database diff]
+  C --> M[database migrate]
+  M --> T[(PostgreSQL or SQLite)]
+  T --> ST[database status]
+  T --> H[database history]
+  T --> R[database rollback]
+  R --> T
+```
+
+`check`, `fmt`, `build`, `inspect` and `diff` never connect to a database.
+`migrate` validates each pending version and then applies it to the target.
+`status` and `history` read the target, and `rollback` publishes a new
+compensating version. [`axiom run`](/tooling/cli-build-and-run#axiom-run) on a
+database source runs the same migration and then opens a SQL console.
+
+None of these commands need Cloud login. Commands that connect need a reachable
+PostgreSQL server or a local SQLite file.
+
+## axiom database
+
+Run and migrate versioned PostgreSQL and SQLite database contracts.
+
+```text title="Usage"
+axiom database <COMMAND>
+```
+
+| Subcommand | Purpose |
+| --- | --- |
+| [`check`](#axiom-database-check) | Check a source entry and its imports without database I/O. |
+| [`fmt`](#axiom-database-fmt) | Format database source. |
+| [`build`](#axiom-database-build) | Build a canonical server-only schema package. |
+| [`inspect`](#axiom-database-inspect) | Inspect a source or schema package without connecting. |
+| [`diff`](#axiom-database-diff) | Compare two contracts, or two catalog versions. |
+| [`migrate`](#axiom-database-migrate) | Apply pending versioned migrations. |
+| [`status`](#axiom-database-status) | Show applied version, pending changes and drift. |
+| [`rollback`](#axiom-database-rollback) | Restore a recorded schema through a new compensating version. |
+| [`history`](#axiom-database-history) | Show version history and failed attempts. |
+
+The `CONTRACT` argument of `migrate`, `rollback`, `status` and `history` accepts
+an `.acore` source, a release bundle written by `--export`, or a schema package
+from `database build` together with its `.sources.axiom` companion. The project
+root is the nearest directory with an `AxiomDeps.toml` that declares
+`type = "database"`. Generated state, the local version catalog and the default
+SQLite file live under that root's `.axiom/` directory.
+
+### Connection options
+
+`migrate`, `rollback`, `status`, `history` and `axiom run` share these options.
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--database-url` | URL | `DATABASE_URL` | PostgreSQL (`postgres://` or `postgresql://`) or SQLite (`sqlite:`) URL. `DATABASE_URL` is read only when no endpoint field or `--database-file` is given. |
+| `--host` | host | `localhost` | PostgreSQL host. |
+| `-p, --port` | number | `5432` | PostgreSQL port. |
+| `--database` | name | `PGDATABASE` | PostgreSQL database name. Required when you use fields instead of a URL. |
+| `--username` | name | `PGUSER`, then `USER` | PostgreSQL user. |
+| `--password` | text | `PGPASSWORD` | PostgreSQL password. Prefer `PGPASSWORD` or the masked interactive prompt, so the value stays out of shell history. |
+| `--database-file` | path | `.axiom/database/data/database.sqlite` | SQLite file. Conflicts with `--database-url`. |
+| `--ssl-mode` | `disable`, `prefer`, `require`, `verify-full` | none | PostgreSQL TLS mode. |
+| `--tls-ca` | path | none | CA certificate used to verify the PostgreSQL server. |
+
+Rules the CLI enforces (error `ADB1107`):
+
+- Give a URL or individual endpoint fields, not both.
+- SQLite takes `--database-file` or a `sqlite:` URL that names a local file.
+  `:memory:` and URL query options are rejected, and PostgreSQL fields are
+  rejected.
+- PostgreSQL contracts cannot use `--database-file`.
+
+If `DATABASE_URL` is set in your shell for another project, `unset` it before
+you run a SQLite contract, or pass `--database-file`.
+
+### Migration policy options
+
+`migrate` and `rollback` share these options. In CI, add `--non-interactive`.
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--auto-version` | flag | off | Accept the suggested next version when the source version is already used. The CLI updates `project(version: ...)` in your source. |
+| `--non-interactive` | flag | off | Never prompt. A prompt that would be needed becomes an error naming the flag to add. Prompts are also skipped without a terminal or when `CI` is set. |
+| `--dry-run` | flag | off | Preview the change without applying it. A missing SQLite file is not created. |
+| `--allow-destructive` | flag | off | Authorize a change that may delete data or remove invariants. A schema rollback does not restore lost values. |
+| `--allow-data-dependent` | flag | off | Authorize a change that depends on existing data or rebuilds invariants. |
+| `--allow-security-changes` | flag | off | Authorize a change to database permissions or security policy. |
+| `--adopt` | flag | off | Enroll an existing scope only when it exactly matches the validated source. |
+| `--json` | flag | off | Print machine-readable results to stdout. |
+| `--export` | path | none | After the run, write the target's complete applied history as one bundle, so CI can promote the same bytes later with `--frozen`. |
+
+Without the matching `--allow-*` flag, a risky change asks for confirmation in a
+terminal and fails with `ADB1111` in non-interactive mode.
+
+## Author and build offline
+
+### axiom database check
+
+Check a database source entry and its imports without any database I/O. Use it
+first, in editors and in CI.
+
+```text title="Usage"
+axiom database check <SOURCE>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<SOURCE>` | path | required | Database `.acore` entry file. |
+
+On success it prints an `axiom-database-evidence/v1` JSON report with the
+compiled nodes, edges, exported tables and source hashes.
+
+```bash title="Terminal"
+axiom database check database/sqlite/schema.acore
+```
+
+### axiom database fmt
+
+Format database source. It prints the result to stdout unless you pass
+`--write`.
+
+```text title="Usage"
+axiom database fmt [OPTIONS] <SOURCE>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<SOURCE>` | path | required | Database `.acore` file. |
+| `--write` | flag | off | Replace the file with the formatted source. |
+
+### axiom database build
+
+Build a canonical server-only schema package. The build is offline and grants no
+migration authority.
+
+```text title="Usage"
+axiom database build [OPTIONS] <SOURCE>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<SOURCE>` | path | required | Database `.acore` entry file. |
+| `--out` | path | `.axiom/contracts/database.axiom` under the project root | Output schema package. |
+
+The command also writes a `.sources.axiom` source companion beside the package
+and prints an `axiom-database-build/v1` summary with the artifact path and
+SHA-256. Keep the companion with the package: `migrate` and `inspect` need it to
+read a package.
+
+```bash title="Terminal"
+axiom database build database/sqlite/schema.acore
+```
+
+### axiom database inspect
+
+Inspect a source contract or a built schema package without connecting. It
+prints JSON describing the engine, exported tables and columns.
+
+```text title="Usage"
+axiom database inspect <SOURCE>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<SOURCE>` | path | required | Database `.acore` source or schema package. |
+
+### axiom database diff
+
+Compare two database contracts, or two versions in the local catalog. Use it to
+review a schema change before you migrate.
+
+```text title="Usage"
+axiom database diff [OPTIONS] <CONTRACT> [AFTER]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<CONTRACT>` | path | required | The "before" source or schema package. With `--from`, the contract whose catalog you compare. |
+| `[AFTER]` | path | none | The "after" source or schema package. When present, `--from`, `--to` and `--json` are ignored and the output is JSON. |
+| `--from` | version | required without `AFTER` | Archived catalog version to compare from. |
+| `--to` | version or `working` | `working` | Version to compare to. `working` is the current source. |
+| `--json` | flag | off | Print the catalog comparison as JSON. |
+
+The two-file form prints an `axiom-database-contract-change/v1` report. Each
+change lists the object path, operation and a compatibility class such as
+`requires-transition-validation`.
+
+```bash title="Terminal"
+axiom database diff before/schema.acore after/schema.acore
+axiom database diff database/schema.acore --from 1.0.0 --to working
+```
+
+## Apply and observe versions
+
+### axiom database migrate
+
+Apply pending versioned migrations to a target. Each pending version is
+validated before it is applied, and drift blocks the run (`ADB1105`).
+
+```text title="Usage"
+axiom database migrate [OPTIONS] <CONTRACT>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<CONTRACT>` | path | required | Source, exported release bundle or schema package. |
+| Connection options | see [Connection options](#connection-options) | | `--database-url`, `--host`, `-p, --port`, `--database`, `--username`, `--password`, `--database-file`, `--ssl-mode`, `--tls-ca`. |
+| Policy options | see [Migration policy options](#migration-policy-options) | | `--auto-version`, `--non-interactive`, `--dry-run`, `--allow-destructive`, `--allow-data-dependent`, `--allow-security-changes`, `--adopt`, `--json`, `--export`. |
+| `--frozen` | flag | off | Apply only an existing immutable release, for example one written by `--export`. Never prepare a new version. |
+| `--to` | version | latest | Stop at a retained forward version. Use `rollback` to go back. |
+
+If the source version was already published with different content, the CLI
+suggests the next version. It prompts in a terminal, uses it with
+`--auto-version`, and otherwise fails with `ADB1103`. When the environment
+variable `AXIOM_DATABASE_TRUSTED_KEY` is set, the release signer must match it
+(`ADB1109`).
+
+```bash title="Terminal"
+axiom database migrate database/schema.acore --database-url "$DATABASE_URL"
+axiom database migrate database/schema.acore --database-file ./tasks.sqlite --dry-run
+```
+
+Prepare a release once and promote the same bytes in CI:
+
+```bash title="Terminal"
+axiom database migrate database/schema.acore --database-url "$STAGING_URL" \
+  --non-interactive --auto-version --export release.axiom
+axiom database migrate release.axiom --database-url "$PRODUCTION_URL" \
+  --non-interactive --frozen
+```
+
+### axiom database status
+
+Show the applied version, the working version, pending changes and drift
+without migrating.
+
+```text title="Usage"
+axiom database status [OPTIONS] <CONTRACT>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<CONTRACT>` | path | required | Source, release bundle or schema package. |
+| Connection options | see [Connection options](#connection-options) | | Select the target. |
+| `--json` | flag | off | Print the status as JSON. |
+| `--watch` | flag | off | Refresh every 2 seconds until you press Ctrl+C. |
+| `--check` | flag | off | Exit non-zero (`ADB1105`, "database is not current") when a change is pending or drift exists. Use it as a CI gate. |
+
+If the working source is invalid, `status` reports the last archived definition
+and marks the working version `invalid`.
+
+```bash title="Terminal"
+axiom database status database/schema.acore --database-url "$DATABASE_URL" --check
+```
+
+### axiom database rollback
+
+Restore an earlier recorded schema by publishing a new compensating version.
+History is never rewritten.
+
+```text title="Usage"
+axiom database rollback [OPTIONS] <CONTRACT>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<CONTRACT>` | path | required | Source, release bundle or schema package. |
+| Connection options | see [Connection options](#connection-options) | | Select the target. |
+| Policy options | see [Migration policy options](#migration-policy-options) | | The rollback is a new version: use `--auto-version` in CI. |
+| `--steps` | number | `1` | Number of applied versions to step back, from 1 to the number applied. Conflicts with `--to`. |
+| `--to` | version or `empty` | none | Restore a retained version. `empty` restores the empty baseline. |
+
+Rollback refuses a target with drift (`ADB1105`). It also refuses to cross a data
+overwrite whose previous values were not archived (`ADB1113`): write an explicit
+compensating migration or restore a backup instead.
+
+```bash title="Terminal"
+axiom database rollback database/schema.acore --database-url "$DATABASE_URL" --steps 1
+axiom database rollback database/schema.acore --database-url "$DATABASE_URL" --to empty
+```
+
+### axiom database history
+
+Show version history, compensating rollbacks and failed attempts. It can also
+recover missing local definitions from the target's verified ledger.
+
+```text title="Usage"
+axiom database history [OPTIONS] [SOURCE] [COMMAND]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `[SOURCE]` | path | none | Source, release bundle or schema package. |
+| Connection options | see [Connection options](#connection-options) | | Select the target. |
+| `--json` | flag | off | Print the history as JSON. |
+| `--watch` | flag | off | Refresh every 2 seconds until you press Ctrl+C. |
+
+Each line shows a version, its kind (migration, rollback or adoption), its
+changes and, for a rollback, the version it restores.
+
+```bash title="Terminal"
+axiom database history database/schema.acore --database-url "$DATABASE_URL"
+```
+
+## Advanced history subcommands
+
+<StatusNote status="experimental" title="Operator profile">
+  These subcommands work with the candidate history of the advanced PostgreSQL
+  planning profile, which is separate from the developer `migrate` path above.
+  They are **Experimental**. See [Migrations and persistence](/database/persistence).
+</StatusNote>
+
+### axiom database history export
+
+Export the complete verified history prefix into a new private offline
+directory.
+
+```text title="Usage"
+axiom database history export [OPTIONS] --out <OUT> <SOURCE>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<SOURCE>` | path | required | Database source. |
+| `--head` | candidate ID | local history head | Last candidate to include. |
+| `--out` | path | required | New output directory. |
+
+### axiom database history checkpoint
+
+Export a complete-prefix checkpoint that also carries deployed data lineage.
+
+```text title="Usage"
+axiom database history checkpoint [OPTIONS] --out <OUT> <SOURCE>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<SOURCE>` | path | required | Database source. |
+| `--head` | candidate ID | local history head | Last candidate to include. |
+| `--out` | path | required | New output directory. |
+
+### axiom database history verify
+
+Verify an exported bundle offline. Verification does not connect to a database
+and does not grant authority to apply.
+
+```text title="Usage"
+axiom database history verify <BUNDLE>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<BUNDLE>` | path | required | Directory written by `history export` or `history checkpoint`. |
+
+### axiom database history import
+
+Import exact generated history for the matching compiled project.
+
+```text title="Usage"
+axiom database history import --source <SOURCE> <BUNDLE>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<BUNDLE>` | path | required | Exported history bundle. |
+| `--source` | path | required | Database source whose compiled package must match the bundle. |
+
+### axiom database history import-atlas
+
+Adopt a verified Atlas migration directory and revision snapshot as private
+provenance, when you move an existing Atlas-managed database to Acore.
+
+```text title="Usage"
+axiom database history import-atlas [OPTIONS] --directory <DIRECTORY> --deployment <DEPLOYMENT> --revision-schema <REVISION_SCHEMA> --legacy-stopped <BUNDLE>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<BUNDLE>` | path | required | History bundle that receives the provenance. |
+| `--directory` | path | required | Atlas migration directory. |
+| `--deployment` | path | required | Private target binding used to read the Atlas revision table. |
+| `--revision-schema` | name | required | Schema that holds the Atlas revision table. |
+| `--revision-table` | name | `atlas_schema_revisions` | Atlas revision table name. |
+| `--legacy-stopped` | flag | required | Confirms that the legacy Atlas deployment is stopped. |
+
+## Hidden operator commands
+
+`axiom database` also accepts subcommands that `--help` does not list. They are
+retained for certified and operator profiles and are outside this reference.
+One example is `axiom database fleet`, the **Experimental** frozen fleet delivery
+workflow: `prepare`, `inspect`, `approve`, `verify`, `export`, `expand`, `run`,
+`monitor`, `promote`, `dashboard`, `terraform-plan`, `recovery-check` and
+`admit-production`. `ci`, `operator` and `terraform-apply` are aliases of `run`.
+Verification, execution and promotion require `--trusted-policy-sha256`. Live
+operations require an explicit inventory, a private provider root, a journal and
+a receipt key. See [Database fleets](/database/fleets).

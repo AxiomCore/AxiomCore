@@ -2,20 +2,16 @@
   "title": "Reference",
   "pages": [
     "index",
-    "capability-boundaries",
-    "acore-schema-reference",
-    "executable-extensions",
-    "extension-dependencies",
-    "security-rules",
-    "error-codes",
-    "troubleshooting",
-    "versioning-and-deprecation",
-    "support-and-feedback",
-    "documentation-contributions",
-    "documentation-site-privacy",
-    "benchmarks",
-    "adoption-metrics",
     "glossary",
-    "faqs"
+    "faqs",
+    "troubleshooting",
+    "error-codes",
+    "security-rules",
+    "acore-schema-reference",
+    "capability-boundaries",
+    "versioning-and-deprecation",
+    "benchmarks",
+    "support-and-feedback",
+    "documentation-site-privacy"
   ]
 }

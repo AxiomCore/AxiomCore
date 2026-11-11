@@ -1,24 +1,15 @@
 ---
 title: Versioning and deprecation
-description: Distinguish tool, source-schema, artifact, package, release, protocol, and documentation versions before upgrading an AxiomCore system.
+description: The independent version boundaries in AxiomCore, the published component versions, compatibility rules, deprecation, and safe upgrades.
 pageType: reference
 ---
 
-AxiomCore has several independent compatibility boundaries. A version change in
-one does not automatically upgrade the others.
+<span id="advanced-language-metadata" />
 
-## Version boundaries
-
-| Boundary | Where to inspect it | Current contract |
-| --- | --- | --- |
-| Axiom CLI | `axiom --version` | Pre-stable tool release. Pin the exact version used by CI and release jobs. |
-| Acore source schema | Top-level `axiom` value and imported modules | Language/schema compatibility; do not infer CLI compatibility from a source version alone. |
-| Contract release | `project.version`, Cloud release, or pinned pull reference | Immutable project/version bytes after release. The current CLI accepts letters, numbers, `.`, `_`, `-`, and `+`; it does not require semantic versioning. |
-| `.axiom` envelope | Artifact header and manifest | Runtime/package compatibility, including minimum runtime requirements where present. |
-| Package dependency | Dependency manifest and committed lock | Exact package identity, version/source, digest, and proof selected for a consumer. |
-| `.axiomapp` and UI host | Application and host manifests | Target, build mode, host version, graph revision, and runtime protocol compatibility. |
-| Machine-readable output | `schema_version` in the individual JSON output | Compatibility for that command's JSON shape, not for every CLI output. |
-| Documentation | Current site and repository revision | Documents the current reviewed implementation; historical versioned docs are not published today. |
+AxiomCore has several independent compatibility boundaries: the CLI, the Acore
+source schema, contract releases, artifacts, packages, UI hosts, and
+machine-readable output. Changing the version of one does not upgrade the
+others. Use this page to find each boundary, pin it, and upgrade safely.
 
 <StatusNote status="alpha" title="No stable-major compatibility promise yet">
   The CLI, Acore language, package format, UI application workflow, and Cloud
@@ -26,15 +17,60 @@ one does not automatically upgrade the others.
   participating versions and test the complete consumer path before upgrading.
 </StatusNote>
 
-## Choose release identifiers deliberately
+## Version boundaries
 
-Use a monotonically understandable scheme such as `0.8.2` or
-`2026.09.16.1`, but treat that as team policy rather than compiler-enforced
-SemVer. A Cloud project/version pair is immutable: the same bytes can be
-retried, while different bytes must use a different version.
+| Boundary | Where to inspect it | What the version means |
+| --- | --- | --- |
+| Axiom CLI | `axiom --version` | Pre-stable tool release. Pin the exact version in CI and release jobs |
+| Acore source schema | The top-level `axiom` value and imported modules | Language and schema compatibility. A source version alone does not tell you which CLI is compatible |
+| Contract release | `project(...)` version, the Cloud release, or a pinned pull reference | Immutable project and version bytes after release |
+| `.axiom` envelope | Artifact header and manifest | Runtime and package compatibility, including a minimum runtime version where present |
+| Package dependency | Dependency manifest and committed lock | The exact package identity, version or source, digest, and proof a consumer selected |
+| `.axiomapp` and UI host | Application and host manifests | Target, build mode, host version, graph revision, and runtime protocol compatibility |
+| Machine-readable output | `schema_version` in a command's JSON output | The shape of that command's JSON only, not every CLI output |
+| Documentation | The current site | The current reviewed implementation. Versioned historical docs are not published |
 
-Do not overwrite an accepted artifact to make a version appear unchanged.
-Create a new version, preserve the old artifact and lock, and review:
+## Published component versions
+
+These are the latest public releases on GitHub as of October 15, 2026.
+
+| Component | Version | Status |
+| --- | --- | --- |
+| Axiom CLI | 0.149.1 | See the [support matrix](/introduction/support-matrix) per path |
+| Axiom UI host (web browser, Android Emulator, iOS Simulator builds) | 0.6.12 | **Alpha** (Acore UI) |
+| `atmx-web` | 0.147.5 | **Available** (vanilla web) |
+| `atmx-react` | 0.147.4 | **Alpha** |
+| `atmx-cli` (client generator) | 0.146.7 | Used by the web paths |
+| `axiom_flutter` | 0.147.5 | **Alpha** |
+| `axiom_flutter_generator` | 0.146.6 | **Alpha** |
+| Apple runtime (`AxiomRuntime.xcframework`) | 0.148.6 | **Experimental** (Swift) |
+| `acore-lsp` (macOS arm64) | 0.1.4 | **Alpha** (language server) |
+| FastAPI extractor | 0.1.4 | **Available** |
+| Go extractor | 2026.10.14.2 | **Alpha** |
+| Rust extension SDK | ABI 1.0.4, derive 0.1.4, SDK 0.1.4 | **Experimental** |
+| TypeScript extension SDK | 0.1.3 | **Experimental** |
+| Python extension SDK | 0.1.3 | **Experimental** |
+
+The local walkthroughs were first checked with CLI **0.149.0** and the signed
+web host **0.6.12** on macOS arm64. The existing-stack samples pin `atmx-cli`
+**0.146.7** and `atmx-web` **0.147.5**, because CLI 0.149.0's matching
+automatic npm companion was not published. That combination qualifies those
+sample contracts, not all advanced metadata or other targets. See
+[Install the Axiom CLI](/getting-started/installation) and the
+[FastAPI guide](/guides/fastapi-to-web).
+
+<span id="choose-release-identifiers-deliberately" />
+
+## Choose release versions
+
+A contract release version can contain letters, numbers, `.`, `_`, `-`, and
+`+`. The CLI does not require semantic versioning, so choose a scheme your team
+understands, such as `0.8.2` or `2026.09.16.1`. A Cloud project and version
+pair is immutable: retrying the same bytes is allowed; different bytes need a
+new version.
+
+Never overwrite an accepted artifact to keep a version number. Create a new
+version, keep the old artifact and lock, and review the change:
 
 ```bash title="Terminal"
 axiom diff previous.acore candidate.acore --format semantic
@@ -42,117 +78,134 @@ axiom test candidate.acore
 axiom build candidate.acore --out candidate.axiom
 ```
 
-The current semantic classifier is review evidence, not a universal proof of
-consumer compatibility. Field projection, authorization, validation, default,
-error, stream, cache, and target behavior still require owner review.
+The semantic classifier is review evidence, not proof of consumer
+compatibility. Field projections, authorization, validation, defaults, errors,
+streams, caching, and target behavior still need owner review.
+
+### Database contract versions
+
+Database migrations use a different, stricter rule:
+
+- Declare the identity in the source: `project(id: "...", version: "1.0.0")`.
+  Database contracts need no profile header; the manifest selects the
+  contract type.
+- The version must be numeric `MAJOR.MINOR.PATCH` without leading zeros
+  (`ADB1100` otherwise).
+- Each managed transition binds an immutable identity, version, content, and
+  parent. Schema, private typed data intent, and provenance have separate
+  digests.
+- Reusing a version for changed content is a conflict (`ADB1103`) with a
+  suggested next version: a major bump for a breaking change, otherwise a
+  patch bump. Unchanged content is reported as current. Metadata-only releases
+  are shown explicitly.
+- Accepting the suggestion interactively (Enter) edits the version in your
+  source. In CI, opt in with `--auto-version` while preparing; frozen promotion
+  (`--frozen`) then keeps the exact release and version across targets.
+- A compensating rollback creates a new version and keeps older history.
+
+These rules apply from CLI 0.149.0. Backend and project releases outside the
+database migration profile keep their own version rules above. See
+[Database contracts](/database/contracts).
 
 ## Deprecate before removing
 
-Acore accepts `@deprecated` metadata on supported declarations. Use it to
-record intent near the authored surface:
+Acore accepts `@deprecated` metadata on declarations. Use it to record intent
+next to the authored surface:
 
 ```acore title="Acore excerpt"
 @deprecated { replacement = "currentName" }
 legacyName = "compatibility-value"
 ```
 
-A useful deprecation change includes:
+A useful deprecation includes:
 
 1. the replacement and migration path;
-2. the first release carrying the notice;
-3. known consumers or an explicit statement that discovery is incomplete;
-4. a test proving old and new behavior during the overlap; and
+2. the first release that carries the notice;
+3. known consumers, or a statement that discovery is incomplete;
+4. a test that proves old and new behavior during the overlap; and
 5. a later, separately reviewed removal diff.
 
-There is no platform-wide deprecation duration guarantee today. Teams must set
-and communicate their own removal window. An annotation also does not force an
-arbitrary runtime or generated client to display a warning; verify the selected
-toolchain's output.
+There is no platform-wide deprecation period. Your team sets and communicates
+its own removal window. The annotation does not force every runtime or
+generated client to show a warning; check the output of your toolchain.
 
 ## Upgrade safely
 
-Upgrade one boundary at a time where practical:
+Upgrade one boundary at a time where you can:
 
-1. record the current CLI, extractor, runtime, host, and client versions;
-2. preserve the accepted source, artifacts, and dependency locks;
-3. update the chosen tool or dependency and resolve deliberately;
-4. inspect semantic and lock changes;
-5. run local contract/security tests and real consumer tests; and
-6. promote a new immutable release only after the rollback input is retained.
+1. Record the current CLI, extractor, runtime, host, and client versions.
+2. Keep the accepted source, artifacts, and dependency locks.
+3. Update one tool or dependency and resolve deliberately.
+4. Inspect the semantic and lock changes.
+5. Run local contract and security tests and real consumer tests.
+6. Promote a new immutable release only after you keep the rollback input.
 
-Use the [release and upgrade workflow](/delivery/releases) for the
-artifact lifecycle and the [support matrix](/introduction/support-matrix) for
-the current maturity of each integration.
+See [Releases and upgrades](/delivery/releases) for the artifact lifecycle.
 
-## Advanced language metadata
+## Format and reader versions
 
-Executable schema/default metadata and selected typed failure descriptors use
-reader version 2. Private advanced language plans use `axiom-server-plan/v2`;
-unknown required capabilities fail before activation. V1 contracts and legacy
-code/message adapters keep their wire meaning. New typed consumers require
-selected payload metadata rather than reconstructing it from old envelopes.
+Advanced language features add metadata that older readers cannot interpret.
+Readers reject unknown required capabilities before activation instead of
+guessing.
 
-Logical-submission descriptors require contract reader 3. The embedded runtime
-reports its contract reader separately from transport/data ABI 1. Matching UI
-builders retain each contract's `minRuntimeVersion`; browser and native facade
-initialization reject a newer required reader before loading contracts or
-acquiring request owners. A legacy host without this capability reports reader
-1. Use the matching host when a locked operation selects inherited validation,
-typed failures, or logical-submission metadata.
+| Format or reader | Version | Rule |
+| --- | --- | --- |
+| Contract reader (executable schema and default metadata, selected typed failure descriptors) | 2 | V1 contracts and legacy code and message adapters keep their wire meaning. New typed consumers need the selected payload metadata, not a reconstruction from old envelopes |
+| Contract reader (logical-submission descriptors) | 3 | The embedded runtime reports its contract reader separately from transport and data ABI 1 |
+| Private server plan | `axiom-server-plan/v2` | Unknown required capabilities fail before activation |
+| Advanced frontend | UI IR 11, frontend program 2, reader 11, with `axiom-validation-schema/v1` | Hosts reject unknown pairs, a missing helper capability, and attempts to downgrade an advanced graph to the legacy pair |
+| Plain legacy frontend | UI IR 10, frontend program 1, reader 10 | Unchanged |
+| Host frontend compatibility metadata | Reader 2 | Advertises schema-helper support without changing the native bundle ABI or readiness pins |
+| Development execution evidence | `axiom-development-execution-evidence/v1` | Optional envelope; legacy reports without it remain readable |
 
-Advanced frontend consumers use the exact UI IR 11/frontend program 2/reader 11
-combination with `axiom-validation-schema/v1`. Plain legacy consumers keep IR
-10/program 1/reader 10. Host frontend compatibility metadata reader 2 advertises
-schema-helper support without changing the native bundle ABI or readiness pins.
-Hosts reject unknown pairs, missing helper capability and attempts to downgrade
-an advanced graph to the legacy pair. Use the matching toolchain when
-building and testing; no release channel is promoted by a source change alone.
+What these rules mean in practice:
 
-Read caches bind plan, contract, schema, codec, deployment authority and
-verified identity; replacing any of these creates a different cache partition.
-Batch descriptors require a provider that explicitly attests the derived
-correlation envelope and read safety. Sink mappings require their qualified
-transaction/receipt profile. Unknown required features reject activation.
+- **Matching hosts.** UI builders keep each contract's `minRuntimeVersion`.
+  Browser and native facades reject a newer required reader before loading
+  contracts or acquiring request owners. A legacy host without this capability
+  reports reader 1. Use the matching host when a locked operation selects
+  inherited validation, typed failures, or logical-submission metadata.
+- **Matching toolchain.** Build and test advanced frontends with the matching
+  toolchain. A source change alone does not promote a release channel.
+- **Cache partitions.** Read caches bind the plan, contract, schema, codec,
+  deployment authority, and verified identity. Changing any of them creates a
+  different cache partition.
+- **Batches and sinks.** Batch descriptors need a provider that explicitly
+  attests the derived correlation envelope and read safety. Sink mappings need
+  their qualified transaction and receipt profile. Unknown required features
+  reject activation.
+- **Extensions.** Generated extension interfaces use the checked schema and SDK
+  profile recorded in the package and build lock. A structural interface match
+  does not establish module identity, grants, or kernel compatibility. Keep
+  named guest resume state, bounded codecs, and module and authority digests in
+  the same toolchain. TypeScript and Python live subscription handles are not
+  supported.
+- **Execution evidence.** The evidence envelope identifies the actual runner,
+  profile, artifact hashes, executed assertion count, and cleanup result. A
+  compiler smoke report with zero application assertions cannot qualify a
+  behavior scenario, guest, durable provider, or mounted target. Native
+  scenarios accept only the explicitly supported development fixture profiles
+  and reject unavailable controls.
 
-Selected generated extension interfaces use the checked schema and SDK profile
-recorded in the package and build lock. A structural interface match does not
-establish module identity, grants or kernel compatibility. Keep named guest
-resume state, bounded codecs and module/authority digests in the same toolchain;
-TypeScript/Python live subscription handles remain unsupported.
+<span id="check-editor-and-compiler-compatibility" />
 
-`axiom-development-execution-evidence/v1` identifies the actual runner, profile, artifact
-hashes, executed assertion count and cleanup result. Legacy reports without
-this optional envelope remain readable. A compiler smoke report with zero
-application assertions cannot qualify a behavior scenario, guest, durable
-provider or mounted target. Native scenarios accept the explicitly supported
-development fixture profiles and reject unavailable controls.
+## Editor and compiler compatibility
 
-## Database contract versions
-
-CLI 0.149.0 database migrations use explicit Acore `project(id: "…", version: "1.0.0")`. The version is a numeric three-part value and is declared in the source project block. Database contracts need no profile header; the manifest selects the contract type. Every managed transition binds an immutable identity/version/content/parent definition; schema, private typed data intent and provenance have distinct digests. Reused changed content receives a source-linked conflict and a numeric suggestion; unchanged content is current. Metadata-only releases are shown explicitly.
-
-Interactive Enter acceptance changes the source version literal. CI auto-versioning is explicit during preparation, then frozen promotion preserves the exact release/version across targets. Compensating rollback allocates a new version and retains older history. Backend/project release syntax outside this database migration profile keeps its existing version rules. See [Database contracts](/database/contracts).
-
-## Check editor and compiler compatibility
-
-Advanced metadata requires a compatible compiler, CLI, host, SDK, and editor
+Advanced metadata needs a compatible compiler, CLI, host, SDK, and editor
 server. Installing a grammar does not update artifact readers or runtime
-capabilities. Inspect both editor entry points when they are installed:
+capabilities. Check both editor entry points when both are installed:
 
 ```bash title="Terminal"
 axiom lsp --version-json
 acore-lsp --version-json
 ```
 
-Their `compilerVersion` and `protocolVersion` must match. CLI and standalone
-`serverVersion` labels may differ. Select the same CLI for explicit editor
-tasks. Offline editing and tests use prepared local contracts and locks; real
-serving separately requires reviewed identities, deployment grants, database
-readiness, and compatible providers.
+```json title="Example output from CLI 0.149.1"
+{"compilerVersion":"062cd6cd...","editorFeatures":{"virtualDocumentNavigationOptOut":true},"protocolVersion":"axiom-editor/v1","serverVersion":"acore/0.1.4 (CLI 0.149.1)"}
+```
 
-For the published local walkthroughs, use CLI **0.149.0** and signed web host
-**0.6.12** on macOS arm64. Existing-stack samples pin `atmx-cli` **0.146.7**
-and `atmx-web` **0.147.5** because the CLI's matching automatic npm companion
-is unavailable. This combination qualifies those sample contracts, not all
-advanced metadata or other targets. See the [installation guide](/getting-started/installation)
-and [generator setup](/guides/fastapi-to-web#pull-the-web-client).
+`compilerVersion` and `protocolVersion` must match between the two. The
+`serverVersion` labels can differ. Point explicit editor tasks at the same
+CLI. Offline editing and tests use prepared local contracts and locks; real
+serving separately needs reviewed identities, deployment grants, database
+readiness, and compatible providers.

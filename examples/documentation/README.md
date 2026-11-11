@@ -8,7 +8,7 @@ The examples use synthetic local data. Each directory has its own setup and clea
 | `task-app` | Acore UI, Acore API, SQLite | [First app](https://docs.axiomcore.dev/getting-started/quickstart/) |
 | `exam-app` | Acore UI, server-side scoring, SQLite | [Exam tutorial](https://docs.axiomcore.dev/examples/exam-app/) |
 | `hello-api` | Pure Acore endpoint | [Backend quickstart](https://docs.axiomcore.dev/getting-started/quickstart-backend/) |
-| `managed-title` | Acore normalization and typed failure | [Managed starter](https://docs.axiomcore.dev/backend/managed-starter/) |
+| `managed-title` | Acore normalization and typed failure | [Backend declarations](https://docs.axiomcore.dev/backend/declarations/) |
 | `fastapi-web` | Python/FastAPI and ATMX web | [FastAPI integration](https://docs.axiomcore.dev/guides/fastapi-to-web/) |
 | `go-web` | Go/Chi and ATMX web | [Go integration](https://docs.axiomcore.dev/guides/go-to-web/) |
 

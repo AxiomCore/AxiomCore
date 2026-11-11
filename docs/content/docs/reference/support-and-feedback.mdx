@@ -1,18 +1,27 @@
 ---
 title: Support and feedback
-description: Report documentation defects, product problems, and security vulnerabilities through the appropriate channel with safe diagnostic evidence.
+description: Report documentation defects, product problems, and security vulnerabilities through the right channel with safe diagnostics, and contribute documentation changes.
 pageType: reference
 ---
 
-Choose the channel by impact. Never place credentials or sensitive customer
-data in a public report.
+<span id="before-editing" />
+<span id="local-workflow" />
+<span id="claim-and-example-requirements" />
+<span id="review-the-generated-surfaces" />
+<span id="escalate-product-failures" />
+
+Use this page to choose where to report a problem, build a diagnostic bundle
+that is safe to share, and contribute a documentation fix. Never put
+credentials or sensitive customer data in a public report.
+
+## Choose a channel
 
 | Need | Channel | Include |
 | --- | --- | --- |
-| Documentation correction | [AxiomCore repository](https://github.com/AxiomCore/AxiomCore) issue or change proposal | Page URL, inaccurate sentence, implementation evidence, and proposed status/boundary |
-| Reproducible product problem | Repository issue or [community Discord](https://discord.gg/Fvv7ufN2DK) | Version, target, sanitized error, doctor report, and minimal contract |
-| Security vulnerability | Private process in [SECURITY.md](https://github.com/AxiomCore/AxiomCore/blob/main/SECURITY.md) | Impact, reproduction, affected versions, and safe proof of concept |
-| General capability question | Documentation search, FAQ, then community Discord | Intended backend/frontend, target, and required production boundary |
+| Documentation correction | An issue or change proposal in the [AxiomCore repository](https://github.com/AxiomCore/AxiomCore) | Page URL, the inaccurate sentence, implementation evidence, and the proposed status or boundary |
+| Reproducible product problem | A repository issue or the [community Discord](https://discord.gg/Fvv7ufN2DK) | Version, target, sanitized error, doctor report, and a minimal contract |
+| Security vulnerability | The private process in [SECURITY.md](https://github.com/AxiomCore/AxiomCore/blob/main/SECURITY.md); do not open a public issue | Impact, reproduction, affected versions, and a safe proof of concept |
+| General capability question | Documentation search, the [FAQ](/reference/faqs), then the community Discord | Your backend, frontend, target, and the production boundary you need |
 
 <StatusNote status="alpha" title="Support boundary">
   AxiomCore does not publish a general response-time or long-term-support SLA
@@ -30,33 +39,116 @@ axiom doctor --json --strict > axiom-doctor.json
 axiom ui doctor --target web --json > axiom-ui-web.json
 ```
 
-Before attaching anything, remove tokens, cookies, authorization headers,
-private URLs, signing material, DSNs, sandbox keys, request/response bodies,
-customer identifiers, local usernames, and cache payloads. Do not attach an
-artifact if its contract shape is private; provide its SHA-256 and the smallest
+The doctor report never contains tokens, keys, or contract contents, but it
+does include your local project path. Before you attach anything, remove:
+
+- tokens, cookies, and authorization headers;
+- private URLs, DSNs, and sandbox keys;
+- signing material;
+- request and response bodies and cache payloads; and
+- customer identifiers and local usernames or paths.
+
+Debug logs are not automatically safe to share. If a contract's shape is
+private, do not attach the artifact; give its SHA-256 and the smallest
 synthetic reproduction instead.
+
+## Report a product failure
+
+Preserve the first structured error and name the failing boundary: extraction,
+evaluation, build, proof, pull, runtime, target host, or Cloud. Check
+[Troubleshooting](/reference/troubleshooting) before you collect broad debug
+output; later framework errors often hide the original condition.
+
+Include:
+
+| Item | Example |
+| --- | --- |
+| Versions | CLI, runtime, and host versions |
+| Environment | Target and operating system |
+| Command | The exact command you ran |
+| Error | The sanitized structured error |
+| Diagnostics | The doctor report |
+| Artifact identity | Artifact SHA-256, and the release version or attempt ID |
+| Reproduction | The smallest contract that shows the problem |
+
+Never attach signing private keys, bearer tokens, cookies, DSNs, sandbox
+credentials, or raw sensitive payloads.
 
 ## Report a documentation defect
 
-State whether the problem is one of these:
+Say which kind of problem it is:
 
-- **implementation mismatch:** the documented command, field, or behavior does
-  not match the current implementation;
-- **availability mismatch:** an Alpha, Experimental, or Coming soon capability
-  is presented with the wrong status;
-- **missing boundary:** prerequisites, execution, security, platform, or
-  compatibility limits are absent;
-- **navigation/accessibility:** content cannot be found, read, or operated at a
-  relevant viewport or input mode; or
-- **machine-reader mismatch:** HTML, processed MDX, `llms.txt`, metadata, or
-  sitemap output disagrees with the public page.
+| Kind | Meaning |
+| --- | --- |
+| Implementation mismatch | A documented command, field, or behavior does not match the current implementation |
+| Availability mismatch | An Alpha, Experimental, or Coming soon capability shows the wrong status |
+| Missing boundary | A prerequisite, execution, security, platform, or compatibility limit is absent |
+| Navigation or accessibility | Content cannot be found, read, or operated at a relevant screen size or input mode |
+| Machine-reader mismatch | HTML, processed MDX, `llms.txt`, metadata, or the sitemap disagrees with the page |
 
-Link the narrowest implementation evidence when possible. Do not expose
-internal milestone names in a public title or reproduction.
+Link the narrowest implementation evidence you can. Do not use internal
+milestone names in a public title or reproduction.
 
-## Escalate product failures
+## Contribute to the documentation
 
-Preserve the first structured error and identify the failing boundary:
-extraction, evaluation, build, proof, pull, runtime, target host, or Cloud.
-Follow [Troubleshooting](/reference/troubleshooting) before collecting broad
-debug output; later framework failures frequently hide the original condition.
+Documentation changes are product changes: a command, API, compatibility, or
+availability claim must come with the evidence that supports it.
+
+Before you edit:
+
+1. Identify the owning repository and the implementation behind the claim.
+2. Reproduce the behavior with the current tool or a test.
+3. Choose the exact status from the [support matrix](/introduction/support-matrix).
+4. Decide whether the change belongs in a concept, guide, reference, or
+   product-direction page.
+
+Planned products must use **Coming soon** and must not include runnable
+installation steps. Do not publish internal workstream labels.
+
+Build and check the site from the repository's `docs` directory:
+
+```bash title="Terminal"
+cd docs
+corepack enable
+pnpm install --frozen-lockfile
+pnpm check
+pnpm static:check
+```
+
+`pnpm check` validates the packaged examples, content metadata and navigation,
+internal links, public terminology and example safety, TypeScript and MDX
+compilation, a production build, and HTTP smoke tests for the public discovery
+routes. For a quick check on a focused edit, run:
+
+```bash title="Terminal"
+pnpm lint:content
+pnpm types:check
+```
+
+Every claim and example in your change must:
+
+- record the versions, commands, results, and source or test evidence in the
+  contribution (maintainers reconcile capability evidence during review);
+- state the target, framework, command, artifact, or host boundary;
+- separate a successful build from real backend or consumer behavior;
+- use synthetic data and clearly non-production placeholders;
+- use repository-relative paths, never a developer's home path;
+- say when extraction imports or runs application code;
+- treat semantic output as review evidence, not a universal guarantee;
+- keep the approved dark theme and check desktop and narrow layouts, code copy
+  controls, diagram text alternatives, and table overflow; and
+- follow `docs/AGENTS.md`: keep useful information, write concise prose with
+  descriptive code captions, and avoid em dashes and private implementation
+  details.
+
+Each page is published in several forms. Check that statuses and boundaries
+survive all of them:
+
+- rendered HTML and the search index;
+- the processed `/docs/<path>.mdx` output;
+- `llms.txt`, `llms-full.txt`, and `agents.json`;
+- `sitemap.xml` and `robots.txt`; and
+- the page's Open Graph image and metadata.
+
+The repository's `CONTRIBUTING.md` has the maintainer release procedure and
+the commands for changes that also touch examples or implementation code.

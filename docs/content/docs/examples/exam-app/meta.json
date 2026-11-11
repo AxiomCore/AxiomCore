@@ -1,11 +1,6 @@
 {
-  "title": "Exam application",
+  "title": "Exam app",
   "pages": [
-    "index",
-    "run",
-    "database",
-    "backend",
-    "frontend",
-    "testing"
+    "index"
   ]
 }

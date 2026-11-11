@@ -1,0 +1,68 @@
+---
+title: Swift
+description: Current status of the Swift package, the Apple runtime binary and generated bindings for native Apple apps.
+pageType: guide
+---
+
+<StatusNote status="experimental" title="Swift and Apple platforms">
+  The Apple runtime binary is published and a Swift package exists as source.
+  There is no published Swift package, no Swift API and no generated bindings,
+  so this page has no runnable install steps yet.
+</StatusNote>
+
+This page tells you what exists for native Swift apps today, what is missing
+before a supported workflow, and what to use in the meantime.
+
+<span id="what-can-be-evaluated-today" />
+
+## What exists today
+
+| Piece | State |
+| --- | --- |
+| Apple runtime | `AxiomRuntime.xcframework.zip` is attached to each runtime-apple release on GitHub (latest 0.148.6). The Flutter iOS and macOS pods use the same archive. |
+| Swift package source | The public [axiom-sdk repository](https://github.com/AxiomCore/axiom-sdk) has an `Axiom` package (Swift tools 6.2, iOS 13+, macOS 11+) that links the runtime as a binary target. |
+| Swift API | None yet. The package's Swift target is empty; its test calls the runtime's C interface directly (ABI version 1, data ABI version 1). |
+| Code generation | `axiom pull` has no Swift option. Its frameworks are `flutter`, `dart`, `atmx-web` and `atmx-react`. |
+
+In the repository you can build the native runtime for supported Apple
+architectures, produce and inspect a local XCFramework with the release
+tooling, validate the C interface in an integration fixture, and compare its
+behavior with the Flutter and browser runtimes.
+
+Do not copy a release URL or checksum from source or an example into your own
+`Package.swift`. Binary-target checksums are release-specific and must come
+from a published, verified distribution manifest.
+
+## The SDK steps, today
+
+| Step | Swift status |
+| --- | --- |
+| Install | No published package or versioned checksum source |
+| Generate a client | Not available; no generated endpoint or model bindings |
+| Initialize | Only the C interface; no documented Swift lifecycle |
+| Make a typed call | Not available |
+| Handle errors | Not documented for Swift |
+
+<span id="what-remains-before-a-supported-application-workflow" />
+
+## What remains before a supported workflow
+
+- A versioned Swift package with a release-specific checksum source.
+- Generated Swift endpoint and model bindings.
+- Documented initialization, authentication, query, mutation, stream, cache and
+  shutdown lifecycles.
+- Simulator, device, archive and App Store validation.
+- A compatibility matrix for Swift, Xcode, iOS and macOS versions.
+
+## What to use now
+
+- For a cross-platform native client on iOS or macOS, use
+  [Flutter and Dart](/sdks/flutter).
+- For a Swift app, call your backend with your existing networking code, and
+  use the `.axiom` contract for review, mocks, tests and change control.
+
+## Next steps
+
+- [Client SDKs](/sdks)
+- [Flutter and Dart](/sdks/flutter)
+- [Support and availability](/introduction/support-matrix)

@@ -1,0 +1,109 @@
+---
+title: Extensions
+description: What a sandboxed executable extension is, what authority it receives, and which languages and targets support it.
+pageType: overview
+---
+
+<span id="where-an-extension-fits" />
+<span id="what-the-module-can-and-cannot-do" />
+<span id="state-durable-store-and-streams" />
+<span id="target-support" />
+
+<StatusNote status="experimental" title="Executable extensions are Experimental">
+  Formats, commands, SDKs and host support can change between CLI releases.
+  Pin the exact Axiom CLI and SDK versions.
+</StatusNote>
+
+An executable extension is a small Rust, TypeScript or Python module that
+AxiomCore compiles to WebAssembly and runs in a sandbox. Use one when a rule is
+impractical to express in declarative Acore, for example a pricing rule, a
+format conversion or one step of a domain workflow. An Acore UI action calls
+it through `use extension`, and a backend action can bind it as a verified
+sandbox implementation (see [Execution plan](/backend/execution)). The
+extension never runs as ordinary code inside your application process.
+
+## How a call crosses the sandbox
+
+```mermaid title="An extension call passes through the host on the way in and on the way out"
+flowchart LR
+  A[Acore action] --> B[Extension host]
+  B --> C{Authority check}
+  C -->|allowed| D[WebAssembly guest]
+  C -->|denied| H[Reject and audit]
+  D --> E[Result, effect plan or patch proposal]
+  E --> F{Host validation}
+  F -->|valid| G[Commit and audit]
+  F -->|invalid| H
+```
+
+The host loads only a signed, verified module. It hands the guest one typed
+input, the state snapshots the extension is allowed to read, and a deadline.
+The guest returns a typed result, one bounded plan of effects to perform, or a
+proposal to change state. The host checks types, invariants, authorization,
+revision conflicts and cancellation before it commits anything, records an
+audit entry either way, and stays responsible for notifying subscribers and
+for teardown. Ordinary Acore rendering and backend handling never
+enter this boundary; only an explicitly bound extension call does.
+
+## Authority
+
+The authority an extension can use is the intersection of three inputs:
+
+| Input | Who writes it | What it says |
+| --- | --- | --- |
+| Authority request | The extension author, in `AxiomDeps.toml` | The maximum the extension asks for. Omitted capabilities are denied. |
+| Application grant | The application owner, signed at release | What this application allows the extension to use. |
+| Target policy | One signed policy per target | What the web, Android, iOS or server host permits. |
+
+The host checks the intersection when it loads the module and again for every
+operation. A target policy can narrow a request but cannot add to it. A package
+version change never raises authority on its own; a permission increase needs
+explicit approval.
+
+The guest never receives:
+
+- a mutable application object, database connection, ORM session or native pointer;
+- ambient network, filesystem, environment, process or WASI access;
+- an arbitrary field path, service name, URL or host method;
+- authority granted to another extension instance.
+
+## Languages
+
+| Language | Source profile | Main limits |
+| --- | --- | --- |
+| Rust | Typed macros compiled to core WebAssembly | No `unsafe`, native linking, build scripts, proc-macro packages or arbitrary Cargo workspaces |
+| TypeScript | Statically bundled ESM compiled with Javy | No Node, DOM, dynamic import, `eval`, timers, network or persistent heap |
+| Python | Restricted Python 3.12, compiled ahead of time | Reviewed syntax and pure `py3-none-any` wheels only; no host Python, native wheels, reflection or dynamic imports |
+
+All three lower to the same ABI, authority model, broker and audit identities.
+See [Build an extension](/extensions/build) for toolchains and SDK versions.
+The [support matrix](/introduction/support-matrix) is authoritative for status.
+
+## Targets
+
+| Target | Host | Limit |
+| --- | --- | --- |
+| Server and headless | Shared Rust host | Durable production-store adapters are not certified. |
+| Web | Dedicated Chromium Worker | Not claimed for every browser engine or deployment topology. |
+| Android | Shared Rust host on Android Emulator | Physical devices are not certified. |
+| iOS | Shared Rust host on iOS Simulator | Physical devices are not certified. |
+
+UI that needs a framework runtime (React, Vue or DOM) is a different path: a
+Web-only, visibly foreign iframe island. It cannot share the application
+document or run on native targets. A small static HTML, literal JSX or Vue
+template subset can instead be translated at build time into ordinary Axiom UI,
+which runs no framework runtime.
+
+## Extensions and packages
+
+A declarative [package](/extensions/packages), such as a theme or component
+library, is `.axiom` data with no executable code. An extension package holds
+only metadata and the digest of a separately distributed WebAssembly module, so
+it also needs the signed authority workflow in this section.
+
+## Next steps
+
+- [Build an extension](/extensions/build): write, sign, verify and run one
+- [Extension reference](/extensions/reference): fields, limits, ABI and SDKs
+- [Packages](/extensions/packages): build and lock declarative `.axiom` packages
+- [Artifact trust](/core-concepts/trust-and-security): how signatures and locks are checked

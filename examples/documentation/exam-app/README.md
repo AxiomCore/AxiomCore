@@ -37,5 +37,5 @@ no production login or deployment configuration. The exam is untimed, has two fi
 
 Stop both processes with Ctrl-C. Data remains in this directory's local state.
 Remove the disposable directory only when its SQLite data is no longer needed.
-Read the [complete guide](https://docs.axiomcore.dev/examples/exam-app/run/) for source details,
+Read the [complete guide](https://docs.axiomcore.dev/examples/exam-app/) for source details,
 error cases, and support boundaries.

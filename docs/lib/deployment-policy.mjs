@@ -2,7 +2,9 @@ export function createContentSecurityPolicy({ isProduction }) {
   const ga = /^G-[A-Z0-9]+$/.test(process.env.NEXT_PUBLIC_GA4_MEASUREMENT_ID || 'G-MLGBL9YG66');
   return [
     "default-src 'self'",
-    `script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com https://www.clarity.ms https://*.clarity.ms${ga ? " https://www.googletagmanager.com" : ""}${isProduction ? '' : " 'unsafe-eval'"}`,
+    // challenges.cloudflare.com serves Turnstile, the Ask AI human check (script and iframe).
+    `script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com https://www.clarity.ms https://*.clarity.ms https://challenges.cloudflare.com${ga ? " https://www.googletagmanager.com" : ""}${isProduction ? '' : " 'unsafe-eval'"}`,
+    'frame-src https://challenges.cloudflare.com',
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https://*.clarity.ms https://c.bing.com",
     "font-src 'self' data:",

@@ -44,7 +44,7 @@ fn watch_targets(source: &Path, content: &str) -> Vec<PathBuf> {
 
 pub async fn handle_watch_dynamic(build_flag: bool, variant: Option<String>) -> anyhow::Result<()> {
     let variant = variant.as_deref().unwrap_or("default");
-    dotenvy::dotenv().ok();
+    // Secret sources are resolved only by the runtime, never during compilation.
     let context = get_watch_context();
 
     if context.is_none() {

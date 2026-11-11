@@ -1,0 +1,144 @@
+---
+title: How extraction works
+description: What a backend extractor reads and executes, where the CLI finds it, and how to review an extracted contract.
+pageType: concept
+---
+
+<span id="fastapi-execution-boundary" />
+<span id="review-is-part-of-extraction" />
+
+**Extraction** turns a supported backend's routes and models into Acore
+declarations that your `axiom.acore` can amend. This page explains what each
+extractor reads and runs, so you can decide where extraction is safe to run
+and what you still need to review.
+
+<span id="current-inputs" />
+
+## Supported inputs
+
+| Input | Status | What you get |
+| --- | --- | --- |
+| FastAPI | **Available** | Routes, parameters, Pydantic models with field validation, relationship candidates |
+| Go | **Alpha** | Routes and types for Chi, Gin, Echo, Fiber, gorilla/mux and `net/http` patterns; review framework-specific constructs |
+| OpenAPI JSON | **Experimental** | A reviewable domain block from `axiom domain bootstrap --source openapi`; not a complete import of every vendor extension or Acore behavior |
+| SQL DDL | **Experimental** | A reviewable domain block from `axiom domain bootstrap --source sql`; it does not connect to or manage a live database |
+| Other backend frameworks | **Coming soon** | No supported extractor workflow |
+
+The published extractor binaries are for macOS arm64.
+
+## How the CLI runs an extractor
+
+A backend source starts with an `amends` line that names a module and an
+entrypoint, for example `amends "axiom-fastapi:main.py:app"`. Each time you
+run `axiom eval`, `check`, `explain` or `build` on that file, the CLI runs the
+extractor again.
+
+```mermaid title="One build: the CLI runs the extractor, then applies your Acore declarations"
+sequenceDiagram
+  participant Dev as You
+  participant CLI as Axiom CLI
+  participant Ext as Extractor
+  participant Src as Backend source
+  Dev->>CLI: axiom build axiom.acore
+  CLI->>Ext: Run with the entrypoint
+  Ext->>Src: Import or load the code
+  Ext-->>CLI: Routes and models
+  CLI->>CLI: Apply axiom.acore
+  CLI-->>Dev: .axiom contract
+```
+
+The FastAPI extractor imports your app; the Go extractor loads your packages.
+Either one reports routes and models. The CLI converts them into
+declarations, applies everything else in your `axiom.acore`, and writes the
+contract. The CLI finds each extractor in a fixed place:
+
+| Module in `amends` | Binary the CLI runs | Override variable | Published release asset |
+| --- | --- | --- | --- |
+| `axiom-fastapi:<file>:<app>` | `~/.acore/bin/axiom-fastapi-extractor` | `AXIOM_FASTAPI_EXTRACTOR` | `axiom-fastapi-macos-arm64` in `extractor-fastapi-v0.1.4` |
+| `axiom-go:<file>` | `~/.acore/bin/axiom-go-extractor` | `AXIOM_GO_EXTRACTOR` | `axiom-go-extractor-macos-arm64` in `extractor-go-2026.10.14.2` |
+
+If the binary is missing, evaluation fails with `MISSING_EXTRACTOR:
+fastapi-extractor` or `MISSING_EXTRACTOR: go-extractor`. Install both with the
+steps in [backend extractors](/getting-started/installation#backend-extractors);
+in CLI 0.149.1, `axiom install <extractor> --module` does not find the
+published builds.
+
+## What each extractor executes
+
+| | FastAPI extractor | Go extractor |
+| --- | --- | --- |
+| How it reads your code | Imports the entry module to get the `FastAPI` instance | Loads your packages and resolves their types with your Go toolchain |
+| Your code that runs | The entry module's top-level code and every local module it imports | None: it does not run `main` or handlers |
+| Dependencies | Bundles FastAPI, Starlette and Pydantic; does not use your virtual environment | Needs a Go toolchain on `PATH`; downloads missing modules unless you ran `go mod download` |
+| Missing third-party packages | Replaced with inert placeholders, so extraction continues | Resolved by the Go toolchain, as above |
+
+Two consequences for FastAPI:
+
+- **Import-time effects are real.** A local module that writes a file, opens a
+  connection with the standard library, or starts work at import does so every
+  time the contract is evaluated or built.
+- **Placeholders hide behavior.** Calls into a package the extractor does not
+  bundle return placeholders instead of running. Models or types that come
+  from such packages can extract incompletely, so review them.
+
+Prefer an application factory, or a module whose import only declares the app,
+routes and models. Move migrations, worker startup, external connections and
+destructive setup behind explicit process entry points. For example:
+
+```python title="src/main.py"
+from fastapi import FastAPI
+
+app = FastAPI()
+
+@app.get("/health")
+def health() -> dict[str, str]:
+    return {"status": "ok"}
+```
+
+After you install the FastAPI extractor, create and build its contract from
+the directory that contains `src/`:
+
+```bash title="Terminal"
+axiom init ./src/main.py:app --module axiom-fastapi
+axiom build axiom.acore --out backend.axiom
+```
+
+<Callout type="warn" title="Treat backend source as code at the extraction boundary">
+  There is no universal no-execution guarantee. A CI runner can be smaller than
+  your production environment, but it still needs the extractor binary, the Go
+  toolchain for Go, and an import path that is safe to execute. Do not give the
+  extraction step production credentials.
+</Callout>
+
+## What extraction cannot see
+
+An extractor reports what it can observe. It cannot prove the business meaning
+of a handler. For example, a FastAPI path parameter declared with
+`Path(max_length=40)` is extracted as a plain required string; FastAPI still
+returns 422 for longer values, but the contract does not say so. The same
+applies to checks written inside Go handlers and to routes built dynamically.
+
+To bootstrap domain declarations from other inputs, run
+`axiom domain bootstrap --source openapi <file>` or
+`axiom domain bootstrap --source sql <file>`. The result is written to
+`axiom.domain.acore` unless you pass `--output`, and is a suggestion to review,
+not runtime parity.
+
+## Review before release
+
+1. Inspect the extracted or amended endpoints and models with
+   `axiom inspect backend.axiom` or `axiom explain axiom.acore`.
+2. Confirm authentication, permissions, validation and error declarations.
+3. Add policies or explicit Acore declarations where the source evidence is
+   incomplete.
+4. Run [contract tests](/testing/contracts) against a controlled service or a
+   [mock](/testing/mocks).
+5. Inspect the semantic diff against the version your consumers use, with
+   `axiom diff --format semantic`.
+
+## Next steps
+
+- [Connect FastAPI to a web client](/guides/fastapi-to-web)
+- [Connect Go to a web client](/guides/go-to-web)
+- [Domain and security models](/acore-language/domain-and-security-models)
+- [Use your existing stack](/guides)

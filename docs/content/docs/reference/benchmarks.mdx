@@ -1,47 +1,66 @@
 ---
-title: Reproducible Benchmarks
-description: The reproducible benchmark protocol and report format.
+title: Benchmarks
+description: Run the reproducible axiom benchmark command, read its report, publish fair comparisons, and see exactly what usage data the CLI sends.
 pageType: reference
 ---
 
-AxiomCore does not publish unrepeatable “typical” runtime numbers. A benchmark
-claim is useful only when it includes the contract fixture, command, machine
-class, CLI version, warm-up, sample count, and resulting report.
+<span id="cli-data-minimization" />
+<span id="adoption-scorecard" />
+<span id="protocol-for-published-comparisons" />
+<span id="next-benchmark-suites" />
 
-## Run the local contract benchmark
+AxiomCore publishes no "typical" performance numbers. Instead, the CLI includes
+a benchmark you can run on your own contract and machine. A benchmark claim is
+useful only with its contract, command, machine class, CLI version, warm-up,
+sample count, and report. This page also lists the usage data the CLI sends.
 
-Run from a backend directory containing `axiom.acore`:
+<span id="run-the-local-contract-benchmark" />
+
+## Run the benchmark
+
+Run it from a backend directory that contains `axiom.acore`:
 
 ```bash title="Terminal"
 axiom benchmark --iterations 20 --warmup 3 --output axiom-benchmark.json
 ```
 
-The command measures:
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `[FILE]` | `axiom.acore` | Contract source to build |
+| `--variant` | `default` | Contract variant |
+| `--iterations` | `10` | Measured runs; at least 1, at most 1000 |
+| `--warmup` | `2` | Unmeasured warm-up runs; at most 1000 |
+| `--output` | `axiom-benchmark.json` | Report file, always written |
+| `--json` | Off | Also print the report to standard output |
+
+The command:
+
+- runs the warm-up builds, then measures each iteration;
+- reports min, median, p95, and max (nearest-rank percentiles);
+- writes a versioned JSON report;
+- restores any existing `axiom.axiom` in the current directory when it
+  finishes or fails, or removes the one it created; and
+- uploads nothing.
+
+## Metrics
 
 | Metric | What it measures | Why it matters |
 | --- | --- | --- |
-| `build_ms` | Acore evaluation, extraction, policy assembly, and artifact packaging | Contract author feedback loop. |
-| `artifact_decode_ms` | Loading and decoding the compiled contract | Runtime contract-load boundary. |
-| `artifact_bytes` | Compiled artifact size | Distribution and browser cache cost. |
-| `endpoints` | Contract size context | Prevents comparing a one-route fixture to a large API. |
+| `build_ms` | Acore evaluation, extraction, policy assembly, and artifact packaging | The contract author's feedback loop |
+| `artifact_decode_ms` | Loading and decoding the compiled contract | The runtime's contract-load boundary |
+| `artifact_bytes` | Compiled artifact size | Distribution and browser cache cost |
+| `endpoints` | Number of endpoints in the contract | Context, so a one-route fixture is not compared to a large API |
 
-It performs warm-up runs, reports min/median/p95/max, writes a versioned JSON
-schema, and restores the prior `axiom.axiom` on completion or failure. It does
-not upload anything.
+## Report format
 
-Attach the generated report to a pull request or store it in a dedicated
-benchmark-results repository. It is evidence, not a pass/fail performance
-gate: shared CI runner timing is too noisy for an honest regression threshold.
-Set thresholds only after collecting a stable baseline on dedicated hardware.
-
-Use `--json` for a machine-readable stdout result. The written report is better
-for a pull-request artifact:
-
-```json title="Configuration excerpt"
+```json title="axiom-benchmark.json (illustrative values)"
 {
   "schema_version": 1,
-  "cli_version": "0.135.0",
+  "cli_version": "0.149.1",
+  "contract": "axiom.acore",
+  "variant": "default",
   "iterations": 20,
+  "warmup_iterations": 3,
   "build_ms": { "min": 11.2, "median": 12.1, "p95": 14.8, "max": 14.8 },
   "artifact_decode_ms": { "min": 0.1, "median": 0.1, "p95": 0.2, "max": 0.2 },
   "artifact_bytes": 8124,
@@ -49,39 +68,73 @@ for a pull-request artifact:
 }
 ```
 
-The values above illustrate the schema only; they are not published AxiomCore
+These values only illustrate the schema; they are not published AxiomCore
 performance claims.
 
-## Protocol for published comparisons
+Attach the report to a pull request, or keep it in a dedicated results
+repository. Treat it as evidence, not a pass or fail gate: shared CI runners
+are too noisy for an honest regression threshold. Set thresholds only after you
+collect a stable baseline on dedicated hardware.
 
-1. Pin the CLI revision and fixture commit. Do not compare different contract
-   sizes without reporting endpoint count and artifact bytes.
-2. Use a release build of the CLI and an otherwise idle machine.
-3. Run at least 3 warm-up and 20 measured iterations for a published claim.
+## Publish a fair comparison
+
+1. Pin the CLI version and the fixture commit. Do not compare contracts of
+   different sizes without reporting endpoint count and artifact bytes.
+2. Use a release build of the CLI on an otherwise idle machine.
+3. Run at least 3 warm-up and 20 measured iterations.
 4. Report median and p95, not only the fastest sample.
-5. Track regressions separately for build, decode, artifact size, browser
-   runtime initialization, and request overhead. Do not combine them into one
-   misleading “Axiom overhead” number.
-6. Treat browser benchmarks as a separate suite: record browser version,
-   network conditions, cache state, contract size, and whether WebAssembly is
+5. Track build time, decode time, artifact size, browser runtime start-up, and
+   request overhead separately. Do not merge them into one "Axiom overhead"
+   number.
+6. Run browser benchmarks as a separate suite. Record the browser version,
+   network conditions, cache state, contract size, and whether WebAssembly was
    cold or warm.
 
-## Next benchmark suites
+## What is not measured yet
 
-The CLI benchmark makes the compiler/artifact boundary reproducible today.
-The broader acceptance suite should additionally publish:
+`axiom benchmark` covers only the compiler and artifact boundary. AxiomCore has
+no published benchmark yet for web runtime start-up, request overhead, cache
+behavior, or compatibility analysis. Measure those yourself with the protocol
+above before you rely on them.
 
-- Web runtime cold and warm initialization, including Wasm download/compile.
-- Request overhead against a loopback fixture at p50/p95/p99.
-- Cache hit/miss latency and memory behavior under a fixed workload.
-- Compatibility-analysis time for additive and breaking contract changes.
+The **Experimental** executable extensions have their own hardening record for
+server and headless hosts, Chromium Workers, the Android Emulator, and the iOS
+Simulator: cold load, warm invocation p99, cancellation, teardown, worker
+recovery, and bounded streams. It does not certify physical mobile devices or
+all browser engines. See the [Extension reference](/extensions/reference).
 
-Each suite needs an executable fixture and a report artifact before its numbers
-belong in the README.
+## CLI usage telemetry
 
-The experimental executable-extension boundary has a separate reproducible
-hardening record for server/headless, Chromium Worker, Android Emulator, and
-iOS Simulator. It reports cold load, warm invocation p99, cancellation,
-teardown, worker recovery, and bounded stream behavior; see [Executable
-extensions reference](/reference/executable-extensions). Those measurements do
-not certify physical mobile devices or all browser engines.
+The CLI sends usage telemetry only for commands that contact Axiom services,
+and only from an installation registered with a referral code. Local commands
+such as `check`, `build`, `run`, `serve`, `test`, `ui`, `database`, and
+`inspect` send nothing. A command pointed at a local control plane sends
+nothing either.
+
+Each event contains exactly these fields:
+
+| Field | Content |
+| --- | --- |
+| Installation ID | A stable identifier for the registered installation |
+| Command | The command name, such as `release` |
+| Result | Success or failure |
+| Duration | In milliseconds |
+| Version | The CLI version and OS family |
+| Failure category | One of `authentication`, `network`, `input`, `build`, or `other` |
+
+The CLI never sends raw command arguments, repository or project names, paths,
+URLs, contract contents, headers, tokens, credentials, or raw error messages.
+The wire-compatible `args` field always contains only `{"schema_version":1}`.
+
+Turn telemetry off for a process with `AXIOM_TELEMETRY` set to `0`, `false`, or
+`off`:
+
+```bash title="Terminal"
+AXIOM_TELEMETRY=0 axiom release backend.axiom
+```
+
+Runtime telemetry is separate. A signed contract's scoped OTLP settings
+configure it for a project's request evidence, and it is never reused for CLI
+analytics. See [Observability](/cloud/telemetry-and-observability). Analytics
+on the public websites is described in
+[Docs site privacy](/reference/documentation-site-privacy).

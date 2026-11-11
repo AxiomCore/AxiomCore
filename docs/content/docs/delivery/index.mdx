@@ -1,22 +1,84 @@
 ---
-title: Review and deliver changes
-description: Review contract changes, permissions, releases, upgrades, and deployment readiness.
+title: Ship changes
+description: Follow a contract change from a local edit through checks, semantic diff, review and release to the consumers that upgrade to it.
 pageType: overview
 ---
 
-Deliver a reviewed artifact with compatible consumers and a recovery path.
+This section shows how to ship a contract change safely: check it, see exactly
+what changed, get it reviewed, release an immutable version and move consumers
+to it. A **contract** is the `.axiom` artifact that describes your API. A
+**consumer** is any client, SDK or Acore UI app built against it.
+
 Publishing a contract and deploying an application are separate operations.
+Releasing a contract version to Axiom Cloud does not start, deploy or update a
+backend service.
 
-| Task | Guide |
-| --- | --- |
-| Review security and authority | [Security review](/delivery/security-review) |
-| Propose an API change | [Contract pull requests](/delivery/contract-pull-requests) |
-| Release and upgrade dependencies | [Release workflow](/delivery/releases) |
-| Assess a production rollout | [Readiness checklist](/delivery/production-readiness) |
-| Package a server for a target | [Server releases](/backend/release-workflow) |
-| Coordinate database versions | [Migration promotion](/database/contracts#ci-prepare-once-promote-unchanged) |
+## The change flow
 
-Before promotion, verify the exact target, artifact, authentication, permissions,
-consumer behavior, observability, and rollback limits. Use the
-[support matrix](/introduction/support-matrix) rather than treating local
-success as certification for other environments.
+```mermaid title="How a contract change moves from your editor to its consumers"
+flowchart TD
+  A[Edit source] --> B[Check and test]
+  B --> C[Semantic diff]
+  C --> D[Contract pull request]
+  D --> E[Release a version]
+  E --> F[Cloud verification, tests and policy]
+  F --> G[latest channel]
+  G --> H[Consumers upgrade]
+```
+
+1. **Edit** the `.acore` source, or re-extract the contract from your existing
+   backend.
+2. **Check and test** locally with `axiom check`, `axiom test` and
+   `axiom security check`.
+3. **Compare** the new contract with the last accepted one. The semantic diff
+   classifies each change as breaking, risky or compatible.
+4. **Review** the pair of releases in a contract pull request when your team
+   needs approval.
+5. **Release** an immutable version with `axiom release`. Axiom Cloud verifies
+   and signs it, tests it against a managed sandbox and applies the release
+   policy.
+6. **Upgrade consumers** by pinning the new version, resolving a new lock and
+   re-running their tests.
+
+| Step | Where it runs | Guide |
+| --- | --- | --- |
+| Check, test and diff | Local Axiom CLI | [Testing](/testing), [CI checks](/testing/ci) |
+| Review a contract change | Axiom Cloud (**Alpha**) | [Contract pull requests](/delivery/contract-pull-requests) |
+| Release and upgrade | Axiom CLI and Axiom Cloud (**Alpha**) | [Releases and upgrades](/delivery/releases) |
+| Assess a rollout | Your team | [Production readiness](/delivery/production-readiness) |
+| Package a server for a target | Local Axiom CLI | [Release a backend](/backend/releases) |
+| Promote database migrations | Local Axiom CLI | [Migrations and persistence](/database/persistence) |
+
+## Example: a semantic diff
+
+Removing an endpoint between two versions of a backend contract is a breaking
+change. Compare the two sources:
+
+```bash title="Terminal"
+axiom diff v1.acore v2.acore
+```
+
+```text title="Output"
+### 🚨 Breaking Changes
+- Removed endpoint: **`ping`**
+
+### ⚙️ Configuration
+- ⚙️ Updated `project` config: `version` changed to `1.1.0`
+```
+
+The same classification appears in a contract pull request, where reviewers can
+discuss each change before the release reaches consumers.
+
+## Before you promote
+
+Check the exact target, artifact, authentication, permissions, consumer
+behavior, observability and rollback limits for the release. Local success
+does not certify another platform or environment. Check the
+[support matrix](/introduction/support-matrix) for each path you rely on.
+
+## Next steps
+
+- [Review a change in a contract pull request](/delivery/contract-pull-requests)
+- [Release a version and upgrade consumers](/delivery/releases)
+- [Work through the production-readiness checklist](/delivery/production-readiness)
+- [Learn what Axiom Cloud records for each release](/cloud/releases-and-environments)

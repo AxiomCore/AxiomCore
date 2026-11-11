@@ -1,10 +1,9 @@
 {
-  "title": "Core Concepts",
+  "title": "How it works",
   "pages": [
+    "index",
     "contracts-and-artifacts",
-    "sandboxed-extensions",
     "the-axiom-pipeline",
-    "ghost-introspection",
     "the-generic-runtime",
     "trust-and-security"
   ]

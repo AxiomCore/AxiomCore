@@ -24,12 +24,12 @@ server.stderr.on('data', (chunk) => { serverOutput += chunk; });
 const legacyAnchors = JSON.parse(readFileSync(join(docsRoot, 'lib', 'legacy-heading-anchors.json'), 'utf8'));
 
 const routes = [
-  ['/', 'text/html', 'Build and connect with AxiomCore'],
-  ['/guides', 'text/html', 'Integrate with your stack'],
+  ['/', 'text/html', 'AxiomCore documentation'],
+  ['/guides', 'text/html', 'Use your existing stack'],
   ['/reference/versioning-and-deprecation', 'text/html', 'Versioning and deprecation'],
   ['/reference/support-and-feedback', 'text/html', 'Support and feedback'],
-  ['/reference/documentation-contributions', 'text/html', 'Documentation contributions'],
-  ['/reference/documentation-site-privacy', 'text/html', 'Documentation site privacy'],
+  ['/sdks', 'text/html', 'Client SDKs'],
+  ['/reference/documentation-site-privacy', 'text/html', 'Docs site privacy'],
   ['/agents.json', 'application/json', 'axiom-documentation-index/v1'],
   ['/docs/index.mdx', 'text/markdown', 'Page type: overview'],
   ['/llms.txt', 'text/plain', 'https://docs.axiomcore.dev/reference/versioning-and-deprecation'],

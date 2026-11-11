@@ -4,18 +4,19 @@ Call a real Go API from an ATMX browser client. Verified with published
 CLI 0.149.0 on macOS arm64, atmx-cli 0.146.7 and atmx-web 0.147.5.
 Use Go 1.25.7 (the module requires 1.23+), Node.js 22.12+, npm, and two terminals.
 
+Install the Go extractor first, as described in
+[Backend extractors](https://docs.axiomcore.dev/getting-started/installation/#backend-extractors).
+`axiom install ... --module` does not install extractors in CLI 0.149.1.
+
 From this directory, prepare and start the backend:
 
 ```bash
-axiom install axiom-go-extractor --module
 cd backend
 go mod download
 axiom build axiom.acore --out backend.axiom
-axiom inspect backend.axiom
+axiom inspect overview .
 go run .
 ```
-
-The installable package is axiom-go-extractor; axiom init uses the source module alias axiom-go.
 
 In another terminal, from this directory:
 

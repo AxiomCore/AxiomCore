@@ -11,6 +11,9 @@ const isStaticExport = process.env.AXIOM_DOCS_STATIC_EXPORT === '1';
 const config = {
   reactStrictMode: true,
   poweredByHeader: false,
+  // The site is published as a static export, which has no /_next/image
+  // optimizer. Serve the exported image files directly so they load.
+  images: { unoptimized: true },
   ...(isStaticExport ? { output: 'export', trailingSlash: true } : {}),
   ...(!isStaticExport ? {
     async headers() {

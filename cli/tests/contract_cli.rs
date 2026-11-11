@@ -73,7 +73,12 @@ fn all_contracts_check_without_outputs_and_build_under_the_owning_manifest() {
             .join(".axiom")
             .exists());
         success(&run(root.path(), &["build", file]));
-        let output = source.parent().unwrap().parent().unwrap().join(format!(".axiom/contracts/{kind}.axiom"));
+        let output = source
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(format!(".axiom/contracts/{kind}.axiom"));
         let before = std::fs::read(&output).unwrap();
         assert!(!before.is_empty());
         assert!(!root.path().join(format!("{kind}.axiom")).exists());
@@ -201,7 +206,10 @@ fn output_overrides_targets_and_profile_specific_flags_are_enforced() {
         root.path(),
         &["database", "build", database.to_str().unwrap()],
     ));
-    assert!(root.path().join("database project/.axiom/contracts/database.axiom").is_file());
+    assert!(root
+        .path()
+        .join("database project/.axiom/contracts/database.axiom")
+        .is_file());
     assert!(!database.parent().unwrap().join("database.axiom").exists());
 }
 
@@ -242,7 +250,12 @@ fn backend_companion_plan_and_baseline_follow_custom_output_without_stale_plans(
     success(&run(root.path(), &args));
     let artifact = root.path().join("custom/api.axiom");
     let plan = root.path().join("custom/api.server.json");
-    let baseline = source.parent().unwrap().parent().unwrap().join(".axiom/baselines/src/main.acore.lockfile");
+    let baseline = source
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join(".axiom/baselines/src/main.acore.lockfile");
     let preserved = [&artifact, &plan, &baseline].map(|p| std::fs::read(p).unwrap());
     success(&run(
         root.path(),
@@ -487,21 +500,36 @@ fn installed_server_is_self_contained_compatible_and_speaks_stdio_lsp() {
 #[test]
 fn amended_backend_without_variants_uses_implicit_default() {
     let root = tempfile::tempdir().unwrap();
-    let source = project(root.path(), "backend", r#"amends "models.acore"
+    let source = project(
+        root.path(),
+        "backend",
+        r#"amends "models.acore"
 endpoint listTasks(method: GET, path: "/tasks") { response(type: Entities.task) }
-"#);
-    std::fs::write(source.parent().unwrap().join("models.acore"),
+"#,
+    );
+    std::fs::write(
+        source.parent().unwrap().join("models.acore"),
         r#"project(id: "zed.example.backend", version: "1.0.0")
 model Task { id: String title: String completed: Bool } also entity
-"#).unwrap();
+"#,
+    )
+    .unwrap();
     let file = source.to_str().unwrap();
     success(&run(root.path(), &["check", file]));
-    let artifact = source.parent().unwrap().parent().unwrap().join(".axiom/contracts/backend.axiom");
+    let artifact = source
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join(".axiom/contracts/backend.axiom");
     assert!(!artifact.exists());
     success(&run(root.path(), &["build", file]));
     let before = std::fs::read(&artifact).unwrap();
     let compiled = axiom_lib::unpackager::unpack_axiom_bytes(&before).unwrap();
-    assert!(compiled.endpoints.iter().any(|endpoint| endpoint.name == "listTasks"));
+    assert!(compiled
+        .endpoints
+        .iter()
+        .any(|endpoint| endpoint.name == "listTasks"));
     for command in ["check", "build"] {
         let failed = run(root.path(), &[command, file, "--variant", "missing"]);
         assert!(!failed.status.success());

@@ -1,0 +1,457 @@
+---
+title: axiom ui
+description: Reference for the axiom ui commands that install target hosts and check, inspect, test and build Acore UI applications.
+pageType: reference
+---
+
+`axiom ui` holds the advanced frontend tooling for authored Acore UI: target
+hosts, starters, compiler checks, AI context, tests and `.axiomapp` builds. This
+page covers Axiom CLI 0.149.1. For everyday development, `axiom run main.acore`
+is the usual entry point; it uses the same compiler and hosts.
+
+<StatusNote status="alpha" title="Acore UI tooling">
+  Acore UI and `.axiomapp` builds are **Alpha** on the browser and on qualified
+  Android Emulator and iOS Simulator development paths. Physical-device
+  certification and app-store distribution are **Coming soon**: these commands
+  do not sign or publish store builds.
+</StatusNote>
+
+```mermaid title="Acore UI command workflow from starter to application artifact"
+flowchart LR
+  Init[ui init] --> Check[ui check]
+  Host[ui host install] --> Run[axiom run or ui run]
+  Check --> Run
+  Run --> Test[ui test]
+  Test --> Build[ui build]
+  Build --> App[.axiomapp artifact]
+  App --> Inspect[axiom inspect]
+  App --> Install[axiom install]
+  App --> Package[axiom package]
+  App --> RunApp[axiom run artifact]
+```
+
+You create a starter with `ui init`, check it with `ui check`, and develop it
+with `axiom run` (or `ui run`) on a host installed by `ui host install`. Before
+release, `ui test` runs session or interaction tests and `ui build` writes a
+target-specific `.axiomapp`. You then inspect, install, combine or run that
+artifact with the top-level commands.
+
+## axiom ui
+
+Groups the advanced frontend commands.
+
+```text title="Usage"
+axiom ui <COMMAND>
+```
+
+No options other than `--help`.
+
+| Command | Purpose |
+| --- | --- |
+| [`ui host`](#axiom-ui-host) | Install, inspect, recover, roll back or quarantine a target UI Host. |
+| [`ui init`](#axiom-ui-init) | Create a small authored Acore UI starter in an empty directory. |
+| [`ui check`](#axiom-ui-check) | Parse, validate and lower a UI module in memory. |
+| [`ui run`](#axiom-ui-run) | Start the compiler and watch loop for one target. |
+| [`ui inspect`](#axiom-ui-inspect) | Print a read-only compiler view for the current graph revision. |
+| [`ui context`](#axiom-ui-context) | Return compact, redacted semantic context for AI tooling. |
+| [`ui ai-check`](#axiom-ui-ai-check) | Validate an AI-proposed replacement without writing it. |
+| [`ui doctor`](#axiom-ui-doctor) | Diagnose compiler and target-host prerequisites. |
+| [`ui capabilities`](#axiom-ui-capabilities) | Inspect the Lynx/Acore capability registry for a target. |
+| [`ui test`](#axiom-ui-test) | Run session smoke checks or an application interaction suite. |
+| [`ui build`](#axiom-ui-build) | Build a deterministic, target-specific `.axiomapp`. |
+
+Shared behavior:
+
+- `--target` accepts `web`, `android` or `ios` and defaults to `ios` on every
+  `ui` subcommand. Any other value fails with
+  ``UI target must be `ios`, `android`, or `web` ``. `axiom run` also defaults
+  Acore source to `ios`.
+- `--lock` selects the UI contract lock and defaults to
+  `.axiom/axiom.ui.lock.json`. A module that imports a backend contract with
+  `use contract` needs that lock; a missing lock reports `AUI010`. Create it with
+  [`axiom contract resolve`](/tooling/cli-contracts#axiom-contract-resolve). A
+  module without contract imports checks without a lock.
+- [`axiom run`](/tooling/cli-build-and-run#axiom-run) maintains a development lock
+  automatically, so `--lock` is an advanced override that the normal
+  source-first workflow does not need. Use `axiom run --frozen` when a run must
+  consume reviewed locks and signed extension workflows without development
+  regeneration.
+- No command writes generated UI source to your workspace. IR, the contract
+  facade and bundles stay in memory or in a private cache.
+- The commands run locally and need no Cloud login. `ui host install`,
+  `ui host status`, and a first `axiom run` that installs a host contact the
+  public AxiomCore release service.
+
+These environment variables adjust host sessions:
+
+| Variable | Effect |
+| --- | --- |
+| `AXIOM_UI_WEB_PORT` | Fixed loopback port for a web session. Default: a free port on `127.0.0.1`. |
+| `AXIOM_UI_WEB_NO_OPEN` | `1`, `true`, `yes` or `on` stops `--launch` from opening a browser. |
+| `AXIOM_UI_ANDROID_DEVICE_SERIAL` | adb serial of an authorized device to use. Default: the first running `emulator-*`. |
+| `AXIOM_UI_NODE` | Node.js executable for native bundle compilation. Default: `node` on `PATH`; Node.js 20.19+ or 22.12+ is required. |
+| `AXIOM_UI_CACHE_ROOT` | Absolute path for the UI and application cache. Default: the user cache directory's `axiom` folder. |
+| `AXIOM_UI_DEBUG` | `1`, `true`, `yes` or `on` prints detailed session and delivery messages. |
+
+## Set up a target host
+
+### axiom ui host
+
+Manages the UI Host, the prebuilt application that renders your UI on a target:
+a browser host for `web`, and a development app for the Android Emulator or iOS
+Simulator. Hosts are installed outside your application workspace.
+
+```text title="Usage"
+axiom ui host <COMMAND>
+```
+
+No options other than `--help`. The subcommands are `install`, `status`,
+`recover`, `rollback` and `quarantine`.
+
+### axiom ui host install
+
+Downloads, verifies and installs a signed UI Host release for one target. It
+needs network access to the public AxiomCore releases unless you pass
+`--offline` or `--release-manifest`. Without `--version`, it selects the newest
+stable signed release compatible with this CLI's compiler and skips
+quarantined releases. The iOS Simulator host supports Apple Silicon Macs only.
+`axiom run` offers to install the latest verified host when none is installed.
+
+```text title="Usage"
+axiom ui host install [OPTIONS]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--target` | `web`, `android`, `ios` | `ios` | Target host to install. |
+| `--release-manifest` | file | none | Install from a signed Axiom UI Host release manifest and its local assets instead of downloading. |
+| `--version` | `X.Y.Z` | none | Exact signed release version. Cannot be combined with `--release-manifest` or `--host-root`. |
+| `--offline` | flag | off | Install only from a signed local manifest or a retained verified release. Requires `--version` or `--release-manifest`; cannot be combined with `--host-root`. |
+| `--variant` | name | none | Platform variant from the release manifest, for example `simulator` or `device`. |
+| `--host-root` | directory | none | Register an existing host project directory for compiler development. A registered source is not used for native bundle delivery; install a signed release for that. |
+| `--non-interactive` | flag | off | Fail instead of prompting when host information is missing. |
+
+```bash title="Terminal"
+axiom ui host install --target web
+axiom ui host install --target web --version 0.6.12
+axiom ui host install --target android
+```
+
+### axiom ui host status
+
+Shows whether a host is installed for a target, its release and variant, its
+renderer toolchain, the number of retained compatible releases, and whether
+bundle delivery is ready. It also checks the public releases for a newer
+compatible host; when that check fails, it reports updates as unavailable and
+still succeeds.
+
+```text title="Usage"
+axiom ui host status [OPTIONS]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--target` | `web`, `android`, `ios` | `ios` | Target host to report. |
+
+```bash title="Terminal"
+axiom ui host status --target web
+```
+
+### axiom ui host recover
+
+Restarts the installed development host and discards only stale delivery
+control records. Use it when an interrupted session leaves the host waiting on
+an old acknowledgement. It never deletes a verified host archive, your Acore
+source, the compiler cache or the last good bundle. For `ios` it restarts the
+host on the selected Simulator, for `android` on the emulator, and for `web` it
+asks you to restart `axiom run --target web`. It requires an installed, current
+host.
+
+```text title="Usage"
+axiom ui host recover [OPTIONS]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--target` | `web`, `android`, `ios` | `ios` | Target host to recover. |
+
+### axiom ui host rollback
+
+Reinstalls a retained signed host, offline. Without `--version` it restores the
+previous verified host; with `--version` it selects the retained verified
+release of that exact version. It refuses a host that does not support this
+CLI's renderer, IR and helper contract.
+
+```text title="Usage"
+axiom ui host rollback [OPTIONS]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--target` | `web`, `android`, `ios` | `ios` | Target host to roll back. |
+| `--version` | `X.Y.Z` | none | Exact retained release to restore. Default: the previous verified host. |
+| `--variant` | name | none | Platform variant from the release manifest. |
+
+### axiom ui host quarantine
+
+Marks a host release as a known rendering regression on this machine, so local
+installation and automatic selection skip it. Retained signed files and
+application data are preserved. Follow it with `axiom ui host rollback` to
+select a compatible retained release.
+
+```text title="Usage"
+axiom ui host quarantine [OPTIONS] --version <VERSION> --incident <INCIDENT>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--target` | `web`, `android`, `ios` | `ios` | Target whose host release is quarantined. |
+| `--version` | `X.Y.Z` | required | Exact release version to exclude. |
+| `--incident` | text | required | Non-empty incident reference, such as an issue ID. |
+
+## Create and check source
+
+### axiom ui init
+
+Creates a small authored Acore UI starter: `axiom.app.toml`, `src/main.acore`,
+`tests/smoke.acore` and `README.md`. The directory must be empty or absent; the
+command refuses a non-empty directory.
+
+```text title="Usage"
+axiom ui init [OPTIONS] <DIRECTORY>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<DIRECTORY>` | path | required | Empty directory that becomes the application root. |
+| `--target` | `web`, `android`, `ios` | `ios` | Target recorded in `axiom.app.toml`. |
+
+```bash title="Terminal"
+axiom ui init my-app --target web
+cd my-app
+axiom run src/main.acore --target web
+```
+
+### axiom ui check
+
+Parses, validates and lowers a UI module in memory without writing generated
+source. Use it in CI or before a commit; it exits non-zero on an error
+diagnostic. Target-specific lowering can add warnings, for example a `SafeArea`
+container fallback on `android`.
+
+```text title="Usage"
+axiom ui check [OPTIONS] <SOURCE>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<SOURCE>` | `.acore` file | required | UI module to check. |
+| `--lock` | file | `.axiom/axiom.ui.lock.json` | UI contract lock for `use contract` imports. |
+| `--target` | `web`, `android`, `ios` | `ios` | Target to lower for. |
+
+```bash title="Terminal"
+axiom ui check src/main.acore --target web
+```
+
+For the `ui init` starter module, the output names the module, the number of
+in-memory files and the graph revision:
+
+```text title="Expected output"
+Checked UI module starter.app.ui (17 virtual read-only file(s), graph 7b94158907ee4d05cd0473e5cefeb00c332c46666a05b235e11cfab13a4aeb65).
+```
+
+## Run and inspect
+
+### axiom ui run
+
+Starts a compiler and watch session for one UI module with an explicit lock.
+For normal development prefer [`axiom run SOURCE`](/tooling/cli-build-and-run#axiom-run),
+which also builds stale local contracts, maintains the development lock and
+prepares registered sandbox extensions.
+
+- `web`: serves the app from the installed web host on `127.0.0.1` and reloads
+  on change. `--launch` opens the default browser.
+- `ios` and `android`: without `--launch`, runs the compiler watch loop only.
+  With `--launch`, delivers each good bundle to the UI Host on a booted iOS
+  Simulator or Android Emulator, and offers to install a missing host. Native
+  bundle compilation needs Node.js 20.19+ or 22.12+.
+- `--once`: compiles once and exits, without a host. Use it in CI.
+
+```text title="Usage"
+axiom ui run [OPTIONS] <SOURCE>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<SOURCE>` | `.acore` file | required | UI module to run. |
+| `--lock` | file | `.axiom/axiom.ui.lock.json` | UI contract lock. |
+| `--target` | `web`, `android`, `ios` | `ios` | Target to run. |
+| `--once` | flag | off | Compile once and exit. |
+| `--launch` | flag | off | Open the browser or deliver to the native host. Cannot be combined with `--once`. |
+
+```bash title="Terminal"
+axiom ui run src/main.acore --target web --launch
+```
+
+### axiom ui inspect
+
+Prints one read-only compiler view, tied to the current graph revision, as
+JSON. Use it to debug compiler output or to feed tooling.
+
+```text title="Usage"
+axiom ui inspect [OPTIONS] <VIEW> <SOURCE>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<VIEW>` | `ir`, `lowered`, `facade`, `context`, `extensions` | required | `ir`: compiled UI IR. `lowered`: the in-memory build files. `facade`: the virtual typed contract facade. `context`: compact semantic context. `extensions`: traces source-level extension imports through their exact action bindings without executing a guest module. |
+| `<SOURCE>` | `.acore` file | required | UI module to inspect. |
+| `--lock` | file | `.axiom/axiom.ui.lock.json` | UI contract lock. |
+| `--target` | `web`, `android`, `ios` | `ios` | Target to compile for. |
+| `--max-symbols` | number | `24` | Maximum semantic symbols for `context`. This is not a token budget. |
+
+```bash title="Terminal"
+axiom ui inspect ir src/main.acore --target web
+```
+
+## AI tooling
+
+### axiom ui context
+
+Returns compiler-checked, compact and redacted semantic context for AI tooling
+as JSON. Give an assistant this context instead of generated files.
+
+```text title="Usage"
+axiom ui context [OPTIONS] <SOURCE>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<SOURCE>` | `.acore` file | required | UI module to describe. |
+| `--lock` | file | `.axiom/axiom.ui.lock.json` | UI contract lock. |
+| `--target` | `web`, `android`, `ios` | `ios` | Target to compile for. |
+| `--max-symbols` | number | `24` | Maximum semantic symbols in the result. This is not a token budget. |
+
+### axiom ui ai-check
+
+Validates an AI-proposed replacement for a UI module without writing it to the
+workspace. It prints a JSON validation result and exits non-zero when the
+proposal fails compiler postconditions or was based on a stale graph revision.
+The current source must compile.
+
+```text title="Usage"
+axiom ui ai-check [OPTIONS] --base <BASE> <SOURCE> <PROPOSED>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<SOURCE>` | `.acore` file | required | Current UI module. |
+| `<PROPOSED>` | file | required | Proposed replacement source. |
+| `--base` | graph revision | required | Graph revision on which the proposal was based, as printed by `ui check`. |
+| `--lock` | file | `.axiom/axiom.ui.lock.json` | UI contract lock. |
+| `--target` | `web`, `android`, `ios` | `ios` | Target to compile for. |
+
+## Diagnose
+
+### axiom ui doctor
+
+Diagnoses UI compiler and target-host prerequisites without modifying the
+workspace. It reports compiler, graph and host state with a diagnostic code
+(`AXIOM_UI_HOST_READY`, `AXIOM_UI_HOST_UPGRADE_REQUIRED` or
+`AXIOM_UI_HOST_MISSING`) and a remediation. Read the code rather than the exit
+status: the command reports readiness and succeeds either way. `--json` emits an
+`axiom-ui-doctor/v1` report.
+
+```text title="Usage"
+axiom ui doctor [OPTIONS]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--target` | `web`, `android`, `ios` | `ios` | Target to diagnose. |
+| `--json` | flag | off | Print a machine-readable report. |
+
+```bash title="Terminal"
+axiom ui doctor --target web --json
+```
+
+### axiom ui capabilities
+
+Lists the versioned Lynx/Acore capability registry for a target: the elements,
+components, properties, at-rules, data types and selectors Acore supports, with
+their status.
+
+```text title="Usage"
+axiom ui capabilities [OPTIONS]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--target` | `web`, `android`, `ios` | `ios` | Target whose support is reported. |
+| `--kind` | `element`, `component`, `property`, `at-rule`, `datatype`, `selector` | none | Show one kind only. |
+| `--query` | text | none | Case-insensitive match against capability ID, Lynx name or Acore name. |
+| `--json` | flag | off | Print JSON. |
+
+## Test and build
+
+### axiom ui test
+
+Without `--suite`, runs a compiler-session smoke check without launching a
+host: a compatible update must preserve state and an invalid update must keep
+the last good graph. With `--suite`, runs a versioned
+`acore-application-test/v1` JSON interaction suite. See
+[Frontend tests](/testing/frontend-applications).
+
+```text title="Usage"
+axiom ui test [OPTIONS] <SOURCE>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<SOURCE>` | `.acore` file | required | UI module to test. |
+| `--lock` | file | `.axiom/axiom.ui.lock.json` | UI contract lock. |
+| `--target` | `web`, `android`, `ios` | `ios` | Target to test. |
+| `--suite` | file | none | `acore-application-test/v1` suite. Omit it to run the session smoke check. |
+| `--layer` | `reference`, `adapter` | `reference` | Execution layer for a suite; `adapter` executes emitted native owner hooks. Requires `--suite`. |
+| `--report` | file | none | Write a machine-readable report, including failed assertions, traces and setup failures. |
+
+```bash title="Terminal"
+axiom ui test src/main.acore --target web
+```
+
+### axiom ui build
+
+Builds a deterministic, target-specific `.axiomapp` application artifact. It
+requires the current verified UI Host for that target, and native targets
+compile a bundle with Node.js 20.19+ or 22.12+. The default release mode
+rejects unsigned local contract dependencies (`AXIOM_UI_UNSIGNED_RELEASE_INPUT`);
+publish them or pass `--development`, which permits them and marks the artifact
+development-only in its manifest. Physical-device certification and store
+publishing are not part of this command.
+
+```text title="Usage"
+axiom ui build [OPTIONS] <SOURCE>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<SOURCE>` | `.acore` file | required | UI module to build. |
+| `--lock` | file | `.axiom/axiom.ui.lock.json` | UI contract lock. |
+| `--target` | `web`, `android`, `ios` | `ios` | Target to build. |
+| `--out` | file | `dist/<module>-<target>.axiomapp` | Artifact path. |
+| `--development` | flag | off | Permit unsigned local contracts and mark the artifact development-only. |
+
+```bash title="Terminal"
+axiom ui build main.acore --target web --development
+axiom inspect dist/my-app-web.axiomapp
+axiom install dist/my-app-web.axiomapp
+axiom run dist/my-app-web.axiomapp --target web
+```
+
+[`axiom install FILE.axiomapp`](/tooling/cli-project#axiom-install) verifies and
+copies the intact artifact to the local content-addressed application cache.
+[`axiom package`](/tooling/cli-build-and-run#axiom-package) combines compatible
+target artifacts into one multi-target artifact, and
+[`axiom run`](/tooling/cli-build-and-run#axiom-run) runs a packaged artifact.
+See [App lifecycle and targets](/frontend/application-lifecycle) for the full
+flow.

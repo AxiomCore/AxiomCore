@@ -26,7 +26,7 @@ const diagrams = {
         title: "Start with the code you own.",
         text: "Extract a supported backend or author Acore declarations. Existing services and native frontend frameworks can keep their own implementation.",
         tags: ["Backend source", "Acore modules"],
-        href: "/core-concepts/ghost-introspection",
+        href: "/guides/backend-extraction",
         link: "Source boundaries",
       },
       {
@@ -119,7 +119,7 @@ const diagrams = {
         title: "Begin with available evidence.",
         text: "Acore source, verified contracts, locks, packages, authority, and captured runtime events contribute different evidence. Missing evidence remains explicit.",
         tags: ["Source spans", "Artifact identities"],
-        href: "/inspector/evidence-and-relationships",
+        href: "/inspector/trace-and-explain",
         link: "Evidence sources",
       },
       {
@@ -129,7 +129,7 @@ const diagrams = {
         title: "Give each fact a stable identity.",
         text: "Pages, operations, fields, permissions, and observed invocations become semantic facts with a truth layer, revision, and supporting references.",
         tags: ["Facts + revisions", "Evidence references"],
-        href: "/inspector/evidence-and-relationships#fact",
+        href: "/inspector/trace-and-explain#fact",
         link: "Understand facts",
       },
       {
@@ -165,7 +165,7 @@ const diagrams = {
         title: "A request is a declaration.",
         text: "An extension asks to write cart.total_label. That declaration describes requested authority; it does not grant access.",
         tags: ["Source", "Requested permission"],
-        href: "/inspector/security-and-authority",
+        href: "/inspector/runtime-and-audits",
         link: "Read authority boundaries",
       },
       {
@@ -175,7 +175,7 @@ const diagrams = {
         title: "Resolve the request against policy.",
         text: "The application grant and target policy determine effective authority. A resolved permission says what is allowed, not what was used.",
         tags: ["Application grant", "Target policy"],
-        href: "/inspector/security-and-authority",
+        href: "/inspector/runtime-and-audits",
         link: "Review effective authority",
       },
       {

@@ -1,111 +1,178 @@
 ---
 title: Standard library
-description: Modules, types, and native intrinsics exposed by the current Acore evaluator.
+description: The acore modules, built-in functions and value members that the Axiom CLI 0.149.1 evaluator actually provides.
 pageType: reference
 ---
 
-The embedded resolver currently exposes a deliberately small standard library.
-Import a module with its `acore:` URI:
+<span id="core-scalar-members" />
+<span id="numbers-and-booleans" />
+<span id="collections" />
+<span id="list-and-set" />
+<span id="map" />
+<span id="regex" />
+<span id="json-and-yaml-parsing" />
+<span id="defined-but-not-currently-resolved" />
 
-```acore title="Acore excerpt"
-import "acore:math"
-largest = math.max(12, 20)
-```
+The Acore standard library is deliberately small. This page lists the `acore:`
+modules the resolver returns, the built-in functions every module can call, and
+the members you can use on strings, numbers and collections. Every entry was
+evaluated with `axiom eval` from CLI 0.149.1; members that are declared but not
+implemented are listed separately so you do not depend on them.
 
 <StatusNote status="alpha" title="Public surface">
-  This page lists modules returned by the current embedded resolver, not every
-  `.acore` definition present in the source tree. Source-only definitions are
-  not public APIs until the resolver and native bindings expose them.
+  This page lists what the evaluator resolves and implements, not every
+  definition present in the language source. A definition is not a public API
+  until the resolver and its native binding expose it.
 </StatusNote>
 
-## Resolved modules
+<span id="resolved-modules" />
 
-| URI | Public surface |
+## Modules
+
+Import a module with its `acore:` URI. `import` makes the module's top-level
+properties available by name; it does not create a `math` or `json` namespace.
+
+```acore title="Acore excerpt"
+import "acore:xml"
+renderer = Renderer { indent = "    " }
+```
+
+| URI | Contents | Usable in 0.149.1 |
+| --- | --- | --- |
+| `acore:base` | Core value classes, collections, `Regex`, `Duration`, `DataSize`, and the Axiom contract schema classes | Loaded automatically into every module, so its classes need no import. |
+| `acore:math` | Declares `min`, `max`, `sqrt`, `log`, `e` and `pi` | No. The declarations have no native binding, so the names are undefined after import. |
+| `acore:json` | Declares `parse(source: String): Any` | No native binding |
+| `acore:yaml` | Declares `parse(source: String): Any` | No native binding |
+| `acore:xml` | `Renderer { indent = "  ", rootElementName = "root" }` | Yes, as a configuration class |
+| `acore:protobuf` | `Renderer { indent = "  " }` | Yes, as a configuration class |
+| `acore:Project` | `Package { name, baseUri, version, packageZipUrl }` and `Dependency { uri }` | Yes. Used by Acore project resolution. |
+
+Any other `acore:` URI fails with `Stdlib not found`. The language source also
+contains definitions for semantic versions, shell escaping, test helpers,
+platform and release metadata, benchmarking, reflection and more renderers.
+The resolver does not return them, so they are not a supported import surface.
+
+## Built-in functions
+
+| Function | Result |
 | --- | --- |
-| `acore:base` | Core value classes, collections, `Regex`, and Axiom contract schema classes. Loaded by contract tooling as the base schema. |
-| `acore:math` | `min`, `max`, `sqrt`, `log`, plus mathematical constants declared by the module. Native support currently guarantees `max` and `pi`; validate other members before depending on them. |
-| `acore:json` | `parse(source: String): Any`. |
-| `acore:yaml` | `parse(source: String): Any`. |
-| `acore:xml` | `Renderer { indent, rootElementName }` configuration. |
-| `acore:protobuf` | `Renderer { indent }` configuration. |
-| `acore:Project` | Package/dependency metadata used by Acore project resolution. |
+| `throw(value)` | Stops evaluation with `User Error` and the value |
+| `error("message")` | Stops evaluation with the message |
+| `read("env:NAME")`, `read("prop:NAME")` | The value, or null. Other URIs return null; `read` does not load files. |
+| `read_env("NAME")` | The environment variable, or an error when it is unset |
 
-## Core scalar members
+Reads go through the evaluator's security manager. Contracts must not depend on
+environment values; declare a [runtime secret](/backend/runtime-secrets).
 
-### `String`
+<span id="string" />
+
+## String members
+
+| Member | Result | Notes |
+| --- | --- | --- |
+| `length` | `Int` | Counts Unicode scalar values |
+| `isEmpty`, `isNotEmpty` | `Boolean` | |
+| `trim`, `trimStart`, `trimEnd` | `String` | Properties: write `name.trim`, not `name.trim()` |
+| `reverse` | `String` | Property |
+| `chars` | `List` of one-character strings | Property |
+| `codePoints` | `List` of `Int` | Property |
+| `md5`, `sha256` | Lowercase hex digest | Property |
+| `base64`, `base64Decoded` | `String` | Property. Decoding invalid base64 or non-UTF-8 bytes fails. |
+| `toUpperCase()`, `toLowerCase()` | `String` | |
+| `substring(start, end)` | `String` | Byte offsets. An index inside a multi-byte character stops the 0.149.1 CLI with an internal error. |
+| `repeat(count)` | `String` | |
+| `padStart(width, char)`, `padEnd(width, char)` | `String` | Uses the first character of `char` |
+| `contains(s)`, `startsWith(s)`, `endsWith(s)` | `Boolean` | |
+| `split(separator)` | `List` | |
+| `replaceFirst(pattern, replacement)`, `replaceAll(pattern, replacement)` | `String` | |
+| `matches(regex)` | `Boolean` | Needs a `Regex` value |
+| `encodeToBytes()` | Bytes | Bytes cannot be rendered in output |
+
+```acore title="strings.acore"
+labels = ["one", "two"].map((value) -> value.toUpperCase())
+csv = labels.join(",")
+padded = "5".padStart(3, "0")
+trimmed = "  orders  ".trim
+```
+
+```json title="Output of axiom eval strings.acore -f json"
+{
+  "csv": "ONE,TWO",
+  "labels": [
+    "ONE",
+    "TWO"
+  ],
+  "padded": "005",
+  "trimmed": "orders"
+}
+```
+
+## Number members
+
+| Type | Members |
+| --- | --- |
+| `Int` | `isEven`, `isOdd`, `abs`, `sign` |
+| `Float` | `isFinite`, `isNaN`, `ceil`, `floor`, `round()`, `toInt()` |
+
+Wrap a negative literal in parentheses before a member: `(-4).abs`.
+
+## List members
 
 | Member | Result |
 | --- | --- |
-| `length`, `lastIndex` | `Int` |
-| `isEmpty`, `isNotEmpty` | `Boolean` |
-| `getOrNull(index)` | `String?` |
-| `substring(start, exclusiveEnd)` | `String` |
-| `repeat(count)` | `String` |
-| `contains`, `startsWith`, `endsWith` | `Boolean` |
-| `toUpperCase`, `toLowerCase`, `trim` | `String` |
-| `toInt`, `toFloat`, `toBoolean` | Parsed scalar |
-| `split(pattern)` | `List` |
-| `replaceFirst`, `replaceAll` | `String` |
+| `length`, `isEmpty` | `Int`, `Boolean` |
+| `first`, `last` | The element; fails on an empty list |
+| `rest` | Every element after the first |
+| `reverse()`, `distinct()` | `List` |
+| `add(value)` | A new list with the value appended |
+| `map(f)`, `filter(f)`, `flatMap(f)` | `List`. `flatMap` needs `f` to return a list. |
+| `fold(initial, (acc, x) -> ...)` | The accumulated value |
+| `join(separator)` | `String` |
+| `minBy(f)`, `maxBy(f)` | The element with the smallest or largest key |
+| `zip(other)` | A list of two-element lists |
+| `partition(f)` | `[matching, notMatching]` |
 
-### Numbers and Booleans
+`Listing { ... }` values and objects do not have these members.
 
-- `Number`: `isPositive`, `isFinite`, `isInfinite`, `isNaN`, `isNonZero`.
-- `Int`: `isEven`, `isOdd`, `toFloat()`, `toRadixString(radix)`.
-- `Float`: `toInt()`.
-- `Boolean`: `xor(other)`, `implies(other)`.
+## Declared but not available in 0.149.1
 
-## Collections
+These are declared in `acore:base` or other modules but are not bound in the
+0.149.1 evaluator. Using them fails with `Property ... not found`,
+`Not a function` or `Undefined`.
 
-### `List` and `Set`
+| Area | Not available |
+| --- | --- |
+| String | `lastIndex`, `getOrNull`, `toInt`, `toFloat`, `toBoolean` |
+| Number | `isPositive`, `isInfinite`, `isNonZero`; `Int.toFloat()`, `Int.toRadixString()`; `isFinite` and `isNaN` on `Int` |
+| Boolean | `xor`, `implies` |
+| List | `contains` |
+| Constructors | `Regex(pattern)`, `List(...)`, `Set(...)`, `Map(...)` |
+| Modules | `acore:math` functions and constants, `json.parse`, `yaml.parse` |
 
-Both expose `length`, `isEmpty`, `contains`, `map`, `filter`, `flatMap`,
-`fold`, and `join`. `List` also exposes `first` and `last`.
+The evaluator implements members for `Set`, `Map` and `Regex` values (for
+example `Map.containsKey`, `Regex.matchEntire`), but 0.149.1 gives source no
+way to construct those values.
 
-```acore title="Acore excerpt"
-labels = ["one", "two"].map((value) -> value.toUpperCase())
-csv = labels.join(",")
-```
+<span id="axiom-contract-schema" />
 
-### `Map`
+## Contract schema classes
 
-`Map` exposes `length`, `isEmpty`, `containsKey`, `mapKeys`, and `mapValues`.
+`acore:base` also declares the service contract API: `Config`, project and
+backend configuration, policies, models, endpoints, types, domain and security
+models, mocks and tests. They are catalogued in the
+[Acore schema reference](/reference/acore-schema-reference). Backend
+declarations have their own catalog: run `axiom explain --schema`.
 
-## Regex
+## Backend pure functions
 
-`Regex(pattern)` creates a compiled regular expression. A regex exposes its
-`pattern`, `findMatchesIn(input)`, and `matchEntire(input)`.
+Backend `pure fn` bodies and validators use a separate set of checked
+intrinsics: string and list methods in the
+[checked expression grammar](/acore-language/values-types-and-operators#checked-expressions-in-backend-and-ui-code)
+and the canonical codec functions in
+[Validation](/acore-language/validation#exact-numbers-dates-and-bytes).
 
-```acore title="Acore excerpt"
-identifier = Regex("^[a-z][a-z0-9-]+$")
-valid = identifier.matchEntire("tasks-api")
-```
+## Related
 
-Invalid patterns fail evaluation.
-
-## JSON and YAML parsing
-
-```acore title="Acore excerpt"
-import "acore:json"
-import "acore:yaml"
-
-jsonValue = json.parse("{\"enabled\":true}")
-yamlValue = yaml.parse("enabled: true")
-```
-
-The parsers return Acore scalar, list, and map values. They do not validate the
-result against an Axiom contract automatically.
-
-## Axiom contract schema
-
-`acore:base` also declares the service contract API: `Config`, project/backend
-configuration, policies, models, endpoints, types, domain and security models,
-mocks, and tests. Those classes are catalogued in the
-[Acore schema reference](/reference/acore-schema-reference).
-
-## Defined but not currently resolved
-
-The repository contains definitions for semver, shell escaping, test helpers,
-platform/release metadata, benchmarking, reflection, and additional renderers.
-The embedded `get_stdlib_module` resolver does not currently return all of
-those modules. They are implementation work, not a supported import surface,
-and are intentionally excluded from runnable examples.
+- [Values, types and operators](/acore-language/values-types-and-operators)
+- [Acore schema reference](/reference/acore-schema-reference)
+- [Imports, amends and variants](/acore-language/imports-and-contracts)

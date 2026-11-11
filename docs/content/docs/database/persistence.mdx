@@ -1,49 +1,271 @@
 ---
-title: Database persistence
-description: Acore storage mappings, automatic private plans, PostgreSQL and SQLite application execution.
+title: Migrations and persistence
+description: Apply, change, roll back and promote versioned database migrations, then connect an Acore backend through typed storage declarations.
 pageType: guide
 ---
 
-Define storage mappings in backend Acore. CLI 0.149.0 compiles the private plan and, during development startup, migrates the linked database before accepting requests. PostgreSQL and SQLite share a closed typed operation interface; frontend contracts contain the public API surface.
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-## A minimal resource mapping
+<span id="a-minimal-resource-mapping" />
+<span id="program-rules" />
+<span id="retained-certified-programs-without-authored-json" />
+<span id="endpoint-wiring-and-browser-provider" />
+<span id="virtual-selected-database-models" />
 
-```acore title="Acore excerpt"
-resource tasks(lifetime: ProviderLifetime.application) {
-  operation list(input: Models.Empty, output: List<Models.Task>, effect: EffectKind.read)
-  operation create(input: Models.NewTask, output: Models.Task, effect: EffectKind.write)
-}
+This guide takes a database contract from its first migration to CI promotion,
+then connects an Acore backend to its tables. You need a contract that passes
+`axiom database check` (see [Database contracts](/database/contracts)) and a
+target: a SQLite file, or a reachable PostgreSQL 17 or 18 server. Run the
+commands from the project root.
 
-storage tasks(schema: "../database/schema.acore", resource: Resources.tasks) {
-  select list(table: "app.tasks", fields: {id: "id", title: "title"}, limit: 100)
-  insert create(table: "app.tasks", values: {id: Input.title, title: Input.title},
-    fields: {id: "id", title: "title"})
+<StatusNote status="experimental" title="Experimental">
+Versioned migrations and typed application storage for PostgreSQL and SQLite
+are Experimental in CLI 0.149.0 and later. Production delivery uses the
+separately qualified [fleet and admission workflow](/database/fleets).
+</StatusNote>
+
+## Apply and inspect a migration
+
+<Tabs items={['PostgreSQL', 'SQLite']}>
+<Tab value="PostgreSQL">
+
+```bash title="Terminal: project root"
+axiom database migrate database/schema.acore --database-url "$DATABASE_URL"
+axiom database status database/schema.acore --database-url "$DATABASE_URL"
+axiom database history database/schema.acore --database-url "$DATABASE_URL"
+```
+
+</Tab>
+<Tab value="SQLite">
+
+```bash title="Terminal: project root"
+unset DATABASE_URL
+axiom database migrate database/schema.acore --database-file ./tasks.sqlite
+axiom database status database/schema.acore --database-file ./tasks.sqlite
+axiom database history database/schema.acore --database-file ./tasks.sqlite
+```
+
+</Tab>
+</Tabs>
+
+`migrate` moves the target up to the working version. It validates the change
+on a disposable copy, then applies schema and history together under a writer
+lock. `axiom run` does the same and then opens the SQL console.
+
+- `--to VERSION` stops at a retained forward version. Missing intermediate
+  definitions must come from the committed catalog or an exported bundle.
+- `--dry-run` previews without applying, and without creating a missing target.
+- `--json` prints machine-readable results to stdout. It is optional; no JSON
+  file is part of the project.
+- `status` reports the applied and working versions, pending changes and drift.
+  `status --check` exits non-zero (ADB1105, "database is not current") when a
+  change is pending or drift exists, which makes it a CI gate.
+- `history` lists migrations, compensating rollbacks and failed attempts. It can
+  recover missing local definitions from the target's verified ledger.
+- `status --watch` and `history --watch` refresh every 2 seconds until you
+  press Ctrl+C.
+- Read-only commands never enroll or migrate a target.
+
+## Change the schema
+
+1. Edit the schema and raise `project(version: ...)`, for example from `1.0.0`
+   to `1.0.1`. If you forget, `migrate` fails with ADB1103 and suggests a
+   version; press Enter in a terminal to accept it.
+2. Compare before applying. The two-file form works offline; the `--from` form
+   reads versions from the local catalog that `migrate` writes:
+
+   ```bash title="Terminal: project root"
+   axiom database diff database/schema.acore --from 1.0.0 --to working
+   axiom database diff database/schema.acore --from 1.0.0 --to 1.0.1
+   ```
+
+3. Apply with `axiom database migrate`, then check `status`.
+
+A required new column on populated rows needs a default, a nullable expansion
+or a typed backfill. Axiom rejects the change before running target DDL if
+values are missing.
+
+## Typed data changes
+
+Reference a private evolution document from the database entry file:
+
+```acore title="database/schema.acore: added line"
+migration(source: "migration.acore")
+```
+
+```acore title="database/migration.acore"
+// After adding a required note column
+evolution fill(from: Previous, to: Current,
+  coordination: EvolutionCoordination.maintenanceFenced) {
+  backfill(table: Current.Tables.app.tasks,
+    key: Previous.Columns.app.tasks.id,
+    column: Current.Columns.app.tasks.note,
+    using: value(literal: ""), batchSize: 100,
+    batchesPerRun: 1, maxRows: 1000, catchUpRows: 1000)
 }
 ```
 
-For SQLite use its schema path and `main.tasks`. Mapped field types, resource signatures, effect bounds, primary keys and tenant columns are checked against the actual compiled schema. PostgreSQL application tables use forced RLS and an unelevated application login role; the development example declares the managed role with an opaque `credentialRef` slot. Axiom generates and stores the role credential privately, separately from the operator connection.
+- The developer profile supports bounded copy and literal backfills under one
+  atomic writer fence (`maintenanceFenced`), up to 10,000 rows.
+- The transition intent counts toward version uniqueness, even for a data-only
+  change.
+- `migrate` compiles the document against the previous release and recompiles
+  source, schema and intent from the signed snapshot. Offline `check` and
+  `build` do not compile it, so errors appear at migrate time as ADB1121.
+- Both engines validate before applying; SQLite also validates a populated
+  backup.
+- Larger or resumable strategies, reference-data synchronization, explicit
+  conversions and nontransactional index or enum stages keep their certified
+  adapters. This atomic profile rejects them with ADB1121.
 
-```sh title="Terminal"
+Remove the `migration(...)` line when preparing the next schema release, so the
+data intent does not repeat. The earlier release keeps its original source and
+intent.
+
+## Roll back
+
+```bash title="Terminal: project root"
+axiom database rollback database/schema.acore --database-url "$DATABASE_URL" --steps 1
+axiom database rollback database/schema.acore --database-url "$DATABASE_URL" --to 1.0.0
+```
+
+- Rollback publishes a **new compensating version**. It keeps every earlier
+  entry and leaves your working source unchanged. A rollback that removes
+  objects is suggested as a new major version, such as `2.0.0`; reapplying
+  later may become `2.0.1`.
+- `--steps` defaults to 1 and cannot be combined with `--to`. `--to empty`
+  restores the managed empty baseline, again as a new version.
+- Running `migrate` afterward may need another fresh version to reapply the
+  working source.
+- Dropped values are not reconstructed. A rollback across a data overwrite
+  without stored previous values fails with ADB1113; write a compensating
+  migration or restore a backup.
+- In CI, pass `--auto-version` so rollback can allocate its version, plus the
+  approval flags for the categories it changes.
+
+## Prepare once, promote unchanged
+
+```bash title="Terminal: CI job"
+axiom database migrate database/schema.acore --database-url "$CI_DATABASE_URL" \
+  --auto-version --non-interactive --export release.axiom
+axiom database migrate release.axiom --database-url "$STAGING_DATABASE_URL" \
+  --frozen --non-interactive
+axiom database status release.axiom --database-url "$STAGING_DATABASE_URL" --check
+```
+
+1. The authoring job allocates a fresh version only when content changed, and
+   records the source edit and catalog entry for review. Unchanged content does
+   not bump.
+2. `--export` writes the complete applied history as one bundle. A frozen bundle
+   cannot be rewritten or auto-versioned (ADB1103 without a prepared release).
+3. Promote that exact bundle to every other eligible target. Never allocate
+   versions separately per environment.
+4. Add `--allow-destructive`, `--allow-data-dependent` or
+   `--allow-security-changes` only for categories you reviewed. CI never prompts
+   or waits for credentials or version approval.
+
+Serialize authoring jobs across checkouts with your CI system's concurrency
+controls. A project lock stops concurrent local publishers (ADB1104), and the
+target's lock and parent check stop divergent acceptance. Signing keys come
+from Axiom's private signing store or `AXIOM_DATABASE_SIGNING_KEY` (a 32-byte
+hex key) injected by your CI secret provider. Enrolled targets require the same
+signer. Commit the source edit and the non-secret `.axiom/database/migrations/`
+catalog, or keep the exported bundle as an immutable CI artifact. Never commit
+keys or connection bindings. Compiled schema packages from `build` are offline
+artifacts and are not migration bundles.
+
+## Connect a backend with typed storage
+
+A backend declares a resource interface, then a `storage` declaration
+implements each operation against a table in the compiled schema. This excerpt
+is from the [task app](/examples/task-app):
+
+```acore title="backend/application.acore (excerpt)"
+resource tasks(lifetime: ProviderLifetime.application) {
+  operation list(input: Models.Empty, output: List<Models.Task>, effect: EffectKind.read)
+  operation create(input: Models.NewTask, output: Models.Task, effect: EffectKind.write,
+    errors: [Failures.duplicate])
+  operation delete(input: Models.RecordId, output: Models.Task, effect: EffectKind.delete)
+}
+```
+
+```acore title="backend/sqlite.acore (excerpt)"
+storage tasks(schema: "../database/sqlite/schema.acore", resource: Resources.tasks) {
+  select list(table: "main.tasks", fields: {id: "id", title: "title"}, limit: 100)
+  insert create(table: "main.tasks", values: {id: Input.title, title: Input.title},
+    fields: {id: "id", title: "title"}, constraint: "tasks_pkey",
+    failure: Failures.duplicate, message: "That task already exists")
+  delete delete(table: "main.tasks", equals: {id: Input.id}, fields: {id: "id", title: "title"})
+}
+```
+
+For PostgreSQL, point `schema:` at the PostgreSQL contract and use tables such
+as `app.tasks`. Both engines share the same closed, typed operation interface.
+The storage mapping stays private: frontend contracts contain only the public
+API surface.
+
+A `binding` entry associates a model and a browser store with a table. The
+[browser preview](/database/browser-preview) uses bindings for its field and
+table associations:
+
+```acore title="Acore excerpt: inside a storage declaration"
+binding rows(table: "app.tasks", model: Models.Task, store: "tasks",
+  fields: {id: "id", title: "title"})
+```
+
+Rules:
+
+- `select`, `insert`, `update` and `delete` name a logical table and map API
+  fields to columns. Values come from `Input.field`, trusted `Claims.field` or
+  literals. SQL text and arbitrary query builders are not accepted.
+- Inputs are bound parameters. The tenant comes from the authenticated identity
+  and is added to every generated predicate and write.
+- Field types, resource signatures, effect bounds, primary keys and tenant
+  columns are checked against the compiled schema when you build or run the
+  backend (ADB1000 for an unknown table or column). In CLI 0.149.1,
+  `axiom check` on the backend does not run this check.
+- `constraint`, `failure` and `message` turn a named constraint violation into a
+  declared public failure, such as HTTP 409 for a duplicate.
+- The host enforces limits, deadlines, response bounds, result validation and
+  transaction rollback. A supported serialization conflict retries the whole
+  transaction within the declared attempt bound. An ambiguous commit is
+  reported, not retried blindly.
+- Readiness checks reject drift or an unapplied schema.
+- On PostgreSQL, application tables use forced row-level security and an
+  unelevated application login role, declared with an opaque `credentialRef`.
+
+An endpoint does nothing on its own: it selects an action with
+`handle(action: ...)`, the action awaits the resource operation (for example
+`Resources.tasks.delete(input: {id: Input.id})`), and the `storage` declaration
+implements it. The operation must declare `EffectKind.delete`, and the
+endpoint declares its response, failures and list-cache invalidation. The
+native provider binds the ID and adds the authenticated tenant predicate.
+Naming an endpoint `delete_task` does not create deletion logic.
+
+### Run the backend
+
+```bash title="Terminal 1: project root"
 axiom run backend/main.acore --database-url "$DATABASE_URL" --port 8093
 # SQLite variant:
 axiom run backend/sqlite.acore --port 8093
-# Second terminal:
+```
+
+```bash title="Terminal 2: project root"
 axiom run frontend/main.acore --port 5173
 ```
 
-The backend emits a development API key for the local UI. Private bindings and the key registry are generated under `.axiom/` with owner-only permissions. A production deployment supplies its reviewed authentication, signer and provider policy. No developer-maintained runtime-spec or deployment JSON is needed for the ordinary example.
+During development startup the CLI compiles the private plan and migrates the
+linked database before accepting requests. The backend prints a development API
+key for the local UI. Private bindings and the key registry are generated under
+`.axiom/` with owner-only permissions. No hand-written runtime-spec or
+deployment JSON is needed for this path. A production deployment supplies its
+own reviewed authentication, signer and provider policy.
 
-## Program rules
+### Advanced transactions
 
-Select/insert/update/delete declarations use logical tables and explicit API-field mappings. Values use `Input.field`, trusted `Claims.field` or literals. SQL text and arbitrary query constructors are not accepted. Inputs are native bound parameters; tenant selection comes from authenticated identity and is added to every generated predicate/write. Limits, deadlines, response bounds, result validation and transaction rollback are enforced by the host.
-
-`constraint`, `failure: Failures.name` and `message` map a declared constraint failure to a typed public failure. Supported serialization conflicts retry the complete aborted transaction within the declared attempt bound. Ambiguous commit outcomes are reported rather than retried blindly. Readiness checks reject drift or an unapplied schema.
-
-The ordinary development profile provides bounded typed select/insert/update/delete programs. Advanced application receipts, batch/savepoint strategies and special codecs keep the retained certified transaction profile and receive capability diagnostics in the ordinary adapter.
-
-## Retained certified programs without authored JSON
-
-The advanced `examples/database-persistence` fixture now expresses its private programs in `backend/storage.acore`. A transaction block names explicit query steps, its result, isolation, retry bound, idempotency receipt and constraint failures:
+A `storage` declaration can also contain `transaction` blocks with explicit
+steps, a result, isolation, a retry bound, an idempotency receipt and
+constraint failures:
 
 ```acore title="Acore excerpt"
 storage tasks(schema: "../database/schema.acore", resource: Resources.tasks) {
@@ -54,33 +276,23 @@ storage tasks(schema: "../database/schema.acore", resource: Resources.tasks) {
 }
 ```
 
-This advanced transaction profile requires separately qualified deployment
-configuration. Start with the [minimal app](/examples/task-app) for ordinary
-select, insert, update, and delete operations; a successful local run does not
-qualify advanced transaction guarantees.
+This advanced profile, together with batch and savepoint strategies and special
+codecs, needs separately qualified deployment configuration. The ordinary
+development adapter reports a capability diagnostic for it. A successful local
+run does not qualify advanced transaction guarantees; start with ordinary
+select, insert, update and delete operations.
 
-## Endpoint wiring and browser provider
+<Callout type="info" title="Source preview: virtual selected models">
+The current source build adds authoring shortcuts, including resolved endpoint
+types, explicit failure inference, selected offline model derivation and
+immutable expressions. Explicit forms remain supported, and matching compiler,
+host and editor versions are required. Public release and target qualification
+are separate. See [Syntax](/acore-language/syntax-overview).
+</Callout>
 
-Endpoints explicitly select a managed action with `handle(action: ...)`. That action calls a resource operation. The source-owned `storage` declaration implements the operation with a typed query:
+## Next steps
 
-```acore title="Acore excerpt"
-storage tasks(schema: "../database/schema.acore", resource: Resources.tasks) {
-  delete delete(table: "app.tasks", equals: {id: Input.id},
-    fields: {id: "id", title: "title"})
-  binding rows(table: "app.tasks", model: Models.Task, store: "tasks",
-    fields: {id: "id", title: "title"})
-}
-```
-
-The operation must also be declared on `Resources.tasks` with `EffectKind.delete`. Its action awaits `Resources.tasks.delete(input: {id: Input.id})` and returns the deleted record. The endpoint declares its response, failures and list-cache invalidation. The native provider binds the ID and adds the authenticated tenant predicate; naming an endpoint `delete_task` does not create deletion logic.
-
-The database playground examples use the same checked managed-flow interpreter with a bounded in-memory provider for these typed storage operations. Bindings supply field/table associations; endpoint mock mutations do not implement CRUD. The list endpoint's initial mock state is browser fixture data only. Browser authentication and tenant context are synthetic and confer no native authority. Unsupported host operations require the local CLI.
-
-Downloaded examples contain executable native handlers, hidden artifact references, web targets and instructions for the real API key. PostgreSQL examples declare application grants/RLS and document seeding any referenced parent rows through the Axiom SQL console. Run preserves compatible preview data, invalid changes preserve the accepted state, and data/history resets are explicit. Native and browser evidence remain distinct.
-
-See [Database contracts](/database/contracts) and [SQLite contracts](/database/sqlite) for run, migrate, status, history, comparison and rollback.
-
-
-## Virtual selected database models
-
-The current source candidate adds [authoring ergonomics](/acore-language/authoring-ergonomics): resolved endpoint types, explicit failure inference, selected offline model derivation and immutable expressions. Existing explicit forms remain supported; matching compiler/host/editor bytes are required. Public release and target qualification remain separate.
+- Try the flow in the browser with the [browser preview](/database/browser-preview).
+- Build the full [task app](/examples/task-app).
+- Add database checks to [CI](/testing/ci).
+- Roll out to many tenants with [database fleets](/database/fleets).

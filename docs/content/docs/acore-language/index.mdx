@@ -1,60 +1,106 @@
 ---
 title: Acore language
-description: Learn Acore expressions, contracts, backend declarations, user interfaces, and database schemas.
+description: What Acore is, how the Axiom CLI evaluates a .acore file, and which profile and output each project uses.
 pageType: overview
 ---
 
-**Acore is the declarative language used to author AxiomCore applications and
-contracts.** Learn expressions and types, then choose an application profile.
-Acore is an independent language and does not require a Pkl runtime.
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-<StatusNote status="alpha" title="Version your source and dependencies">
-  Pin compatible tools and packages, and review semantic changes when upgrading.
-  Core language, backend, frontend, and database capabilities have separate
-  support boundaries.
+<span id="evaluation-model" />
+<span id="module-resolution" />
+<span id="materialization-and-output-formats" />
+<span id="variant-filtering" />
+<span id="determinism-boundary" />
+<span id="read-the-manual-in-this-order" />
+<span id="minimal-service-source" />
+<span id="minimal-acore-ui-source" />
+
+**Acore is the declarative language you use to author AxiomCore contracts and
+applications.** One `.acore` file describes data, endpoints, user interfaces or
+database schemas, and the Axiom CLI checks it and builds an artifact. Acore is
+an independent language and does not need a Pkl runtime.
+
+<StatusNote status="alpha" title="Pin your toolchain">
+  The Acore language toolchain is Alpha. Pin compatible tools and packages and
+  review semantic changes when you upgrade. The core language, backend,
+  frontend and database profiles each have their own support boundary.
 </StatusNote>
 
-## Read the manual in this order
+## How a .acore file is evaluated
 
-| Learn | Topics |
-| --- | --- |
-| [Syntax](/acore-language/syntax-overview) | Modules, properties, comments, typed objects, collections |
-| [Values and types](/acore-language/values-types-and-operators) | Literals, nullable/union types, operators, precedence |
-| [Objects and functions](/acore-language/objects-classes-and-functions) | Classes, modifiers, functions, lambdas, scope |
-| [Imports and composition](/acore-language/imports-and-contracts) | `import`, `amends`, `use contract`, `extend` |
-| [Validation](/acore-language/validation) | Constraints and diagnostics |
-| [Evaluation and output](/acore-language/evaluation-and-output) | Evaluation, rendering, variants, errors |
-| [Standard library](/acore-language/standard-library) | Supported modules and functions |
-
-## Contract profiles
-
-`AxiomDeps.toml` selects the project profile. A declaration accepted by one
-profile is not automatically valid in another.
-
-| Profile | What you author | Continue with |
-| --- | --- | --- |
-| Backend | Models, endpoints, actions, validation, policies | [Backend declarations](/acore-language/backend-profile) |
-| Frontend | Apps, pages, forms, state, queries, mutations, views | [Acore UI](/frontend/acore-ui) |
-| Database | Tables, keys, relationships, constraints, schema versions | [Database contracts](/database/contracts) |
-| Package | Theme, component-library, database-schema, extension, application-policy exports | [Package lifecycle](/workflows/package-lifecycle) |
-
-Backend and package builds produce `.axiom` artifacts. Acore UI runs locally or
-builds a `.axiomapp` application package.
-
-## Minimal service source
-
-For an existing FastAPI app, extraction begins with an explicit source:
-
-```acore title="backend/axiom.acore"
-amends "axiom-fastapi:./main.py:app"
-project(id: "tasks-api", version: "0.1.0")
-policies(retry: RetryPolicy(maxAttempts: 3))
+```mermaid title="The steps from a .acore source file to an artifact or printed output"
+flowchart LR
+  A[".acore source"] --> B["Select profile from AxiomDeps.toml"]
+  B --> C["Parse"]
+  C --> D["Resolve import, amends and use"]
+  D --> E["Evaluate and check types"]
+  E --> F["Validate for the profile"]
+  F --> G[".axiom contract"]
+  F --> H[".axiom package"]
+  F --> I[".axiomapp application"]
+  F --> J["axiom eval output"]
 ```
 
-Install the extractor and Python dependencies first. Follow the
-[FastAPI guide](/guides/fastapi-to-web) to run the complete integration.
+1. **Select the profile.** The `type` in the nearest `AxiomDeps.toml` selects
+   the grammar and rules. A file with no manifest type is a general module.
+   Older backend sources that start with `profile backend 1` are still read.
+2. **Parse.** The parser keeps source spans so diagnostics and editors point at
+   the authored text.
+3. **Resolve.** `import` and `amends` load other source or extractor input.
+   `use contract` reads a compiled `.axiom` through the manifest and lock.
+   An import cycle is an error.
+4. **Evaluate.** Properties are lazy: a value is computed when something
+   references or renders it. Source order is not execution order. Type
+   annotations and constraints are checked.
+5. **Validate.** The profile applies its own rules, such as backend
+   validators, domain and security analysis, or UI checks.
+6. **Output.** The command decides what is written or printed. A backend build
+   validates the contract schema and writes the canonical `.axiom`; it does not
+   dump arbitrary JSON. Acore UI lowers to a UI graph and a target bundle.
+   For backend contracts, one named [variant](/acore-language/imports-and-contracts)
+   is applied before output.
 
-## Minimal Acore UI source
+<span id="contract-profiles" />
+
+## Profiles
+
+A declaration accepted by one profile is not automatically valid in another.
+
+| `type` in `AxiomDeps.toml` | What you author | Output | Continue with |
+| --- | --- | --- | --- |
+| `backend` | Models, endpoints, actions, validation, policies | `.axiom` contract | [Backend declarations](/backend/declarations) |
+| `frontend` | Apps, pages, forms, state, queries, mutations, views | Local run or `.axiomapp` | [Acore UI](/frontend/acore-ui) |
+| `database` | Tables, keys, relationships, constraints, schema versions | Offline database compiler output | [Database contracts](/database/contracts) |
+| `package` | Theme, component-library, database-schema, extension and application-policy exports | `.axiom` package | [Packages](/extensions/packages) |
+| `extension` | Sandboxed extension projects | Signed extension package | [Extensions](/extensions) |
+| none | General modules: properties, classes, expressions | `axiom eval` output | [Syntax](/acore-language/syntax-overview) |
+
+Database sources go through the offline database compiler. General evaluation
+of a database source fails with `ADB158`, because evaluation cannot acquire
+migration authority.
+
+### Minimal sources
+
+<Tabs items={['Backend', 'Acore UI', 'Existing FastAPI service']}>
+<Tab value="Backend">
+
+With `type = "backend"` in `AxiomDeps.toml`, `axiom check main.acore` prints
+`Valid backend contract: main.acore`.
+
+```acore title="backend/main.acore"
+project(id: "hello-api", version: "1.0.0")
+model Greeting { message: String }
+endpoint hello(method: GET, path: "/hello") {
+  response(type: Models.Greeting)
+}
+```
+
+</Tab>
+<Tab value="Acore UI">
+
+With `type = "frontend"`, `axiom ui check main.acore --target web` checks this
+module. The [frontend quickstart](/getting-started/quickstart-frontend) adds the
+run command.
 
 ```acore title="frontend/main.acore"
 module example.hello.ui
@@ -66,6 +112,121 @@ page Home {
 }
 ```
 
-The [frontend quickstart](/getting-started/quickstart-frontend) includes the
-manifest and run command. The [base schema reference](/reference/acore-schema-reference)
-provides exact fields and defaults.
+</Tab>
+<Tab value="Existing FastAPI service">
+
+Extraction starts from an explicit source. Install the
+[FastAPI extractor](/getting-started/installation#backend-extractors) first,
+then follow the [FastAPI guide](/guides/fastapi-to-web).
+
+```acore title="backend/axiom.acore"
+amends "axiom-fastapi:./main.py:app"
+project(id: "tasks-api", version: "0.1.0")
+policies(retry: RetryPolicy(maxAttempts: 3))
+```
+
+</Tab>
+</Tabs>
+
+The [Acore schema reference](/reference/acore-schema-reference) lists exact
+fields and defaults.
+
+## Commands that read Acore
+
+| Command | Use it to |
+| --- | --- |
+| `axiom eval FILE` | Evaluate any module and print the result. `-f json`, `-f yaml` or `-f md`; anything else prints PCF. `-v NAME` selects a backend variant. |
+| `axiom check [FILE]` | Validate a backend, frontend or database contract without writing outputs. It rejects a general module (`'project' block missing`). |
+| `axiom build [FILE]` | Build a contract under `.axiom/contracts`, or export with `--out`. |
+| `axiom explain [FILE]` | Print expanded backend JSON. `--schema` prints the declaration catalog; `--provenance` adds source spans, defaults and policy origins. |
+
+A general module and its evaluated output:
+
+```acore title="config.acore"
+module example.config
+name = "orders"
+port: Int = 8080
+retry { attempts = 3 }
+hidden secretSuffix = "internal"
+```
+
+```bash title="Terminal"
+axiom eval config.acore -f json
+```
+
+```json title="Output"
+{
+  "name": "orders",
+  "port": 8080,
+  "retry": {
+    "attempts": 3
+  }
+}
+```
+
+Rendered output sorts keys and omits null values, `hidden` and `local`
+properties, names that start with `_`, functions and a property named `output`.
+To render one value instead of the whole module, set `output { value = settings }`.
+PCF, the default format, is the canonical text form used by the toolchain.
+The language library also has XML and Protocol Buffers renderers, but
+`axiom eval` does not select them. `-f md` is meant for contracts: it prints API
+documentation with a Mermaid route diagram.
+
+<span id="authority-boundary" />
+
+## Authority and imports
+
+Evaluation runs under a security manager that controls module, file,
+environment and package access. A path in source is a request for access, not
+proof of authority. Evaluation does not fetch network modules. A compiled
+`.axiom` is not source: `import` and `amends` reject it, and you consume it with
+`use contract` through a manifest and lock. Declarative `.axiom` packages do not
+gain execution authority. An extension package carries metadata, requested
+capabilities and a digest for separately distributed code; running that code is
+a separate host decision.
+
+## Errors
+
+| Error | Meaning |
+| --- | --- |
+| `Parse Error` | The source does not match the grammar. |
+| `Evaluation error` | A value could not be computed, such as an undefined name. |
+| `Type mismatch` | A value does not match its declared type or constraint. |
+| `Division by zero` | An integer divided by zero. A float divided by zero is infinite and cannot be rendered. |
+| `Security violation` | The security manager denied a module or resource. |
+| `I/O Error` | A file could not be read. |
+| `AXB001`, `AXB002`, `AXB004` to `AXB007` | Backend profile diagnostics: syntax (`AXB001`), declaration or argument shape (`AXB002`), unresolved reference (`AXB004`), extractor input not cached (`AXB005`), server-plan rule (`AXB006`), expression (`AXB007`). |
+
+Commands add their own codes for artifact, runtime, UI, package and Cloud
+boundaries. Use the narrowest check that does not write files, for example
+`axiom doctor --json`, `axiom check`, `axiom domain validate`,
+`axiom security check` or `axiom ui check main.acore --target web`. Not every
+source needs every check.
+
+## Reproducible builds
+
+An artifact is reproducible only when the source, resolved dependencies,
+compiler version, target and build mode are all the same. Commit dependency
+locks and record build provenance. Matching top-level source alone does not
+make two builds identical.
+
+## Read the reference
+
+| Page | Covers |
+| --- | --- |
+| [Syntax](/acore-language/syntax-overview) | Modules, comments, keywords, properties, declarations, authoring shortcuts |
+| [Values, types and operators](/acore-language/values-types-and-operators) | Literals, types, operators, null handling, expressions |
+| [Objects, classes and functions](/acore-language/objects-classes-and-functions) | Objects, classes, scope, lambdas, pure functions |
+| [Imports, amends and variants](/acore-language/imports-and-contracts) | `import`, `use`, `amends`, `entity`, variants |
+| [Validation](/acore-language/validation) | Constraints, validators, codecs, limits |
+| [Managed logic and concurrency](/acore-language/managed-language) | Actions, failures, transactions, parallel groups, policies |
+| [Streams and WebSockets](/acore-language/streaming-and-websockets) | Stream declarations and bounded views |
+| [Standard library](/acore-language/standard-library) | Modules and built-in members |
+| [Domain and security models](/acore-language/domain-and-security-models) | Entities, projections, invariants, security policy |
+
+## Next steps
+
+- [Run your first app](/getting-started/quickstart)
+- [Learn the syntax](/acore-language/syntax-overview)
+- [Build a backend](/backend)
+- [Acore UI reference](/frontend/acore-ui)

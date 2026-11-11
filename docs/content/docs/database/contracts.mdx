@@ -1,25 +1,62 @@
 ---
 title: Database contracts
-description: Versioned PostgreSQL and SQLite contracts, native run, migrations, rollback, history and clean internal state.
-pageType: guide
+description: Reference for Acore database contract files, versions, PostgreSQL and SQLite schemas, connections, the SQL console, commands and diagnostics.
+pageType: reference
 ---
 
-Acore database contracts declare desired state and an immutable contract version. With CLI 0.149.0, connect through `axiom run`, migrate forward, roll back and inspect history using PostgreSQL or SQLite. The CLI owns private planning, validation, signing, bindings and recovery bookkeeping.
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-The developer lifecycle remains Experimental. It is distinct from retained certified native recovery profiles and does not broaden production workload certification.
+<span id="declare-identity-version-and-schema" />
+<span id="connect-and-run" />
+<span id="migrate-inspect-and-compare" />
+<span id="roll-back-through-a-new-version" />
+<span id="ci-prepare-once-promote-unchanged" />
+<span id="typed-data-changes" />
+<span id="author-and-run" />
+<span id="backend-persistence-and-playground" />
 
-## Declare identity, version and schema
+A database contract is an Acore source file that declares a database's desired
+schema and an immutable version. This page lists the syntax, version rules,
+connection options, commands, generated files and diagnostics for PostgreSQL
+and SQLite contracts in Axiom CLI 0.149.0 and later (current release 0.149.1).
+For the step-by-step workflow, see [Migrations and persistence](/database/persistence).
 
-`database/AxiomDeps.toml` selects the database compiler:
+<StatusNote status="experimental" title="Experimental developer lifecycle">
+The developer lifecycle on this page is Experimental. It is separate from the
+retained certified native recovery profiles and does not widen production
+workload certification. The CLI owns private planning, validation, signing,
+bindings and recovery bookkeeping.
+</StatusNote>
 
-```toml title="AxiomDeps.toml"
+## Files and identity
+
+| File | Purpose |
+| --- | --- |
+| `AxiomDeps.toml` | `type = "database"` and `targets = ["server"]` select the database compiler. No profile header is needed in source. |
+| Entry `.acore` file | `project(id: ..., version: ...)`, a `module` line and one `database` block. |
+| `migration.acore` (optional) | Typed data changes, referenced from the entry file with `migration(source: "migration.acore")`. See [Typed data changes](/database/persistence). |
+
+```toml title="database/AxiomDeps.toml"
 type = "database"
 targets = ["server"]
 ```
 
-The entry source owns its identity:
+Identity rules:
 
-```acore title="Acore excerpt"
+- `project(version: ...)` is the contract and migration version. It has three
+  numeric parts, such as `1.0.0`. Leading zeros and pre-release suffixes are
+  rejected with ADB1100.
+- Object identities stay stable across version-only changes.
+- A legacy manifest `[application]` table can still supply identity for offline
+  reads. If source and manifest both supply identity, they must agree.
+  Publishing a new migration requires `project(...)` in source.
+
+## Declare a schema
+
+<Tabs items={['PostgreSQL', 'SQLite']}>
+<Tab value="PostgreSQL">
+
+```acore title="database/schema.acore"
 project(id: "example.tasks.storage", version: "1.0.0")
 module example.tasks.storage
 
@@ -35,105 +72,296 @@ database tasks(engine: DatabaseEngine.postgres) {
 }
 ```
 
-The manifest selects the database contract type; no profile header is needed. `project(version: ...)` is the contract/migration version. Versions use three numeric components, such as `1.0.0`; object identities remain stable across version-only changes. A legacy manifest `[application]` can still supply identity for offline reads. If source and manifest both supply identity, they must agree. New migration publication requires explicit source metadata.
+</Tab>
+<Tab value="SQLite">
 
-## Connect and run
+```acore title="database/schema.acore"
+project(id: "example.tasks.sqlite", version: "1.0.0")
+module example.tasks.sqlite
 
-```sh title="Terminal"
-axiom check database/schema.acore
-axiom build database/schema.acore
-axiom run database/schema.acore --database-url "$DATABASE_URL"
+database tasks(engine: DatabaseEngine.sqlite) {
+  manage(schemas: [Schemas.main], mode: ManagementMode.ownedObjects)
+  schema main {
+    table tasks(strict: true) {
+      id: Sqlite.Text()
+      title: Sqlite.Text()
+      primaryKey(columns: [.id])
+    }
+  }
+}
 ```
 
-Or provide connection fields:
+</Tab>
+</Tabs>
 
-```sh title="Terminal"
+`manage(...)` names the schemas Axiom owns. Add `nullable: true` to a column
+type, for example `note: Sqlite.Text(nullable: true)`, to allow nulls.
+`primaryKey(..., sqlName: "tasks_pkey")` sets the physical constraint name that
+storage declarations can refer to.
+
+### SQLite storage types
+
+| Type | Use |
+| --- | --- |
+| `Sqlite.Text`, `Sqlite.Integer`, `Sqlite.Int`, `Sqlite.Real`, `Sqlite.Blob`, `Sqlite.Any` | SQLite storage class and affinity |
+| `Sqlite.Native(declared: ...)` | An explicit declared type |
+
+- `table name(strict: true)` creates a STRICT table, which accepts only
+  strict-compatible declared types.
+- Keys, foreign keys, checks, defaults, generated columns, indexes and supported
+  views and triggers use the dedicated SQLite catalog.
+- The managed scope is the entire `main` schema. Attached databases are not
+  supported.
+- SQLite INTEGER values reach the backend through lossless string codecs. TEXT
+  is the simplest fit for identifiers such as the task example's.
+- Table rebuilds keep retained values and validate a consistent populated
+  backup before the target changes. Foreign-key and native integrity checks run
+  before acceptance.
+- Unsupported type, rowid or sequence conversions fail explicitly. Axiom never
+  silently coerces an existing identity.
+- The internal ledger and the schema commit atomically under a writer lock.
+  Native locking, hot-journal and WAL recovery, and the original qualified
+  SQLite lifecycle are qualified separately from compiler-only evidence.
+
+<span id="types-and-boundaries" />
+
+### PostgreSQL types and objects
+
+Columns use `Pg` types such as `Pg.Text()` and `Pg.VarChar(length: 120)`. A
+schema can also declare grants, row security and a managed application role:
+
+```acore title="Acore excerpt: inside database tasks"
+schema app {
+  table tasks {
+    tenant: Pg.Text()
+    id: Pg.Text()
+    title: Pg.VarChar(length: 120)
+    primaryKey(columns: [.tenant, .id], sqlName: "tasks_pkey")
+  }
+  grant taskAccess(objectId: Tables.app.tasks, roleIds: [Roles.tasks_app], public: false,
+    privileges: ["select", "insert", "update", "delete"], columns: [], grantOption: false)
+  rowSecurity taskIsolation(tableId: Tables.app.tasks, enabled: true, force: true)
+}
+role tasks_app(managed: true, login: true, inherit: true, superuser: false,
+  createDb: false, createRole: false, replication: false, bypassRls: false,
+  connectionLimit: 20, credentialRef: "tasks_app")
+```
+
+`credentialRef` is an opaque slot. Axiom generates the role's credential and
+stores it privately, apart from the operator connection. Advanced PostgreSQL
+declarations (SQL and PL/pgSQL objects, grants and row-level security,
+partitions and typed package imports) keep their qualified language profiles.
+Engine capability diagnostics apply before runtime execution. See
+[Capability boundaries](/reference/capability-boundaries).
+
+## Version rules
+
+- Every published pair of contract ID and version binds to immutable content.
+- Rerunning unchanged content is a no-op: no migration, no prompt and no new
+  version. Comment-only edits are not schema changes.
+- Changed content under a version that is already used, or under a version that
+  is not newer than a published one, fails with **ADB1103** and a suggested
+  version. The suggestion bumps the patch number, or the major number (for
+  example `2.0.0`) when the change is destructive.
+- In an interactive terminal, press Enter to accept the suggestion. The CLI
+  changes only the version literal in source and keeps your formatting. If
+  `AxiomDeps.toml` still has a legacy `[application]` table, the same edit
+  removes it. The edit is saved only after validation passes.
+- The prompt appears only when stdin and stdout are terminals, without
+  `--non-interactive` or `--json`, and when `CI` is unset, empty, `0` or
+  `false`. Otherwise pass `--auto-version`.
+- A release that changes only the version is shown as metadata-only.
+- Accepting a version is separate from approving risky changes (see
+  [Risk approvals](#risk-approvals)).
+- The developer history holds up to 4,096 revisions. Beyond that, use the
+  qualified checkpoint profile.
+
+## Connect to a database
+
+| Option | Engine | Meaning |
+| --- | --- | --- |
+| `--database-url URL` | Both | `postgres://` or `postgresql://`; or `sqlite:./tasks.sqlite`, `sqlite:///absolute/tasks.sqlite` |
+| `DATABASE_URL` | Both | Used when you pass no connection flag |
+| `--host`, `--port`, `--database`, `--username` | PostgreSQL | Endpoint fields. `--port` defaults to 5432. `PGDATABASE` and `PGUSER` (then `USER`) fill omitted fields. |
+| `--password` | PostgreSQL | Prefer `PGPASSWORD` or the masked prompt |
+| `--ssl-mode` | PostgreSQL | `disable`, `prefer`, `require` or `verify-full` |
+| `--tls-ca FILE` | PostgreSQL | Trust a private certificate authority |
+| `--database-file PATH` | SQLite | A file path, relative to the current directory |
+
+```bash title="Terminal: connect with fields instead of a URL"
 axiom run database/schema.acore --host localhost --port 5432 \
   --database tasks_demo --username tasks_admin
 ```
 
-The password is masked when prompted. CI can use `PGPASSWORD` or a secret-injected URL. URLs and individual endpoint fields cannot conflict. Remote targets default to verified TLS; `--tls-ca` supports a private CA. Loopback development has an explicit local transport. Credentials are redacted from connection diagnostics.
+PostgreSQL rules:
 
-The target must already be reachable. `run` connects and migrates; it does not restart or provision the PostgreSQL server. Disposable validation is internal, using packaged PostgreSQL validator assets. Developers do not use `pg_ctl`, `psql`, OpenSSL, authored binding JSON or development-profile files.
+- The password prompt is masked. A URL and endpoint fields cannot be
+  combined. `PGHOST`, `PGPORT` and `PGSSLMODE` are not read.
+- A noninteractive run needs `PGPASSWORD`, `--password` or a secret-injected URL
+  (ADB1110 otherwise).
+- Remote hosts use verified TLS unless you pass `--ssl-mode disable`. `prefer`
+  never falls back to plaintext. Loopback hosts (`localhost`, `127.0.0.1`,
+  `::1`) connect without TLS unless you pass `require` or `verify-full`.
+- Credentials are redacted from connection diagnostics.
+- `migrate` and `run` need a writable primary. `status` and `history` can read
+  a read-only target and open read-only sessions.
+- The target must already be reachable. Before applying a change, Axiom replays
+  it on a disposable PostgreSQL of the same major version. It uses the managed
+  validator shipped in the Linux CLI archives (PostgreSQL 17), otherwise a
+  matching installation found through `AXIOM_DATABASE_POSTGRES_BIN`, `PG_BIN`,
+  `PATH`, `pg_config` or standard Homebrew and Linux locations. With none, the
+  command fails with ADB1106 and nothing is applied. You do not run `pg_ctl`,
+  `psql` or OpenSSL yourself, and you do not write binding JSON or
+  development-profile files.
 
-After verification, the native SQL console accepts multiline SQL and `\dt`, `\d app.tasks`, `\conninfo`, `\q`. Session history uses Up/Down. Ctrl+C clears pending input or cancels a running query; Ctrl+D exits an empty prompt. For scripts:
+SQLite rules:
 
-```sh title="Terminal"
+- With no file, no URL and no `DATABASE_URL`, the CLI uses
+  `.axiom/database/data/database.sqlite` under the project root (the nearest
+  directory with `AxiomDeps.toml`). Unset a PostgreSQL `DATABASE_URL` first,
+  and use the same file for every command and for backend startup.
+- `migrate` and `run` create a missing file with owner-only permissions.
+  `status` stays read-only and fails if the file is missing.
+- `:memory:` and symbolic links are rejected. A PostgreSQL URL or PostgreSQL
+  fields with a SQLite contract fail with ADB1107 (engine mismatch).
+- The CLI finds the native SQLite library itself; set `AXIOM_SQLITE_LIBRARY` to
+  override. No `sqlite3` command, library flag or binding JSON is needed.
+- SQLite acceptance is recorded on macOS arm64 and Linux arm64, separately from
+  production certification. On non-Unix platforms the CLI reports that the
+  native SQLite lifecycle is not qualified.
+
+## SQL console
+
+`axiom run CONTRACT` applies pending versions, verifies the target and opens a
+native SQL console:
+
+```bash title="Terminal"
+axiom run database/schema.acore --database-url "$DATABASE_URL"
+axiom run database/schema.acore --database-file ./tasks.sqlite
+```
+
+| Input | Effect |
+| --- | --- |
+| SQL | Multiline statements, quoted semicolons and comments |
+| `\dt` | List tables |
+| `\d app.tasks` (SQLite: `\d tasks`) | Describe a table |
+| `\conninfo` | Show the connection. For SQLite this includes the file path for DBeaver or another viewer. |
+| `\q` or Ctrl+D at an empty prompt | Exit |
+| Up and Down | Recall input from this session (last 100 entries) |
+| Ctrl+C | Clear pending input, or cancel the running query |
+
+For scripts, apply and query without the console:
+
+```bash title="Terminal"
 axiom run database/schema.acore --database-url "$DATABASE_URL" --no-shell \
   --execute 'SELECT * FROM app.tasks;'
 ```
 
-For SQLite, change the engine/source syntax as shown in [SQLite contracts](/database/sqlite), then use `--database-file ./tasks.sqlite` or a SQLite URL. Both engines use the same migration commands.
+If the console opens while stdin is not a terminal, it runs all of stdin as a
+SQL script instead of prompting. `--execute` runs after synchronization. The
+console still opens unless you add `--no-shell` (or `--once`, `--json` or
+`--dry-run`). The script is split at
+unquoted semicolons and each statement runs on its own, not in one transaction.
+The first error stops the script with a non-zero exit.
 
-## Migrate, inspect and compare
+| Limit | PostgreSQL | SQLite |
+| --- | --- | --- |
+| Timeouts | 15 s per statement, 15 s to connect | 5 s busy timeout |
+| Result size | No row cap | 20,000 rows, 256 columns, 4 MiB per BLOB and 64 MiB per statement; BLOBs print as base64 |
 
-```sh title="Terminal"
-axiom database migrate database/schema.acore --database-url "$DATABASE_URL"
-axiom database status database/schema.acore --database-url "$DATABASE_URL"
-axiom database history database/schema.acore --database-url "$DATABASE_URL"
-axiom database diff database/schema.acore --from 1.0.0 --to working
-axiom database diff database/schema.acore --from 1.0.0 --to 1.0.1
+## Commands
+
+| Command | Connects | Purpose |
+| --- | --- | --- |
+| `axiom database check SOURCE` | No | Check the entry file and its imports. Prints JSON evidence. |
+| `axiom database fmt SOURCE` | No | Format source to stdout, or in place with `--write` |
+| `axiom database build SOURCE` | No | Write a canonical server-only schema package (`--out FILE` to choose the path) |
+| `axiom database inspect SOURCE` | No | Summarize a source or schema package |
+| `axiom database diff A [B]` | No | Compare two sources or packages, or catalog versions with `--from` and `--to` |
+| `axiom database migrate CONTRACT` | Yes | Apply pending versions |
+| `axiom database status CONTRACT` | Yes, read-only | Applied and working versions, pending changes and drift |
+| `axiom database history [SOURCE]` | Yes, read-only | Version history, including rollbacks and failed attempts |
+| `axiom database rollback CONTRACT` | Yes | Restore a recorded schema through a new version |
+| `axiom run CONTRACT` | Yes | Migrate, then open the SQL console |
+
+`axiom check` and `axiom build` also accept a database source. `history` keeps
+advanced subcommands for exported histories: `export`, `checkpoint`, `verify`
+(offline; grants no apply authority), `import` and `import-atlas` (adopt a
+verified Atlas revision snapshot as private provenance).
+[axiom database](/tooling/cli-database) lists every flag.
+
+### Offline output
+
+```bash title="Terminal: task-app"
+axiom check database/sqlite/schema.acore
+axiom database build database/sqlite/schema.acore
 ```
 
-`migrate` means up. `--to VERSION` selects a retained forward version; missing intermediate definitions must be supplied through the committed catalog or an exported bundle. Status reports applied/working versions, pending state and drift. History includes compensating revisions and failed attempts. `status --check` is a CI gate; `status --watch` and `history --watch` refresh until interrupted. Read-only commands do not enroll or migrate a target. History can recover missing local definitions from the verified target ledger.
-
-Every published `(contract ID, version)` binds to immutable content. An unchanged rerun is current: no migration, no prompt and no new version. Comment-only edits are not schema changes. A changed definition under a used version fails with ADB1103 and suggests an unused numeric version. In a terminal, Enter accepts the suggestion and the CLI changes only the source version literal, preserving formatting. An explicit version-only release is shown as metadata-only.
-
-A required new column on populated rows needs a default, a nullable expansion or a declared backfill. Axiom rejects missing values before applying target DDL. External DDL is reported as drift; the coordinator does not silently absorb or remove it.
-
-## Roll back through a new version
-
-```sh title="Terminal"
-axiom database rollback database/schema.acore --database-url "$DATABASE_URL" --steps 1
-axiom database rollback database/schema.acore --database-url "$DATABASE_URL" --to 1.0.0
+```text title="Output"
+Valid database contract: database/sqlite/schema.acore
+{"artifact":".../database/sqlite/.axiom/contracts/database.axiom","effects":"offline-only","format":"axiom-database-build/v1","migrationAuthority":false,"profile":"acore-database/v1","sha256":"..."}
 ```
 
-Rollback publishes a new compensating version. It preserves previous entries and working source. `--to empty` restores the managed empty baseline through a new version. Running migrate afterward may require another fresh version to reapply working source.
+`axiom database check` prints JSON evidence (objects, columns and source
+positions); `inspect` reports `"liveState": "not-observed"`. The two-file
+`diff` prints one entry per change, with a path such as
+`Columns.main.tasks.note`, an operation and a compatibility class.
+`diff --from VERSION` reads the local migration catalog (ADB1102 if the version
+is missing); `--to` defaults to `working`.
 
-The preview identifies destructive, data-dependent and security changes. Interactive approvals are separate from version acceptance. Noninteractive pipelines must authorize the applicable categories with `--allow-destructive`, `--allow-data-dependent` and `--allow-security-changes`. Dropped values are not reconstructed. A rollback crossing a data overwrite without stored reverse values fails with ADB1113 and requires a compensating migration or backup.
+## Risk approvals
 
-## CI: prepare once, promote unchanged
+Before applying, the preview classifies destructive, data-dependent and security
+changes. Interactive approval is separate from version acceptance. A
+noninteractive run must authorize each category that applies:
 
-```sh title="Terminal"
-axiom database migrate database/schema.acore --database-url "$CI_DATABASE_URL" \
-  --auto-version --non-interactive --export release.axiom
-axiom database migrate release.axiom --database-url "$STAGING_DATABASE_URL" \
-  --frozen --non-interactive
-axiom database status release.axiom --database-url "$STAGING_DATABASE_URL" --check
-```
+| Flag | Authorizes |
+| --- | --- |
+| `--allow-destructive` | Changes that may delete data or remove invariants, such as dropping a column |
+| `--allow-data-dependent` | Changes that depend on populated data or rebuild existing invariants |
+| `--allow-security-changes` | Changes to database permissions or security policy |
 
-Automatic preparation allocates a fresh version when required and preserves the source/catalog change for review. Unchanged content does not bump. A frozen bundle contains the complete immutable prefix and cannot be rewritten or auto-versioned. Promote the exact artifact/version to other eligible targets; do not allocate independently in each environment. Serialize authoring jobs across checkouts using the CI system's concurrency controls. Keys come from Axiom's private signing store or `AXIOM_DATABASE_SIGNING_KEY`; enrolled targets require the same signer. Production delivery still uses its separately qualified trust/recovery policy.
+There is no blanket approval flag. Approvals authorize a change. They do not
+invent missing values and they do not restore deleted data. A required new
+column on populated rows needs a default, a nullable expansion or a declared
+backfill; Axiom rejects missing values before running target DDL. DDL applied
+outside Axiom is reported as drift and is never silently absorbed or removed.
 
-`--dry-run` previews without applying or creating a missing target. `--json` is optional stdout integration, not a required project file. Compiled schema builds are offline and are distinct from prepared immutable migration bundles.
+<span id="clean-generated-state" />
 
-## Typed data changes
+## Generated files and state
 
-Reference a private evolution document from the database entry:
+| Location | Contents | Keep in version control |
+| --- | --- | --- |
+| `.axiom/contracts/` | `database.axiom` and the `database.sources.axiom` source capsule from builds | No; rebuilt on demand |
+| `.axiom/database/migrations/VERSION/release.axiom` | Immutable, non-secret migration definitions | Yes, or keep exact CI artifacts |
+| `.axiom/database/` (other files) | Private plans, bindings, locks, reports and source-edit recovery journals, owner-only | No |
+| `.axiom/database/data/database.sqlite` | The default persistent SQLite database | No, but keep it: it is data, not cache |
+| Private secret store outside the project | Signing keys and role credentials | Never |
 
-```acore title="Acore excerpt"
-migration(source: "migration.acore")
-```
+Legacy root locks and identity sidecars stay readable during an upgrade.
 
-```acore title="Acore excerpt"
-// migration.acore, after adding a required note column
-evolution fill(from: Previous, to: Current,
-  coordination: EvolutionCoordination.maintenanceFenced) {
-  backfill(table: Current.Tables.app.tasks,
-    key: Previous.Columns.app.tasks.id,
-    column: Current.Columns.app.tasks.note,
-    using: value(literal: ""), batchSize: 100,
-    batchesPerRun: 1, maxRows: 1000, catchUpRows: 1000)
-}
-```
+## Existing schemas
 
-The developer profile supports bounded copy/literal backfills under one atomic writer fence, up to 10,000 rows. The transition intent participates in version uniqueness, even for data-only changes. Source, schema and typed intent are recompiled and verified from the signed snapshot. PostgreSQL and SQLite adapters validate before application; SQLite additionally validates a populated backup. Larger/resumable strategies, reference-data synchronization, explicit conversions and nontransactional index/enum stages retain their existing certified adapters and are rejected by this atomic profile.
+A managed scope that already contains objects fails with ADB1105. To take
+ownership, pass `--adopt` with a reviewed baseline: Axiom enrolls the scope only
+when it exactly matches the validated source. Existing certified ledgers and
+history stay intact and keep their recovery procedures. See the
+[existing database guide](/guides/existing-database).
 
-Remove the `migration(...)` reference when preparing a subsequent schema release that should not repeat that data intent. The immutable prior release retains its original source and intent.
+## Diagnostics
 
-## Clean generated state
-
-Default build artifacts and source capsules live in `.axiom/contracts/`. Private plans, bindings, locks, reports and source-edit recovery journals stay in the owning project's `.axiom/`; signing and role credentials remain in the private secret store. Keep non-secret `.axiom/database/migrations/` definitions in version control or immutable CI artifacts. Persistent SQLite data is separate from build caches and must be retained.
-
-Existing schemas require an exact reviewed `--adopt` baseline before new ownership is accepted. Existing certified ledgers/history remain intact; their recovery procedures are retained. Legacy root locks and identity sidecars remain readable during upgrade.
-
-See [Database persistence](/database/persistence) for typed backend mappings and the [simple database example](/examples/task-app) for the full application walkthrough. Advanced PostgreSQL schema declarations, SQL/PLpgSQL objects, grants/RLS, partitions and typed package imports retain their qualified language profiles; engine capability diagnostics apply before runtime execution.
+| Code | Meaning | What to do |
+| --- | --- | --- |
+| ADB1000 | Invalid application schema or storage mapping, such as an unknown table or column | Fix the backend `storage` declaration and rebuild |
+| ADB1100 | Version is not `MAJOR.MINOR.PATCH` | Use a version such as `1.0.1` |
+| ADB1102 | Version not in the catalog, nothing applied, or rollback steps out of range | Check `history`; supply the catalog or bundle |
+| ADB1103 | Version already used, or frozen mode without a prepared release | Accept the suggested version or pass `--auto-version` |
+| ADB1104 | Another command is publishing, or the migration parent changed | Retry after it finishes; check `status` and prepare again |
+| ADB1105 | Drift, target not current (`status --check`), unenrolled objects or an adoption mismatch | Inspect drift; use a reviewed `--adopt` baseline |
+| ADB1106 | Validator unavailable or validation mismatch; transition needs the certified nontransactional profile | Install a matching PostgreSQL; nothing was applied |
+| ADB1107 | Invalid URL, engine mismatch, unusable SQLite file or read-only target for a write | Fix the connection options |
+| ADB1109 | Signing or credential problem, including a signer that differs from the enrolled target | Restore the original signing provider |
+| ADB1110 | PostgreSQL password required | Use the prompt, `PGPASSWORD` or `--password` |
+| ADB1113 | Rollback crosses a data overwrite whose previous values were not archived | Write a compensating migration or restore a backup |
+| ADB1121 | Typed data change rejected | Use a supported backfill or a certified adapter |

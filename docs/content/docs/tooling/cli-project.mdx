@@ -1,0 +1,605 @@
+---
+title: Setup and project commands
+description: Reference for the Axiom CLI commands that set up a project, diagnose prerequisites, sign in, link Cloud projects, install tools, and support editors and the REPL.
+pageType: reference
+---
+
+These commands prepare a machine and a repository for AxiomCore: create a
+backend contract source, diagnose prerequisites, sign in to Axiom Cloud, link a
+directory to a Cloud project, install tools, and run the editor services, REPL
+and evaluator. This page covers Axiom CLI 0.149.1.
+
+| Command | Network or Cloud |
+| --- | --- |
+| `init`, `onboard` (without `--contract`), `doctor`, `editor`, `lsp`, `repl`, `eval`, `install lsp-server`, `install FILE.axiomapp` | None. They work offline. |
+| `login`, `project list`, `project create`, `project link`, `project rotate-key` | Network and Axiom Cloud. All but `login` need a prior `axiom login`. |
+| `join` | Network. No sign-in or referral code. |
+| `onboard --contract`, `install NAME --module`, `project resolve` | Network. |
+| `cache`, `project package` | None. |
+
+Every command outside the first row, except `join`, passes the one-time Cloud
+access check described in the
+[CLI overview](/tooling/cli-reference#cloud-access-and-telemetry).
+
+Cloud accounts and projects are **Alpha** and require their configured services.
+
+## Start a project
+
+### axiom init
+
+Create an `axiom.acore` backend contract source for an existing FastAPI or Go
+service. With both an entrypoint and `--module`, it writes the file directly;
+otherwise it opens a short terminal wizard.
+
+```text title="Usage"
+axiom init [OPTIONS] [ENTRYPOINT]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `[ENTRYPOINT]` | entrypoint | wizard: `./main.py:app` or `./main.go` | Service entrypoint, for example `main.py:app`. |
+| `--module` | module | wizard: `axiom-fastapi` or `axiom-go` | Compiler module that extracts the service. |
+
+`init` also writes `type = "backend"` into `AxiomDeps.toml`, keeping its other
+settings. It refuses to overwrite an existing `axiom.acore`. The wizard detects
+Python (`requirements.txt`, `pyproject.toml`, `main.py`) or Go (`go.mod`,
+`main.go`) and uses the directory name as the project name. Use the arrow keys
+and Enter; `Esc` or Ctrl+C leaves, and `q` closes the success screen. Building
+the contract needs the extractor described in
+[Install the Axiom CLI](/getting-started/installation#backend-extractors).
+
+```bash title="Terminal"
+axiom init main.py:app --module axiom-fastapi
+```
+
+### axiom onboard
+
+Detect the repository's role and print the shortest supported first path. Run it
+from the application root before you create files.
+
+```text title="Usage"
+axiom onboard [OPTIONS]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--role` | `backend`, `frontend`, `fullstack` | detected | Path to plan. |
+| `--entrypoint` | entrypoint | detected (`main.py:app`, `app.py:app`, `main.go`) | Backend entrypoint, for example `main.py:app`. |
+| `--module` | module | detected | Extractor module, for example `axiom-fastapi`. |
+| `--framework` | `flutter`, `dart`, `atmx-web`, `atmx-react` | detected | Client target. |
+| `--contract` | reference | none | Contract to pull for a frontend path. This is the only option that pulls, and it needs network. |
+| `--apply` | flag | off | Create the detected backend `axiom.acore`. No release is uploaded. |
+
+A backend is detected from `axiom.acore`, `main.py`, `app.py`,
+`pyproject.toml`, `go.mod` or `main.go`; a frontend from `package.json`,
+`pubspec.yaml` or `AxiomDeps.toml`; both give `fullstack`. `onboard` does not
+log in, release or pull unless you supply the option that needs it. `--apply`
+only creates `axiom.acore` and refuses to overwrite one.
+
+| Goal | Command |
+| --- | --- |
+| Create a detected FastAPI or Go contract source | `axiom onboard --role backend --apply` |
+| Specify a FastAPI entrypoint | `axiom onboard --role backend --entrypoint main.py:app --module axiom-fastapi --apply` |
+| Plan client integration | `axiom onboard --role frontend --framework atmx-web` |
+| Pull and generate a client in one step | `axiom onboard --role frontend --contract org/project --framework atmx-web` |
+
+Releasing is always a separate, explicit step:
+
+```bash title="Terminal"
+axiom build
+axiom login
+axiom build --release --out backend.axiom
+```
+
+### axiom doctor
+
+Inspect local prerequisites without changing files, logging in or pulling a
+contract. It is safe in a new checkout and in CI.
+
+```text title="Usage"
+axiom doctor [OPTIONS]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--json` | flag | off | Print a stable machine-readable report for CI or support tickets. |
+| `--strict` | flag | off | Exit non-zero when a required check fails. Warnings do not fail. |
+
+| Check ID | What it reports |
+| --- | --- |
+| `cli` | The running CLI version. |
+| `control_plane` | The active control plane, `https://api.axiomcore.dev` by default. |
+| `authentication` | Whether a Cloud session is saved. Credentials are never shown. |
+| `contract_source` | Whether `axiom.acore` exists in the current directory. |
+| `artifact` | Whether `backend.axiom` (or legacy `axiom.axiom`) is present and readable. |
+| `dependencies` | Whether `AxiomDeps.toml` is valid. |
+| `project_link` | Whether the directory is linked to a Cloud project. |
+| `python`, `go`, `node`, `npm`, `flutter` | Tool checks, added only when the project needs that tool. |
+
+Each check has an `id`, a `status` (`pass`, `warn` or `fail`), a `summary`, a
+`detail` and, when available, a `fix` with the next command. Failures are
+missing prerequisites such as an invalid `AxiomDeps.toml`, an unreadable
+artifact or a missing tool.
+
+```bash title="Terminal"
+axiom doctor --json --strict > axiom-doctor.json
+```
+
+```json title="Expected output (excerpt)"
+{
+  "schema_version": 1,
+  "control_plane": "https://api.axiomcore.dev",
+  "project_root": "/path/to/app",
+  "checks": [{ "id": "cli", "status": "pass", "summary": "Axiom CLI 0.149.1 is available", "detail": "The current executable is running normally.", "fix": null }]
+}
+```
+
+The report never includes tokens, keys or contract contents, but `project_root`
+is a local path: review it before you share a report publicly.
+
+## Sign in to Axiom Cloud
+
+### axiom login
+
+Sign in to Axiom Cloud with the device authorization flow. The terminal shows a
+code and a URL, then waits until you approve the code in the browser.
+
+```text title="Usage"
+axiom login
+```
+
+No options other than `--help`.
+
+The session is saved in the CLI profile directory (see the
+[CLI overview](/tooling/cli-reference#files-and-directories)). Browser sign-in
+and CLI device login are separate sessions. In automation, authenticate through
+the supported environment and pass explicit project and version options instead
+of relying on terminal selection.
+
+### axiom join
+
+Join the Axiom Cloud waitlist when you do not have a referral code.
+
+```text title="Usage"
+axiom join <EMAIL>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<EMAIL>` | email address | required | Address to add to the waitlist. |
+
+`join` only adds the address to the waitlist. The referral code itself is asked
+for once, by the first command that uses Axiom Cloud, or read from
+`AXIOM_REFERRAL_CODE`. Local commands work without joining.
+
+## Link Cloud projects
+
+### axiom project
+
+Manage Axiom Cloud projects and local Acore project packages.
+
+```text title="Usage"
+axiom project <COMMAND>
+```
+
+| Subcommand | Purpose |
+| --- | --- |
+| [`list`](#axiom-project-list) | List the Cloud projects you can access. |
+| [`create`](#axiom-project-create) | Create a Cloud project and link this directory to it. |
+| [`link`](#axiom-project-link) | Link this directory to a Cloud project. |
+| [`rotate-key`](#axiom-project-rotate-key) | Replace the project's active signing key. |
+| [`resolve`](#axiom-project-resolve) | Resolve the dependencies of a local Acore project. |
+| [`package`](#axiom-project-package) | Package a local Acore project. |
+
+Project operations need authentication, project membership and a reachable
+control plane. A directory link is stored in your CLI profile, not in the
+repository.
+
+### axiom project list
+
+List the Cloud projects you can access, by name and slug.
+
+```text title="Usage"
+axiom project list
+```
+
+No options other than `--help`.
+
+### axiom project create
+
+Create a Cloud project and link the current directory to it.
+
+```text title="Usage"
+axiom project create [OPTIONS]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--name` | text | prompted | Display name. |
+| `--slug` | slug | prompted, from the name | Lowercase project identifier used in release URLs, for example `payments-api`. Letters, numbers and single hyphens. |
+| `--description` | text | prompted, may be empty | Project description. |
+| `--path` | path | none | A `.axiom` artifact whose project ID suggests the slug. Otherwise the directory name is used. |
+
+In 0.149.1 the command always needs an interactive terminal, even when you pass
+every option: it fails without one or when `CI` is set. It prompts for any
+missing value, then links the current directory. In automation, create the
+project once interactively or in the Cloud Dashboard, then use
+`axiom project link --project-id`.
+
+```bash title="Terminal"
+axiom project create --name "Payments API" --slug payments-api
+```
+
+### axiom project link
+
+Link the current directory to a Cloud project, so `release` and other Cloud
+commands find it without `--project`.
+
+```text title="Usage"
+axiom project link [OPTIONS]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--project-id` | project ID or slug | interactive picker | Project to link. Required in non-interactive shells. |
+
+```bash title="Terminal"
+axiom project link --project-id payments-api
+```
+
+### axiom project rotate-key
+
+Replace the project's active signing key. Old public keys stay available, so
+earlier releases still verify.
+
+```text title="Usage"
+axiom project rotate-key --project <PROJECT>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--project` | slug | required | Project slug, for example `demo-app`. |
+
+### axiom project resolve
+
+Resolve the dependencies of a local Acore project and write a lock file. Use it
+for an Acore project that declares package dependencies in a `PklProject` file.
+
+```text title="Usage"
+axiom project resolve <DIR>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<DIR>` | directory | required | Directory that contains `PklProject`. |
+
+The command reads the `dependencies` URIs, selects the minimum compatible
+versions, fetches each package's metadata over the network and writes
+`PklProject.deps.json`. If metadata cannot be fetched, it prints a warning and
+records the dependency without checksum verification: review the lock file.
+
+### axiom project package
+
+Package a local Acore project.
+
+```text title="Usage"
+axiom project package <DIR>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<DIR>` | directory | required | Directory that contains `PklProject`. |
+
+<Callout type="warn" title="Limited in 0.149.1">
+  In this release the command checks that `PklProject` exists and prints a
+  success message, but it does not write a package archive or checksums.
+</Callout>
+
+## Install tools and manage the cache
+
+### axiom install
+
+Install the bundled language server, an intact `.axiomapp` application, or a
+compiler or extractor module.
+
+```text title="Usage"
+axiom install [OPTIONS] <PACKAGE>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<PACKAGE>` | `lsp-server`, a `.axiomapp` path, or a module name | required | What to install. |
+| `--module` | flag | off | Install a compiler or extractor module. Not accepted with `lsp-server`. |
+
+| Target | Result |
+| --- | --- |
+| `lsp-server` | Copies the CLI's own language server to `~/.axiom/bin/acore-lsp` (`acore-lsp.exe` on Windows), verifies its compiler and protocol metadata, and replaces an older copy atomically. No download, source checkout or Cloud login. |
+| `FILE.axiomapp` | Verifies the artifact and copies it, unchanged, into the local content-addressed application cache. |
+| `NAME --module` | Downloads an extractor into `~/.acore/bin/`. |
+
+<Callout type="warn" title="Extractor modules in 0.149.1">
+  Module installation of the FastAPI and Go extractors does not work in CLI
+  0.149.1: `axiom-fastapi` is not an accepted name, and the accepted names
+  download from a release URL that does not exist. Install the extractors
+  manually as shown in
+  [Install the Axiom CLI](/getting-started/installation#backend-extractors).
+  The CLI looks for them in `~/.acore/bin/`, or at the paths in
+  `AXIOM_FASTAPI_EXTRACTOR` and `AXIOM_GO_EXTRACTOR`.
+</Callout>
+
+The language server installer copies the current host's executable only; it
+cannot create a server for another OS or CPU. It does not edit editor settings
+or `PATH`. Run it again after you update the CLI, then restart the editor's
+language server. It is validated on Apple Silicon macOS; Linux, Windows and
+Intel macOS acceptance is pending.
+
+```bash title="Terminal"
+axiom install lsp-server
+~/.axiom/bin/acore-lsp --version-json
+axiom install dist/my-app-web.axiomapp
+```
+
+### axiom cache
+
+Inspect or clear the CLI profile's local cache. These commands do not clear
+Flutter application or browser session caches.
+
+```text title="Usage"
+axiom cache <COMMAND>
+```
+
+| Subcommand | Purpose |
+| --- | --- |
+| [`ls`](#axiom-cache-ls) | Browse cache entries in a terminal interface. |
+| [`get`](#axiom-cache-get) | Print one entry. |
+| [`clear`](#axiom-cache-clear) | Delete every entry. |
+
+The cache lives in the `cache/` folder of the CLI profile directory. Cached
+payloads can contain application data: redact them before you paste output into
+an issue or support channel.
+
+### axiom cache ls
+
+List cache entries in a terminal interface. Use `j`/`k` or the arrow keys to
+move, `x` to delete the selected entry, and `q` or `Esc` to exit.
+
+```text title="Usage"
+axiom cache ls
+```
+
+No options other than `--help`.
+
+### axiom cache get
+
+Print one cache entry: timestamps, TTL, headers, payload size, and the JSON or
+byte payload.
+
+```text title="Usage"
+axiom cache get --key <KEY>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--key` | text | required | Cache key to print. |
+
+### axiom cache clear
+
+Delete every entry in the CLI cache and print how many were removed.
+
+```text title="Usage"
+axiom cache clear
+```
+
+No options other than `--help`.
+
+## Editor services
+
+### axiom lsp
+
+Run the Acore language server over stdin and stdout, without Cloud access. Point
+an editor at `axiom lsp`, or install a standalone copy with
+[`axiom install lsp-server`](#axiom-install).
+
+```text title="Usage"
+axiom lsp [OPTIONS]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--version` | flag | off | Print the server version and protocol. |
+| `--version-json` | flag | off | Print version metadata as JSON. Conflicts with `--version`. |
+
+```bash title="Terminal"
+axiom lsp --version
+```
+
+```text title="Expected output"
+acore-lsp 0.1.4 (axiom-editor/v1)
+```
+
+`--version-json` prints `compilerVersion`, `protocolVersion` and
+`serverVersion` (for example `acore/0.1.4 (CLI 0.149.1)`). The installed
+`acore-lsp` executable accepts the same two flags.
+
+No Acore editor extension is published in an extension registry yet. Where you
+use the Acore editor adapters, configure them with an absolute path (`~` is not a
+portable editor setting; on Windows include `.exe` and use forward slashes or
+escaped backslashes):
+
+| Editor | Setting |
+| --- | --- |
+| VS Code | `axiom.server.path`: the installed `acore-lsp` path. Or set `axiom.server.source` to `cli` and `axiom.binaryPath` to the absolute `axiom` executable to run `axiom lsp`. CLI tasks always use `axiom.binaryPath`. Restricted Mode keeps the bundled server and disables custom executables. |
+| Zed | `lsp.acore-lsp.binary.path`: the installed `acore-lsp` path. Or use the absolute `axiom` path with `"arguments": ["lsp"]`; the CLI answers Zed's `--version-json` probe. |
+
+```json title="Zed settings excerpt"
+{
+  "lsp": {
+    "acore-lsp": {
+      "binary": { "path": "/path/to/acore-lsp" }
+    }
+  }
+}
+```
+
+### axiom editor
+
+Offline saved-source checking and editor compatibility metadata. Editor
+integrations call these commands; you can also run them to reproduce what an
+editor reports.
+
+```text title="Usage"
+axiom editor <COMMAND>
+```
+
+| Subcommand | Purpose |
+| --- | --- |
+| [`info`](#axiom-editor-info) | Show the saved-check contract this CLI supports. |
+| [`check`](#axiom-editor-check) | Check saved source and manifests statically. |
+| [`report`](#axiom-editor-report) | Print a read-only private-input and graph report. |
+| [`refresh-extraction`](#axiom-editor-refresh-extraction) | Run declared native extractors and refresh the cache. |
+| [`workflows`](#axiom-editor-workflows) | Describe the explicit editor tasks this CLI accepts. |
+| [`validate-workflow`](#axiom-editor-validate-workflow) | Validate a typed workflow request without running it. |
+
+`check`, `report` and `refresh-extraction` share these inputs:
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--entry` | path | required | Saved entry file to check. |
+| `--root` | directory | required | Owning project root. |
+| `--kind` | `backend`, `frontend`, `database`, `config`, `package`, `extension`, `detached` | required | Kind of source. |
+| `--target` | target | none | Frontend target. Repeat for several targets. Not on `refresh-extraction`. |
+| `--variant` | name | none | Contract variant. |
+| `--json` | flag | off | Print JSON. |
+
+### axiom editor info
+
+Print the CLI version, editor protocol, saved-check format and compiler
+identity. Editors use it to confirm compatibility.
+
+```text title="Usage"
+axiom editor info [OPTIONS]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--json` | flag | off | Print an `axiom-editor-cli/v1` JSON object. |
+
+```text title="Expected output"
+Axiom 0.149.1 · axiom-editor/v1 · axiom-editor-check/v1
+```
+
+### axiom editor check
+
+Check saved source and manifests statically with the owning compiler. It writes
+no artifacts and exits non-zero when the check fails.
+
+```text title="Usage"
+axiom editor check [OPTIONS] --entry <ENTRY> --root <ROOT> --kind <KIND>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--entry`, `--root`, `--kind`, `--target`, `--variant`, `--json` | see [shared inputs](#axiom-editor) | | Select the saved source. `--json` prints an `axiom-editor-check/v1` report. |
+
+```bash title="Terminal"
+axiom editor check --entry main.acore --root . --kind backend
+```
+
+```text title="Expected output"
+Saved static check: main.acore · backend/v1 · default
+```
+
+### axiom editor report
+
+Print a read-only report of saved private inputs and the semantic graph. No
+provider is contacted. The output is `axiom-editor-report/v1` JSON.
+
+```text title="Usage"
+axiom editor report [OPTIONS] --entry <ENTRY> --root <ROOT> --kind <KIND>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--entry`, `--root`, `--kind`, `--target`, `--variant`, `--json` | see [shared inputs](#axiom-editor) | | Select the saved source. The report is JSON with or without `--json`. |
+
+### axiom editor refresh-extraction
+
+Run the declared native extractors explicitly and store the fenced extraction
+cache, so later saved checks can read extracted interfaces.
+
+```text title="Usage"
+axiom editor refresh-extraction [OPTIONS] --entry <ENTRY> --root <ROOT> --kind <KIND>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--entry`, `--root`, `--kind`, `--variant`, `--json` | see [shared inputs](#axiom-editor) | | Select the saved source. |
+
+This command runs extractor code, unlike the other `editor` commands.
+
+### axiom editor workflows
+
+Describe the explicit editor tasks that this CLI accepts, generated from its real
+argument definitions: each workflow's ID, command and typed inputs.
+
+```text title="Usage"
+axiom editor workflows [OPTIONS]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--json` | flag | off | Accepted for symmetry. The catalog is always `axiom-editor-workflows/v1` JSON. |
+
+### axiom editor validate-workflow
+
+Validate a typed workflow request against the catalog and parse the command line
+it would run, without executing it.
+
+```text title="Usage"
+axiom editor validate-workflow --request <REQUEST> --root <ROOT>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--request` | JSON text | required | Request object with `workflow` and `inputs`, up to 64 KiB. Unknown inputs are rejected. |
+| `--root` | directory | required | Owning project root. Relative paths in inputs resolve against it. |
+
+```bash title="Terminal"
+axiom editor validate-workflow --root . \
+  --request '{"workflow":"check","inputs":{"file":"axiom.acore","json":true}}'
+```
+
+The result is `axiom-editor-workflow-validation/v1` JSON with the resolved
+`argv` and `"execution": false`.
+
+## Explore Acore
+
+### axiom repl
+
+Start the Acore REPL. Type an expression to evaluate it, and `exit` or `quit` to
+leave.
+
+```text title="Usage"
+axiom repl
+```
+
+No options other than `--help`.
+
+### axiom eval
+
+Evaluate an Acore file and print its output. Use it to see the rendered value of
+any Acore module, contract or not.
+
+```text title="Usage"
+axiom eval [OPTIONS] <FILE>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<FILE>` | path | required | Acore file to evaluate. |
+| `-f, --format` | `pcf`, `json`, `yaml`, `md` | `pcf` | Output format. `pcf` is Acore object notation; `md` (or `markdown`) renders API documentation. Unknown values fall back to `pcf`. |
+| `-v, --variant` | name | none | Variant to select before rendering. |
+
+```bash title="Terminal"
+axiom eval main.acore --format json
+```

@@ -1,105 +1,304 @@
 ---
-title: Installation
-description: Install a verified CLI, check your environment, and add the tools your application needs.
+title: Install the Axiom CLI
+description: Install Axiom CLI 0.149.1, check your environment with axiom doctor and axiom onboard, and add the host, extractor or editor support your path needs.
 pageType: guide
-testedWith: Axiom CLI 0.149.0 on macOS arm64; web UI Host 0.6.12
 ---
 
-Install the **Axiom CLI**, then add an extractor or UI host when your chosen
-path needs one. Local authoring and testing do not require a Cloud account.
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+Install the **Axiom CLI** (`axiom`), check your environment, then add only the
+tools your path needs. Local authoring, building and testing do not need a
+Cloud account.
+
+## Supported platforms
+
+| Platform | CLI 0.149.1 status | Install with |
+| --- | --- | --- |
+| macOS arm64 (Apple silicon) | **Alpha** | Installer script, Homebrew or manual download |
+| Linux amd64 and arm64, glibc 2.36 or newer | **Experimental** | Installer script |
+| macOS on Intel, Windows, musl Linux (Alpine) | No build | Not available |
+
+Debian 12 and Ubuntu 24.04 or newer meet the glibc requirement. The
+walkthroughs in these docs are checked on macOS arm64. See the
+[support matrix](/introduction/support-matrix) for the other tools' platforms.
 
 ## 1. Install the CLI
 
-The 0.149.0 CLI release provides a **macOS arm64** archive. Check the
-[release assets](https://github.com/AxiomCore/AxiomCore/releases/tag/cli-v0.149.0)
-before choosing a platform. Linux downloads and a native Windows installer are
-not included in this release. WSL2 still needs a compatible Linux executable.
+<Tabs items={['Installer script', 'Homebrew', 'Manual download']}>
+<Tab value="Installer script">
 
-On an Apple silicon Mac, download and verify the archive:
+```bash title="Terminal"
+curl -fsSL https://axiomcore.dev/install | bash
+```
+
+The script needs `curl`, `uname` and `python3`. It:
+
+1. Detects your OS and CPU, and stops on an unsupported platform.
+2. Selects the newest CLI release that has an archive for your platform.
+3. Checks the archive's SHA-256 digest against the published release.
+4. Installs `axiom` into `/usr/local/bin`, asking for `sudo` if that
+   directory is not writable.
+5. On Linux, also installs the bundled PostgreSQL 17 validator into
+   `~/.axiom/engines/postgres/17`.
+
+Set these variables for the `bash` process to change the defaults:
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `INSTALL_DIR` | `/usr/local/bin` | Install directory. It must already exist. |
+| `VERSION` | Newest release | Exact version: `0.149.1`, `v0.149.1` or `cli-v0.149.1` |
+
+```bash title="Terminal: pinned version, no sudo"
+mkdir -p "$HOME/.local/bin"
+curl -fsSL https://axiomcore.dev/install | VERSION=0.149.1 INSTALL_DIR="$HOME/.local/bin" bash
+```
+
+If the install directory is not on your `PATH`, the script prints the
+`export PATH=...` line to add to your shell profile.
+
+</Tab>
+<Tab value="Homebrew">
+
+The Homebrew formula supports macOS arm64 only and installs 0.149.1.
+
+```bash title="Terminal"
+brew install AxiomCore/tap/axiom
+```
+
+</Tab>
+<Tab value="Manual download">
+
+Download and verify the macOS arm64 archive:
 
 ```bash title="Terminal"
 mkdir axiom-install
 cd axiom-install
-curl -fL https://github.com/AxiomCore/AxiomCore/releases/download/cli-v0.149.0/axiom-macos-arm64.tar.gz -o axiom.tar.gz
-echo '229cf5b0e6d3ff2b1dfbe7ed8138a4864eba7ddd622d9a7e97f70a1d8578a8c6  axiom.tar.gz' | shasum -a 256 -c -
+curl -fL https://github.com/AxiomCore/AxiomCore/releases/download/cli-v0.149.1/axiom-macos-arm64.tar.gz -o axiom.tar.gz
+echo '6747941bb3ff5917baac691b8d26391e34ad31d8c1fbffd688b358eb3463e50d  axiom.tar.gz' | shasum -a 256 -c -
 tar -xzf axiom.tar.gz
 mkdir -p "$HOME/.local/bin"
 install -m 755 axiom "$HOME/.local/bin/axiom"
 export PATH="$HOME/.local/bin:$PATH"
+```
+
+Add the `export PATH` line to your shell profile, then delete the
+`axiom-install` directory. On Linux, use the installer script: it also places
+the bundled PostgreSQL validator.
+
+| Archive | SHA-256 |
+| --- | --- |
+| `axiom-macos-arm64.tar.gz` | `6747941bb3ff5917baac691b8d26391e34ad31d8c1fbffd688b358eb3463e50d` |
+| `axiom-linux-amd64.tar.gz` | `3577ebc92722269ce7ddbc9770b9dfa4d62b99d63409d5af3ce02ef496ac193f` |
+| `axiom-linux-arm64.tar.gz` | `09928a0c3169d94faeaa9c1dc79d60bb22399358de33c71b64861ea32064ad20` |
+
+</Tab>
+</Tabs>
+
+Confirm the installed version:
+
+```bash title="Terminal"
 axiom --version
 ```
 
 ```text title="Expected output"
-axiom 0.149.0
+axiom 0.149.1
 ```
-
-Add the `PATH` line to your shell configuration for future terminals. Remove
-the temporary `axiom-install` directory after installation.
-
-Homebrew is another macOS arm64 installation path:
-
-```bash title="Terminal"
-brew install AxiomCore/tap/axiom
-axiom --version
-```
-
-The general installer is `curl -fsSL https://axiomcore.dev/install | bash`.
-Its current channel selection uses older release-tag naming and may select an
-older CLI. Use the verified release above for database quickstarts, which
-require 0.149.0. The installer defaults to `/usr/local/bin` and may request sudo;
-`INSTALL_DIR` selects another directory.
-
-<span id="4-start-with-an-explicit-plan" />
 
 ## 2. Check your environment
 
+Run both commands from your application's root directory.
+
+### `axiom doctor`
+
+`axiom doctor` reports prerequisites without writing files, logging in,
+pulling contracts or showing credentials.
+
 ```bash title="Your application directory"
 axiom doctor
-axiom onboard
+axiom doctor --json --strict > axiom-doctor.json
 ```
 
-`doctor` reports prerequisites without writing files, logging in, pulling
-contracts, or displaying credentials. `onboard` detects the application and
-prints a plan. For a supported backend, `onboard --apply` can create source;
-it does not upload or publish a release.
+Each check reports **PASS**, **WARN** or **FAIL**, a detail line and, when
+available, a fix.
 
-Use `axiom doctor --json --strict` for a machine-readable CI or support report.
+| Check | What it looks at |
+| --- | --- |
+| `cli` | The running CLI version |
+| `control_plane` | The active Cloud endpoint, `https://api.axiomcore.dev` by default |
+| `authentication` | Whether a Cloud session exists, without revealing it |
+| `contract_source` | `axiom.acore` in this directory |
+| `artifact` | Whether `backend.axiom` or `axiom.axiom` is readable |
+| `dependencies` | Whether `AxiomDeps.toml` is valid |
+| `project_link` | Whether this directory is linked to a Cloud project |
+| `python`, `go`, `node`, `npm`, `flutter` | The toolchain, only when the project needs it: Python for `main.py`, `app.py`, `requirements.txt` or `pyproject.toml`; Go for `go.mod` or `main.go`; Node.js and npm for `package.json` or an ATMX web or React client; Flutter for `pubspec.yaml` or a Flutter client |
 
-<span id="3-install-backend-extractors" />
+`--json` prints a stable report with `schema_version`, `control_plane`,
+`project_root` and `checks` (each with `id`, `status`, `summary`, `detail` and
+`fix`). `--strict` exits non-zero when any check fails; warnings do not fail.
+The report never contains tokens, keys or contract contents, but
+`project_root` is a local path, so review it before you post the report
+publicly.
+
+<span id="4-start-with-an-explicit-plan" />
+
+### `axiom onboard`
+
+`axiom onboard` detects whether the directory holds a backend, a frontend or
+both, and prints the shortest supported next step. It writes nothing unless you
+pass `--apply`, and it pulls a contract only when you pass `--contract`.
+
+| Goal | Command |
+| --- | --- |
+| Print a plan for this directory | `axiom onboard` |
+| Create `axiom.acore` for a detected FastAPI or Go backend | `axiom onboard --role backend --apply` |
+| Name the FastAPI entrypoint explicitly | `axiom onboard --role backend --entrypoint main.py:app --module axiom-fastapi --apply` |
+| Plan a client integration | `axiom onboard --role frontend --framework atmx-web` |
+| Pull a contract and generate a client in one step | `axiom onboard --role frontend --contract organization/project --framework atmx-web` |
+
+Without `--role`, `axiom.acore`, `main.py`, `app.py`, `pyproject.toml`,
+`go.mod` or `main.go` means backend, and `package.json`, `pubspec.yaml` or
+`AxiomDeps.toml` means frontend; both means `fullstack`. `main.py`, `app.py` (FastAPI) and `main.go` (Go) are detected as
+entrypoints. `pubspec.yaml` selects `flutter`, a React dependency selects
+`atmx-react`, and other `package.json` projects use `atmx-web`. `--framework`
+also accepts `dart`.
+
+`--apply` only creates `axiom.acore` and never overwrites an existing one.
+Releasing is always a separate, explicit step:
+
+```bash title="Backend directory"
+axiom build
+axiom login
+axiom build --release --out backend.axiom
+```
 
 ## 3. Add the tools your path needs
 
-| Path | Setup |
+| Path | Add |
 | --- | --- |
-| Acore web UI | `axiom ui host install --target web --version 0.6.12 --non-interactive` |
-| Existing FastAPI backend | Install its Python dependencies, then `axiom install axiom-fastapi --module` |
-| Existing Go backend | `axiom install axiom-go-extractor --module` |
-| Acore backend or SQLite example | No extractor is required |
+| Acore backend or SQLite database | Nothing else |
+| Acore UI in a browser | Web UI host 0.6.12 |
+| Existing FastAPI backend | The FastAPI extractor, plus your Python dependencies to run the service |
+| Existing Go backend | A Go toolchain and the Go extractor |
+| Web or React client | `atmx-cli` 0.146.7 as a project dev dependency; see [Web](/sdks/web) |
+| Flutter or Dart client | See [Flutter and Dart](/sdks/flutter) |
 
-The signed web host must match the CLI's supported capabilities. Host 0.6.12
-was checked with CLI 0.149.0. An older installed host can fail even when both
-commands are installed. See [versioning](/reference/versioning-and-deprecation)
-for compiler, host, SDK, and editor compatibility.
+### Web UI host
 
-Extractors install separately under `~/.axiom/plugins/`. FastAPI extraction
-imports the application module, so keep import-time initialization safe.
-Read the [extraction boundary](/core-concepts/ghost-introspection) before CI use.
+```bash title="Terminal"
+axiom ui host install --target web --version 0.6.12 --non-interactive
+```
 
+```text title="Expected output"
+Verified and installed Axiom UI Host 0.6.12 (browser) for web.
+```
+
+Always pass `--target web`: `axiom ui host` commands default to `ios`. Check
+the installed host with `axiom ui host status --target web`. The signed host
+must match the CLI's capabilities, and an older host can fail even when both
+are installed. See [Versioning and deprecation](/reference/versioning-and-deprecation)
+for compiler, host, SDK and editor compatibility.
+
+<span id="3-install-backend-extractors" />
+
+### Backend extractors
+
+An extractor reads a FastAPI or Go service and produces its contract. FastAPI
+extraction imports your application module, so keep import-time code free of
+migrations, worker startup and production connections. Read
+[How extraction works](/guides/backend-extraction) before you use it in CI.
+
+The CLI looks for extractors at `~/.acore/bin/axiom-fastapi-extractor` and
+`~/.acore/bin/axiom-go-extractor`, or at the paths in `AXIOM_FASTAPI_EXTRACTOR`
+and `AXIOM_GO_EXTRACTOR`. Published builds are macOS arm64 only. In CLI 0.149.1,
+`axiom install <extractor> --module` does not find these builds, so install
+them directly:
+
+<Tabs items={['FastAPI extractor 0.1.4', 'Go extractor 2026.10.14.2']}>
+<Tab value="FastAPI extractor 0.1.4">
+
+```bash title="Terminal"
+mkdir -p "$HOME/.acore/bin"
+curl -fL https://github.com/AxiomCore/AxiomCore/releases/download/extractor-fastapi-v0.1.4/axiom-fastapi-macos-arm64 -o "$HOME/.acore/bin/axiom-fastapi-extractor"
+echo "8f0d08c831821c7a9f89ee6b11694fe64f0d68abc7c4169c3f8157929cd3e0f1  $HOME/.acore/bin/axiom-fastapi-extractor" | shasum -a 256 -c -
+chmod 755 "$HOME/.acore/bin/axiom-fastapi-extractor"
+```
+
+</Tab>
+<Tab value="Go extractor 2026.10.14.2">
+
+```bash title="Terminal"
+mkdir -p "$HOME/.acore/bin"
+curl -fL https://github.com/AxiomCore/AxiomCore/releases/download/extractor-go-2026.10.14.2/axiom-go-extractor-macos-arm64 -o "$HOME/.acore/bin/axiom-go-extractor"
+echo "a38b7c708cba319eefc07256fc8aefef95f4446a0d18b368c932b0f9f16158df  $HOME/.acore/bin/axiom-go-extractor" | shasum -a 256 -c -
+chmod 755 "$HOME/.acore/bin/axiom-go-extractor"
+```
+
+</Tab>
+</Tabs>
+
+A build that needs a missing extractor fails with
+`MISSING_EXTRACTOR: fastapi-extractor` or `MISSING_EXTRACTOR: go-extractor`.
+
+## 4. Set up your editor
+
+The CLI includes the Acore language server, `acore-lsp`. It runs offline over
+stdin and stdout.
+
+```bash title="Terminal"
+axiom lsp --version
+axiom install lsp-server
+```
+
+```text title="Expected output"
+acore-lsp 0.1.4 (axiom-editor/v1)
+Installed Acore LSP: <home>/.axiom/bin/acore-lsp
+Use this absolute path in your editor's language-server binary setting.
+Version metadata: <home>/.axiom/bin/acore-lsp --version-json
+Run `axiom install lsp-server` again after updating the CLI to update this server.
+```
+
+`axiom install lsp-server` copies a self-contained server to
+`~/.axiom/bin/acore-lsp`. It does not change editor settings or `PATH`. Point an
+editor that can launch a stdio language server at the printed path, or have it
+run `axiom lsp`. Run `axiom install lsp-server` again after you update the CLI.
+A standalone `acore-lsp` 0.1.4 build for macOS arm64 is also published. No
+Acore editor extension is published in the VS Code Marketplace, Open VSX or
+the Zed extension registry yet.
+
+<span id="4-start-locally-or-connect-to-cloud" />
 <span id="2-join-the-private-alpha-for-cloud-access" />
 
-## 4. Start locally or connect to Cloud
+## 5. Connect to Axiom Cloud (optional)
 
-Run the [first app](/getting-started/quickstart), or choose the
-[backend](/getting-started/quickstart-backend),
-[frontend](/getting-started/quickstart-frontend), or
-[database](/getting-started/quickstart-database) guide.
+Local commands such as `check`, `build`, `run`, `test`, `inspect`, `database`
+and `ui` work without an account. Axiom Cloud is in private alpha. The first
+command that uses Cloud, such as `axiom login`, `axiom build --release` or
+`axiom pull organization/project`, asks once for a referral code to register
+this machine. In CI, set `AXIOM_REFERRAL_CODE`; without it the command fails
+instead of prompting.
 
-Cloud operations and release publishing require an authorized machine:
+If you do not have a code, join the waitlist:
 
-```bash title="Optional Cloud access"
+```bash title="Terminal"
 axiom join you@yourcompany.com
 ```
 
-The referral flow sends a code by email; a subsequent Cloud command uses it
-to authorize the machine. Local authoring commands remain available without
-joining the private alpha.
+## Troubleshooting
+
+| Symptom | Fix |
+| --- | --- |
+| `No verified axiom-<platform>.tar.gz exists` | No build exists for your platform, for example an Intel Mac. |
+| `Unsupported OS` | Native Windows has no build. |
+| `Linux CLI packages require glibc 2.36 or newer` | Use Debian 12, Ubuntu 24.04 or another glibc 2.36+ distribution. |
+| `python3 is required but not installed` | Install Python 3; the installer uses it to verify the archive. |
+| `axiom: command not found` | Add the install directory to `PATH`. |
+| `MISSING_EXTRACTOR: ...` | Install the extractor as shown above, or set its path variable. |
+| UI host is missing or incompatible | Run the host install command with `--target web --version 0.6.12`. |
+| Unexpected referral code prompt | The command uses Cloud. Use a local command, or get a code with `axiom join`. |
+
+## Next steps
+
+- [Run your first app](/getting-started/quickstart)
+- [Build your first API](/getting-started/quickstart-backend)
+- [Build your first UI](/getting-started/quickstart-frontend)
+- [Create your first database](/getting-started/quickstart-database)

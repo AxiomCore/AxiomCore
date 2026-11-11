@@ -1,0 +1,604 @@
+---
+title: Backend declarations
+description: Reference for the Acore declarations that define backend models, entities, endpoints, actions, typed failures, storage mappings and route groups.
+pageType: reference
+---
+
+<span id="existing-contracts" />
+<span id="compatibility-and-corrected-examples" />
+<span id="execution-boundaries" />
+<span id="m1-bounded-business-logic" />
+<span id="bounded-business-logic" />
+<span id="endpoint-type-inference" />
+<span id="run-and-verify" />
+
+This page lists the declarations a backend `.acore` file can contain, with
+their arguments and rules, as accepted by Axiom CLI 0.149.1. Print the complete
+machine-readable catalog, including every argument and enum value, with
+`axiom explain --schema`.
+
+Declarations describe data. They do not execute handlers or make requests
+while the compiler evaluates them. Some compile into the public `.axiom`
+contract; others compile into the private server plan (`.server.json`) that
+only the server runtime reads.
+
+## Project manifest
+
+Put an `AxiomDeps.toml` beside the source or in a parent directory:
+
+```toml title="AxiomDeps.toml"
+type = "backend"
+targets = ["server"]
+audiences = ["mobile", "web"]
+```
+
+| Key | Meaning |
+| --- | --- |
+| `type` | `"backend"` selects backend syntax for this directory and its subdirectories. A nearer manifest starts a new scope. |
+| `audiences` | Vocabulary for typed `Audience.name` references. Must be sorted and unique. Audiences of contract dependencies are added automatically. Parent manifests are not merged. |
+| `targets` | Application target set, sorted and unique. Required when the manifest declares packages or extensions. The examples use `["server"]`. |
+
+The legacy profile header and the `format` manifest discriminator remain
+readable for existing projects; new source files need neither. Imported
+generated extractor modules keep their own format. Unknown audiences and
+missing or invalid manifests are errors.
+
+Every backend source starts with a project and at least one variant:
+
+```acore title="main.acore"
+project(id: "docs.hello", version: "1.0.0")
+variant default(include: ["*"])
+```
+
+`variant name(include:, exclude:, includeModels:, excludeModels:, cache:)`
+selects endpoints and models. Commands take `--variant NAME`, for example
+`axiom check main.acore --variant mobile`; the default is `default`.
+
+<span id="a-complete-contract" />
+
+## Complete example
+
+The `managed-title` example normalizes a title in Acore, rejects blank input
+with a declared 422 failure, and returns a value. It does not persist a task;
+for a real database write, use the [task app](/examples/task-app).
+
+```acore title="managed-title/main.acore"
+project(id: "managed-quickstart", version: "1")
+variant default(include: ["*"])
+model Create { title: String(minLength: 1, maxLength: 200) }
+model Task { id: Int32 title: String }
+model Problem { message: String }
+failure invalidTitle(payload: Models.Problem, status: 422)
+pure fn normalizeTitle(value: String): String = value.trim()
+
+action create(kind: ActionKind.command, input: Models.Create, output: Models.Task) {
+  errors(Failures.invalidTitle)
+  managed {
+    let title = normalizeTitle(Input.title)
+    guard title.length > 0 else fail Failures.invalidTitle({message: "Title is required"})
+    return {id: 1, title: title}
+  }
+}
+endpoint create(method: POST, path: "/tasks") {
+  request { body("title", type: String) }
+  handle(action: Actions.create, input: {title: Input.body.title})
+  response(type: Models.Task)
+  errors(Failures.invalidTitle)
+  exposeFailure(failure: Failures.invalidTitle, fields: [.message], audiences: ["web"])
+}
+```
+
+The pure function trims the title. The managed action fails with the declared
+422 failure when the trimmed value is empty. The endpoint exposes only the
+failure's `message` field to the `web` audience. To run it:
+
+```bash title="Terminal"
+git clone --depth 1 https://github.com/AxiomCore/AxiomCore.git
+cd AxiomCore/examples/documentation/managed-title
+axiom check main.acore
+axiom build main.acore --out backend.axiom
+axiom server deployment backend.axiom backend.server.json --output deployment.json
+axiom run main.acore --deployment deployment.json --port 8085
+```
+
+In a second terminal, send a JSON string body:
+
+```bash title="Terminal 2"
+curl -fsS http://127.0.0.1:8085/tasks -H 'Content-Type: application/json' -d '"  Read the guide  "'
+```
+
+The response contains ID `1` and the trimmed title. A whitespace-only string
+returns the declared 422 failure. The endpoint is public and has no provider
+grants. Stop the server with Ctrl-C. Persisting the task would need a declared
+storage resource and a reviewed operation grant.
+
+## Where each declaration is documented
+
+| Declarations | Compiles into | Reference |
+| --- | --- | --- |
+| `project`, `variant`, `model`, `entity`, `projection` | Public contract | This page |
+| `endpoint`, `group`, `request`, `response`, `errors`, `cache`, `retry`, `cacheIdentity`, `invalidates` | Public contract | This page |
+| `action`, `handle`, `failure`, `exposeFailure`, `failureStatus`, `resource`, `operation`, `storage`, `service` | Private plan | This page |
+| `validator`, `check`, `validation`, `codec`, `pure fn` | Private plan | [Validation](/acore-language/validation), [Managed logic](/acore-language/managed-language) |
+| `guard`, `permission`, `require`, `serverPolicy`, `serverDefaults`, `rateLimit`, `idempotency`, `cors` | Private plan | [Identity and policies](/backend/policies) |
+| `event`, `publisher`, `consumer`, `job`, `schedule`, `webhook` | Private plan | [Events, jobs and webhooks](/backend/events-and-jobs) |
+| `serverCache`, `batchOperation`, `batchPolicy`, `outbound`, `multipart`, `streamPolicy`, `serverTelemetry` | Private plan | [Integrations and transports](/backend/integrations) |
+| `secret`, `configuration` | Private plan | [Secrets at runtime](/backend/runtime-secrets) |
+| `interceptor`, `intercept`, `native`, `sandbox`, `effect` | Private plan | [Execution plan](/backend/execution) |
+| `streaming`, `SseStreamDef`, `WebSocketDef` | Public contract | [Streams and WebSockets](/acore-language/streaming-and-websockets) |
+| `security`, `domain`, `relationship`, `invariant` | Public contract | [Domain and security models](/acore-language/domain-and-security-models) |
+| `mock`, `testConfig` | Public contract | [Mocks](/testing/mocks), [Contract tests](/testing/contracts) |
+
+Unknown declarations, unknown arguments, repeated singleton declarations and
+missing required arguments are compile errors. Classes such as `MockConfig`,
+`TestSuite` and `SecurityPolicy` take named arguments; their JSON shapes,
+ordered mock mutations, test assertions and enforcement boundaries are
+unchanged.
+
+<span id="types-and-collections" />
+
+## Models and types
+
+Models use a `field: Type` form. Constructor arguments add constraints:
+
+```acore title="Acore excerpt"
+model Project {
+  id: String
+  name: String(minLength: 1, maxLength: 72)
+  progress: Int64(min: 0, max: 100)
+}
+model ProjectIndex {
+  names: List<String>
+  counts: Map<String, Int64>
+  groupedNames: Map<String, List<String>>
+}
+```
+
+| Type | Meaning |
+| --- | --- |
+| `String`, `Bool`, `Bytes`, `DateTime`, `Json`, `Void` | Scalars, untyped JSON, and no value |
+| `Int32`, `Int64`, `Float32`, `Float64` | Numbers; `Int64` keeps exact JSON values |
+| `List<T>` | Items of one type |
+| `Map<K, V>` | Key and value types |
+| `Optional<T>` | A field or response that may be omitted |
+| `Field(type:, optional:, validate:, doc:)` | Explicit field form |
+
+`Optional<T>` makes a field omittable. A field that must be present but may be
+JSON `null` uses an explicit nullable rule:
+
+```acore title="Acore excerpt"
+model ProjectDetails {
+  subtitle: Optional<String>
+  description: Field(type: String, validate: {
+    type: "nullable", inner: {type: "string"}
+  })
+}
+```
+
+`Optional<T>` is allowed only for a field or a response, with one type, so
+`List<Optional<String>>` is rejected. Use brackets for collection values
+(`[1, 2]`) and angle brackets for collection types (`List<Int32>`).
+
+`derive model Name(schema:, table:, fields:)` derives a model from a table in a
+[database contract](/database/contracts), mapping API fields to columns, and
+accepts `also entity`. Regenerate an explicit copy after schema changes.
+
+References use explicit namespaces such as `Models.Project`, `Entities.Task`,
+`Projections.taskPublic`, `Actions.create`, `Failures.invalidTitle`,
+`Resources.tasks` and `Routes.upload`. For names with punctuation, use a quoted
+declaration and an indexed reference, for example
+`Models["treasury.outbound_transfer"]` or `Audience["workspace-member"]`.
+
+<span id="entities-fields-and-audiences" />
+
+## Entities and projections
+
+Add `also entity` when a model and its domain entity share a shape:
+
+```acore title="Acore excerpt"
+model Task {
+  id: String
+  title: String(minLength: 1, maxLength: 10)
+  completed: Bool
+} also entity
+
+projection taskUpdate(
+  entity: Entities.Task,
+  fields: [.title, .completed],
+  audience: Audience.mobile
+)
+```
+
+- `also entity` is equivalent to `entity task(model: Models.Task)`. The entity
+  is referenced as `Entities.Task`, matching the model's case. The lower camel
+  case form (`Entities.task`, `Entities.httpTask`) remains valid, and compiled
+  entity keys do not change.
+- Write an explicit `entity name(model:, key: [...], doc:)` when the name,
+  identity key or documentation differs. Declaring both forms with the same
+  entity name is an error.
+- An entity needs an `id` or `uuid` field, or an explicit `key:`.
+- `projection name(entity:, fields:, audience:, doc:)` selects fields with
+  relative `.field` references. Fields resolve after imports and model
+  overrides; misspelled, missing and duplicate fields are errors.
+- Editors complete, navigate and rename entity fields, including models from
+  amended files.
+- `Audience.mobile` compiles to the string `"mobile"`. Audience is exposure
+  metadata; it grants no request authorization. Strings remain accepted for
+  existing code.
+
+## Endpoints
+
+```acore title="Acore excerpt"
+endpoint listProjects(method: GET, path: "/projects") {
+  response(type: List<Models.Project>)
+  cache(strategy: CacheStrategy.cacheFirst, ttl: 2m)
+  errors("projects_unavailable")
+}
+```
+
+`endpoint name(method:, path:, doc:)` declares one operation. The declaration
+name (`listProjects`) is the public operation name. Endpoint IDs are assigned
+by the compiler; do not repeat a `name` or assign an `id`. Methods are `GET`,
+`POST`, `PUT`, `DELETE`, `PATCH`, `OPTIONS`, `HEAD` and `WS`.
+
+| Inside an endpoint | Arguments and defaults |
+| --- | --- |
+| `request(projection:, mediaType:) { ... }` | Parameters received; see below. `mediaType` defaults to `application/json`. |
+| `handle(action:, input:)` | Runs an action. `input` maps request values, for example `{id: Input.path.id}`. |
+| `response(type:, projection:, optional:, status:, statuses:, mediaType:)` | Success body. `type` can be omitted when `handle` names an action; the action's output is used. |
+| `responseHeader(name:, type:, optional:)` | Typed success header |
+| `responseCookie(name:, type:, optional:, secure:, httpOnly:, sameSite:)` | Typed cookie; `sameSite` is `CookieSameSite.strict`, `lax` or `none` |
+| `errors(...)` | Declared failures, or `errors(infer)` to copy the handled action's declared failures |
+| `exposeFailure(failure:, fields:, audiences:)` | Public fields of an action failure |
+| `cache(strategy:, ttl:)` | Client cache policy |
+| `retry(attempts: 3, onStatus: [502, 503, 504], onTimeout: true, backoff: Exponential())` | Client retry policy, shown with defaults |
+| `cacheIdentity(identity)`, `invalidates(...identities)` | Client cache identity and invalidation |
+| `require`, `rateLimit`, `idempotency`, `server(policy:)` | Server policies; see [Identity and policies](/backend/policies) |
+| `streaming(...)`, `intercept(...)` | Streams and native interceptors |
+
+Response rules:
+
+- `status:` sets one success status. `statuses:` allows up to sixteen
+  alternatives that share the response type. Bodyless `204` and `205`
+  require `Void`.
+- A `HEAD` endpoint never sends a body, so an endpoint bound to an action needs
+  `response(type: Void)`.
+- `mediaType` defaults to `application/json` and accepts `application/*+json`
+  subtypes. The body is still JSON; this does not produce HTML, multipart or a
+  stream. Accept negotiation uses the declared response media type. Generated
+  OpenAPI includes the success variants, headers and media types, and records
+  cookie schemas and attributes in `x-axiom-response-cookies`.
+- Header and cookie values use scalar or enum types; `optional: true` allows
+  omission. Required metadata must be present on success. Metadata present on
+  a failure must still validate. Header names are case insensitive, cookie
+  names case sensitive, and duplicate names are rejected.
+- `Content-Length`, `Content-Type`, CORS and trace headers belong to the server
+  boundary; use `mediaType:` for the content type.
+- `__Host-` cookies require Secure, `Path=/` and no Domain. `SameSite=None`
+  requires Secure. These checks validate application cookies; they do not
+  issue or rotate sessions.
+
+```acore title="Acore excerpt"
+endpoint getTask(method: GET, path: "/tasks/{id}") {
+  request { path("id", type: Int32) }
+  response(type: Models.Task, statuses: [200, 202], mediaType: "application/vnd.task+json")
+  responseHeader(name: "x-revision", type: Int32)
+  responseCookie(name: "__Host-session", type: String, secure: true, httpOnly: true, sameSite: CookieSameSite.lax)
+}
+```
+
+## Request parameters
+
+```acore title="Acore excerpt"
+endpoint getProject(method: GET, path: "/projects/{id}") {
+  request {
+    path("id", type: String)
+    query("includeArchived", type: Bool, optional: true)
+  }
+  response(type: Json)
+}
+```
+
+| Parameter | Signature | Read in `handle` as |
+| --- | --- | --- |
+| Path | `path(name, type:)` | `Input.path.id` |
+| Query | `query(name, type:, optional: false)` | `Input.query.includeArchived` |
+| Header | `header(name, type:, optional: false)` | `Input.header.apiKey` or `Input.header["last-event-id"]` |
+| Body | `body(name, type:, optional: false)` | `Input.body.title` |
+
+Every `{name}` in the path must have a matching `path(...)` parameter, and
+every path parameter must appear in the template. Parameters keep their
+names, locations and types in the contract JSON. Repeated query parameters
+represent a `List<T>`. How bodies are decoded is described in
+[Execution plan](/backend/execution).
+
+<span id="route-groups-and-head" />
+
+## Route groups and services
+
+Groups compose literal path prefixes:
+
+```acore title="Acore excerpt"
+group api(prefix: "/api") {
+  group v1(prefix: "/v1") {
+    endpoint health(method: HEAD, path: "/health") {
+      response(type: Void)
+    }
+  }
+}
+```
+
+This declares `HEAD /api/v1/health`. `group name(prefix:, policy:)` contains
+endpoints or nested groups. `service name(prefix:, policy:)` does the same and
+can hold other server declarations. A prefix must be a literal absolute path
+with no trailing slash, path parameters or dot segments. Endpoint names and IDs
+stay at module scope. Neither form starts a host. The server plan rejects
+ambiguous route templates before an adapter starts. Policy inheritance through
+services and groups is described in [Identity and policies](/backend/policies).
+
+## Actions
+
+An action is the typed unit of business logic that endpoints, jobs and other
+actions call.
+
+```acore title="Acore excerpt"
+action hello(kind: ActionKind.query, output: Models.Greeting) {
+  managed { return {message: "Hello from Acore"} }
+}
+endpoint hello(method: GET, path: "/hello") {
+  handle(action: Actions.hello)
+  response(type: Models.Greeting)
+}
+```
+
+- `action name(kind:, input:, output:)`. `kind` is `ActionKind.query`,
+  `command` or `stream`. `input` is a model or `Void`; omitting it means
+  `Void`. The compiler keeps the input model's field constraints.
+- An action has exactly one implementation:
+
+| Implementation | Form | Runs on |
+| --- | --- | --- |
+| Managed | `managed { ... }` | The Axiom server runtime |
+| Sandbox | `sandbox(extension: Extensions.name, export: .name)` | A verified WebAssembly [extension](/extensions) |
+| Native | `native(symbol: "tasks.read")` | A trusted native Rust host that registers the symbol; the CLI cannot load arbitrary native code |
+
+- Inside an action: `require(guard:)` adds a mandatory guard,
+  `errors(Failures.x)` declares failures, `server(policy:)` applies a server
+  policy, and `effect(resource:, operation:)` declares the one typed effect a
+  native handler may dispatch.
+- Managed blocks support immutable `let`, `await` on resource operations and
+  other actions, branches, `guard ... else fail`, exhaustive `match`, and a
+  terminal `return` or `fail`. The legacy `perform`, `invoke` and `result`
+  forms remain accepted. See [Managed logic and concurrency](/acore-language/managed-language).
+- Inferred requirements include every branch and transitive call, but they
+  never supply grants.
+- `pure fn name(arg: Type): Type = expression` declares a pure helper. Pure
+  code cannot read time, randomness, secrets or host services. A resource
+  operation can be query-safe without being pure.
+- Managed steps run in source order and share the invocation's deadline and
+  budgets with nested actions. Cancellation stops later dispatch and
+  publication but does not undo a provider call that already committed. Use a
+  qualified persistence program for an atomic database boundary.
+
+An endpoint without `handle` is bound to a native handler, as in extracted
+FastAPI and Go services.
+
+## Typed failures
+
+```acore title="Acore excerpt"
+model Problem { message: String }
+failure invalidTitle(payload: Models.Problem, status: 422)
+```
+
+`failure name(payload:, status:, category:, retryable:)` declares a typed
+failure. `category` is one of `invalidInput`, `unauthenticated`, `forbidden`,
+`domain`, `invariant`, `policyExhausted`, `cancelled`, `deadline`, `internal`
+or `indeterminate`.
+
+- Actions list their failures with `errors(Failures.name)`. An action that
+  calls another action must also declare the callee's failures.
+- Action failure payloads are private. On the endpoint,
+  `exposeFailure(failure:, fields:, audiences:)` selects the public fields and
+  audiences, and `failureStatus(failure:, status:)` maps the HTTP status
+  independently.
+- A failure response uses the envelope
+  `{"error":{"code":"name","payload":...}}` with the declared status.
+- An undeclared code, a mismatched status or malformed output becomes a `502`
+  boundary error.
+- A legacy string error such as `errors("projects_unavailable")` maps to a JSON
+  payload with status 500 until a server mapping gives it a narrower type and
+  status.
+
+## Resources and operations
+
+A resource declares typed operations that actions can call. It is an
+interface; the deployment binds a provider to it and grants each operation.
+
+```acore title="Acore excerpt"
+resource tasks(lifetime: ProviderLifetime.application) {
+  operation list(input: Models.Empty, output: List<Models.Task>, effect: EffectKind.read)
+  operation create(input: Models.NewTask, output: Models.Task, effect: EffectKind.write,
+    errors: [Failures.duplicate])
+}
+```
+
+- `resource name(lifetime:, dependencies:, configuration:, transactionProfile:, secrets:)`.
+  `lifetime` is `ProviderLifetime.application` or `invocation`.
+- `operation name(input:, output:, effect:, errors:)`. `effect` is one of
+  `read`, `write`, `delete`, `networkCall`, `publish`, `consume`, `fileRead`,
+  `fileWrite`, `secretUse`, `schedule`, `spawnJob`, `log`, `trace`, `clock`
+  or `random`.
+- A managed action calls an operation with
+  `await Resources.tasks.list(input: {})`.
+- Declaring or binding a resource grants nothing. The deployment must grant
+  `tasks.list` explicitly.
+
+## Storage mappings
+
+A `storage` block implements a resource's operations with typed queries
+against a [database contract](/database/contracts):
+
+```acore title="task-app/backend/sqlite.acore"
+storage tasks(schema: "../database/sqlite/schema.acore", resource: Resources.tasks) {
+  select list(table: "main.tasks", fields: {id: "id", title: "title"}, limit: 100)
+  insert create(table: "main.tasks", values: {id: Input.title, title: Input.title},
+    fields: {id: "id", title: "title"}, constraint: "tasks_pkey",
+    failure: Failures.duplicate, message: "That task already exists")
+  update update(table: "main.tasks", equals: {id: Input.id}, values: {title: Input.title}, fields: {id: "id", title: "title"})
+  delete delete(table: "main.tasks", equals: {id: Input.id}, fields: {id: "id", title: "title"})
+}
+```
+
+| Declaration | Arguments |
+| --- | --- |
+| `storage name` | `schema` (path to the database contract), `resource`, `tenantClaim`, `tenantColumn` |
+| `select name` | `table`, `fields`, `equals`, `limit`, `many` |
+| `insert name` | `table`, `fields`, `values`, `constraint`, `failure`, `message` |
+| `update name` | `table`, `fields`, `values`, `equals` |
+| `delete name` | `table`, `fields`, `equals` |
+| `binding name` | `table`, `model`, `store`, `fields` |
+
+Each mapping name matches an operation on the resource. `fields` maps API fields
+to columns; values come from `Input.field`, trusted claims or literals. SQLite
+tables use the `main.` schema; PostgreSQL uses its declared schema.
+`constraint`, `failure` and `message` turn a constraint violation into a typed
+failure. Field types, signatures, keys and tenant columns are checked against
+the compiled schema. SQL text is not accepted. See
+[Migrations and persistence](/database/persistence) for program rules and
+transactions. `axiom run` prepares a local database for these mappings; see
+[Run a backend locally](/backend/local-development).
+
+## Frontend contract imports
+
+A frontend is a separate project with its own `AxiomDeps.toml`
+(`type = "frontend"`) that names the built `backend.axiom` under
+`[contracts.ALIAS]` and imports it with
+`use contract Tasks from "tasks" audience "mobile"`. The backend manifest only
+defines the audience vocabulary; it does not choose which operations a
+frontend imports. Operations come from the compiled contract and its audience
+restrictions. See [Imports, amends and variants](/acore-language/imports-and-contracts)
+for the manifest fields, audience selection and lock rules.
+
+## Inspect and validate
+
+```bash title="Terminal"
+axiom explain --schema
+axiom eval main.acore --format json
+axiom explain main.acore
+axiom explain main.acore --provenance
+axiom check main.acore
+axiom build main.acore --out backend.axiom
+```
+
+| Command | Result |
+| --- | --- |
+| `axiom explain --schema` | The declaration catalog: names, arguments, defaults, enums and contexts |
+| `axiom eval FILE --format json` | The evaluated JSON |
+| `axiom explain FILE` | The expanded contract for review; `--variant` selects a variant |
+| `axiom explain FILE --provenance` | The contract plus source spans, declaration to JSON pointers, reusable policy expansion, effective policy precedence, constructor defaults and endpoint identity origins |
+| `axiom check FILE` | A complete build in temporary storage; replaces no artifact or baseline. `--json` prints a report even on failure; `--frozen-interface ARTIFACT` rejects public interface drift |
+| `axiom build FILE --out PATH` | Writes the contract and its `.server.json` plan beside it; without `--out`, the build goes under `.axiom/contracts` |
+
+These commands need neither a backend extractor nor a Cloud account.
+
+The language server uses the same compiler for completion, signatures, hover,
+navigation, rename, formatting and structural and security diagnostics. Enum
+and reference diagnostics offer quick fixes, and a stale diagnostic cannot edit
+another token. Local imports use unsaved editor buffers. External extraction
+runs only through the explicit `acore.refreshBackend` editor command. Rename
+follows resolved references across files. Endpoint rename includes an atomic
+identity file edit so IDs and public names stay stable; the editor must support
+workspace resource edits to create that file.
+
+In the [playground](https://playground.axiomcore.dev), each source has its own
+editable `AxiomDeps.toml` tab. Errors appear as underlines and gutter markers;
+open Problems with Ctrl/Cmd + Shift + M. Exported applications keep separate
+`source/frontend/` and `source/backend/` directories with their manifests. The
+browser supports local `backend.axiom` imports; external packages and
+extensions require the CLI.
+
+## Extend an extracted backend
+
+For an existing FastAPI or Go service, check prerequisites with
+`axiom doctor`, then `axiom init main.py:app --module axiom-fastapi` (or the
+entrypoint and module that `axiom onboard` selects) creates source that names
+the backend:
+
+```acore title="Acore excerpt"
+backend(language: "python", entrypoint: "main.py:app")
+policies(retry: RetryPolicy(maxAttempts: 3))
+```
+
+`backend(entrypoint:, language:, codec: "json")` records the service.
+Initialization creates source; it does not upload a release. Add cache, retry,
+validation, mock, domain or security declarations in Acore while handlers stay
+in the application. Extend extracted declarations with
+`override model Models.User { ... }` and `override endpoint Routes.getUser { ... }`:
+
+- A supplied field type replaces the previous type constraints.
+- `Field(validate: {...})` keeps the inherited type and optionality but
+  replaces the whole validation rule.
+- Literal objects are complete values; omitted properties do not carry over.
+- Conflicting declarations from independently amended sources are errors.
+
+Extraction keeps referenced models in Python collection responses; forwards
+enums and root authentication, offline, service name and test settings; keeps
+the backend language and full entrypoint; and takes model and enum
+documentation from the application's own classes. Pydantic required fields
+that permit `null` stay required. Inherited policy defaults are kept. Go route
+groups and path parameters keep their full transport definition, and inferred
+response types describe the handler's response. See [Use your existing stack](/guides) for the extraction
+workflows.
+
+<span id="source" />
+
+## Migrate legacy source
+
+Legacy Acore modules remain supported. Migration to the declaration syntax is
+opt-in:
+
+```bash title="Terminal"
+axiom migrate axiom.acore --output backend.acore
+axiom eval backend.acore --format json
+axiom check backend.acore
+```
+
+- The output must be a new `.acore` file in the same directory, so relative
+  imports keep their base. An existing output or identity file is refused.
+- Migration verifies every declared variant and refuses to write when the
+  evaluated JSON would change. It also sets `type = "backend"` in the
+  adjacent `AxiomDeps.toml`.
+- It writes the endpoint identities to
+  `.axiom/identities/backend.acore.identities.json` under the project root.
+  Keep that file with the source: it preserves endpoint IDs and historical
+  public names. A legacy `backend.acore.identities.json` beside the source is
+  still read.
+- Comments stay with their declaration. The original file is left in place.
+  To roll back, build from it again and restore the matching released
+  artifact and identity file.
+- Explicit model declarations must keep every field and endpoint identity.
+- Correct invalid legacy source first. Unknown model references, missing path
+  parameters, unsupported validation rules and missing response types are
+  diagnostics.
+
+When rebuilding a released FlatBuffers contract, pass the released artifact so
+historical field slots stay put:
+
+```bash title="Terminal"
+axiom build backend.acore --compatibility-baseline released.axiom --out backend.axiom
+```
+
+The baseline must belong to the same project, variant and codec. Keep it with
+the release evidence; sorting field names cannot preserve historical wire
+layout. A release retry that changes the version reuses the current artifact
+as its baseline. Compare the result with the released artifact using
+`axiom diff`; formatting and syntax changes should not change the contract.
+
+Validation keeps nested extracted rules in JSON form. Shared validation
+resolves named model schemas and optional or nullable wrappers before checking
+mock payloads or generating client constraints. Recursive schemas use a finite
+graph with named references; validation fails when a payload exceeds 64
+reference traversals. Contracts with recursive validators need the validation
+runtime bundled with the matching compiler. Literal mock bodies, initial
+state, validation metadata and expectation values keep authored `null`, empty
+lists and empty objects.

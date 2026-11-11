@@ -1,51 +1,80 @@
 ---
-title: Client integration
-description: Choose a generated client or Acore UI without coupling the contract to one frontend framework.
+title: Build a frontend
+description: Choose between an Acore UI application and a generated client SDK for the frontend you already have.
 pageType: overview
 ---
 
-AxiomCore contracts can be consumed from an existing application or from an
-Acore UI application. You do not need to replace Flutter, React, or an
-HTML-first frontend to adopt the contract and runtime boundary.
+<span id="integration-boundary" />
+<span id="generate-for-an-existing-frontend" />
+<span id="use-another-framework-or-language" />
 
-| Capability | Status | Supported scope |
-| --- | --- | --- |
-| Vanilla web / ATMX | **Available** | Browser Wasm runtime, imperative API, and declarative DOM integration. |
-| React / ATMX | **Alpha** | Provider, hooks, query-state manager, and declarative components. |
-| Flutter / Dart | **Alpha** | Generated Dart surface, native runtime, streams, and Flutter builders. |
-| Swift / Apple | **Experimental** | Native runtime distribution foundations; public generated-binding and lifecycle parity remain incomplete. |
-| Acore UI | **Alpha** | Declarative UI compiled for browser, Android Emulator, and iOS Simulator development hosts. |
+A frontend reaches your backend through its `.axiom` contract, the compiled
+description of every operation, type and error the backend exposes. You can
+build that frontend in two ways: write the UI itself in Acore, or keep your
+existing app and call the contract through a client SDK.
 
-## Integration boundary
+## Choose a path
 
-All client paths need four pieces:
-
-1. a pinned `.axiom` artifact and its dependency proof;
-2. a target-specific generated or declarative client surface;
-3. runtime configuration for contract location and backend base URL; and
-4. application-owned authentication, error UI, cache privacy, and startup.
-
-The contract is portable; the lifecycle is not. A browser uses Wasm,
-`sessionStorage`, browser CORS, and cookie rules. Flutter uses the native
-runtime, application assets, and an optional database path. Test every target
-you ship, including a release build and an integrity failure.
-
-## Generate for an existing frontend
-
-```bash title="Terminal"
-axiom pull --contract ../backend/backend.axiom --framework atmx-web
-axiom pull --contract ../backend/backend.axiom --framework atmx-react
-axiom pull --contract ../backend/backend.axiom --framework flutter
+```mermaid title="Choosing between Acore UI and a client SDK"
+flowchart TD
+  A[Backend .axiom contract] --> B{Do you already have a frontend?}
+  B -->|No| C[Write the UI in .acore]
+  C --> D[axiom ui build]
+  D --> E[.axiomapp artifact]
+  E --> F[UI host: web, Android Emulator, iOS Simulator]
+  B -->|Yes| G{Which framework?}
+  G -->|Browser or React| H[atmx-web or atmx-react]
+  G -->|Flutter| I[axiom_flutter]
+  G -->|Anything else| J[Call the HTTP API directly]
+  H --> K[axiom pull generates a typed client]
+  I --> K
 ```
 
-Use the generated files as the source of truth for endpoint names and model
-signatures. The examples in these guides intentionally use placeholders such
-as `sdk.users.getUser`; replace them with the symbols emitted for your
-contract.
+- **Acore UI.** You write pages, components and styles in `.acore`. The
+  compiler checks them against target capabilities and a locked backend
+  contract, then a UI host runs the app. A UI host is the signed browser,
+  Android Emulator or iOS Simulator shell that renders compiled Acore UI. The
+  build output is a target-specific `.axiomapp` artifact.
+- **Client SDK.** Your React, browser or Flutter code stays as it is.
+  `axiom pull` copies the contract into your project and generates a typed
+  client. A runtime inside the SDK builds requests, validates responses,
+  applies cache policy and attaches credentials.
 
-## Use another framework or language
+| | Acore UI | Client SDK |
+| --- | --- | --- |
+| You write | `.acore` pages and components | Your framework code |
+| Generated for you | Compiled UI, kept in memory by the CLI | `sdk.ts` and `models.ts`, or `axiom_sdk.dart` and `models.dart` |
+| Runs in | Axiom UI host | Your app, with a Wasm or native runtime |
+| Contract binding | `use contract` checked against a committed lock | `AxiomDeps.toml` written by `axiom pull` |
+| Status | **Alpha** | Web **Available**; React and Flutter **Alpha**; Swift **Experimental** |
+| Start with | [Acore UI](/frontend/acore-ui) | [Client SDKs](/sdks) |
 
-An unsupported framework can still call your backend normally. You can use
-the `.axiom` artifact for review, mocks, tests, and change control without
-routing production calls through an Axiom runtime. A first-party client bridge
-for additional stacks is not implied by the existence of the artifact format.
+Physical-device certification and app-store publishing are **Coming soon**
+for both paths. See [Support and availability](/introduction/support-matrix).
+
+## What every client path needs
+
+1. A pinned `.axiom` artifact and, for a Cloud release, its signature proof.
+2. A target-specific client: generated SDK code or Acore UI source.
+3. Runtime configuration: where to load the contract and the backend base URL.
+4. Application-owned authentication, error UI, cache privacy and startup order.
+
+The contract is portable. The lifecycle is not. A browser client uses Wasm,
+browser storage, CORS and cookie rules. Flutter uses a native runtime,
+bundled contract assets and an optional cache database path. An Acore UI app
+depends on its UI host version. Test every target you ship, including a release
+build and a contract integrity failure.
+
+## Other frameworks and languages
+
+A framework without a first-party SDK can still call your backend over HTTP.
+You can keep using the `.axiom` artifact for review, mocks, tests and change
+control without routing production calls through an Axiom runtime. The
+artifact format alone does not imply a client bridge for another stack.
+
+## Next steps
+
+- [Build your first UI](/getting-started/quickstart-frontend)
+- [Acore UI reference](/frontend/acore-ui)
+- [App lifecycle and targets](/frontend/application-lifecycle)
+- [Client SDKs](/sdks) for an existing frontend

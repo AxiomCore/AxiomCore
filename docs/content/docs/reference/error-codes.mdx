@@ -1,55 +1,95 @@
 ---
 title: Runtime errors
-description: Structured failure stages, categories, symbolic codes, retryability, and safe handling.
+description: Structured client runtime errors, their stages, categories, codes, and retry rules, plus typed failures and ADB database lifecycle codes.
 pageType: reference
 ---
 
-The Axiom Runtime represents a failed operation as a structured `AxiomError`.
-Framework bindings can change naming conventions during serialization, but the
-semantic fields are:
+<span id="handling-pattern" />
+
+When a request through the Axiom runtime fails, you get a structured
+`AxiomError` instead of a bare exception. This page lists its fields and
+values, how to handle them, typed business failures, and the `ADB` codes the
+database commands print.
+
+## The `AxiomError` object
 
 | Field | Meaning |
 | --- | --- |
-| `stage` | Pipeline boundary where the failure occurred |
-| `category` | Broad class used for UI, metrics, and policy |
-| `code` | Specific symbolic condition; an HTTP status can carry its number |
-| `message` | Human-oriented summary safe for application handling |
-| `retryable` | Runtime assessment of whether another attempt may succeed |
-| `details` | Optional additional context |
+| `stage` | The pipeline boundary where the failure happened |
+| `category` | A broad class for UI, metrics, and policy decisions |
+| `code` | The specific condition. An HTTP failure carries its status number |
+| `message` | A human-readable summary that is safe for application handling |
+| `retryable` | The runtime's assessment of whether another attempt may succeed |
+| `details` | Optional extra context, such as field validation messages |
 | `source` | Optional internal source context; bindings may omit it |
 
-Do not parse `message` to make control-flow decisions. Match the typed or
-serialized `code`, and preserve an unknown fallback so a newer runtime does not
-break an older UI.
+Match on `code` or `category`, never on `message`. Keep an unknown fallback so
+a newer runtime does not break an older UI.
+
+How each binding exposes the object:
+
+| Binding | Shape |
+| --- | --- |
+| Web (`atmx-web`) | Errors from the engine use the names on this page: `stage` such as `"ContractLoad"`, `category` such as `"Auth"`, and `code` such as `"ContractInvalid"`, or an object for HTTP statuses: `{ "HttpStatus": 404 }`. Errors raised by the JavaScript layer use lower-camel-case `stage` and `category` values (`"ffiBoundary"`, `"runtime"`, `"network"`) and their own codes, listed below. No `source` field. |
+| Flutter (`axiom_flutter`) | `stage` and `category` are lower-camel-case Dart enums (`ErrorStage.contractLoad`), parsed without regard to case. `code` is a class such as `ContractInvalid` or `HttpStatus(code)`; codes the binding does not name become `UnknownCode(raw)`. No `source` field. |
+
+Compare `stage` and `category` without regard to case. Generated TypeScript or
+Dart types are authoritative for exact casing.
+
+Codes added by the `atmx-web` JavaScript layer (0.147.5):
+
+| Code | When | Retryable |
+| --- | --- | --- |
+| `WasmFetchFailed` | The WebAssembly engine could not be downloaded | Yes |
+| `InitFailed` | The engine failed to initialize | No |
+| `ContractLoadFailed` | One or more contracts failed verification or loading during `init`; see `InitResult.contracts` | No |
+| `FatalError` | An unexpected exception during `init` | No |
+| `JsonParseFailure` | The engine returned an error the JavaScript layer could not parse | No |
 
 ## Stages
+
+A failure's stage tells you where in the request it stopped:
+
+```mermaid title="Runtime stages along one request"
+flowchart LR
+  L["Load contract: ContractLoad"] --> B["Build request: RequestBuild, ValidationRequest"]
+  B --> R["Read cache: CacheRead"]
+  R --> S["Send: NetworkSend"]
+  S --> V["Receive: NetworkReceive"]
+  V --> D["Validate and decode: ValidationResponse, Deserialize"]
+  D --> W["Write cache: CacheWrite"]
+```
+
+Not every request passes every stage; a cache-only read stops early. Three
+stages sit outside the request path: `Configuration` (runtime or contract
+configuration), `Runtime` (engine lifecycle or internal execution), and
+`FfiBoundary` (the native or WebAssembly binding).
 
 | Stage | Boundary |
 | --- | --- |
 | `Configuration` | Runtime or contract configuration |
-| `ContractLoad` | Artifact loading or validation |
+| `ContractLoad` | Loading or validating the contract artifact |
 | `RequestBuild` | Endpoint lookup, path, headers, or body construction |
-| `ValidationRequest` | Outbound value did not satisfy the contract |
+| `ValidationRequest` | The outgoing value does not satisfy the contract |
 | `CacheRead` | Reading a configured cache |
-| `NetworkSend` | Establishing or sending the request |
+| `NetworkSend` | Connecting or sending the request |
 | `NetworkReceive` | Receiving transport or HTTP response data |
-| `ValidationResponse` | Inbound value did not satisfy the contract |
+| `ValidationResponse` | The incoming value does not satisfy the contract |
 | `Deserialize` | JSON or codec decoding |
-| `CacheWrite` | Persisting a response cache entry |
+| `CacheWrite` | Saving a response to the cache |
 | `Runtime` | Engine lifecycle or internal execution |
-| `FfiBoundary` | Native/Wasm binding boundary |
-
-Serialized clients can expose lower-camel-case equivalents. Confirm the actual
-binding type rather than hard-coding display text.
+| `FfiBoundary` | Native or WebAssembly binding boundary |
 
 ## Categories
 
-`Contract`, `Validation`, `Network`, `Timeout`, `Serialization`, `Cache`,
-`Auth`, `Server`, `Runtime`, and `Unknown` are the current runtime categories.
-A category is intentionally broader than the code: for example, several HTTP
-statuses can map to `Auth` or `Server` behavior.
+The categories are `Contract`, `Validation`, `Network`, `Timeout`,
+`Serialization`, `Cache`, `Auth`, `Server`, `Runtime`, and `Unknown`. A
+category is broader than a code: several HTTP statuses can map to `Auth` or
+`Server`.
 
-## Symbolic codes
+<span id="symbolic-codes" />
+
+## Codes
 
 | Group | Codes |
 | --- | --- |
@@ -62,15 +102,14 @@ statuses can map to `Auth` or `Server` behavior.
 | Authentication | `AuthTokenMissing`, `AuthTokenExpired` |
 | Runtime | `NotInitialized`, `InternalError` |
 
-Numeric FFI status values are a lower-level compatibility boundary and can
-collapse several symbolic codes. Application code should use the structured
-error emitted by its binding rather than copying a numeric table.
+Lower-level numeric FFI status values can merge several codes into one. Use
+the structured error your binding emits instead of copying a numeric table.
 
-## Handling pattern
+## Handle errors
 
 ```ts title="TypeScript excerpt"
 function messageFor(error: AxiomError): string {
-  if (error.category === 'Auth') return 'Please sign in again.';
+  if (error.category.toLowerCase() === 'auth') return 'Please sign in again.';
   if (error.retryable) return 'Request failed. Try again.';
   if (error.code === 'ContractInvalid') {
     return 'This application release has an invalid data contract.';
@@ -79,45 +118,75 @@ function messageFor(error: AxiomError): string {
 }
 ```
 
-The exact enum casing in generated TypeScript or Dart is authoritative. Keep
-detailed diagnostic context in protected logs, not in a user-visible message.
+Keep detailed diagnostic context in protected logs, not in a message the user
+sees.
 
-## Retry guidance
+<span id="retry-guidance" />
 
-- retry only when the error says it is retryable or application policy
-  explicitly permits it;
-- cap attempts and add jitter for network retries;
-- do not retry an invalid contract, unknown endpoint, request validation, or
-  deterministic decoding failure without changing input or deployment;
-- refresh or clear credentials before retrying an authentication failure; and
-- treat cache errors separately from network success so a write failure does
-  not masquerade as a failed server operation.
+## Retry rules
 
-## Typed domain cases and execution aborts
+- Retry only when `retryable` is true or your application policy explicitly
+  allows it.
+- Cap attempts and add jitter for network retries.
+- Do not retry an invalid contract, unknown endpoint, request validation error,
+  or deterministic decoding failure without changing the input or the
+  deployment.
+- Refresh or clear credentials before retrying an authentication failure.
+- Treat cache errors separately: a cache write failure is not a failed server
+  operation.
 
-Named action failures are declared payload cases. Their endpoint status and public
-field projection are explicit. Unknown/malformed cases are sanitized; execution
-aborts (cancelled, deadline, budget, host fault and indeterminate outcome) remain
-separate from recoverable business cases. New payload contracts require the
-version-2 reader. See [typed outcomes](/acore-language/managed-language).
+<span id="typed-domain-cases-and-execution-aborts" />
 
-## Database developer lifecycle
+## Typed failures and execution aborts
 
-| Code | Meaning and next action |
-| --- | --- |
-| ADB1100 | Declare source `project(id: ..., version: ...)`; remove conflicting duplicate manifest metadata. |
-| ADB1101 | Invalid/tampered artifact, source snapshot or ledger; restore verified history rather than editing internal files. |
-| ADB1102 | Requested migration version/baseline is unavailable; retain the complete catalog or exported prefix. |
-| ADB1103 | Used/nonincreasing contract version; accept the suggestion, update source, or opt into CI `--auto-version`. |
-| ADB1104 | Concurrent publisher, changed parent, or interrupted source edit; inspect/retry against the accepted state. |
-| ADB1105 | Drift, overlapping ownership or unreviewed existing scope; inspect and establish an exact baseline. |
-| ADB1106 | Unsupported engine capability, unavailable/tampered validator runtime, or replay mismatch; no candidate is accepted. |
-| ADB1107 | Invalid/unavailable connection or wrong engine; supply the URL/fields/file for the declared engine. |
-| ADB1108 | Database execution/transport failure; inspect the reported transaction outcome before retrying. |
-| ADB1109 | Missing/different signer; restore the enrolled private signing provider. |
-| ADB1110 | Password required; use the masked terminal prompt or CI secret input. |
-| ADB1111 | Risk category needs approval; use the specific reviewed risk flag in CI. |
-| ADB1112 | Populated rows have no value for a required new column; declare nullable/default/backfill intent. |
-| ADB1113 | Rollback crosses an unrecoverable data overwrite; define compensation or restore a backup. |
-| ADB1120 | Invalid typed backend storage mapping; check exact fields, values and resource signatures. |
-| ADB1121 | Invalid/unsupported bounded typed evolution; use the supported atomic subset or its qualified adapter. |
+A managed action declares named failure cases, each with a payload and an HTTP
+status. The endpoint chooses which payload fields each audience may see. The
+HTTP failure body carries only `error.code` and the selected `error.payload`.
+
+- Malformed envelopes and unknown cases are sanitized into transport errors.
+- Execution aborts (cancellation, deadline, budget, host fault, and an
+  indeterminate outcome) stay separate from recoverable business cases.
+- New payload contracts need the version 2 contract reader.
+
+The backend declaration catalog (`axiom explain --schema`) lists these failure
+categories: `invalidInput`, `unauthenticated`, `forbidden`, `domain`,
+`invariant`, `policyExhausted`, `cancelled`, `deadline`, `internal`, and
+`indeterminate`. See [Managed logic and concurrency](/acore-language/managed-language).
+
+<span id="database-developer-lifecycle" />
+
+## Database lifecycle codes (`ADB`)
+
+The database commands (`axiom database`, `axiom run` on a database source) and
+the backend storage compiler print these codes.
+
+| Code | Meaning | What to do |
+| --- | --- | --- |
+| `ADB1100` | Missing or invalid project identity, or a version that is not `MAJOR.MINOR.PATCH` | Declare one `project(id: ..., version: "1.0.0")` in the entry source; remove conflicting duplicate manifest metadata |
+| `ADB1101` | Invalid or tampered artifact, source snapshot, or ledger | Restore verified history; do not edit internal files |
+| `ADB1102` | The requested migration version or baseline is not available | Keep the complete catalog or an exported prefix |
+| `ADB1103` | The version is already used, or does not increase | Accept the suggested version, update the source, or opt in to `--auto-version` in CI |
+| `ADB1104` | A concurrent publisher, a changed parent, or an interrupted source edit | Inspect, then retry against the accepted state |
+| `ADB1105` | Drift, overlapping ownership, or unreviewed existing scope | Run `axiom database status`; establish an exact baseline |
+| `ADB1106` | Unsupported engine capability, an unavailable or tampered validator runtime, or a replay mismatch | Install a matching validator or supported PostgreSQL; no candidate is accepted |
+| `ADB1107` | Invalid or unavailable connection, or the wrong engine | Supply the URL, connection fields, or file for the declared engine |
+| `ADB1108` | Database execution or transport failure | Check the reported transaction outcome before retrying |
+| `ADB1109` | Missing or different signer | Restore the enrolled signing provider |
+| `ADB1110` | A PostgreSQL password is required | Use the masked prompt, `PGPASSWORD`, or `--password` in non-interactive runs |
+| `ADB1111` | A risk category needs approval | In CI, pass the specific flag: `--allow-destructive`, `--allow-data-dependent`, or `--allow-security-changes` |
+| `ADB1112` | Existing rows have no value for a new required column | Make the column nullable, or declare a default or backfill |
+| `ADB1113` | Rollback crosses a data overwrite whose old values were not archived | Define a compensating migration or restore a backup |
+| `ADB1120` | Invalid typed backend storage mapping | Check the exact fields, values, and resource signatures |
+| `ADB1121` | Invalid or unsupported typed data evolution | Use the supported atomic subset or its qualified adapter |
+
+See [Database contracts](/database/contracts) and
+[`axiom database`](/tooling/cli-database).
+
+## Other diagnostic code families
+
+| Prefix | Produced by | Reference |
+| --- | --- | --- |
+| `AXSEC-` | The security analyzer (`axiom security check`, `axiom build`) | [Security rules](/reference/security-rules) |
+| `AUI` | The Acore UI compiler and development host | [Acore UI](/frontend/acore-ui) |
+| `AXIOM_APP_` | `.axiomapp` verification, such as `AXIOM_APP_FORMAT` and `AXIOM_APP_CHECKSUM` | [App lifecycle and targets](/frontend/application-lifecycle) |
+| `ADB` | Database contract commands | This page |

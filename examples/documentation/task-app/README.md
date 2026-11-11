@@ -2,7 +2,7 @@
 
 Create, update, and delete tasks backed by real SQLite storage.
 
-Prerequisites: [Axiom CLI 0.149.0](https://docs.axiomcore.dev/getting-started/installation/),
+Prerequisites: [Axiom CLI 0.149.1](https://docs.axiomcore.dev/getting-started/installation/),
 macOS arm64, a browser, and two terminals. Install the compatible web host:
 
 ```bash

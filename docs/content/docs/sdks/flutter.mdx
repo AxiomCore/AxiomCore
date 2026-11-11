@@ -1,0 +1,231 @@
+---
+title: Flutter and Dart (axiom_flutter)
+description: Generate a typed Dart client with axiom pull, start the native AxiomCore runtime in a Flutter app and bind queries and mutations to widgets.
+pageType: guide
+---
+
+<span id="generate-and-package-the-contract" />
+<span id="render-a-query" />
+
+<StatusNote status="alpha" title="axiom_flutter 0.147.5">
+  Generated Dart bindings and the native runtime path are implemented.
+  Validate asset packaging, cache storage, native libraries and release builds
+  on every platform you ship.
+</StatusNote>
+
+`axiom_flutter` runs the AxiomCore runtime, written in Rust, inside a Flutter
+app through `dart:ffi`. `axiom_flutter_generator` turns your `.axiom` contract
+into a typed Dart client. This guide uses the `greetings` contract from the
+[FastAPI example](/guides/fastapi-to-web): endpoint `greet` at
+`GET /greet/{name}`, returning `Greeting { message }`.
+
+**You need:** a Flutter project with Dart SDK 3.8 or newer, `dart` (or
+`fvm dart`) on your `PATH`, and CocoaPods for iOS and macOS builds.
+
+## Platforms
+
+| Platform | How the runtime is supplied | Notes |
+| --- | --- | --- |
+| iOS 13+ | CocoaPods downloads `AxiomRuntime.xcframework` (runtime 0.148.6) and verifies its SHA-256 | Native target |
+| macOS 11+ | Same as iOS | Native target |
+| Web | Wasm runtime assets bundled in the package | Not covered by a published example |
+| Android | The package loads `libaxiom_runtime.so` but does not include it, and no public release provides it | Not usable with 0.147.5 alone |
+| Linux, Windows | No runtime library is published | Not supported |
+
+If the runtime download or checksum check fails, pod preparation keeps the
+previous framework and stops the build. Rebuild your app after updating the
+runtime pin; an old framework is not evidence for a new release.
+
+## 1. Add the packages
+
+```bash title="Terminal (Flutter project)"
+flutter pub add axiom_flutter:^0.147.5
+flutter pub add dev:axiom_flutter_generator:^0.146.6
+```
+
+This step is optional: `axiom pull` adds both entries to `pubspec.yaml` when
+they are missing.
+
+## 2. Generate the client
+
+```bash title="Terminal (Flutter project root)"
+axiom pull ../backend/backend.axiom --framework flutter --name greetings --out lib/axiom_generated
+```
+
+`pull` then:
+
+1. copies the contract to `assets/axiom/greetings.axiom` and registers it
+   under `flutter: assets:` in `pubspec.yaml`;
+2. adds `axiom_flutter` and `axiom_flutter_generator` if missing and runs
+   `dart pub get`;
+3. runs the generator, which writes `lib/axiom_generated/axiom_sdk.dart` and
+   `lib/axiom_generated/models.dart`.
+
+The generated `AxiomDefaultConfig` maps each contract name to a `baseUrl` and
+an `assetPath`. The base URL is `http://localhost:8000` unless the contract's
+table in `AxiomDeps.toml` sets `base_url` before you pull.
+
+Generated names follow the contract:
+
+| Contract item | Dart |
+| --- | --- |
+| Contract name `greetings` | `sdk.greetings` (camelCase) |
+| Endpoint `greet` | `AxiomQuery<models.Greeting> greet({required String name})` |
+| Endpoint `create_task` | `createTask(...)`, with named parameters; optional ones are nullable |
+| Write endpoint without a body parameter | Extra `Map<String, dynamic>? body` parameter |
+| Model `Greeting` | `models.Greeting`, with `fromJson` and `toJson` |
+
+Every endpoint method returns an `AxiomQuery<T>`. `POST`, `PUT`, `PATCH` and
+`DELETE` endpoints are sent as mutations and are never cached.
+
+<span id="initialize-once" />
+
+## 3. Initialize once
+
+```dart title="lib/main.dart"
+import 'package:flutter/material.dart';
+import 'package:axiom_flutter/axiom_flutter.dart';
+import 'package:my_app/axiom_generated/axiom_sdk.dart';
+import 'package:my_app/axiom_generated/models.dart' as models;
+
+late final AxiomSdk sdk;
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  sdk = await AxiomSdk.create();
+  runApp(const MaterialApp(home: Scaffold(body: Center(child: GreetingView()))));
+}
+```
+
+`AxiomSdk.create()` starts the runtime and loads every contract from the asset
+bundle. It throws a `StateError` naming the status if a contract fails to
+load, so create it before mounting widgets that run queries.
+
+To change the backend URL or keep a persistent cache, pass a config:
+
+```dart title="Dart excerpt: custom configuration"
+final config = AxiomConfig(
+  contracts: {
+    'greetings': const AxiomContractConfig(
+      baseUrl: 'https://api.example.com',
+      assetPath: 'assets/axiom/greetings.axiom',
+    ),
+  },
+  dbPath: applicationCachePath,
+  debug: false,
+);
+
+sdk = await AxiomSdk.create(config: config);
+```
+
+Choose a `dbPath` suited to cached, recoverable data, for example under the
+directory from `path_provider`. Without one, do not assume persistence. The
+cache is not a secure credential store.
+
+## 4. Make a typed call
+
+```dart title="lib/main.dart (continued)"
+class GreetingView extends StatelessWidget {
+  const GreetingView({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return AxiomBuilder<models.Greeting, models.Greeting>(
+      query: sdk.greetings.greet(name: 'Ada'),
+      loading: (context) => const Text('Loading...'),
+      error: (context, error) => Text(error.message),
+      builder: (context, state, greeting) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(greeting.message),
+          if (state.isFetching) const Text('Refreshing...'),
+        ],
+      ),
+    );
+  }
+}
+```
+
+`AxiomBuilder` manages the subscription and keeps previously rendered data
+while a refresh runs. Optional `transform` maps `T` to the UI type `R`, and
+`selector` limits rebuilds to the fields it returns. It is one option; you can
+also use the query directly:
+
+| Member | Use |
+| --- | --- |
+| `query.stream` | `Stream<AxiomState<T>>` for BLoC, Provider or `StreamBuilder` |
+| `query.stream.unwrap()` | `Future<T>` that completes with the first data or throws the error |
+| `onlyData()`, `onData(callback)` | Stream helpers for data events |
+| `query.refresh()` | Revalidate a cached query from the network |
+| `query.prefetch()` | Load once without keeping a subscription |
+| `query.setHeader(name, value)` | Add a request header before the stream starts |
+
+`AxiomState<T>` has `status` (`idle`, `loading`, `success` or `error`),
+`data`, `error`, `source` (`none`, `cache` or `network`), `isFetching`,
+`isMutating` and `isStreaming`, with `isLoading`, `hasData` and `hasError`
+getters. Identical queries share one request; argument order does not change
+the cache key.
+
+<span id="execute-a-mutation" />
+
+## 5. Run a mutation
+
+```dart title="Mutation excerpt (a contract with create_task and body parameter task)"
+AxiomMutationBuilder<models.Task, String>(
+  mutation: AxiomMutation((title) => sdk.tasks.createTask(task: models.NewTask(title: title))),
+  builder: (context, state, execute) => TextButton(
+    onPressed: state.isMutating ? null : () => execute('Write docs'),
+    child: Text(state.isMutating ? 'Saving...' : 'Add task'),
+  ),
+)
+```
+
+`AxiomMutation` wraps a function from your argument type to the generated
+call. Check the generated parameter names, and decide which queries to refresh
+after success, for example with `query.refresh()`.
+
+## 6. Handle errors
+
+`AxiomError` has `stage`, `category`, `code`, `message`, `retryable` and
+optional `details`. `code` is a sealed `AxiomErrorCode`, for example
+`ValidationError`, `NetworkTimeout`, `NetworkConnectionFailed`,
+`AuthTokenExpired`, `NotInitialized` or `HttpStatus(code)`. Builders receive
+the error in `error:`; `unwrap()` throws it.
+
+```dart title="Dart excerpt: retryable errors"
+error: (context, error) => Text(
+  error.retryable ? 'Connection problem. Try again.' : error.message,
+),
+```
+
+See [Runtime errors](/reference/error-codes) for stages and codes.
+
+## Authentication and shutdown
+
+- Restore credentials from the platform's secure storage at startup and pass
+  them with `sdk.greetings.axiom.setAuthToken(methodName, token)`. Tokens are
+  held in memory only.
+- Contracts that declare a cookie session use the runtime's own cookie jar;
+  cookie values never reach Dart.
+- On logout, call `clearAuthToken(methodName)` and clear sensitive cached data.
+- Dispose stream subscriptions that you own outside the provided widgets.
+  Lifecycle APIs may change while this client is Alpha.
+
+## Platform limits
+
+- **Contract signatures.** The generated `AxiomSdk.create()` loads contracts
+  without a signature, so they run in unsigned local mode, and the runtime
+  prints a security warning when `debug` is on. `AxiomRuntime.loadContract` and `startup` accept
+  `signature` and `publicKey`. A partial or invalid pair fails and never falls
+  back to unsigned mode.
+- **Android, Linux and Windows** have no published runtime library (see
+  [Platforms](#platforms)).
+- **`--framework dart`** is accepted by `axiom pull`, but it does not add
+  packages or copy the contract asset, and this guide does not cover it.
+- Test release builds on each platform, not only debug and hot reload.
+
+## Next steps
+
+- [Client SDKs](/sdks) for `axiom pull` options
+- [The contract runtime](/core-concepts/the-generic-runtime)
+- [Artifact trust](/core-concepts/trust-and-security)

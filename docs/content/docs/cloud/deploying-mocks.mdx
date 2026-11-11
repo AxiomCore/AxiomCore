@@ -1,74 +1,125 @@
 ---
-title: Cloud mocks and sandboxes
-description: Save authored mock configuration and run it locally or in a managed project environment.
+title: Cloud mocks
+description: Save a project's mock configuration to Axiom Cloud, run it locally with axiom mock --cloud, and serve it from the managed sandbox.
 pageType: guide
 ---
 
-There are two connected but distinct workflows: saving a project's authored
-mock configuration and provisioning a managed sandbox from an immutable
-release. `axiom deploy mock-server` performs the first operation; it does not
-by itself prove a Cloud Run environment is ready.
+<span id="provision-a-managed-environment" />
+
+<StatusNote status="alpha" title="Managed execution">
+  Saving project mock configuration is implemented. Managed sandbox execution
+  depends on the connected deployment's environment feature and worker
+  resources. It is not available just because the CLI command succeeded.
+</StatusNote>
+
+A Cloud mock lets frontend developers and tests call your API before the real
+backend exists. There are two connected but separate steps:
+
+1. **Save** the project's mock configuration to Axiom Cloud with
+   `axiom deploy mock-server`.
+2. **Run** it, either locally with `axiom mock --cloud` or in the managed
+   sandbox that Cloud starts from a verified release.
+
+Saving the configuration does not by itself prove that a managed sandbox is
+ready.
+
+```mermaid title="How a saved mock configuration reaches local and managed mocks"
+sequenceDiagram
+  participant Dev as Developer
+  participant CLI as Axiom CLI
+  participant Cloud as Axiom Cloud
+  participant SB as Managed sandbox
+  Dev->>CLI: axiom deploy mock-server
+  CLI->>CLI: Evaluate axiom.acore and render JSON
+  CLI->>Cloud: Save mock configuration
+  Cloud-->>SB: New revision, if a sandbox is live
+  Dev->>CLI: axiom mock --cloud
+  CLI->>Cloud: Fetch configuration with its ETag
+  Cloud-->>CLI: Configuration, or not modified
+  CLI-->>Dev: Contract mock on localhost
+```
 
 ## Save mock configuration
 
-From a linked project directory:
+From a directory linked to your project (see
+[Workspaces and projects](/cloud/project-management)):
 
 ```bash title="Terminal"
 axiom deploy mock-server axiom.acore
 ```
 
-The CLI evaluates the local Acore module, renders the result to JSON, and sends
-that configuration to the linked Cloud project. It fails when the file cannot
-be evaluated, the directory is not linked, the account is unauthorized, or
-the service rejects the configuration.
+The file argument is optional and defaults to `axiom.acore`. The command
+checks the directory link, evaluates the local Acore module, renders the result
+to JSON and uploads it to the linked project. Maintainers and owners can save
+configuration. You can also edit it under **Mock configuration** on the
+project's **Sandbox** page.
 
-The current command evaluates with its local project evaluator. Treat imported
-or amended code according to the [Backend extraction](/core-concepts/ghost-introspection)
-boundary before running it.
+Each project keeps one saved configuration. A new save replaces it, and Cloud
+does not check it against your contract. If a sandbox is live, saving queues a
+new revision of that sandbox.
 
-## Consume locally
+| Failure | Cause |
+| --- | --- |
+| Directory not linked | Run `axiom project link` first. |
+| File not found, or an evaluation error | Fix the file or pass the right path. |
+| Not logged in, or unable to authenticate | Run `axiom login` again. |
+| Failed to upload mock config | The service rejected the request. The message includes its response. |
 
-`axiom serve` now starts a real local API and no longer downloads a saved Cloud
-mock when its input is omitted. Local contract simulation remains explicit:
+The command evaluates the file with the local project evaluator. Treat imported
+or amended code with the same care as any code you run; see
+[How extraction works](/guides/backend-extraction).
 
-```bash title="Terminal"
-axiom mock axiom.acore --profile contract --port 8080
-```
+<span id="consume-locally" />
 
-Use explicit Cloud retrieval from a linked project with a Cloud session:
+## Run a mock locally
+
+`axiom mock --cloud` fetches the saved configuration and runs it as a local
+contract mock:
 
 ```bash title="Terminal"
 axiom mock --cloud --port 8080
 ```
 
-The command preserves the configuration cache and ETag. It is a labeled
-contract-only profile and rejects local inputs, variants, private plans,
-fixtures, real deployment bindings and watch. Local paths work offline; no
-source/configuration error triggers Cloud retrieval.
+It needs a linked directory and a Cloud session. It keeps a cached copy and
+its ETag, so an unchanged configuration is not downloaded again. It runs only
+the contract profile and rejects a local input file, `--variant`, `--plan`,
+`--deployment`, `--bindings`, `--delivery`, `--fixtures`, `--identities` and
+`--watch`.
 
-## Provision a managed environment
+Local mocks never fall back to Cloud. To simulate a local contract offline,
+pass the file:
 
-Use the dashboard's sandbox controls after the matching release is verified.
-Provisioning is asynchronous. Wait for the durable environment state to become
-ready before giving its endpoint to a consumer or queueing a sandbox-backed
-test.
+```bash title="Terminal"
+axiom mock axiom.acore --profile contract --port 8080
+```
 
-An empty mock document is valid but does not fabricate successful behavior for
-undeclared scenarios. A route without authored behavior can return an explicit
-not-implemented response.
+`axiom serve` starts your real local API. It never downloads a saved Cloud
+mock. See [Mocks](/testing/mocks) for local mock profiles and fixtures.
+
+## Serve it from the managed sandbox
+
+After a release is verified, open the project's **Sandbox** page and choose
+**Launch from active release**. Provisioning runs in the background. Wait for
+the sandbox to report ready before you give its endpoint to a consumer or queue
+a sandbox-backed test. See [Releases and environments](/cloud/releases-and-environments)
+for the sandbox lifecycle and key.
+
+An empty mock document is valid, but it does not invent successful behavior.
+A contract route with no declared behavior returns an explicit `501`
+response with `mock_behavior_not_declared`.
 
 ## Security checklist
 
-- use synthetic data only;
-- never put provider, database, or production user credentials in the mock;
-- require the sandbox key for routes, health controls, reset, and API docs;
-- redact the key from screenshots, shell history, logs, and test artifacts;
-- verify reset restores declared initial state; and
-- confirm expiry/deletion removes the provider resource before treating the
-  environment as gone.
+- Use synthetic data only.
+- Never put provider, database or production user credentials in the mock.
+- Require the sandbox key for routes, health controls, reset and API docs.
+- Redact the key from screenshots, shell history, logs and test artifacts.
+- Check that reset restores the declared initial state.
+- Confirm that expiry or deletion removed the sandbox before you treat it as
+  gone.
 
-<StatusNote status="alpha" title="Managed execution">
-  Saving project mock configuration is implemented. Managed sandbox execution
-  depends on the connected deployment's environment feature and worker
-  resources; it is not available merely because the CLI command succeeded.
-</StatusNote>
+## Next steps
+
+- [Follow a release into the managed sandbox](/cloud/releases-and-environments)
+- [Write contract tests that run against the sandbox](/testing/contracts)
+- [Choose a local mock profile](/testing/mocks)

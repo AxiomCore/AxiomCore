@@ -1,81 +1,147 @@
 ---
-title: Values, types, and operators
-description: Acore literals, type expressions, null handling, operators, and expression evaluation.
+title: Values, types and operators
+description: Acore literals, built-in types, type expressions, operators, precedence and null handling, checked with Axiom CLI 0.149.1.
 pageType: reference
 ---
 
-## Runtime values
+This page lists the values, types and operators you can use in Acore. Acore has
+two expression grammars: the **general evaluator** used by general modules and
+property values, and the **checked expression** grammar used by backend
+`pure fn` bodies, `managed` blocks and Acore UI. Each section says which one it
+covers. Examples were evaluated with `axiom eval` or checked with `axiom check`
+from CLI 0.149.1.
+
+<span id="runtime-values" />
+
+## Values in general modules
 
 | Family | Source form | Notes |
 | --- | --- | --- |
-| Null | `null` | The only null value. |
-| Boolean | `true`, `false` | Used by logical and conditional expressions. |
-| Integer | `42`, `-7` | Signed 64-bit integer in the current lexer. |
-| Float | `3.14`, `-0.5` | Double-precision evaluator value. |
-| String | `"hello"` | Double-quoted source string. |
-| List | `[1, 2]`, `Listing { 1 2 }` | General evaluator collection values; backend fields use `List<T>`. |
-| Set | Typed standard-library values | Unique collection value supported by evaluator intrinsics. |
-| Map/object | `{ key = value }`, `Mapping { [key] = value }` | Named properties or evaluated key/value entries. |
-| Function | `(x) -> x + 1` | Lambda closure with lexical capture. |
-| Duration/DataSize | Standard-library values | Unit-aware primitives used by library APIs. |
+| Null | `null` | The only null value. A property whose value is null is left out of rendered output. |
+| Boolean | `true`, `false` | |
+| Integer | `42`, `-7` | Signed 64-bit. Overflow is an error (`Integer overflow`). |
+| Float | `3.14`, `-0.5` | 64-bit. A whole float such as `7.0` renders as `7`. |
+| String | `"hello"` | See [Strings and numbers](/acore-language/syntax-overview#strings-and-numbers) for the other string forms. |
+| List | `[1, 2]`, `Listing { 1 2 }` | |
+| Object | `{ key = value }`, `name { ... }` | Named properties and evaluated keys. |
+| Mapping | `Mapping { ["key"] = value }` | Evaluated key and value entries. |
+| Function | `(x) -> x + 1` | A lambda with lexical capture. Functions are left out of rendered output. |
+| Set, Map, Regex, Bytes | Library values | Members exist, but 0.149.1 binds no source constructor. See [Standard library](/acore-language/standard-library). |
+| Duration, DataSize | `Duration { value = 5 unit = "s" }` | Unit-aware classes from the base module. |
 
-## Type expressions
+<span id="literal-types" />
 
-```acore title="Acore excerpt"
+## Types in general modules
+
+```acore title="types.acore"
 name: String = "tasks"
 attempts: Int = 3
 enabled: Boolean = true
-handler: (String, Int) -> Boolean
-```
-
-### Nullable and union types
-
-```acore title="Acore excerpt"
+ratio: Number = 1.5
 description: String? = null
 identifier: String | Int = "task-1"
-```
-
-### Parameterized and constrained types
-
-```acore title="Acore excerpt"
+mode: "audit" | "strict" = "audit"
 tags: Listing<String> = Listing { "alpha" }
 sampleRate: Float(this >= 0.0 && this <= 1.0) = 0.5
+handler: (String, Int) -> Boolean = (s, i) -> true
 ```
 
-Constraints are checked by the evaluator/schema path that owns the declaration.
-They are not arbitrary server-side authorization rules.
+| Type | Accepts |
+| --- | --- |
+| `Int` | Integers only. `1.0` is a type mismatch. |
+| `Float` | Floats only. `1` is a type mismatch; use `Number` for either. |
+| `Number` | Integers and floats |
+| `String`, `Boolean`, `Null` | The matching literal |
+| `Listing`, `Listing<T>` | Lists. A type argument is checked for each element. |
+| `Mapping` | Mappings and maps |
+| `Dynamic` | Plain objects |
+| `Object` | Plain and typed objects |
+| `Any` | Every value |
+| `T?` | `T` or `null` |
+| `A \| B` | Either type |
+| `"a" \| "b"` | One of the string literals |
+| `T(constraint)` | `T`, where the constraint expression on `this` is true |
+| `(A, B) -> R` | A function type. Parameter types are not checked when a lambda is called. |
 
-### Literal types
+Rules verified in 0.149.1:
 
-```acore title="Acore excerpt"
-typealias Mode = "audit" | "strict"
-```
+- A declared type and its constraints are checked on the property's value.
+  `x: Int(this > 0) = -5` fails with `Type mismatch`.
+- `typealias Mode = "audit" | "strict"` is accepted, but a property typed
+  `Mode` is not checked against the literals. Write the union inline when you
+  need the check.
+- A typed object such as `Base { port = "x" }` does not re-check an overridden
+  property against the class's declared type or constraint. A class property
+  with no default must still be set. Profile validators for backend, UI and
+  database sources remain authoritative.
+- Constraints validate authored values during evaluation. They are not
+  server-side authorization rules.
 
-## Operators
+<span id="nullable-and-union-types" />
+<span id="parameterized-and-constrained-types" />
 
-From lowest to highest binding precedence:
+## Types in backend and UI declarations
+
+Backend models use these types. Field constraints such as
+`String(minLength: 1)` are listed in [Validation](/acore-language/validation).
+
+| Type | Notes |
+| --- | --- |
+| `String`, `Bool`, `Bytes`, `DateTime`, `Json`, `Void` | `Boolean` and `Int` are not backend types. |
+| `Int32`, `Int64`, `Float32`, `Float64` | Sized numbers. `Int64` stays exact on the backend. |
+| `List<T>`, `Map<K, V>` | Collections. Values are written as bracketed lists and `{key: value}` records. |
+| `Optional<T>`, `T?` | An optional value |
+| `Models.Name`, `Entities.name` | A model or promoted entity |
+
+Acore UI has its own portable types, such as `Int` and `Bool`, and keeps
+integers within the safe JavaScript range. See [Acore UI](/frontend/acore-ui).
+
+<span id="operators" />
+
+## Operators in general modules
+
+From lowest to highest binding precedence. All binary operators are left
+associative except `**`.
 
 | Precedence | Operators | Meaning |
 | --- | --- | --- |
-| 1 | <code>&#124;&gt;</code> | Pipe the left value into a callable expression. |
-| 2 | <code>&#124;&#124;</code> | Short-circuit logical OR. |
-| 3 | `&&` | Short-circuit logical AND. |
-| 4 | `==`, `!=` | Equality and inequality. |
-| 5 | `<`, `<=`, `>`, `>=` | Ordered comparison. |
-| 6 | `??` | Use the right operand when the left is null. |
-| 7 | `+`, `-` | Addition/subtraction; `+` also joins supported strings. |
-| 8 | `*`, `/` | Multiplication and division. `/` can produce a float. |
-| 9 | `**` | Exponentiation; right associative. |
+| 1 | `\|>` | Parsed, but not evaluated in 0.149.1: it fails with `Type mismatch in math`. Call the function instead. |
+| 2 | `\|\|` | Short-circuit OR on Booleans |
+| 3 | `&&` | Short-circuit AND on Booleans |
+| 4 | `==`, `!=` | Equality for any two values. `1 == 1.0` is `true`. |
+| 5 | `<`, `<=`, `>`, `>=` | Numbers only. Comparing strings fails (`Invalid string op`). |
+| 6 | `??` | The right operand when the left is null. The right side is evaluated only when needed. |
+| 7 | `+`, `-` | Numbers. `+` also joins two strings; `1 + "x"` is a type mismatch. |
+| 8 | `*`, `/` | Numbers. `/` always returns a float: `7 / 2` is `3.5` and `6 / 2` is `3.0`. |
+| 9 | `**` | Power, right associative: `2 ** 3 ** 2` is `512`. A negative exponent returns a float. |
 
-The lexer also recognizes `~/` and `%`; treat them as alpha until their parser
-path and conformance examples are covered consistently.
+Unary `-` negates a number and `!` negates a Boolean. Mixing an integer and a
+float promotes to float. Integer `+`, `-`, `*` and `**` fail on overflow, and
+integer division by zero fails with `Division by zero`. A float divided by zero
+is infinite, and rendering it fails with `Cannot render non-finite float`.
 
-Unary `-` negates a number and `!` negates a Boolean.
+The lexer also recognizes `%` and `~/`, but the 0.149.1 parser rejects them
+(`Unexpected token: Mod`, `Unexpected token: TruncDiv`).
 
-```acore title="Acore excerpt"
+```acore title="operators.acore"
+baseTimeout = 5
 timeout = baseTimeout * 2
+configuredLabel = null
 label = configuredLabel ?? "Untitled"
+active = true
+attempts = 2
 eligible = active && attempts < 3
+```
+
+```json title="Output of axiom eval operators.acore -f json"
+{
+  "active": true,
+  "attempts": 2,
+  "baseTimeout": 5,
+  "eligible": true,
+  "label": "Untitled",
+  "timeout": 10
+}
 ```
 
 ## Member access and null handling
@@ -86,46 +152,106 @@ safeName = account?.profile?.name
 requiredName = safeName!!
 ```
 
-- `.` reads a member and fails when the receiver/member is invalid.
-- `?.` short-circuits member access when the receiver is null.
-- `!!` asserts non-null and raises an evaluation error otherwise.
+| Form | Behavior |
+| --- | --- |
+| `a.b` | Reads a member. Fails with `Property b not found` when it does not exist. |
+| `a?.b` | Returns null when `a` is null, or when `a` is an object without `b`. |
+| `a!!` | Returns `a`, or fails with `Null pointer exception (!!) applied to a null value`. |
+
+<span id="type-expressions" />
 
 ## Type checks and casts
 
-```acore title="Acore excerpt"
-isText = value is String
-text = value as String
-```
+`is` and `as` are reserved words, but the 0.149.1 parser rejects them
+(`Unexpected token: Is`). Use a typed property, such as `text: String = value`,
+to check a value's type.
 
-`is` returns a Boolean. `as` returns the value when compatible and otherwise
-raises a type-mismatch diagnostic.
+<span id="conditionals" />
 
-## Conditionals
+## Conditionals and let
 
 ```acore title="Acore excerpt"
 cacheSeconds = if (environment == "prod") 300 else 0
+area = let (side = 4) side * side
 ```
 
-An omitted `else` evaluates to null, but explicit alternatives are clearer for
-typed contract properties.
+The condition must be a Boolean. Without `else`, a false condition produces
+null, so the property is left out of output. Write an explicit alternative for
+typed contract values. `let (name = value) body` binds a name for one
+expression; `let (name: Type = value)` also checks the type.
 
 ## Lambdas
 
 ```acore title="Acore excerpt"
 double = (value: Int) -> value * 2
 doubled = [1, 2, 3].map(double)
+add = (a, b) -> a + b
+sum = add(1, 2)
 ```
 
-Lambdas capture their lexical environment. Acore UI also supports the compact
-lambda form used by list keys; see the [UI profile](/frontend/acore-ui).
+Lambdas capture their lexical scope. Extra call arguments are ignored. Acore UI
+also has a compact lambda form for list keys; see [Acore UI](/frontend/acore-ui).
 
 ## Errors and reads
 
 ```acore title="Acore excerpt"
 required = configured ?? throw("configured is required")
-template = read("./template.txt")
+region = read("env:REGION") ?? "local"
 ```
 
-`throw(value)` stops evaluation with a diagnostic. `read("path")` goes through
-the evaluator's security manager. An Acore file does not gain unrestricted I/O
-merely by naming a path.
+| Form | Result |
+| --- | --- |
+| `throw(value)` | Stops evaluation with `User Error` and the value. |
+| `error("message")` | Stops evaluation with the message. |
+| `read("env:NAME")` | The environment variable, or null when it is unset. |
+| `read("prop:NAME")` | An external property supplied by the host, or null. |
+| `read("other")`, `read?("...")` | Null in 0.149.1. `read` does not load files. |
+| `read_env("NAME")` | The environment variable, or an error when it is unset. |
+
+Every read goes through the evaluator's security manager. Naming a path does
+not grant I/O. Contracts must not depend on environment values: declare a
+[runtime secret](/backend/runtime-secrets) instead.
+
+## Checked expressions in backend and UI code
+
+Backend `pure fn` bodies, `managed` blocks, validator checks and Acore UI
+expressions share a separate, checked grammar.
+
+| Precedence | Operators |
+| --- | --- |
+| 1 | `condition ? whenTrue : whenFalse` |
+| 2 | `??` |
+| 3 | `\|\|` |
+| 4 | `&&` |
+| 5 | `==`, `!=` |
+| 6 | `<`, `>`, `<=`, `>=` |
+| 7 | `+`, `-` |
+| 8 | `*`, `/`, `%` |
+
+Other forms:
+
+- Unary `!` and `-`, member access `.` and `?.`, and indexing `items[0]`, which
+  returns an optional value.
+- Records `{title: value}`, lists `[a, b]`, record updates `{task with title: t}`
+  and interpolated strings `$"..."`.
+- Calls to declared pure functions and bounded methods: `String` has `length`,
+  `trim()`, `toLowerCase()`, `toUpperCase()`, `contains(s)`, `startsWith(s)`,
+  `endsWith(s)` and `slice(start, end)`; `List` has `length`, `contains(x)`,
+  `take(n)`, `drop(n)`, `sum()` for integers and `join(sep)` for strings.
+- No lambdas, `**` or `|>`. Arithmetic is checked, evaluation runs
+  left to right, `&&`, `||` and `??` short-circuit, and string length counts
+  Unicode scalar values.
+
+```acore title="backend/main.acore"
+project(id: "pure-example", version: "1.0.0")
+pure fn label(count: Int32): String = count > 1 ? "many" : "one"
+pure fn orNone(value: String?): String = value ?? "none"
+pure fn isEven(value: Int32): Bool = value % 2 == 0
+```
+
+## Related
+
+- [Syntax](/acore-language/syntax-overview)
+- [Objects, classes and functions](/acore-language/objects-classes-and-functions)
+- [Standard library](/acore-language/standard-library)
+- [Managed logic and concurrency](/acore-language/managed-language)

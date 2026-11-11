@@ -6,18 +6,10 @@
     "values-types-and-operators",
     "objects-classes-and-functions",
     "imports-and-contracts",
-    "amends-and-merging",
     "validation",
-    "evaluation-and-output",
-    "standard-library",
-    "backend-profile",
     "managed-language",
-    "authoring-ergonomics",
-    "owned-operations",
-    "domain-model-v1",
-    "security-model-v1",
-    "policies-and-behavior",
     "streaming-and-websockets",
-    "variants-and-filtering"
+    "standard-library",
+    "domain-and-security-models"
   ]
 }

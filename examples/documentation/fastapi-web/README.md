@@ -4,15 +4,18 @@ Call a real Python API from an ATMX browser client. Verified with published
 CLI 0.149.0 on macOS arm64, atmx-cli 0.146.7 and atmx-web 0.147.5.
 Use Python 3.12, Node.js 22.12+, npm, and two terminals.
 
+Install the FastAPI extractor first, as described in
+[Backend extractors](https://docs.axiomcore.dev/getting-started/installation/#backend-extractors).
+`axiom install ... --module` does not install extractors in CLI 0.149.1.
+
 From this directory, prepare and start the backend:
 
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install -r backend/requirements.txt
-axiom install axiom-fastapi --module
 cd backend
 axiom build axiom.acore --out backend.axiom
-axiom inspect backend.axiom
+axiom inspect overview .
 ../.venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8083
 ```
 

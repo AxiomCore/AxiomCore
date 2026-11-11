@@ -1,19 +1,32 @@
 ---
-title: Testing contracts
-description: Define request checks, lifecycle hooks, captures, and assertions in Acore.
+title: Contract tests
+description: Run live request checks declared in Acore with axiom test, and replay managed logic with logical time using axiom scenario.
 pageType: guide
 ---
 
-The native test runner executes `TestConfig` suites against each suite's
-configured base URL. It is a live HTTP/WebSocket test path, not a static source
-assertion.
+<span id="requests-and-expectations" />
+<span id="lifecycle-and-isolation" />
+<span id="repeat-retries-and-cancellation-with-logical-time" />
+<span id="typed-development-scenarios" />
 
-## Minimal suite
+Contract tests run checks that live in your Acore contract. `axiom test` sends
+real HTTP and WebSocket requests to a running service and asserts on the
+responses. `axiom scenario` replays compiled managed logic with scripted
+replies and logical time, so retries and cancellation are deterministic.
 
-```acore title="Acore excerpt"
+## Live request checks
+
+`axiom test` is part of the **Alpha** `.axiom` service contract workflow. It
+evaluates the contract's `testConfig` and runs each suite against that suite's
+base URL. It is a live network test, not a static source assertion.
+
+<span id="minimal-suite" />
+
+### A minimal suite
+
+```acore title="axiom.acore (excerpt)"
 // list_tasks is an authored or extracted endpoint in the same contract.
 testConfig(
-  defaults: TestDefaults(timeoutMs: 5000),
   suites: [TestSuite(
     name: "Task API",
     baseUrl: "http://localhost:8080",
@@ -31,57 +44,355 @@ testConfig(
 )
 ```
 
-```bash title="Terminal"
+```bash title="Terminal: project root"
 axiom test axiom.acore
 axiom test axiom.acore --tag smoke
 ```
 
-## Requests and expectations
+The runner prints each suite, a pass or fail mark per check with its duration
+and failure reasons, and a summary such as `Tests: 1 passed, 0 failed`.
 
-`CheckDef` selects either a declared `route` or an explicit `url` and can
-provide path/query parameters, body, and headers. It also controls retry,
-timeout, skipping, captures, and continuation behavior.
+- `FILE` defaults to `axiom.acore`.
+- `--tag` runs only suites whose `tags` contain that exact value. If no suite
+  matches, the runner prints `No suites found matching tag` and exits 0, so do
+  not rely on a tag filter alone in CI.
+- `--variant` selects the contract variant used to resolve route references.
+- The command exits 1 when any check fails. A skipped check is listed with its
+  reason and counts as neither passed nor failed.
 
-Implemented expectation families cover:
+### Suites and checks
 
-- status and duration;
-- response schema;
-- body path comparisons and every/some/none quantifiers;
-- headers; and
-- named groups of expectations.
+| `TestSuite` field | Default | Meaning |
+| --- | --- | --- |
+| `name` | Required | Suite name in the output |
+| `baseUrl` | `http://localhost:8080` | Every check's request goes here |
+| `timeoutMs` | 5000 | Per-request timeout unless a check sets its own |
+| `headers` | None | Sent with every check, after `TestDefaults.headers` |
+| `hooks` | None | Lifecycle hooks (see below) |
+| `checks` | None | The checks, run in order |
+| `continueOnFailure` | `true` | `false` stops the suite after its first failing check |
+| `tags` | None | Labels for `--tag` |
 
-## Capture values
+`testConfig(defaults: TestDefaults(...))` supplies shared `headers`.
+`TestDefaults.timeoutMs` applies only to a suite whose `timeoutMs` is 0. Set
+retries on each check and continuation on each suite; the `retryCount` and
+`continueOnFailure` fields of `TestDefaults` are not applied.
 
-```acore title="Acore excerpt"
-// A capture argument inside CheckDef(...).
+| `CheckDef` field | Default | Meaning |
+| --- | --- | --- |
+| `route` | None | A declared endpoint, such as `Routes.list_tasks`. Uses the endpoint's method and path. |
+| `url` | None | A path relative to `baseUrl`. Always sent as GET; use `route` for other methods. |
+| `pathParams`, `queryParams` | None | Values for `{name}` or `:name` path segments, and the query string |
+| `body`, `headers` | None | Request body (JSON) and headers |
+| `retryCount`, `retryDelayMs` | 0, 500 | Retries after a failed attempt |
+| `timeoutMs` | Suite value | Per-check timeout |
+| `expect` | None | Expectations, all of which must pass |
+| `capture` | None | Values to keep for later checks |
+| `skip`, `skipReason` | `false` | Skip the check and report the reason |
+| `label` | `Unnamed Check` | Name in the output |
+
+### Expectations
+
+| Class | Fields | Passes when |
+| --- | --- | --- |
+| `StatusExpectation` | `op` (default `eq`), `value` | The status code matches |
+| `DurationExpectation` | `op`, `valueMs` | The response time matches |
+| `HeaderExpectation` | `key`, `op`, `value` | The header matches |
+| `BodyExpectation` | `path`, `op`, `value` | The value at a JSON path matches |
+| `BodyQuantifierExpectation` | `path`, `quantifier` (`every`, `some`, `none`), `itemPath`, `op`, `value` | Items of an array match. `every` fails on an empty array. |
+| `SchemaExpectation` | `strict` | The response has a JSON body. It does not yet validate against the declared schema, and `strict` is not applied. |
+| `ExpectGroup` | `label`, `expectations` | Every nested expectation passes |
+
+Operators are `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `contains`, `matches`,
+`exists` and `missing`. Every expectation accepts an optional `label`. Body
+paths are JSONPath; `$.` is added when you omit it, so `items[0].id` works.
+
+### Capture values
+
+```acore title="Acore excerpt: two checks inside TestSuite(checks: [...])"
 CheckDef(
-  url: "/login",
-  capture: [ResponseCapture(path: "token", bindAs: "sessionToken", type: "string")]
+  label: "Sign in",
+  route: Routes.login,
+  body: {email: "fixture@example.test", password: "synthetic-password"},
+  expect: [StatusExpectation(value: 200)],
+  capture: [ResponseCapture(path: "body.token", bindAs: "sessionToken")]
+),
+CheckDef(
+  label: "Read profile",
+  route: Routes.profile,
+  headers: {authorization: "Bearer {{store.sessionToken}}"},
+  expect: [StatusExpectation(value: 200)]
 )
 ```
 
-Captured values are scoped test data for later checks/hooks. Do not print or
-commit real production tokens.
+- A capture `path` starts with `body.` or `headers.`, or is `status`.
+- Values are stored only when every expectation of that check passes. The
+  `type` field is accepted but values keep their JSON type.
+- Use `{{store.name}}` inside headers, path and query parameters, body strings
+  and hook actions. A value that is exactly `"store.name"` substitutes the raw
+  JSON value. `url` strings are not interpolated; use `pathParams`.
+- Captured values are scoped test data. Do not print or commit real production
+  tokens.
 
-## Lifecycle and isolation
+### Lifecycle hooks
 
-Suites can declare typed lifecycle hooks. Use them to create/reset fixtures and
-make state ownership explicit. Prefer a dedicated test or local mock base URL;
-an explicit URL can perform real writes.
+```acore title="Acore excerpt: inside TestSuite(...)"
+hooks: [LifecycleHook(phase: "beforeAll", actions: [
+  HttpHookAction(method: "POST", url: "http://localhost:8080/test/reset"),
+  StoreSetAction(key: "tenant", value: "fixture"),
+  LogAction(message: "tenant={{store.tenant}}")
+])]
+```
 
-Run contract tests alongside, not instead of, the backend's unit/integration
-tests and the consuming application's tests.
+- `phase` is `beforeAll`, `afterAll`, `beforeEach` or `afterEach`.
+  `beforeEach` and `afterEach` hooks run around every check that is not
+  skipped.
+- Actions are `HttpHookAction(method, url, headers, body)`,
+  `StoreSetAction(key, value)`, `StoreClearAction()` and `LogAction(message)`.
+  A hook `url` is used exactly as written, so give the full URL.
+- A failed hook request does not fail the suite. Assert on fixture state with a
+  check if it matters.
 
-## Repeat retries and cancellation with logical time
+### WebSocket checks
 
-Use the matching source build's [typed development scenarios](/testing/test-runner#typed-development-scenarios)
-for deterministic compiled managed-query behavior. Keep the complete Acore
-resource/policy declarations, selected artifact identities and synthetic replies
-in the same reviewed fixture project. `axiom scenario check` rejects wrong input
-rules, undeclared failures and stale plans before acquiring resources.
+When `route` resolves to an endpoint declared with method `WS`, the runner opens
+a `ws://` or `wss://` connection, sends `body` once as a JSON text message and
+reads one text message as the JSON body. The status is the handshake status,
+and only `body.` captures apply.
 
-A scenario uses an arrival barrier before advancing backoff, joins every started
-operation, and checks terminal outcomes, physical calls and cleanup. A failed
-assertion still drains work. Reports separate the primary failure from cleanup
-failure and identify the actual execution level; a compiler-host scenario does
-not certify persistence, transport or native OS behavior.
+### Keep tests isolated
+
+Checks call the base URL for real, so a check on a write route performs a real
+write. Verify each suite's `baseUrl` and credentials before running it, prefer
+a dedicated test service or a local [mock](/testing/mocks), and use hooks to
+create or reset fixtures. Run contract tests alongside, not instead of, the
+backend's own unit and integration tests and the consuming application's tests.
+
+## Deterministic scenarios
+
+<StatusNote status="experimental" title="Experimental, development only">
+`axiom scenario` runs the `native-managed.v1` fixture: compiled managed query
+actions with synthetic, declared read providers. Resource grants, typed
+boundaries, operation policies and host cleanup still apply. Reports label the
+level `compiler-host`, which does not certify persistence, transport or native
+OS behavior.
+</StatusNote>
+
+A scenario scripts provider replies, starts an action, waits at a barrier,
+moves logical time and asserts the outcome, the physical calls and cleanup.
+Nothing uses a wall-clock sleep to decide ordering. Keep the Acore
+declarations, the selected artifact identities and the synthetic replies
+together in one reviewed fixture project.
+
+### Write and check a scenario
+
+This backend reads a task with a fixed 250 ms retry policy:
+
+```acore title="main.acore"
+project(id: "scenario-reader", version: "1.0.0")
+variant default(include: ["*"])
+
+model Key { id: Int32(min: 1) }
+model Task { title: String }
+model Problem { message: String }
+failure unavailable(payload: Models.Problem, status: 503,
+  category: FailureCategory.domain, retryable: true)
+
+resource tasks(lifetime: ProviderLifetime.invocation) {
+  operation lookup(input: Int32, output: Models.Task, effect: EffectKind.read,
+    errors: [Failures.unavailable])
+}
+operationPolicy reads(totalTimeout: 2s, attemptTimeout: 500ms, attempts: 2,
+  backoff: Fixed(delay: 250ms), jitter: Jitter.none,
+  retryOn: [Failures.unavailable], safety: RetrySafety.readOnly)
+
+action read(kind: ActionKind.query, input: Models.Key, output: Models.Task) {
+  errors(Failures.unavailable)
+  managed {
+    let task = await Resources.tasks.lookup(input: Input.id,
+      policy: OperationPolicies.reads)
+    return task
+  }
+}
+```
+
+1. Build the contract and its private plan, then read the catalog:
+
+   ```bash title="Terminal: project root"
+   axiom build main.acore --out axiom.axiom
+   axiom scenario catalog axiom.axiom --plan axiom.server.json > catalog.json
+   ```
+
+   `build` writes `axiom.axiom` and, beside it, `axiom.server.json`. The
+   catalog lists the exact contract, plan and schema identities, each
+   operation's input and output types and declared failures, the available
+   barriers and the supported controls.
+
+2. Write the scenario. Paste the catalog's `artifacts` object into it:
+
+   ```json title="retry.scenario.json (artifact hashes shortened)"
+   {
+     "format": "axiom-development-scenario/v1",
+     "developmentOnly": true,
+     "name": "successfulRetry",
+     "fixture": "native-managed.v1",
+     "artifacts": {"contract": "a23a...", "plan": "a12c...", "schema": "b8bd..."},
+     "steps": [
+       {"kind": "provide", "operation": "resource.tasks.lookup", "replies": [
+         {"input": 1, "outcome": {"kind": "failure", "code": "unavailable", "value": {"message": "Synthetic unavailable"}}},
+         {"input": 1, "outcome": {"kind": "value", "value": {"title": "Synthetic"}}}
+       ]},
+       {"kind": "start", "id": "read", "operation": "action.read", "input": {"id": 1}},
+       {"kind": "barrier", "name": "policy.waiting", "action": "arrive"},
+       {"kind": "advance", "milliseconds": 250},
+       {"kind": "join", "id": "read"},
+       {"kind": "expectOutcome", "id": "read", "outcome": {"kind": "value", "value": {"title": "Synthetic"}}},
+       {"kind": "expectCalls", "operation": "resource.tasks.lookup", "count": 2},
+       {"kind": "expectClean"}
+     ]
+   }
+   ```
+
+3. Check it. `check` validates every step without acquiring resources or
+   running application code:
+
+   ```bash title="Terminal: project root"
+   axiom scenario check axiom.axiom --plan axiom.server.json --scenario retry.scenario.json
+   ```
+
+   ```text title="Output (hashes shortened)"
+   {"artifacts":{...},"executed":false,"format":"axiom-development-scenario-check/v1","level":"compiler-host","scenarioSha256":"...","validated":true}
+   ```
+
+4. Run it against an explicit, reviewed deployment. Scaffold one, then review
+   it: every resource needs an explicit binding with empty `configuration` and
+   no secrets, and `grants` must list the operations the scenario calls (here
+   only `tasks.lookup`). The run replaces each bound provider with its
+   synthetic one. Scenario data cannot grant permissions or create a principal.
+
+   ```bash title="Terminal: project root"
+   axiom server deployment axiom.axiom axiom.server.json --output deployment.json
+   axiom scenario run axiom.axiom --plan axiom.server.json --deployment deployment.json \
+     --scenario retry.scenario.json --report retry.report.json
+   ```
+
+The retry run makes two physical provider calls. A cancellation variant with
+one failing reply, `advance` of 50 ms, then `cancel` and `join` expects the
+outcome `{"kind": "cancelled"}` and one call. A separate real watchdog contains
+blocked harness work.
+
+`check` rejects a value that violates the input schema, an undeclared failure,
+an outcome assertion on a handle that was never joined, and artifacts that do
+not match the selected contract and plan (a stale scenario).
+
+### Steps
+
+| Step `kind` | Purpose |
+| --- | --- |
+| `provide` | Exact operation, input and reply sequence for a provider |
+| `start` | Start an action and own its handle (`id`) |
+| `barrier` | Wait until the host reaches a named point before advancing or cancelling |
+| `advance` | Move logical time (`milliseconds`, at most one day per step) |
+| `cancel`, `join` | Cancel or settle a started handle. Every started handle must be joined. |
+| `expectOutcome`, `expectCalls`, `expectTrace`, `expectClean` | Assert the outcome, physical calls, trace events and clean ownership |
+
+Barriers come from the catalog: `policy.waiting` (an operation policy with more
+than one attempt and a backoff), `batch.waiting`, and `batch.queued.N`.
+`batch.queued.N` waits until N uncancelled items are queued and a real timer
+owns the batch; `advance` then crosses the declared dispatch window, so you can
+assert just before and at dispatch, or cancel before it. Batch scripts name
+scalar logical inputs; the host generates and checks item correlation IDs.
+Production dispatch and I/O containment keep their native clocks.
+
+The `native-managed.v1` fixture rejects UI interactions, state selectors, write
+providers and native or sandbox action bodies. Unsupported controls fail before
+activation. A scenario file is at most 512 KiB and 512 steps. `--epoch-ms`
+(default 0) sets the synthetic wall clock and `--seed` (default 7) seeds test
+policy jitter only; neither replaces secure randomness.
+
+### Synthetic expiry environments
+
+To test credential or provider expiry, add an explicit reviewed environment. It
+selects `native-managed.environment.v1`, generates a private temporary hashed
+API-key registry and uses normal authentication and guards. It accepts
+synthetic principal labels only; it cannot replace a deployment authenticator
+or accept live credential headers, and no production deployment field selects
+this clock.
+
+```json title="expiry.environment.json"
+{
+  "format": "axiom-scenario-environment/v1",
+  "developmentOnly": true,
+  "clockEpochMs": 1000000,
+  "randomSeed": 7,
+  "credential": {
+    "principal": {"subject": "fixtureUser", "roles": [], "permissions": [], "claims": {}},
+    "lifetimeMs": 1000
+  },
+  "providerExpiryMs": {"tasks": 1000}
+}
+```
+
+```bash title="Terminal: project root"
+axiom scenario catalog axiom.axiom --plan axiom.server.json --environment expiry.environment.json
+axiom scenario check axiom.axiom --plan axiom.server.json --environment expiry.environment.json --scenario expiry.scenario.json
+axiom scenario run axiom.axiom --plan axiom.server.json --deployment deployment.json --environment expiry.environment.json --scenario expiry.scenario.json --report expiry.report.json
+```
+
+- Credential lifetimes are whole seconds, from 1 second to 7 days. Provider
+  lifetimes are milliseconds, at most 7 days. Advancing 999 ms keeps these
+  fixtures valid; the next millisecond expires them.
+- Only the fixture registry's authentication is virtualized. JWT verification,
+  secure randomness and production credential providers keep their normal
+  implementations and OS time.
+- The catalog adds an exact environment digest to `artifacts`. A different
+  clock, seed, principal or expiry policy makes the scenario stale; run
+  `catalog` again and review the identity before editing `artifacts`.
+- `--environment` owns the epoch and seed, so it cannot be combined with
+  `--epoch-ms` or `--seed`.
+
+### Reports and observations
+
+Reports use `axiom-development-scenario-report/v1` with level `compiler-host`.
+Read `executedAssertions`, `failedStep`, `failure`, `cleanupFailure` and
+`passed`. Unexpected calls, unused replies, stale artifacts, zero assertions and
+leaked owners fail. Cleanup runs even after a failed assertion, and the report
+keeps the primary failure separate from any cleanup failure. Ctrl+C cancels
+owned work and still writes a failing report when `--report` is set. Reports
+contain identities and closed failure codes, never scripted payloads. Scenario
+files themselves hold fixture data, so use synthetic values and keep any
+authorized replay input private.
+
+`--observations FILE` saves the actual host observations without payloads,
+with providers labeled `scripted-provider`. Import them into
+[Inspector](/inspector) for the same compiled workspace:
+
+```bash title="Terminal: project root"
+axiom scenario run axiom.axiom --plan axiom.server.json --deployment deployment.json \
+  --scenario retry.scenario.json --observations retry.observation.json
+axiom inspect record . --target server --input retry.observation.json --session retry-observed
+axiom inspect runtime . --session retry-observed --format json
+```
+
+Inspector links each event to its graph facts. A stale plan, an unsupported
+event, a private field or excess retention fails before a session is written.
+The export does not describe provider internals or production durability.
+
+### Editor support
+
+VS Code and Zed run `scenario/catalog`, `scenario/check` and `scenario/run`
+through their explicit, catalog-backed workflow runners. Associate files in
+`AxiomEditor.json`: role `development-scenario` for a scenario with its
+`contract` and `plan` inputs, and role `scenario-environment` for an
+environment, which you then add as the scenario's `environment` input. The
+shared language server then checks unsaved fixture edits and stale identities
+without generating credentials or running work. Save inputs before running a
+task; paths and compiler identity are checked first. A successful task must
+report nonzero assertions and clean ownership.
+
+## Next steps
+
+- Develop clients against [mocks](/testing/mocks).
+- Run fixtures through the real server boundary with [server simulation](/testing/server-simulation).
+- Add `axiom test` to the [CI gate](/testing/ci).
+- See every flag in [Test and mock commands](/tooling/cli-testing).

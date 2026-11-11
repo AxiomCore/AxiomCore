@@ -1,68 +1,110 @@
 ---
-title: Acore base schema reference
-description: Implemented contract, behavior, domain, security, mock, and test classes exposed by acore.base.
+title: Acore schema
+description: Fields, types, and defaults of the acore.base contract schema that backend declarations compile to, including endpoint, policy, domain, security, mock, and test classes.
 pageType: reference
 ---
 
-This page describes the existing contract data model and its standard-library
-classes. For new source, use the
-[backend authoring profile](/acore-language/backend-profile): named endpoint
-declarations, typed model fields, `List<T>`, and `Map<K, V>` lower to these same
-JSON fields. Generated identity metadata preserves historical endpoint IDs
-and names; developers do not repeat them in endpoint declarations.
+This page lists the classes in `acore.base`, the schema that every backend
+contract compiles to. You write
+[backend declarations](/backend/declarations) (named `endpoint`, `model`, and
+other declarations with typed fields, `List<T>`, and `Map<K, V>`); the compiler
+lowers them to the JSON fields below. Generated identity metadata keeps
+historical endpoint IDs and names, so you do not repeat them in declarations.
+For syntax and evaluation, see the [Acore language](/acore-language).
 
-This page defines the public configuration surface exposed by `acore.base`.
-It complements the [language manual](/acore-language):
-the manual explains syntax and evaluation, while this reference describes the
-contract schema consumed by AxiomCore.
+## Inspect the schema yourself
 
-Fields without a displayed default are required unless their type is nullable
-(`?`). `Listing<T>` and `Mapping<K, V>` are typed list and mapping shapes.
+Two read-only commands show the same data for your installed CLI:
+
+```bash title="Terminal"
+axiom explain axiom.acore
+axiom explain --schema
+```
+
+`axiom explain FILE` prints the expanded backend JSON for one contract.
+`axiom explain --schema` prints the machine-readable declaration catalog
+(format `acore-backend-language/v1`): every constructor with its arguments,
+types, defaults, and required flags, plus all enum values. Use it when you need
+a field this page summarizes.
+
+## Conventions
+
+- A field without a default is required unless its type is nullable (`?`).
+- `Listing<T>` is a typed list and `Mapping<K, V>` a typed map; both default to
+  empty where a default is shown as `[]` or `{}`.
+- Profile compilers run extra semantic checks beyond these types.
 
 ## Root configuration
 
 ### `Config`
 
-| Field | Type / default | Purpose |
+| Field | Type and default | Purpose |
 | --- | --- | --- |
 | `axiom` | `String = "1.0"` | Source schema version |
 | `project` | `ProjectConfig?` | Project identity and version |
 | `backend` | `BackendConfig?` | Extractor language, entrypoint, and codec |
 | `frontend` | `FrontendConfig?` | Framework and optional output directory |
 | `observability` | `ObservabilityConfig?` | Telemetry URL, sampling, and headers |
-| `variants` | `Mapping<String, VariantConfig>` | Named selection profiles; includes `default` |
+| `variants` | `Mapping<String, VariantConfig>` | Named selection profiles; defaults to `default` including `"*"` |
 | `policies` | `PolicyConfig?` | Default cache and retry behavior |
 | `serviceName` | `String?` | Service label |
 | `offlineConfig` | `OfflineConfig?` | Local database and synchronization selection |
-| `models` / `enums` | typed mappings | Extracted or authored data shapes |
+| `models`, `enums` | `Mapping<String, ModelDef>`, `Mapping<String, EnumDef>` | Extracted or authored data shapes |
 | `endpoints` | `Mapping<String, EndpointDef>` | Operation surface |
-| `domain` | `DomainModel? = null` | Optional promoted business semantics |
+| `domain` | `DomainModel? = null` | Optional business semantics |
 | `security` | `SecurityConfig? = null` | Optional security declarations and gates |
-| `securityEvidence` | `ExtractedSecurityEvidence?` | Extractor-owned evidence, normally not authored |
+| `securityEvidence` | `ExtractedSecurityEvidence? = null` | Written by Go and Python extractors; you normally do not author it |
 | `authMethods` | `Mapping<String, AuthMethodDef>` | Reusable endpoint authentication methods |
 
 ### Project, backend, and frontend
 
 | Class | Fields |
 | --- | --- |
-| `ProjectConfig` | required `id: String`, `version: String` |
-| `BackendConfig` | required `language`, `entrypoint`; `codec = "json"` (`json` or `flatbuffers`) |
-| `FrontendConfig` | required `framework`; nullable `outputDir` |
-| `ObservabilityConfig` | `enabled = false`, nullable `telemetryUrl`, `sampleRate = 1.0` constrained to 0…1, `headers = {}` |
-| `OfflineConfig` | `enableLocalDb = false`; required `syncStrategy` |
+| `ProjectConfig` | `id: String`, `version: String` (both required) |
+| `BackendConfig` | `language`, `entrypoint` (required); `codec = "json"` |
+| `FrontendConfig` | `framework` (required); `outputDir: String?` |
+| `ObservabilityConfig` | `enabled = false`; `telemetryUrl: String?`; `sampleRate = 1.0`, constrained to 0 through 1; `headers = {}` |
+| `OfflineConfig` | `enableLocalDb = false`; `syncStrategy` (required) |
 
-## Models and endpoint types
+`codec` accepts `json`, `flatbuffers` (also spelled `flat_buffers`), and
+`protobuf`. The runtime implements JSON and FlatBuffers only; it has no
+Protobuf codec.
 
-| Class | Implemented members |
+<span id="models-and-endpoint-types" />
+
+## Models and endpoints
+
+| Class | Members |
 | --- | --- |
-| `ModelDef` | required `name`; `fields = {}`, dynamic `rpcs`, nullable `doc` |
-| `ModelField` | required `name`, `typeRef`; `isOptional = false`, nullable `doc`, nullable `validate`, `extraConstraints = {}` |
-| `EnumDef` | required `name`; `values = []`, nullable `doc` |
-| `EndpointParameter` | required `name`, `typeRef`, `source`; `isOptional = false` |
-| `RpcMethod` | `endpoint = ""`, dynamic `arguments` and `resolver` |
+| `ModelDef` | `name` (required); `fields = {}`; dynamic `rpcs`; `doc: String?` |
+| `ModelField` | `name`, `typeRef` (required); `default = null`; `isOptional = false`; `doc: String?`; `validate = null`; `extraConstraints = {}` |
+| `EnumDef` | `name` (required); `values = []`; `doc: String?` |
+| `EndpointParameter` | `name`, `typeRef`, `source` (required); `isOptional = false` |
+| `RpcMethod` | `endpoint = ""`; dynamic `arguments` and `resolver` |
 
-`EndpointParameter.source` is `path`, `query`, `body`, or `header`. HTTP methods
-are `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, and `WS`.
+`EndpointParameter.source` is `path`, `query`, `body`, or `header`.
+
+### `EndpointDef`
+
+| Field | Type and default |
+| --- | --- |
+| `id` | `Int = 0` |
+| `name`, `path`, `method` | Required |
+| `parameters` | `Listing<EndpointParameter> = []` |
+| `returnType` | Type reference; default `void` |
+| `returnIsOptional` | `Boolean = false` |
+| `streaming`, `auth`, `mock` | Nullable typed configuration |
+| `cache`, `validate`, `retry` | Nullable per-endpoint policy overrides (`validate` is `Boolean?`) |
+| `requestProjection`, `responseProjection` | Nullable domain projection names |
+| `cacheIdentity` | Nullable readable UI cache identity |
+| `invalidates`, `errors` | `Listing<String> = []` |
+| `doc` | `String?` |
+
+HTTP methods are `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `OPTIONS`, `HEAD`,
+and `WS`.
+
+`EndpointOverride` exposes the six overridable behavior fields: `cache`,
+`validate`, `retry`, `streaming`, `auth`, and `mock`.
 
 ### Type references
 
@@ -70,41 +112,23 @@ are `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, and `WS`.
 
 | Class | Members |
 | --- | --- |
-| `TypeRefPrimitive` | `kind`, default `void`; supports string, numeric, boolean, bytes, date-time, void, and JSON kinds |
-| `TypeRefNamed` / `ContractTypeRef` | `kind = "named"`, model name in `value` |
-| `TypeRefList` | `kind = "list"`, item type reference in `value` |
-| `TypeRefMap` | `kind = "map"`, key/value references in the two-item `value` list |
+| `TypeRefPrimitive` | `kind`, default `void`. Kinds: `string`, `int32`, `int64`, `float32`, `float64`, `bool`, `bytes`, `dateTime`, `void`, `json` |
+| `TypeRefNamed` (`ContractTypeRef`) | `kind = "named"`; the model name in `value` |
+| `TypeRefList` | `kind = "list"`; the item type reference in `value` |
+| `TypeRefMap` | `kind = "map"`; key and value references in the two-item `value` list |
 
-Promoted `DomainEntity` values share the named-type shape, so they can be used
-in endpoint type positions after domain validation.
-
-## `EndpointDef`
-
-| Field | Type / default |
-| --- | --- |
-| `id` | `Int = 0` |
-| `name`, `path`, `method` | required |
-| `parameters` | `Listing<EndpointParameter> = []` |
-| `returnType` | type reference, default `void` |
-| `returnIsOptional` | `Boolean = false` |
-| `streaming`, `auth`, `mock` | nullable typed configuration |
-| `cache`, `validate`, `retry` | nullable endpoint policy overrides |
-| `requestProjection`, `responseProjection` | nullable domain projection names |
-| `cacheIdentity` | nullable readable UI cache identity |
-| `invalidates`, `errors` | string lists, default empty |
-| `doc` | nullable documentation |
-
-`EndpointOverride` exposes the six overrideable behavior fields: `cache`,
-`validate`, `retry`, `streaming`, `auth`, and `mock`.
+A promoted `DomainEntity` shares the named-type shape, so you can use it in an
+endpoint type position after domain validation.
 
 ## Cache, retry, and streaming
 
 | Class | Members |
 | --- | --- |
-| `PolicyConfig` | nullable `cache` and `retry` defaults |
-| `CachePolicy` | required `strategy` and `ttlSeconds` |
-| `RetryPolicy` | `maxAttempts = 3`, exponential `backoff`, retry codes 502/503/504, `retryOnTimeout = true` |
-| `FixedBackoff` | fixed delay; defaults inherited from `Backoff` |
+| `PolicyConfig` | Nullable `cache` and `retry` defaults |
+| `CachePolicy` | `strategy`, `ttlSeconds` (both required) |
+| `RetryPolicy` | `maxAttempts = 3`; `backoff = ExponentialBackoff {}`; `retryOnCodes = [502, 503, 504]`; `retryOnTimeout = true` |
+| `Backoff` (base) | `initialDelay = "1s"`; `maxDelay = "30s"`; `useJitter = true` |
+| `FixedBackoff` | Fixed delay; uses the base defaults |
 | `LinearBackoff` | `step = "1s"` |
 | `ExponentialBackoff` | `multiplier = 2.0` |
 
@@ -113,109 +137,148 @@ Cache strategies are `network_only`, `cache_first`, `network_first`, and
 
 | Stream class | Members |
 | --- | --- |
-| `HttpStreamDef` | nullable `responseType`; `framing = "chunk"`; `encoding = "json"` |
-| `SseStreamDef` | nullable `responseType` |
-| `WebSocketDef` | `direction = "bidirectional"`; nullable singular `client` and `server` messages; `reconnect = "auto"` |
-| `WsMessageDef` | required named-model or dynamic `model` |
-| `FileStreamDef` | nullable content type and filename; `disposition = "attachment"` |
+| `HttpStreamDef` | `responseType: TypeRef?`; `framing = "chunk"`; `encoding = "json"` |
+| `SseStreamDef` | `responseType: TypeRef?` |
+| `WebSocketDef` | `direction = "bidirectional"`; single nullable `client` and `server` messages; `reconnect = "auto"` |
+| `WsMessageDef` | `model` (required): a named model or dynamic value |
+| `FileStreamDef` | `contentType: String?`; `filename: String?`; `disposition = "attachment"` |
 
-See [Streaming and WebSockets](/acore-language/streaming-and-websockets) for
-legal enum values and examples.
+| Enum | Values |
+| --- | --- |
+| Framing | `chunk`, `event`, `message`, `file` |
+| Encoding | `json`, `text`, `binary` |
+| WebSocket direction | `server_to_client`, `bidirectional` |
+| Reconnect | `auto`, `manual`, `none` |
+| File disposition | `attachment`, `inline` |
+
+See [Streams and WebSockets](/acore-language/streaming-and-websockets) for
+examples.
 
 ## Authentication
 
 | Class | Members |
 | --- | --- |
-| `AuthMethodDef` | required `type`; nullable scheme, location, name, OAuth flows, and validation |
-| `AuthValidationDef` | required `strategy`; nullable secret reference and algorithm |
-| `EndpointAuth` | required `required`; `condition = "and"`, scopes/methods empty, `confidence = "high"` |
+| `AuthMethodDef` | `type` (required); nullable `scheme`, `location`, `name`, `oauth2Flows`, `validation` |
+| `AuthValidationDef` | `strategy` (required); nullable `secret` reference and `alg` |
+| `EndpointAuth` | `required` (required); `condition = "and"` (`and` or `or`); `scopes = []`; `methods = []`; `confidence = "high"` (`high` or `unknown`) |
 
-Authentication declarations describe the contract. Secret material and trusted
-server-side enforcement remain outside Acore evaluation.
+Authentication method types are `bearer`, `api_key`, `session`, `oauth2`,
+`http_basic`, and `unknown`. These declarations describe the contract. Secret
+material and trusted server-side enforcement stay outside Acore evaluation.
 
 ## Variants
 
-`VariantConfig` provides nullable `include`, `exclude`, `includeModels`,
-`excludeModels`, and `cache`. Patterns select endpoint/model names during
+`VariantConfig` has nullable `include`, `exclude`, `includeModels`,
+`excludeModels`, and `cache`. Patterns select endpoint and model names during
 evaluation; they do not create a runtime feature flag. See
-[Variants and filtering](/acore-language/variants-and-filtering).
+[Imports, amends and variants](/acore-language/imports-and-contracts).
 
 ## Domain schema
 
-| Class | Required members | Defaults / optional members |
+| Class | Required members | Defaults and optional members |
 | --- | --- | --- |
-| `DomainModel` | ,  | format, empty entities, relationships, invariants, projections |
-| `DomainEntity` | `model` (injected by `extend`) | key list, nullable doc; do not author model/ID manually |
-| `DomainRelationship` | `from`, `to` | cardinality, ownership, via, inverse, required, inferred, doc |
-| `DomainInvariant` | `scope` | expression, fields, nullable rules, severity, inferred, doc |
-| `DomainProjection` | `entity` | fields, audience, doc |
+| `DomainModel` | None | `format = "axiom-domain/v1"`; empty `entities`, `relationships`, `invariants`, `projections` |
+| `DomainEntity` | `model` (injected by `extend`; do not author it) | `key = []`; `doc = null`; do not set the model name or ID by hand |
+| `DomainRelationship` | `from`, `to` | `cardinality`, `ownership`, `via`, `inverse` (default `""`); `required = false`; `inferred = false`; `doc` |
+| `DomainInvariant` | `scope` | `expression = ""`; `fields = []`; `rules = null`; `severity = "error"`; `inferred = false`; `doc` |
+| `DomainProjection` | `entity` | `fields = []`; `audience = ""`; `doc` |
 
+Cardinality values are `one_to_one`, `one_to_many`, `many_to_one`, and
+`many_to_many`. Ownership values are `owned`, `reference`, and `shared`.
 Domain invariants are signed, reviewable evidence. AxiomCore does not execute
-their expressions as application business logic.
+their expressions as application logic.
 
 ## Security schema
 
-`SecurityConfig` defaults to `mode = "audit"` and owns named mappings for
-principals, permissions, resources, policies, authentication profiles,
-endpoint guards, data classifications, effects, services, rate limits,
-uploads, paths, processes, and invariants. CORS, CSRF, cache security, and
-observability security are optional singleton policies.
+`SecurityConfig` has `format = "axiom-security/v1"`, `mode = "audit"` (`audit`
+or `strict`), and `defaultPolicy = ""`. It holds named maps for `principals`,
+`permissions`, `resources`, `policies`, `auth` (authentication profiles),
+`endpoints` (endpoint guards), `classifications` (sensitive data), `effects`,
+`services`, `rateLimits`, `uploads`, `paths`, `processes`, and `invariants`.
+`cors`, `csrf`, `cache`, and `observability` are optional single policies.
 
-| Class | Key members |
+| Class | Members and defaults |
 | --- | --- |
-| `SecurityPrincipal` | roles and documentation |
-| `Permission` | required rate-limit, idempotency, and CSRF safeguards |
-| `ProtectedResource` | required promoted domain entity |
-| `SecurityPolicy` | resource, permissions, principals/roles, auth, relationship, resource binding |
-| `EndpointGuard` | public/protected decision, bindings, effects, writable fields, CSRF exemption, idempotency |
-| `AuthenticationPolicy` | transport plus issuer/audience, expiry, rotation, secure/httpOnly/sameSite settings |
-| `SensitiveData` | required target and classification; audiences and redaction |
-| `SecurityEffect` | effect kind and bounded service/upload/path/process/input reference |
-| `NetworkService` | origin, private-network and redirect policy |
-| `RateLimit` | required maximum, window, and key |
-| `CorsPolicy` / `CsrfPolicy` | transport controls |
-| `UploadPolicy` | size, media types, inspection, storage, filename, executable policy |
-| `PathPolicy` / `ProcessPolicy` | filesystem root or executable and allowed input boundary |
-| `CacheSecurityPolicy` | authenticated-response sharing and principal variance |
-| `ObservabilitySecurityPolicy` | redacted classes and payload policy |
+| `SecurityPrincipal` | `roles = []`; `doc` |
+| `Permission` | `requiresRateLimit`, `requiresIdempotency`, `requiresCsrf` (all `false`); `doc` |
+| `ProtectedResource` | `entity` (a promoted `Entities.*` reference); `doc` |
+| `SecurityPolicy` | `resource`, `permissions`, `principals`, `roles`, `auth`, `relationship`, `resourceBinding`; `doc` |
+| `EndpointGuard` | `public = false`; `policy`, `resource`, `permission`, `auth`, `effects`, `rateLimit`, `writableFields`; `csrfExempt = false`; `idempotent = false` |
+| `AuthenticationPolicy` | `transport` (required); `issuer`, `audience`; `validateExpiry = true`; `sessionRotation = false`; `secure = false`; `httpOnly = false`; `sameSite = "lax"` |
+| `SensitiveData` | `target`, `classification` (required); `audiences = []`; `redact = false` |
+| `SecurityEffect` | `kind` (required); `service`, `upload`, `path`, `process`, `input` |
+| `NetworkService` | `origin` (required); `allowPrivateNetworks = false`; `allowRedirects = false` |
+| `RateLimit` | `maxRequests`, `windowSeconds`, `key` (all required) |
+| `CorsPolicy` | `origins`, `methods`, `headers` (default `[]`); `credentials = false` |
+| `CsrfPolicy` | `strategy` (required); `sameSite = "lax"`; `secure = true`; `httpOnly = true` |
+| `UploadPolicy` | `maxBytes` (required); `mediaTypes = []`; `inspectContent = true`; `generatedFilename = true`; `privateStorage = true`; `executable = false` |
+| `PathPolicy` | `root` (required); `allowExternalInput = false` |
+| `ProcessPolicy` | `executable` (required); `allowShell = false`; `allowedArguments = []` |
+| `CacheSecurityPolicy` | `sharedAuthenticatedResponses = false`; `requireVaryByPrincipal = true` |
+| `ObservabilitySecurityPolicy` | `redactClasses = []`; `allowPayloads = false` |
+| `SecurityRequirement` | `kind` (required); `target = ""`; `severity = "error"` |
+| `SecurityEvidenceFact` | `kind` (required); `target`, `file`, `line`, `confidence = "heuristic"`, `detail` |
 
-`audit` reports findings; `strict` gates error findings during supported build
-and release paths. Declarations do not replace trusted runtime authorization.
+Effect kinds are `network`, `html_output`, `upload`, `filesystem_read`,
+`filesystem_write`, `process`, `log`, `analytics`, `cache`, and `response`.
+
+`audit` reports findings; `strict` blocks error findings in supported build and
+release paths. Declarations do not replace trusted runtime authorization. See
+[Security rules](/reference/security-rules) for the AXSEC findings these
+classes produce.
 
 ## Mock schema
 
-`MockConfig` selects responses with `first_match`, `random`, `sequential`, or
-`weighted`; it can carry fault injection, state, and a fallback response.
+`MockConfig` has `enabled = true`, `selectionStrategy = "first_match"`
+(`first_match`, `random`, `sequential`, or `weighted`), `responses = []`, and
+nullable `fault`, `state`, and `fallback`.
 
-| Family | Implemented role |
+| Family | Classes and defaults |
 | --- | --- |
-| Conditions | header, query, path, body, state, and expression matching |
-| Data strategies | static, template, collection, echo, and store query |
-| Faults | latency, network fault, malformed body, partial response, or configured status behavior |
-| State | initial store, mutations, emitted events, and reset behavior |
-| `MockResponse` | conditions, status, headers, data, delay/jitter, weight, label |
+| Response | `MockResponse`: `conditions = []`; `status = 200`; `headers = {}`; `data = StaticData {}`; `delayMs = 0`; `delayJitterMs = 0`; `weight = 1`; `label` |
+| Conditions | `HeaderCondition` (`key`, default op `exists`), `QueryCondition` and `PathCondition` (`key`, op `eq`), `BodyCondition` (`path`, op `eq`), `StoreCondition` (`key`, op `gt`); combine with `AllCondition`, `AnyCondition`, `NotCondition` |
+| Operators | `eq`, `neq`, `exists`, `missing`, `contains`, `matches`, `gt`, `lt` |
+| Data | `StaticData`, `TemplateData`, `EchoData` (`body`); `CollectionData` (`item`, `count = 20`, `paging` with `pageSizeParam = "limit"` and `pageIndexParam = "offset"`); `StoreQueryData` (`key`, `filterKey`, `filterValue`, `returnAll = false`) |
+| Faults | `FaultConfig`: `errorRate = 0.0` (0 through 1), `errorResponse`, `networkFault`. `NetworkFault`: `type` is `timeout`, `connection_reset`, or `slow_response`; `probability = 1.0`; `delayMs` |
+| State | `MockStateConfig`: `initial = {}`, `onReceive = []`, `activityKey = "activity"`, `changes = []` |
+| Mutations | `StoreMutation`: `type` is `increment`, `increment_fields`, `set`, `update`, `update_all`, `append`, or `delete`; `key`; `value`; `by = 1`; `filterKey`, `filterValue` |
+| Transitions | `StateChange`: `name`, `responseLabel`, `when = []`, `mutations = []`, `events = []`. Every matching change runs in declaration order. `StateEvent` requires `type` and `title` |
 
-Use [Mocking APIs](/testing/mocks) for a supported lifecycle. Mock
-behavior is a development/test boundary, not proof of production behavior.
+Use [Mocks](/testing/mocks) for the supported workflow. Mock behavior is a
+development and test boundary, not proof of production behavior.
 
 ## Test schema
 
-| Class | Members |
-| --- | --- |
-| `TestConfig` | suites plus optional defaults |
-| `TestDefaults` | timeout, retry count, continue-on-failure, headers |
-| `TestSuite` | name, base URL, timeout, headers, hooks, checks, continuation, tags |
-| `CheckDef` | route or URL, request inputs, retry, expectations, captures, skip, timeout, label |
-| `LifecycleHook` | timing plus a typed hook action |
-| `ResponseCapture` | response path, binding name, extraction type |
+In a backend contract, declare suites with
+`testConfig(suites: [TestSuite(name: "smoke", baseUrl: "http://localhost:8080", checks: [...])])`.
 
-Expectations cover status, duration, schema, body values/quantifiers, headers,
-and grouped assertions. Run all configured suites with `axiom test axiom.acore`
-or filter them with `--tag`.
+| Class | Members and defaults |
+| --- | --- |
+| `TestConfig` | `suites = []`; `defaults: TestDefaults?` |
+| `TestDefaults` | `timeoutMs = 5000`; `retryCount = 0`; `continueOnFailure = true`; `headers = {}` |
+| `TestSuite` | `name` (required); `baseUrl`; `timeoutMs = 5000`; `headers`; `hooks`; `checks`; `continueOnFailure = true`; `tags` |
+| `CheckDef` | `route` or `url`; `pathParams`, `queryParams`, `body`, `headers`; `retryCount = 0`; `retryDelayMs = 500`; `expect`; `capture`; `skip = false`; `skipReason`; `timeoutMs`; `label` |
+| `LifecycleHook` | `phase` (`beforeAll`, `afterAll`, `beforeEach`, `afterEach`); `actions`; `continueOnFailure = false` |
+| Hook actions | `http` (`method = "GET"`, `url`, `headers`, `body`), `store_set` (`key`, `value`), `store_clear`, `log` (`message`) |
+| `ResponseCapture` | `path`, `bindAs`; `type = "any"` (`string`, `int`, `float`, `bool`, `any`) |
+
+| Expectation | Members |
+| --- | --- |
+| `status` | `op = "eq"`, `value` |
+| `duration` | `op`, `valueMs` |
+| `schema` | `strict = false` |
+| `body` | `path`, `op`, `value` |
+| `body_quantifier` | `path`, `quantifier` (`every`, `some`, `none`), `itemPath`, `op`, `value` |
+| `header` | `key`, `op`, `value` |
+| `group` | `label`, `expectations` |
+
+Assertion operators are `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `contains`,
+`matches`, `exists`, and `missing`. Every expectation also accepts an optional
+`label`. Run all suites with `axiom test axiom.acore`, or filter by tag with
+`--tag`. See [Contract tests](/testing/contracts).
 
 ## Source of truth and stability
 
-This reference documents the checked-in base schema, not every Rust internal
-type. Profile compilers perform additional semantic checks. For exact target UI
-support, use `axiom ui capabilities`; for the current maturity boundary, use
-[Support and availability](/introduction/support-matrix).
+This page documents the checked-in base schema, not every internal compiler
+type. For exact UI target support, run `axiom ui capabilities`. For the current
+maturity of each path, see [Support and availability](/introduction/support-matrix).

@@ -1,87 +1,143 @@
 ---
-title: Frequently asked questions
-description: Boundaries and adoption choices for Acore, runtimes, clients, Cloud, and planned products.
+title: FAQ
+description: Short answers about adopting AxiomCore with an existing stack, artifacts, signatures, runtimes, CI, telemetry, Cloud, and planned products.
 pageType: reference
 ---
 
-## Do I have to build the frontend in Acore?
+Short answers to the questions developers ask most when they evaluate
+AxiomCore. Each answer links to the page with the details.
 
-No. Existing Flutter, React, and web applications can consume generated client
-surfaces, and any application can keep its current networking stack while using
-AxiomCore for contract review, mocks, tests, and release evidence. Acore UI is
-an optional alpha application-authoring path.
+## Adoption
 
-## Do I have to write my backend in Acore?
+### Do I have to build the frontend in Acore?
 
-No. FastAPI is the primary extraction path, Go extraction is alpha, and bounded
-OpenAPI/SQL bootstrap paths are experimental. You can also author the contract
-directly. Acore describes and composes the contract; it does not require
-rewriting all backend implementation code.
+No. Existing web, React, and Flutter applications can use generated clients,
+and any application can keep its own networking code while using AxiomCore for
+contract review, mocks, tests, and release evidence. Acore UI is an optional
+**Alpha** path. See [Use your existing stack](/guides).
 
-## Does backend extraction execute my service?
+### Do I have to write my backend in Acore?
 
-It can. The current FastAPI extractor imports and executes the selected
-module's top-level initialization to obtain the application object. Keep
-imports safe, install required dependencies, and move production connections
-or worker startup behind explicit process entry points.
+No. FastAPI extraction is **Available**, Go extraction is **Alpha**, and the
+OpenAPI and SQL bootstrap paths are **Experimental**. You can also write the
+contract by hand. Acore describes and composes the contract; it does not
+require you to rewrite your backend code.
 
-## Are `.axiom` and `.axiomapp` the same artifact?
+<span id="does-backend-extraction-execute-my-service" />
 
-No. `.axiom` carries a compiled contract. `.axiomapp` is a target application
-artifact containing the verified Acore UI payload and target host material.
-Both are non-source artifacts with their own manifests and verification rules.
+### Does backend extraction run my service?
 
-## Does a signature make the contract secure?
+Yes, partly. The FastAPI extractor imports your application's own modules and
+runs their top-level code to get the application object, so keep that code
+safe: move production connections, migrations, and worker startup behind
+explicit entry points. The extractor bundles FastAPI, Starlette, and Pydantic
+and replaces other third-party imports with placeholders, so your project's
+packages do not need to be installed to extract (they are still needed to run
+the service). Constraints that FastAPI enforces on path parameters, and checks
+inside Go handlers, are not carried into the contract. See
+[How extraction works](/guides/backend-extraction).
 
-A signature proves provenance of exact bytes relative to a public key. It does
+### Do I need an Axiom Cloud account?
+
+No, not for local work. Authoring, checking, building, testing, mocking, and
+running locally work without an account. Commands that contact Axiom services
+first need a private alpha referral code (`axiom join` requests one).
+Releasing to Axiom Cloud and pulling private contracts also need
+`axiom login`.
+
+### Which platforms does the CLI run on?
+
+The CLI 0.149.1 release has archives for macOS arm64, Linux amd64, and Linux
+arm64. There is no native Windows download. The documented walkthroughs are
+checked on macOS arm64. See [Install the Axiom CLI](/getting-started/installation)
+and [Support and availability](/introduction/support-matrix).
+
+## Artifacts and trust
+
+<span id="are-axiom-and-axiomapp-the-same-artifact" />
+
+### Are `.axiom` and `.axiomapp` the same kind of file?
+
+No. An `.axiom` file carries a compiled contract or package. An `.axiomapp`
+file is a target application artifact that contains the verified Acore UI
+payload and target host material. Both are non-source artifacts with their own
+manifests and verification rules.
+
+<span id="does-a-signature-make-the-contract-secure" />
+
+### Does a signature make a contract secure?
+
+No. A signature proves that exact bytes came from the holder of a key. It does
 not prove backend authorization, source correctness, privacy, compatibility,
 or test coverage. Use locks, semantic diff, security analysis, tests, and
-release policy as separate controls.
+release policy as separate controls. See [Artifact trust](/core-concepts/trust-and-security).
 
-## Are browser and native requests guaranteed to behave identically?
+### Where should authentication secrets live?
 
-They share contract concepts but use different network, cache, lifecycle, and
-framework bridges. Browser CORS/cookies and `sessionStorage` differ from native
-HTTP and an optional Sled path. Run end-to-end tests on every shipping target.
+In the application's secure or session storage, or in a scoped runtime
+configuration channel. A contract can declare where authentication is attached,
+but never commit production credentials in Acore source, generated clients,
+locks, mocks, screenshots, or source control.
 
-## Is ATMX “zero JavaScript”?
+## Runtime behavior
 
-No. ATMX includes a JavaScript integration layer and Wasm runtime. Its DOM
-scanner can reduce application glue, but startup, framework code, browser
-policy, and some declarative expression evaluation remain JavaScript
-boundaries.
+<span id="are-browser-and-native-requests-guaranteed-to-behave-identically" />
 
-## Where should authentication secrets live?
+### Do browser and native requests behave the same?
 
-In the application's appropriate secure/session storage or a scoped runtime
-configuration channel. A contract can declare where authentication is
-attached, but production credentials should not be committed in Acore,
-generated clients, locks, mocks, screenshots, or source control.
+They share the contract concepts but use different network, cache, lifecycle,
+and framework bridges. Browser CORS, cookies, and `sessionStorage` differ from
+native HTTP and the optional native Sled store. Run end-to-end tests on every
+target you ship.
 
-## Can I use AxiomCore in CI?
+### Is ATMX "zero JavaScript"?
 
-Yes for headless commands such as validation, test, build, lock verification,
-semantic diff, and selected UI checks. Install the chosen extractor and its
-required service dependencies. Pin tool and contract versions, avoid
-interactive selection, and fail on non-zero exit status.
+No. ATMX includes a JavaScript integration layer and a WebAssembly runtime.
+Its DOM scanner can reduce application glue code, but startup, framework code,
+browser policy, and some declarative expression evaluation remain JavaScript.
 
-## What happens when the backend violates a response contract?
+### What happens when the backend violates a response contract?
 
-Where response validation is implemented for the selected runtime and endpoint,
-the operation reports a structured validation or decoding error. It does not
-guarantee that every UI will recover gracefully; the application must render
-the error state and decide whether retry or fallback is safe.
+Where the selected runtime and endpoint validate responses, the operation
+returns a structured validation or decoding error. Your UI still has to render
+the error state and decide whether a retry or fallback is safe. See
+[Runtime errors](/reference/error-codes).
 
-## Is the Axiom Marketplace available?
+## Tooling
 
-Not yet. Typed package formats and lock tooling are alpha, but a supported
-catalog browsing and installation workflow is coming soon. Axiom Studio and
-Acode are also coming soon; existing dashboard, language-server, and editor
-foundations should not be mistaken for those finished products.
+### Can I use AxiomCore in CI?
 
-## Can Cloud replace GitHub and all CI/CD today?
+Yes, for headless commands such as `axiom check`, `axiom test`, `axiom build`,
+lock verification, semantic diff, security checks, and selected UI checks.
+Install the extractor binary (see
+[Backend extractors](/getting-started/installation#backend-extractors)), pin
+the tool and contract versions, avoid interactive prompts, and fail the job on
+a non-zero exit. See
+[CI checks](/testing/ci).
 
-No. Axiom Cloud manages Axiom contracts, their release evidence, channels,
+### Does the CLI send usage data?
+
+Only for commands that contact Axiom services, from an installation registered
+with a referral code. Local commands such as `check`, `build`, `run`, `test`,
+and `ui` send nothing. The data is minimal: an installation ID, command name,
+success or failure, duration, CLI version, OS family, and a broad failure
+category. It never includes arguments, paths, project names, contract
+contents, or credentials. Set `AXIOM_TELEMETRY=0` to turn it off. See
+[Benchmarks](/reference/benchmarks#cli-usage-telemetry) for details.
+
+## Products and scope
+
+### Is the Axiom Marketplace available?
+
+Not yet. Typed package formats and lock tooling are **Alpha**, but a supported
+catalog for browsing and installing packages is **Coming soon**. Axiom Studio
+and Acode are also **Coming soon**; the existing dashboard, language server,
+and editor extensions are not those products.
+
+<span id="can-cloud-replace-github-and-all-cicd-today" />
+
+### Can Axiom Cloud replace GitHub and my CI/CD today?
+
+No. Axiom Cloud manages Axiom contracts and their release evidence, channels,
 environments, tests, reviews, and runtime observability. General repository
-hosting and arbitrary CI/CD replacement are outside the current documented
-boundary.
+hosting and arbitrary CI/CD are outside its current scope.

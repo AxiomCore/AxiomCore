@@ -1,21 +1,32 @@
 ---
-title: Backend quickstart
-description: Author a typed Acore endpoint, run it locally, and verify its HTTP response.
+title: Build your first API
+description: Write a typed Acore endpoint, build its contract, run it locally and call it with curl.
 pageType: tutorial
-testedWith: Published Axiom CLI 0.149.0 on macOS arm64
 ---
 
-Run a small API authored in Acore. If you already have a service, follow the
-[FastAPI integration](/guides/fastapi-to-web) or [Go integration](/guides/go-to-web)
-instead. Those paths retain your existing backend.
+Write a small API in Acore, build its contract and call the running endpoint.
+If you already have a service, follow the [FastAPI](/guides/fastapi-to-web) or
+[Go](/guides/go-to-web) guide instead; those keep your existing backend.
+
+```mermaid title="A request to GET /hello runs the hello action and returns a typed Greeting"
+flowchart LR
+  A[curl GET /hello] --> B[endpoint hello]
+  B --> C[action hello]
+  C --> D[Greeting JSON response]
+```
 
 <span id="diagnose-and-plan" />
 
 ## Prerequisites
 
-[Install CLI 0.149.0](/getting-started/installation). Create an empty `hello-api`
-directory and run the commands below from that directory. This example uses
-port 8081 and has no external providers or database.
+- [Axiom CLI 0.149.1](/getting-started/installation). This walkthrough is
+  checked on macOS arm64.
+- Port 8081 free. The example has no database or external providers.
+- An empty directory named `hello-api`. Run every command from it.
+
+The finished files are also in the repository. To use them instead of typing,
+run `git clone --depth 1 https://github.com/AxiomCore/AxiomCore.git` and
+`cd AxiomCore/examples/documentation/hello-api`.
 
 ## 1. Define the project and endpoint
 
@@ -38,7 +49,8 @@ endpoint hello(method: GET, path: "/hello") {
 }
 ```
 
-The action returns a typed value. `handle` connects the public endpoint to
+The manifest marks the directory as a backend for the `server` target. The
+action returns a typed `Greeting`, and `handle` connects the public endpoint to
 that action. Request validation and response types belong to the contract.
 
 <span id="build-and-inspect" />
@@ -48,22 +60,40 @@ that action. Request validation and response types belong to the contract.
 ```bash title="Terminal 1: hello-api"
 axiom check main.acore
 axiom build main.acore --out backend.axiom
-axiom inspect backend.axiom
+```
+
+```text title="Expected output"
+Valid backend contract: main.acore
+Built backend contract: backend.axiom
+```
+
+`--out` exports the contract to a known path. The build also writes
+`backend.server.json`, the private server plan. To browse the contract, run
+`axiom inspect backend.axiom` in an interactive terminal (Tab switches views,
+`/` searches, `q` quits). For plain text output, run
+`axiom inspect overview backend.axiom`.
+
+## 3. Create a deployment configuration
+
+```bash title="Terminal 1: hello-api"
 axiom server deployment backend.axiom backend.server.json --output deployment.json
 ```
 
-`--out` exports the contract to a known path. The companion server plan and
-deployment configuration stay on the backend; clients receive the public
-contract. The deployment scaffold has no provider grants. This action needs
-none. Review providers, authentication, and grants before adding real effects.
+The server plan and deployment configuration stay on the backend; clients get
+only the public contract. This scaffold grants no providers, and the `hello`
+action needs none. Review providers, authentication and grants before you add
+real effects.
 
 <span id="exercise-the-development-boundary" />
+<span id="3-run-and-verify" />
 
-## 3. Run and verify
+## 4. Run and verify
 
 ```bash title="Terminal 1: hello-api"
 axiom run main.acore --deployment deployment.json --port 8081
 ```
+
+In a second terminal:
 
 ```bash title="Terminal 2"
 curl -fsS http://127.0.0.1:8081/hello
@@ -73,23 +103,42 @@ curl -fsS http://127.0.0.1:8081/hello
 {"message":"Hello from Acore"}
 ```
 
-This is the real action, not a mock. The example's endpoint is public and
-returns a constant. Add authentication before exposing protected data.
-Stop the process with Ctrl-C when finished.
+This is the real action, not a mock. The endpoint is public and returns a
+constant, so add authentication before you expose protected data.
+
+## Troubleshooting
+
+| Symptom | Fix |
+| --- | --- |
+| `axiom check` prints an error | The message gives a code and the declaration, such as `action.hello`. Compare that declaration with the listing above. |
+| `curl` cannot connect | Check that Terminal 1 is still running and that both use port 8081. |
+| Port 8081 is in use | Pick another `--port` and use it in the `curl` URL. |
+| `axiom inspect backend.axiom` fails with `Resource temporarily unavailable` | That view needs an interactive terminal. Use `axiom inspect overview backend.axiom`. |
+
+## Cleanup
+
+Stop the server with Ctrl-C. Delete the `hello-api` directory to remove
+`backend.axiom`, `backend.server.json`, `deployment.json` and the `.axiom`
+directory the build created.
 
 <span id="add-bounded-managed-logic" />
-
 <span id="build-the-complete-task-application" />
 
-## Next steps
+## Extend the API
 
 | Need | Continue with |
 | --- | --- |
-| Persist records | [First app](/getting-started/quickstart) and [typed persistence](/database/persistence) |
-| Add validation and typed failures | [Managed logic](/acore-language/managed-language) and [managed starter](/backend/managed-starter) |
-| Connect an existing framework | [HTTP adapters](/backend/adapters) |
-| Test a simulation | [Server simulation](/testing/server-simulation) |
-| Release a service | [Contract lifecycle](/backend/contract-lifecycle) and [server release workflow](/backend/release-workflow) |
+| Persist records | [Run your first app](/getting-started/quickstart) and [Migrations and persistence](/database/persistence) |
+| Add validation and typed failures | [Managed logic](/acore-language/managed-language) and [Backend declarations](/backend/declarations) |
+| Put an existing framework in front | [Deployment targets](/backend/deployment) |
+| Test without real effects | [Server simulation](/testing/server-simulation) |
+| Release the service | [Build a backend](/backend) and [Release a backend](/backend/releases) |
 
-A build does not deploy a backend. Native releases, Linux containers, and local
-Workers have different support limits. See [targets](/backend/targets-and-releases).
+A build does not deploy a backend. Native releases, Linux containers and local
+Workers have different support limits; see [Deployment targets](/backend/deployment).
+
+## Next steps
+
+- [Run your first app](/getting-started/quickstart)
+- [Run a backend locally](/backend/local-development)
+- [Backend declarations](/backend/declarations)

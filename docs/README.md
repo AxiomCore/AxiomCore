@@ -131,6 +131,56 @@ authority.
 These outputs contain public documentation only. Internal evidence and planning
 files are maintained outside this repository.
 
+## Ask AI
+
+The docs have an Ask AI chat (a floating **Ask AI** button; Ctrl or Cmd + / opens
+it). It uses the Fumadocs AI chat components (`components/ai/chat/`), mounted by
+`components/ai/ask-ai.tsx` in `app/layout.tsx`.
+
+- **Server.** Production is a static export, so `functions/api/chat.ts` (a
+  Cloudflare Pages Function) answers `POST /api/chat`; `app/api/chat/route.ts`
+  does the same for `next dev` and `next start`, and the static build leaves it
+  out. Both call `lib/ask-ai/chat.ts`.
+- **Configuration.** `OPENROUTER_API_KEY` (secret) and `DOCS_AI_MODEL` (an
+  OpenRouter model ID; defaults to `minimax/minimax-m3.1-flash:free`) are set on
+  the Pages project for each environment, from Infisical, with the
+  abuse-protection settings below. Change the model by
+  changing `DOCS_AI_MODEL`; no code change or redeploy of content is needed, but a
+  new deployment picks up a changed variable.
+- **Retrieval.** `pnpm static:build` writes `out/ask-ai/docs-index.json`, a
+  precomputed search index over the same reader Markdown served at
+  `/docs/<page>.mdx`. Each question is searched on the server first and the best
+  page or sections go to the model, so most answers take one model request (at
+  most two: the model may open a page with `read_page`, then must answer). This
+  matters for free models, which have a daily request cap per OpenRouter account.
+- **Abuse protection.** `lib/ask-ai/guard.ts` holds the checks; the Pages
+  Function refuses every question (503) unless all of them are configured:
+  - Edge (axiomcore.dev zone): a WAF custom rule blocks `/api/chat` requests that
+    are not `POST` from `https://docs.axiomcore.dev`, and a rate-limiting rule
+    blocks an IP for 10 seconds after 5 requests in 10 seconds. Neither request
+    reaches the function.
+  - Human check: Cloudflare Turnstile widget "AxiomCore docs Ask AI" (managed,
+    invisible unless Cloudflare asks for a click). Its public site key is in
+    `components/ai/human-check.ts`; `TURNSTILE_SECRET_KEY` verifies each
+    single-use token, including its action and hostname.
+  - Question limits in D1 (binding `ASK_AI_DB`, database
+    `axiomcore-docs-ask-ai`): 4 a minute, 20 an hour and 40 a day per visitor (an
+    IPv4 address or IPv6 /64), plus a site-wide daily total
+    (`ASK_AI_DAILY_LIMIT`, default 300). Visitors are stored only as an HMAC of
+    their network keyed by `ASK_AI_HASH_SECRET`, and rows are deleted after their
+    window ends.
+  - Input: docs origins only, JSON only, a 64 KB body read with a cap, size
+    limits on questions and history, and a rebuilt history: only user and
+    assistant text and the open page's path reach the model, never client
+    `system` messages or tool results.
+  `TURNSTILE_SECRET_KEY`, `TURNSTILE_SITE_KEY`, `ASK_AI_HASH_SECRET` and
+  `ASK_AI_D1_DATABASE_ID` are in Infisical with the other variables.
+- **Local test.** Run `pnpm static:build`, then `wrangler pages dev out --d1
+  ASK_AI_DB` from a directory that has `out` and `functions` (symlinks are fine)
+  and a `.dev.vars` file with `OPENROUTER_API_KEY` and Cloudflare's test secret
+  `TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA` (the chat uses the
+  matching test site key on localhost). Keep `.dev.vars` out of the repository.
+
 ## Publication and maintenance
 
 The repository workflow in `.github/workflows/docs.yml` runs `pnpm check` for
@@ -140,9 +190,8 @@ The workflow retains `artifacts/docs-release-manifest.json` as release evidence.
 
 Public lifecycle guidance is maintained under:
 
-- `/reference/versioning-and-deprecation`;
-- `/reference/support-and-feedback`; and
-- `/reference/documentation-contributions`.
+- `/reference/versioning-and-deprecation`; and
+- `/reference/support-and-feedback` (support channels and how to contribute).
 
 Update the support matrix only after reviewing the matching implementation.
 The public content gate requires its review date to be refreshed at least every

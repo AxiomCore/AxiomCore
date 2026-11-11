@@ -1,0 +1,252 @@
+---
+title: Web (atmx-web)
+description: Install atmx-web, generate a browser client with axiom pull, start the Wasm runtime and make a typed contract call.
+pageType: guide
+---
+
+<span id="start-before-mounting-application-code" />
+<span id="configuration" />
+<span id="imperative-operations" />
+<span id="try-a-complete-integration" />
+
+<StatusNote status="available" title="atmx-web 0.147.5">
+  The browser runtime, imperative API, declarative HTML bindings and generated
+  web client are implemented. Browser compatibility, Content Security Policy,
+  CORS and release integration remain your responsibility.
+</StatusNote>
+
+`atmx-web` runs the AxiomCore runtime in the browser as WebAssembly, with a
+JavaScript layer called ATMX. Use it from any bundler or from plain HTML. This
+guide uses the `greetings` contract from the [FastAPI example](/guides/fastapi-to-web):
+one endpoint, `greet`, at `GET /greet/{name}`, returning `Greeting { message }`.
+
+**You need:** Node.js and npm, a backend `.axiom` contract, and backend CORS
+that allows your frontend origin. The example was verified with Node.js 22.12,
+Vite 7.3.7 and TypeScript 5.9.3.
+
+## 1. Install the runtime and generator
+
+```bash title="Terminal (frontend project)"
+npm install atmx-web@0.147.5
+npm install --save-dev atmx-cli@0.146.7
+```
+
+Install `atmx-cli` before `axiom pull`. CLI 0.149.1 otherwise asks npm for an
+unpublished `atmx-cli@0.149.1` and fails with `ETARGET`.
+
+## 2. Generate the client
+
+```bash title="Terminal (frontend project)"
+axiom pull ../backend/backend.axiom --framework atmx-web --name greetings --out src/generated
+```
+
+| File | Contents |
+| --- | --- |
+| `public/greetings.axiom` | The contract your app serves to the runtime |
+| `src/generated/sdk.ts` | `AxiomDefaultConfig`, the `sdk` object and `greetingsModule` |
+| `src/generated/models.ts` | TypeScript interfaces in the `greetings` namespace, plus JSON `Mappers` |
+| `AxiomDeps.toml` | `framework = "atmx-web"` and the `[contracts.greetings]` source |
+
+If the project has a `static/` folder, `pull` also writes
+`static/axiom/greetings.axiom` for servers that serve that folder.
+
+## 3. Serve the Wasm engine
+
+Without `wasmUrl`, `atmx.init` downloads the engine from
+`https://atmx.axiomcore.dev/v0.147.5/axiom_runtime.wasm` with a cache-busting
+query string. To self-host it and keep it on the same release as the
+JavaScript, copy it from the package at build time:
+
+```js title="copy-assets.mjs"
+import { copyFileSync, mkdirSync } from 'node:fs';
+mkdirSync('public', { recursive: true });
+copyFileSync('node_modules/atmx-web/dist/axiom_runtime.wasm', 'public/axiom_runtime.wasm');
+```
+
+## 4. Initialize before you query
+
+Startup is asynchronous. Await it, and keep contract-dependent UI unmounted if
+it fails.
+
+```ts title="src/main.ts"
+import { atmx } from 'atmx-web';
+import { AxiomDefaultConfig } from './generated/sdk';
+
+const config = {
+  ...AxiomDefaultConfig,
+  contracts: {
+    greetings: { ...AxiomDefaultConfig.contracts.greetings, baseUrl: 'http://127.0.0.1:8083' },
+  },
+  wasmUrl: '/axiom_runtime.wasm',
+};
+
+const ready = await atmx.init(config);
+if (!ready.ok) {
+  throw new Error(ready.error?.message ?? 'Axiom runtime failed to start');
+}
+```
+
+- `atmx.init` is idempotent, and concurrent calls share one initialization.
+- `ready.ok` is true only when every contract loaded. `ready.contracts` reports
+  `loaded`, `endpointCount` and `error` per contract.
+- Code loaded separately can `await atmx.whenReady()`. It rejects if no
+  initialization has started.
+
+| Config field | Meaning |
+| --- | --- |
+| `contracts.<name>.contractUrl` | Where the browser fetches the `.axiom` file |
+| `contracts.<name>.baseUrl` | Backend URL. Generated default: `http://localhost:8080`, or `base_url` from `AxiomDeps.toml` |
+| `contracts.<name>.contractSignature`, `contractPublicKey` | Cloud signature proof. Supply both or neither |
+| `wasmUrl` | Self-hosted engine URL |
+| `engineVersion` | Engine version path on the default host (default `v0.147.5`) |
+| `disableCacheBuster` | Drop the `?t=` query on the default engine URL |
+| `debug` | Console tracing of calls and responses |
+
+A partial or malformed signature pair fails startup and never falls back to
+unsigned mode. When both are omitted, ATMX uses the `X-Axiom-Signature` and
+`X-Axiom-Public-Key` headers from the contract response if both are present.
+Otherwise the contract loads in unsigned local mode, and debug mode warns that
+telemetry is disabled.
+
+## 5. Make a typed call
+
+```ts title="src/main.ts (continued)"
+import type { greetings } from './generated/models';
+
+const output = document.querySelector<HTMLOutputElement>('#result')!;
+const query = atmx.query('greetings.greet', { name: 'Ada' });
+const unsubscribe = query.subscribe((state) => {
+  if (state.error) output.textContent = state.error.message;
+  else if (state.data) output.textContent = (state.data as greetings.Greeting).message;
+});
+
+// When the view is removed:
+unsubscribe();
+query.dispose();
+```
+
+```text title="Result"
+Hello, Ada!
+```
+
+- The route key is `<contract name>.<endpoint name>`. Pass arguments by
+  contract parameter name.
+- `atmx.query` returns a handle, not a Promise: `getSnapshot()`,
+  `subscribe(listener)` (called at once with the current state),
+  `refresh()` and `dispose()`. Disposing never clears the shared cache.
+- State fields: `state` (`idle`, `loading`, `data` or `error`), `isFetching`,
+  `source` (`cache`, `network` or null), `data` and `error`.
+- The web client types response models, not call arguments. Cast `data` to
+  the interface from `models.ts`.
+
+Writes return a Promise that resolves with the response data (or `undefined`
+for an empty response, such as 204) and rejects with an error:
+
+```ts title="Mutation excerpt (a contract with create_task and list_tasks)"
+await atmx.mutate('tasks.create_task', { task: { title: 'Write docs' } });
+atmx.invalidate('tasks.list_tasks');
+```
+
+`mutate(route, args, payload)` merges `args` and `payload`, fills path
+parameters, and sends an object passed for a single body parameter as the
+body. Invalidation is explicit: call `invalidate` or `setQueryData` after a
+successful write.
+
+## 6. Handle errors
+
+Every error is an `AxiomError`:
+
+| Field | Meaning |
+| --- | --- |
+| `stage` | Where it failed, for example `runtime` or `ffiBoundary` |
+| `category` | For example `network`, `auth`, `validation` or `server` |
+| `code` | Symbolic code, or an object such as an HTTP status |
+| `message` | Human-readable text |
+| `retryable` | Whether retrying can help |
+| `details` | Optional safe details, such as field messages for `ValidationError` |
+
+Startup failures use `WasmFetchFailed` (retryable), `InitFailed`,
+`ContractLoadFailed` or `FatalError`. Query failures arrive in `state.error`;
+`mutate` rejects. `atmx.onError(callback)` receives startup and mutation
+errors globally. See [Runtime errors](/reference/error-codes).
+
+## API summary
+
+| Area | Methods |
+| --- | --- |
+| Startup | `init`, `whenReady`, `installSDKPlaceholder`, `on('ready' \| 'data' \| 'error' \| 'success' \| 'contract-loaded', cb)`, `onError` |
+| Calls | `query`, `mutate`, `mutateBytes(route, args, bytes, headers)` |
+| Cache | `invalidate`, `getCachedQueryData`, `setQueryData`, `clearCache(namespace?)` (refetches active queries), `purgeCache(namespace?)` (no refetch) |
+| Streams | `connect`, `disconnect`, `send`, for endpoints the contract declares as streams |
+| Credentials | `setAuthToken(namespace, method, token)`, `setNamespaceAuthToken`, `setGlobalAuthToken`, `clearAuthToken(namespace, method)` |
+| DOM | `hydrate(root?)`, `triggerQuery(element)` |
+
+Each generated module also has `axiom.setAuthToken(method, token)`,
+`clearAuthToken`, `connect`, `disconnect` and `send` scoped to its contract.
+
+## Authentication and cache
+
+- Tokens set with the `*AuthToken` methods live in memory only. Restore them
+  from your own storage after a reload and clear them on logout.
+- Cookie sessions are automatic when the contract declares
+  `type = "session"` with `location = "cookie"`. They follow browser cookie and
+  SameSite rules.
+- ATMX keeps query snapshots in `sessionStorage` (`atmx_cache_*` keys) for
+  instant re-render. `invalidate`, `clearCache` and `purgeCache` clear them.
+- The runtime keeps its response cache, governed by each endpoint's cache
+  policy, in `localStorage` (`axiom_cache_*` keys), or in memory when storage
+  is blocked. ATMX cache methods do not remove those entries. If cached
+  responses are private, remove them during logout too.
+
+## Declarative HTML
+
+The DOM scanner connects `ax-query` and `ax-mutate` elements and watches for
+added nodes. If a declarative framework hydrates before the generated module
+loads, install the placeholder first:
+
+```html title="index.html excerpt"
+<script src="/assets/atmx.umd.js"></script>
+<script>atmx.installSDKPlaceholder()</script>
+<script type="module">
+  import { AxiomDefaultConfig } from '/generated/sdk.js';
+  const result = await atmx.init(AxiomDefaultConfig);
+  if (!result.ok) console.error(result.error);
+</script>
+```
+
+| Attribute | Effect |
+| --- | --- |
+| `ax-query="greetings.greet({name: 'Ada'})"` | Runs a query. `ax-trigger` is `load` (default), `intersect` or a DOM event name |
+| `ax-mutate="..."` | Runs a mutation on click, or on submit for a form |
+| `ax-invalidates="ns.op, ns.other"` | Invalidates queries after a successful mutation |
+| `ax-when="loading, error"` | Shows the element only in the listed states |
+| `ax-text`, `ax-if`, `ax-bind:<attr>` | Text, visibility and attribute bindings using `$data`, `$error` and `$state` |
+| `ax-for` with `ax-key` | Repeats a template for a list |
+| `ax-error-for="field"` | Shows a `ValidationError` message for one field |
+| `ax-on:data`, `ax-on:error`, `ax-on:success` | Runs code on a state change |
+| `ax-trigger="refresh"` | On a child element, refreshes the parent query on click |
+
+## Platform limits
+
+- **Browser only.** Importing `atmx-web` outside a browser throws a
+  `ReferenceError`, so load it only in client-side code.
+- **Content Security Policy.** `atmx.init` adds the runtime's JavaScript glue
+  as an inline script unless `window.wasm_bindgen` already exists, and Wasm
+  compilation needs `'wasm-unsafe-eval'`. `ax-*` argument and binding
+  expressions run as JavaScript, which needs `'unsafe-eval'`. Treat `ax-*`
+  attributes as code and never render untrusted strings into them.
+- **Default engine host.** Without `wasmUrl`, the page must reach
+  `atmx.axiomcore.dev`.
+- **Untyped helpers.** The generated `sdk` object, its route helpers and call
+  arguments are typed `any`. Only `models.ts` is typed.
+- **Globals.** The package sets `window.atmx`, and the generated module sets
+  `window.sdk`.
+- Wasm is not a security sandbox for your page. Application code, ATMX and
+  the browser origin share one trust boundary.
+
+## Next steps
+
+- [FastAPI to web](/guides/fastapi-to-web) and [Go to web](/guides/go-to-web),
+  complete tested examples
+- [React (atmx-react)](/sdks/react)
+- [Artifact trust](/core-concepts/trust-and-security) for signed contracts

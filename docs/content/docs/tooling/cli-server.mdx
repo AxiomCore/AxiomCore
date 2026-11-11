@@ -1,0 +1,597 @@
+---
+title: axiom server
+description: Reference for every axiom server subcommand that scaffolds, validates, runs, packages and verifies a compiled backend contract and its private server plan.
+pageType: reference
+---
+
+`axiom server` works with a compiled backend contract and its private server
+plan: it scaffolds configuration, generates OpenAPI and handler types, runs
+managed and sandbox actions, drives durable delivery, and packages release
+bundles. This page covers all 22 subcommands in Axiom CLI 0.149.1.
+
+<StatusNote status="alpha" title="Server workflows">
+  These commands operate on `.axiom` service contracts, which are **Alpha**.
+  Executing managed actions and durable delivery depend on capabilities
+  labeled **Experimental**, and sandbox actions use executable extensions,
+  which are **Experimental**. A deployment target is usable only
+  when `axiom server targets` reports it available. See
+  [Support and availability](/introduction/support-matrix) and
+  [Capability boundaries](/reference/capability-boundaries).
+</StatusNote>
+
+All `axiom server` commands run locally without Cloud login. Commands that start
+a service or worker resolve provider values, such as a database URL or Redis URL,
+from environment variables named in your deployment files.
+
+```mermaid title="From a compiled backend contract to a verified release bundle"
+flowchart LR
+  B[axiom build] --> C[Contract and plan]
+  C --> D[server deployment]
+  D --> V[server validate]
+  V --> R[server run]
+  V --> P[server package]
+  P --> VB[server verify-bundle]
+  VB --> RB[server run-bundle]
+  VB --> RC[server rollback-check]
+```
+
+`axiom build` writes the contract and plan. `server deployment` scaffolds the
+private deployment file, which you review. `server validate` constructs the real
+providers without opening a listener. From there you either run the service
+locally with `server run`, or package an immutable bundle, verify it, and run it
+with `server run-bundle`. `server rollback-check` compares two verified bundles
+before you switch back to an older one.
+
+## axiom server
+
+```text title="Usage"
+axiom server <COMMAND>
+```
+
+| Subcommand | Purpose |
+| --- | --- |
+| [`plan`](#axiom-server-plan) | Scaffold a native plan from a compiled contract. |
+| [`deployment`](#axiom-server-deployment) | Scaffold the private provider and grant file. |
+| [`delivery-deployment`](#axiom-server-delivery-deployment) | Scaffold the private durable delivery file. |
+| [`openapi`](#axiom-server-openapi) | Generate an OpenAPI 3.1 document. |
+| [`types`](#axiom-server-types) | Generate Python or Go handler types. |
+| [`targets`](#axiom-server-targets) | List target profiles and whether each is available. |
+| [`inspect`](#axiom-server-inspect) | Show action guards, effects and target compatibility. |
+| [`diff`](#axiom-server-diff) | Compare private behavior between two plans. |
+| [`validate`](#axiom-server-validate) | Construct providers and check cleanup without a listener. |
+| [`run`](#axiom-server-run) | Serve managed and sandbox actions over HTTP. |
+| [`dev`](#axiom-server-dev) | Build source and reload it on change. |
+| [`invoke`](#axiom-server-invoke) | Call one action directly through its guards. |
+| [`boundary`](#axiom-server-boundary) | Run the JSON-lines bridge used by native adapters. |
+| [`worker`](#axiom-server-worker) | Execute durable jobs, consumers, schedules and webhooks. |
+| [`enqueue`](#axiom-server-enqueue) | Submit a job or publish an event. |
+| [`delivery-inspect`](#axiom-server-delivery-inspect) | Inspect delivery state and dead letters. |
+| [`delivery-cancel`](#axiom-server-delivery-cancel) | Cancel pending work or signal a leased attempt. |
+| [`delivery-redrive`](#axiom-server-delivery-redrive) | Redrive a dead letter. |
+| [`package`](#axiom-server-package) | Create an immutable release directory. |
+| [`verify-bundle`](#axiom-server-verify-bundle) | Verify a release directory offline. |
+| [`run-bundle`](#axiom-server-run-bundle) | Run a verified release with its packaged executable. |
+| [`rollback-check`](#axiom-server-rollback-check) | Check that an older release can replace the current one. |
+
+### Shared inputs
+
+| Input | What it is | Where it comes from |
+| --- | --- | --- |
+| `<CONTRACT>` | Compiled backend `.axiom` contract. | `axiom build` writes `.axiom/contracts/backend.axiom` by default. |
+| `<PLAN>` | Private server plan (`axiom-server-plan/v2` JSON) bound to that contract. | `axiom build` writes `backend.server.json` beside the contract when the source declares managed or sandbox actions. For an extracted or adapter-served contract, `axiom server plan` scaffolds one. |
+| `--deployment` | Private `axiom-server-deployment/v1` file: plan hash, capabilities, provider bindings, operation grants, coordination and authentication. | `axiom server deployment`, then your review. |
+| `--bindings` | `axiom-action-bindings/v1` file for sandbox plans. Each sandbox extension maps to environment variable names for its package, authority and module files, plus the exact authority digest. It must cover exactly the plan's extensions. | Written by you for plans with sandbox actions. |
+| `--delivery` | Private `axiom-delivery-deployment/v1` file for durable jobs, events and webhooks. | `axiom server delivery-deployment`, then your review. |
+
+Keep the plan, deployment, bindings and delivery files private. They never enter
+the public `.axiom` artifact. Scaffold commands refuse to overwrite an existing
+file: choose a new output path so a reviewed file is never replaced.
+
+Native actions need a registered trusted Rust application host. The generic
+runtime behind `axiom serve` and `axiom server run` cannot resolve arbitrary
+native symbols. Python and Go services use their server adapter, which talks to
+[`axiom server boundary`](#axiom-server-boundary).
+
+## Scaffold and generate
+
+### axiom server plan
+
+Scaffold a native action plan from a compiled contract when your handlers live
+in your own application (for example an extracted FastAPI or Go service). Review
+the generated status and body mappings before use.
+
+```text title="Usage"
+axiom server plan --output <OUTPUT> <CONTRACT>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<CONTRACT>` | path | required | Compiled backend `.axiom` contract. |
+| `-o, --output` | path | required | New plan file to create. |
+
+```bash title="Terminal"
+axiom server plan backend.axiom --output backend.server.json
+```
+
+### axiom server deployment
+
+Scaffold the private deployment file for a contract and plan. Resources, grants
+and providers start in a reviewable state: operation grants are empty, and a
+typed resource without a known provider is marked `reviewRequired`.
+
+```text title="Usage"
+axiom server deployment --output <OUTPUT> <CONTRACT> <PLAN>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<CONTRACT>` | path | required | Compiled backend `.axiom` contract. |
+| `<PLAN>` | path | required | Private server plan for that contract. |
+| `-o, --output` | path | required | New deployment file to create. |
+
+The scaffold refers to values by environment variable name. You set these when
+you run the service:
+
+| Variable | Used for |
+| --- | --- |
+| `AXIOM_REDIS_URL` | Shared coordination when the plan needs distributed rate limits or durable idempotency. |
+| `AXIOM_JWT_PUBLIC_KEY` | RS256 JWT verification key. Issuer and audience come from the contract's security profile, or placeholders you must replace. |
+| `AXIOM_<RESOURCE>_<FIELD>` | Required typed configuration fields of a resource. |
+| `AXIOM_HTTP_<NAME>_<KEY>` | HTTP client resources: `ORIGIN`, `CREDENTIAL`, `ALLOWLOOPBACK`, `IDEMPOTENCYSUPPORTED`. |
+| `AXIOM_RESOURCE_<NAME>_FILE` | File, upload root or database binding path for other resources. |
+
+```bash title="Terminal"
+axiom server deployment backend.axiom backend.server.json --output deployment.json
+```
+
+### axiom server delivery-deployment
+
+Scaffold the private durable delivery file for a plan that declares jobs,
+events or webhooks. Operation grants start empty; add only the grants you want
+before starting a worker.
+
+```text title="Usage"
+axiom server delivery-deployment --output <OUTPUT> <CONTRACT> <PLAN>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<CONTRACT>` | path | required | Compiled backend `.axiom` contract. |
+| `<PLAN>` | path | required | Private server plan with delivery declarations. |
+| `-o, --output` | path | required | New delivery file to create. |
+
+The scaffold uses namespace `delivery`, a 30-second lease, 24-hour receipt
+retention, and these environment variable names: `AXIOM_DELIVERY_REDIS_URL`,
+`AXIOM_DELIVERY_JOB_<NAME>_TOKEN` and `AXIOM_DELIVERY_CONSUMER_<NAME>_TOKEN` for
+worker credentials, and `AXIOM_WEBHOOK_<NAME>_URL` and `AXIOM_WEBHOOK_<NAME>_KEY`
+for webhook destinations and signing keys. See
+[Events, jobs and webhooks](/backend/events-and-jobs) for grants and Redis
+requirements.
+
+### axiom server openapi
+
+Generate an OpenAPI 3.1 document from the effective contract and its server
+mappings, for API gateways or third-party clients.
+
+```text title="Usage"
+axiom server openapi --output <OUTPUT> <CONTRACT> <PLAN>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<CONTRACT>` | path | required | Compiled backend `.axiom` contract. |
+| `<PLAN>` | path | required | Private server plan for that contract. |
+| `-o, --output` | path | required | New OpenAPI JSON file to create. |
+
+```bash title="Terminal"
+axiom server openapi backend.axiom backend.server.json --output openapi.json
+```
+
+### axiom server types
+
+Generate typed handler inputs, outputs and handler signatures for a Python or
+Go service that implements the contract's actions.
+
+```text title="Usage"
+axiom server types --language <LANGUAGE> --output <OUTPUT> <CONTRACT> <PLAN>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<CONTRACT>` | path | required | Compiled backend `.axiom` contract. |
+| `<PLAN>` | path | required | Private server plan for that contract. |
+| `--language` | `python`, `go` | required | Output language. |
+| `-o, --output` | path | required | New source file to create. |
+
+```bash title="Terminal"
+axiom server types backend.axiom backend.server.json --language python --output handler_types.py
+axiom server types backend.axiom backend.server.json --language go --output handler_types.go
+```
+
+## Inspect and compare
+
+### axiom server targets
+
+List every deployment target profile with its runtime, platform, capabilities,
+providers, limits and evidence. Unavailable or uncertified profiles fail closed:
+they cannot validate or package.
+
+```text title="Usage"
+axiom server targets
+```
+
+No options other than `--help`.
+
+| Target | Available | Scope |
+| --- | --- | --- |
+| `native-server` | Yes, on macOS `aarch64` and Linux `aarch64`/`x86_64` | Managed and verified sandbox HTTP actions. Database persistence and the PostgreSQL provider are included only on macOS `aarch64`. |
+| `container-amd64`, `container-arm64` | Yes | Source-built Linux managed and sandbox HTTP images. Packaging needs `--runtime-source`. |
+| `cloudflare-workers-local` | Yes | Portable managed JSON API with HS256 JWT and bounded HTTP providers, checked with local workerd. Packaging needs `--runtime-source`. |
+| `container` | No | Select an architecture-specific container target. |
+| `serverless` | No | Lambda runtime and hosted checks are pending. |
+| `cloudflare-workers` | No | Hosted Cloudflare acceptance is pending. |
+| `edge` | No | No generic edge certification. |
+
+See [Deployment targets](/backend/deployment) for each profile's limits.
+
+### axiom server inspect
+
+Validate the exact contract identity and show each action's guards, effects and
+transitive requirements, plus a target compatibility assessment. Without
+`--deployment`, provider review stays pending and the result cannot establish
+release compatibility.
+
+```text title="Usage"
+axiom server inspect [OPTIONS] <CONTRACT> <PLAN>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<CONTRACT>` | path | required | Compiled backend `.axiom` contract. |
+| `<PLAN>` | path | required | Private server plan for that contract. |
+| `--deployment` | path | none | Deployment file to assess providers and grants. |
+| `--bindings` | path | none | Sandbox bindings file. |
+| `--target` | target ID | `native-server` | Target profile to assess against. |
+
+The same assessment, with optional redacted startup observations, is available
+from [`axiom inspect server`](/tooling/cli-inspect#axiom-inspect-server).
+
+### axiom server diff
+
+Compare the private behavior of two contract and plan pairs, such as guards,
+effects and provider requirements. The public contract diff is unchanged; use
+[`axiom diff`](/tooling/cli-build-and-run#axiom-diff) for public changes.
+
+```text title="Usage"
+axiom server diff <BEFORE_CONTRACT> <BEFORE_PLAN> <AFTER_CONTRACT> <AFTER_PLAN>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<BEFORE_CONTRACT>` | path | required | Earlier compiled contract. |
+| `<BEFORE_PLAN>` | path | required | Earlier private plan. |
+| `<AFTER_CONTRACT>` | path | required | Later compiled contract. |
+| `<AFTER_PLAN>` | path | required | Later private plan. |
+
+## Validate and run locally
+
+### axiom server validate
+
+Check that a deployment works before you start a listener: it assesses target
+compatibility, constructs the actual providers and authentication, verifies
+sandbox assets and confirms cleanup. Missing credentials fail validation.
+
+```text title="Usage"
+axiom server validate [OPTIONS] --deployment <DEPLOYMENT> <CONTRACT> <PLAN>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<CONTRACT>` | path | required | Compiled backend `.axiom` contract. |
+| `<PLAN>` | path | required | Private server plan for that contract. |
+| `--deployment` | path | required | Reviewed deployment file. |
+| `--bindings` | path | none | Sandbox bindings file. |
+| `--delivery` | path | none | Delivery file. Only valid with `--target native-server`. |
+| `--target` | target ID | `native-server` | Target profile. `cloudflare-workers-local` runs an artifact preflight only. |
+
+```bash title="Terminal"
+axiom server validate backend.axiom backend.server.json --deployment deployment.json
+```
+
+On success it prints one JSON object with `"validated":true`, the
+`targetAssessment`, `"listenerOpened":false` and the cleanup result.
+
+### axiom server run
+
+Serve the plan's managed and sandbox actions as an HTTP service. It never starts
+mocks. Use it to run a compiled contract and plan exactly as deployed; for
+source-first development use [`axiom serve`](/tooling/cli-build-and-run#axiom-serve)
+or [`axiom server dev`](#axiom-server-dev).
+
+```text title="Usage"
+axiom server run [OPTIONS] --deployment <DEPLOYMENT> <CONTRACT> <PLAN>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<CONTRACT>` | path | required | Compiled backend `.axiom` contract. |
+| `<PLAN>` | path | required | Private server plan for that contract. |
+| `--deployment` | path | required | Reviewed deployment file. |
+| `--bindings` | path | none | Sandbox bindings file. |
+| `--delivery` | path | none | Reviewed durable controller for producer actions. Request input cannot select its grants. |
+| `--observations` | path | none | After shutdown, write bounded, payload-free native observations to this new file (owner-only, at most 25 MiB). The file must not exist. |
+| `--listen` | address | `127.0.0.1:8080` | Listener address. |
+
+```bash title="Terminal"
+axiom server run backend.axiom backend.server.json --deployment deployment.json --listen 127.0.0.1:8080
+```
+
+### axiom server dev
+
+Build `.acore` source, serve it, and reload when project files change, within
+the providers and grants of a reviewed deployment.
+
+```text title="Usage"
+axiom server dev [OPTIONS] --deployment <DEPLOYMENT> <SOURCE>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<SOURCE>` | path | required | Backend `.acore` entry source. Its directory is the project root. |
+| `--deployment` | path | required | Reviewed deployment file. |
+| `--bindings` | path | none | Sandbox bindings file. |
+| `--delivery` | path | none | Delivery file. |
+| `--listen` | address | `127.0.0.1:8080` | Must be a loopback address with a fixed, non-zero port. |
+| `--poll-ms` | 50 to 2000 | `250` | Change polling interval in milliseconds. |
+
+The watcher snapshots up to 1,024 source, manifest and lock files. It skips
+hidden directories, symlinks, secret files and `target`, `node_modules`,
+`build`, `dist`, `venv` and `__pycache__`. A rejected reload keeps the running
+service. If a new snapshot fails to start, the last validated snapshot restarts.
+
+```bash title="Terminal"
+axiom server dev service.acore --deployment deployment.json --listen 127.0.0.1:8080
+```
+
+### axiom server invoke
+
+Call one authored action directly, without HTTP, through its mandatory guards.
+Use it to test an action's guards and output from a script.
+
+```text title="Usage"
+axiom server invoke [OPTIONS] --deployment <DEPLOYMENT> --request <REQUEST> <CONTRACT> <PLAN>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<CONTRACT>` | path | required | Compiled backend `.axiom` contract. |
+| `<PLAN>` | path | required | Private server plan for that contract. |
+| `--deployment` | path | required | Reviewed deployment file. |
+| `--bindings` | path | none | Sandbox bindings file. |
+| `--delivery` | path | none | Reviewed durable controller. Request input cannot select its grants. |
+| `--request` | path | required | JSON invocation request (action, origin, identity, input, optional headers), at most 1,114,112 bytes. |
+
+The result prints as JSON.
+
+### axiom server boundary
+
+Run the private JSON-lines enforcement bridge that a native framework adapter
+(for example the Python or Go server adapter) starts over stdin and stdout. It
+opens no network listener. You normally do not run it by hand.
+
+```text title="Usage"
+axiom server boundary [OPTIONS] <CONTRACT> <PLAN>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<CONTRACT>` | path | required | Compiled backend `.axiom` contract. |
+| `<PLAN>` | path | required | Native server plan for that contract. |
+| `--deployment` | path | none | Deployment file whose providers the bridge enforces. |
+
+## Durable delivery
+
+These commands need a plan with delivery declarations, a reviewed delivery file
+and a reachable Redis server named by `AXIOM_DELIVERY_REDIS_URL` (or the name in
+your delivery file). Execution is at least once. See
+[Events, jobs and webhooks](/backend/events-and-jobs) for grants, retries and
+Redis configuration.
+
+### axiom server worker
+
+Execute durable jobs, event consumers, schedules and signed webhook attempts.
+SIGTERM or Ctrl+C stops new attempts and drains current work.
+
+```text title="Usage"
+axiom server worker [OPTIONS] --deployment <DEPLOYMENT> --delivery <DELIVERY> <CONTRACT> <PLAN>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<CONTRACT>` | path | required | Compiled backend `.axiom` contract. |
+| `<PLAN>` | path | required | Private server plan for that contract. |
+| `--deployment` | path | required | Reviewed deployment file. |
+| `--delivery` | path | required | Reviewed delivery file. |
+| `--bindings` | path | none | Sandbox bindings file. |
+| `--once` | flag | off | Tick schedules, process one attempt, print it and exit. |
+| `--poll-ms` | 10 to 60000 | `100` | Idle polling interval in milliseconds. |
+
+```bash title="Terminal"
+axiom server worker backend.axiom backend.server.json --deployment deployment.json --delivery delivery.json
+```
+
+### axiom server enqueue
+
+Submit a typed job, or publish to an event binding, using an explicitly granted
+operation.
+
+```text title="Usage"
+axiom server enqueue --delivery <DELIVERY> --request <REQUEST> <CONTRACT> <PLAN>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<CONTRACT>` | path | required | Compiled backend `.axiom` contract. |
+| `<PLAN>` | path | required | Private server plan for that contract. |
+| `--delivery` | path | required | Reviewed delivery file. |
+| `--request` | path | required | JSON submission (kind, name, producer ID, payload, optional delay and trace parent), at most 70,000 bytes. |
+
+The receipt prints as JSON. Repeating the same identity and payload during
+retention returns the same receipt.
+
+### axiom server delivery-inspect
+
+Inspect redacted provider state, attempts, failures and recovery history. The
+output never includes payloads or credentials.
+
+```text title="Usage"
+axiom server delivery-inspect [OPTIONS] --delivery <DELIVERY> <CONTRACT> <PLAN>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<CONTRACT>` | path | required | Compiled backend `.axiom` contract. |
+| `<PLAN>` | path | required | Private server plan for that contract. |
+| `--delivery` | path | required | Reviewed delivery file. |
+| `--id` | task ID | none | Show one task instead of a list. |
+| `--dead` | flag | off | List dead letters instead of active work. |
+| `--limit` | count | `32` | Maximum entries in a list. |
+
+### axiom server delivery-cancel
+
+Cancel pending work, or signal the attempt that currently holds the lease. The
+delivery file must grant cancellation for that binding.
+
+```text title="Usage"
+axiom server delivery-cancel --delivery <DELIVERY> --id <ID> <CONTRACT> <PLAN>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<CONTRACT>` | path | required | Compiled backend `.axiom` contract. |
+| `<PLAN>` | path | required | Private server plan for that contract. |
+| `--delivery` | path | required | Reviewed delivery file. |
+| `--id` | task ID | required | Task to cancel. |
+
+### axiom server delivery-redrive
+
+Move one dead letter back into delivery. It needs a recovery grant, and external
+effects of earlier attempts can repeat.
+
+```text title="Usage"
+axiom server delivery-redrive --delivery <DELIVERY> --id <ID> <CONTRACT> <PLAN>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<CONTRACT>` | path | required | Compiled backend `.axiom` contract. |
+| `<PLAN>` | path | required | Private server plan for that contract. |
+| `--delivery` | path | required | Reviewed delivery file. |
+| `--id` | task ID | required | Dead letter to redrive. |
+
+## Package and release bundles
+
+Bundles are local artifacts. Provisioning, publication and hosting stay
+external. Legacy `axiom-server-release/v1` bundles have no bound target or
+runtime contract: repackage the original artifacts with the current CLI before
+verification, activation or rollback. See [Release a backend](/backend/releases).
+
+### axiom server package
+
+Create an immutable, hash-bound release directory for one target after an
+artifact-only preflight. Production credentials are not resolved.
+
+```text title="Usage"
+axiom server package [OPTIONS] --deployment <DEPLOYMENT> --output <OUTPUT> <CONTRACT> <PLAN>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<CONTRACT>` | path | required | Compiled backend `.axiom` contract. |
+| `<PLAN>` | path | required | Private server plan for that contract. |
+| `--deployment` | path | required | Reviewed deployment file. |
+| `--bindings` | path | none | Sandbox bindings file. The environment variables it names must point to the package, authority and module files to seal. |
+| `--target` | target ID | `native-server` | Target profile. |
+| `--runtime-source` | directory | none | Reviewed workspace source root used to build a container or Worker runtime. Required for `container-amd64`, `container-arm64` and `cloudflare-workers-local`; rejected for other targets. |
+| `-o, --output` | directory | required | New release directory. An existing path is rejected because releases are immutable. |
+
+What each target produces:
+
+| Target | Output |
+| --- | --- |
+| `native-server` | A deterministic `axiom-server-release/v2` bundle: the running `axiom` executable as `bin/axiom`, the canonical contract, plan, deployment, optional bindings and sealed sandbox assets. Package on the platform you will run on; the CLI never copies a host executable across platforms. |
+| `container-amd64`, `container-arm64` | A reviewed Linux build context that builds the runtime from source. |
+| `cloudflare-workers-local` | A Worker bundle for the pinned portable managed runtime. |
+
+```bash title="Terminal"
+axiom server package backend.axiom backend.server.json --deployment deployment.json --target native-server --output release-v1
+```
+
+### axiom server verify-bundle
+
+Verify a release directory offline: exact file inventory, platform, bound
+contract and plan, target and runtime, capability requirements and sealed
+sandbox assets. It also verifies local Worker bundles.
+
+```text title="Usage"
+axiom server verify-bundle <DIRECTORY>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<DIRECTORY>` | directory | required | Release directory to verify. |
+
+The JSON result reports `"verified":true`, the platform, plan and target hashes
+and the file count. Configuration is validated again at startup.
+
+```bash title="Terminal"
+axiom server verify-bundle release-v1
+```
+
+### axiom server run-bundle
+
+Run a verified native release using its exact packaged executable and a fresh
+configuration preflight. Start it with the bundled binary, on the matching
+platform.
+
+```text title="Usage"
+axiom server run-bundle [OPTIONS] <DIRECTORY>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<DIRECTORY>` | directory | required | Verified release directory. |
+| `--listen` | address | `127.0.0.1:8080` | Listener address. |
+
+```bash title="Terminal"
+release-v1/bin/axiom server run-bundle release-v1 --listen 127.0.0.1:8080
+```
+
+### axiom server rollback-check
+
+Compare two immutable releases before you switch from the current one back to a
+previous one. Both must verify, share the same target, runtime and platform,
+and keep a compatible public contract. Private behavior changes are reported for
+review. Nothing rolls back automatically.
+
+```text title="Usage"
+axiom server rollback-check <CURRENT> <PREVIOUS>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<CURRENT>` | directory | required | Release that is running now. |
+| `<PREVIOUS>` | directory | required | Release you want to return to. |
+
+```bash title="Terminal"
+axiom server rollback-check release-v2 release-v1
+```
+
+Run a configuration preflight before activating the previous release.
+
+## Related pages
+
+- [Run a backend locally](/backend/local-development)
+- [Deployment targets](/backend/deployment)
+- [Release a backend](/backend/releases)
+- [Build and run commands](/tooling/cli-build-and-run)

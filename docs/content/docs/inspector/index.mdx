@@ -1,91 +1,93 @@
 ---
 title: Axiom Inspector
-description: Understand what an Axiom application declares, resolves, can access, executes, and changes.
+description: Query what an Axiom application declares, resolves, can access, executed and changed, from the CLI or a local dashboard.
 pageType: overview
 ---
 
 <StatusNote status="alpha" title="Queryable application evidence">
-  Axiom Inspector is implemented in the Axiom CLI and packaged local dashboard.
-  Its evidence and query formats are versioned, but commands and presentation can
-  still change before a stable major release.
+  Axiom Inspector ships in the Axiom CLI with a packaged local dashboard. Its
+  evidence and query formats are versioned, but commands and presentation can
+  change before a stable major release. Optional Jev question planning is
+  **Experimental**.
 </StatusNote>
 
-Axiom Inspector turns compiler, resolver, package, authority, and runtime
-evidence into a queryable model of an application. It is designed to answer:
+Axiom Inspector turns compiler, resolver, package, authority and runtime
+evidence into a queryable model of your application. Use it to answer four
+questions:
 
 1. What is this application?
-2. What can it do, and why is it allowed to do that?
-3. What happened during a particular execution?
-4. What would be affected by a change?
+2. What can it do, and why is it allowed to?
+3. What happened during one captured execution?
+4. What would a change affect?
 
-It can inspect a frontend-only workspace, a backend-only workspace, or a
-combined application with contracts, packages, sandboxed extensions, and target
-artifacts.
+It works on frontend-only, backend-only or combined workspaces.
 
 <ConceptDiagram kind="inspector" />
 
-The CLI and dashboard query the same evidence engine. The dashboard does not
-reimplement the compiler in JavaScript, and an AI explanation does not become a
-new source of application facts.
+The CLI, machine formats and dashboard all query the same evidence engine with
+the same semantic IDs and graph revision. The dashboard does not reimplement the
+compiler, and an AI explanation never becomes a new source of facts.
+
+![Axiom Inspector dashboard Overview for the task app: 100 semantic facts, 155 relationships, three targets, no extensions, no readiness blockers, and an architecture graph from task-app to its frontend modules, Home page and operations](/images/docs/inspector-overview.jpg)
+
+The dashboard Overview for the documentation task app, served by CLI 0.149.1.
 
 ## Start locally
 
-From the application workspace:
+From an application workspace:
 
 ```bash title="Terminal"
 axiom inspect overview .
 axiom inspect serve .
 ```
 
-The first command prints a human-oriented summary. The second opens the secure
-loopback dashboard on an available port.
-
-For an agent or CI job, request a machine format:
-
-```bash title="Terminal"
-axiom inspect overview . --format json
-axiom inspect dependencies . --format json
-axiom inspect security . --format json
-```
-
-Human, JSON, JSONL, dashboard, and API presentations retain the same semantic
-identities and graph revision.
+The first command prints a summary of every discovered fact. The second starts
+the loopback [dashboard](/inspector/local-dashboard). For agents and CI, add
+`--format json` (one complete result) or `--format jsonl` (one record per line).
 
 ## What you can inspect
 
-| Area | Examples |
-| --- | --- |
-| Frontend | Routes, pages, components, rendered primitives, state, actions, queries, mutations, styles, responsive branches, assets, and accessibility declarations |
-| Backend | Services, operations, endpoints, entities, fields, projections, validation, auth, exposure, errors, cache, retry, streams, mocks, and implementation bindings present in verified artifacts |
-| Contracts and packages | Direct and transitive imports, immutable identities, target support, provenance, and executable closure |
-| Extensions | Exports, source availability, module and interface digests, requested/granted/effective permissions, limits, dependencies, and observed invocations |
-| Security | Endpoint exposure, authority, deterministic findings, readiness blockers, warnings, and supporting evidence |
-| Runtime | Redacted sessions, traces, extension lifecycle, denials, state changes, cancellation, teardown, and evidence retention |
-| Changes | Semantic changes, approval classes, affected facts, bounded impact paths, and optional normalized runtime comparison |
+| Area | Commands | Examples |
+| --- | --- | --- |
+| Workspace | `overview`, `source`, `serve` | Every discovered fact, one saved source file as the editor sees it, the dashboard |
+| Frontend | `frontend`, `ui`, `state`, `styles`, `accessibility` | Routes, pages, components, primitives, actions, state, queries, mutations, styles, responsive branches, assets, accessibility |
+| Backend | `backend`, `operation`, `data`, `exposure`, `cache`, `server` | Services, operations, endpoints, models, fields, projections, validation, auth, errors, cache, retry, streams, implementation bindings, private server plans |
+| Contracts and packages | `dependencies`, `contract`, `executable-closure`, `provenance` | Direct and transitive imports, immutable identities, target support, provenance, executable closure; extension exports, digests, permissions, limits and source availability |
+| Security | `security`, `authority`, `finding`, `readiness`, `access` | Exposure, requested, granted and effective authority, findings, blockers |
+| Relationships | `node`, `evidence`, `trace`, `why`, `reachability`, `lineage`, `graph`, `query`, `target-compare` | Typed paths between facts, per-target differences |
+| Runtime | `record`, `runtime`, `export-audit`, `import-audit` | Redacted sessions, traces, extension lifecycle, denials, state changes, cancellation, teardown, retention |
+| Changes | `snapshot`, `validate-snapshot`, `diff`, `impact` | Semantic changes, approval classes, bounded impact paths |
+| Questions and handoff | `ask`, `answer`, `export-inspector`, `import-inspector`, `release-check` | Bounded questions, signed offline exchange, Inspector self-checks |
 
-## Inspector is not a guesser
+The [`axiom inspect` reference](/tooling/cli-inspect) lists all 46 subcommands.
 
-Inspector reports what its current evidence can establish. It does not infer an
-external backend implementation body from an endpoint name, label static
-reachability as an observed call, or treat requested extension authority as an
-application grant.
+<span id="inspector-is-not-a-guesser" />
 
-When evidence is unavailable or a traversal is truncated, that limitation is
-part of the result. Read [Evidence and relationships](/inspector/evidence-and-relationships)
-before using Inspector results as release evidence.
+## Inspector reports evidence, not guesses
+
+Inspector states only what its current evidence establishes. It does not infer
+an external backend implementation from an endpoint name, label static
+reachability as an observed call, or treat requested extension authority as a
+grant. When evidence is unavailable or a traversal is truncated, that limitation
+is part of the result.
+
+Inspector keeps its local state under `.axiom/inspector/` in the workspace: a
+query cache, snapshot copies, runtime sessions, planner receipts and the live
+connection descriptor. Inspection makes no hosted upload.
 
 ## Recommended development loop
 
 1. Run `axiom inspect overview .` after adding or importing a contract.
-2. Review `dependencies`, `executable-closure`, `security`, and `authority`
-   before accepting third-party content.
-3. Trace important UI actions and backend operations in both directions.
-4. Keep the dashboard open while developing for source, graph, and live target
-   inspection.
-5. Capture runtime evidence only when the question requires observed behavior.
-6. Create canonical snapshots before and after material changes.
-7. Run semantic diff, impact, readiness, tests, and the normal release gates in
-   CI.
+2. Review dependencies, executable closure, security and authority before
+   accepting third-party content.
+3. Trace important actions and operations in both directions, with the
+   dashboard open while you develop.
+4. Capture runtime evidence only when a question needs observed behavior, and
+   gate CI on semantic diff between snapshots.
 
-Continue with the [local dashboard guide](/inspector/local-dashboard) or the
-[Inspector CLI reference](/inspector/cli-reference).
+## Next steps
+
+- [Inspect an application](/inspector/inspect-an-application)
+- [Trace relationships](/inspector/trace-and-explain)
+- [Local dashboard](/inspector/local-dashboard)
+- [`axiom inspect` reference](/tooling/cli-inspect)

@@ -1,148 +1,176 @@
 ---
-title: Deterministic questions and Jev
-description: Ask bounded questions locally or use Jev as an optional probabilistic planner while keeping application facts deterministic.
+title: Ask questions
+description: Ask Axiom Inspector bounded questions locally, submit versioned question documents from agents, or opt in to the experimental Jev planner.
 pageType: guide
 ---
 
-Ask Axiom separates two responsibilities:
+<span id="pre-plan-questions-for-agents" />
 
-```text title="Conceptual example"
-question interpretation
-          ↓
-validated typed Inspector request
-          ↓
-local deterministic evidence query
-          ↓
-facts, paths, evidence, completeness and limits
+Ask Axiom turns a question into a validated Inspector query and answers it from
+your local evidence graph. A **planner** only interprets the question; the
+facts, paths and evidence always come from the deterministic local engine.
+
+```mermaid title="A question becomes a validated local query"
+flowchart TD
+  A[Question] --> B{Planner}
+  B -->|Local deterministic| C[Validated typed request]
+  B -->|Jev, opt-in remote| C
+  D[Question document] --> C
+  C --> E[Local evidence query]
+  E --> F[Facts, paths, evidence, completeness, limits]
 ```
-
-The planner can be deterministic and local or probabilistic and remote. The
-answer always comes from the local evidence graph.
 
 ## Local deterministic planner
 
-This is the default and performs no remote model request:
+The deterministic planner is the default and makes no network request:
 
 ```bash title="Terminal"
-axiom inspect ask "what can write Home.total_label" .
-axiom inspect ask "what executes when I press Checkout" .
-axiom inspect ask "why pricing" .
+axiom inspect ask "what can write Home.apiKey" .
 ```
 
-The bounded phrase planner supports:
+```text title="Expected output"
+AXIOM INSPECTOR ANSWER
+Status: Incomplete
+1 canonical write relationship can modify `home.apikey`.
+Graph revision: 18be964eb0eb528277b270e4b48bf6aa7a444ebd76195f273454b1f961cae3fa
+Validated query: {"format":"axiom-query/v1","operation":{"kind":"trace","root":"state:beb6895899277ccd1fbb36b3","direction":"upstream"},"maxDepth":8,"maxResults":250}
+...
+```
 
-- what can write a selector;
-- why an extension has network access;
-- what executes from an action or UI selector;
-- why a semantic fact is connected; and
-- what changed, when supplied a canonical semantic-change report.
+This output is from the task app in [Inspect an application](/inspector/inspect-an-application).
+The question must be one printable line of at most 512 bytes. The planner
+ignores case and trailing `?`, `.` or `!`, and recognizes these forms:
+
+| Intent | Phrasings |
+| --- | --- |
+| Writers | `what can write X`, `who can write X` |
+| Network access | `why does X have network access`, `why does extension X have network access`, `why network access X` |
+| Execution | `what executes when I press X`, `what executes when I click X`, `what executes when X`, `trace execution X` |
+| Why | `why X`, `explain X` |
+| Changes | `what changed`, `what has changed` (needs `--changes`) |
 
 ```bash title="Terminal"
-axiom inspect ask "what changed" . \
-  --changes semantic-changes.json
+axiom inspect ask "what changed" . --changes semantic-changes.json
 ```
 
-Unsupported or ambiguous questions fail explicitly. Use the exact semantic ID
-when a display label is not unique.
+`--changes` takes the canonical report from
+`axiom inspect diff --output`. See [Changes and impact](/inspector/changes-impact-and-ci).
 
-## Pre-plan questions for agents
+Each answer has a status: **Answered**, **Incomplete** (for example, runtime
+evidence was not collected) or **Unsupported** (the phrasing is not recognized;
+the command still exits 0). An ambiguous label fails with
+`selector ... is ambiguous; use a semantic ID` and a non-zero exit; ask again
+with the exact ID. Add `--output FILE` to save the answer and `--format json` to
+read it as `axiom-inspector-answer/v1`.
 
-An agent can submit a validated `axiom-inspector-question/v1` document instead
-of relying on natural-language parsing:
+## Submit a question document
+
+Agents and CI jobs should skip natural language and submit a validated
+`axiom-inspector-question/v1` document:
+
+```json title="question.json"
+{
+  "format": "axiom-inspector-question/v1",
+  "intent": { "kind": "writers", "selector": "state:beb6895899277ccd1fbb36b3" },
+  "maxDepth": 8,
+  "maxResults": 250
+}
+```
 
 ```bash title="Terminal"
-axiom inspect answer question.json . --format json
+axiom inspect answer question.json .
 ```
 
-Agents should retain `graphRevision`, cite returned evidence IDs, inspect
-completeness and limits, and avoid parsing human terminal output.
+Intent kinds are `writers`, `network-access`, `execution` and `why` (each with
+a `selector`), and `changes` (pass `--changes FILE`). `maxDepth` defaults to 8
+(maximum 16) and `maxResults` to 250 (1 to 1,000). `answer` prints JSON by
+default.
+
+Rules for agents:
+
+- Use `--format json` or `jsonl`; never parse human output.
+- Treat a non-zero exit as failure.
+- Keep `graphRevision` and the format version with every result.
+- Cite the returned evidence IDs, and read `completeness` and `limits` before
+  claiming that something is absent.
+- Use exact semantic IDs when a label could be ambiguous.
 
 ## Optional Jev planner
 
 <StatusNote status="experimental" title="Remote probabilistic planning">
-  Jev planning is opt-in and requires Vercel AI Gateway access. It selects a
-  bounded intent and semantic target; it does not generate Inspector facts.
+  Jev planning is opt-in and needs Vercel AI Gateway access. It selects a
+  bounded intent and semantic target; it never generates Inspector facts.
 </StatusNote>
 
-Run the command through a secret environment that already provides
-`AI_GATEWAY_API_KEY`:
+Jev helps when people phrase questions freely. Make an AI Gateway API key
+available as `AI_GATEWAY_API_KEY` (a general Vercel or provider token is
+rejected), then pass both flags:
 
 ```bash title="Terminal"
-infisical run --env=dev -- \
-  axiom inspect ask \
-  "Who can modify Home.total_label?" . \
-  --planner jev \
-  --allow-remote
+axiom inspect ask "Who can modify Home.apiKey?" . --planner jev --allow-remote
 ```
 
-Jev receives the question, narrow Inspector terminology, and a bounded shortlist
-of semantic candidate identities, kinds, and labels. It does not receive the
-application source, complete evidence graph, source spans, fact attributes,
-runtime payloads, or secret values through this planner path.
+Without `--allow-remote` the command stops before sending anything. Jev
+(`typesafe-ai/jev`) receives only the question, narrow Inspector terminology and
+a shortlist of up to 48 candidate semantic IDs, kinds and labels. It never
+receives your source, the evidence graph, source spans, fact attributes,
+runtime payloads or secret values.
 
-It answers closed choice questions for intent and target. Axiom then:
+Jev answers closed-choice questions for intent and target. Axiom then:
 
-1. checks intent probability;
+1. checks the intent probability;
 2. resolves exact semantic names deterministically where possible;
 3. requires fuzzy targets to pass the selector threshold;
-4. rejects targets outside the local allowlist;
-5. creates and validates the normal versioned question request; and
-6. asks the local `EvidenceIndex` for facts and paths.
+4. rejects targets outside the local candidate list;
+5. builds and validates the normal question request; and
+6. answers it from the local evidence index.
 
-Defaults are `0.65` for intent and `0.55` for fuzzy selector probability.
-Threshold overrides are evaluation controls, not a way to bypass request or
-evidence validation.
+The thresholds default to `0.65` for intent and `0.55` for fuzzy selectors
+(`--jev-intent-threshold`, `--jev-selector-threshold`). They are evaluation
+controls, not a way to bypass validation. A model probability is never
+evidence confidence.
 
-## Safe abstention
+### Safe abstention
 
-A precise question can resolve:
+A precise question resolves cleanly. A vague phrase such as "the cart total"
+can match several facts, so Jev may choose `none`, or Axiom may reject a choice
+below the threshold. When Jev abstains, Axiom tries the local phrase planner;
+if that also fails, the answer is **Unsupported** with Jev's reason. Abstaining
+is better than tracing the wrong fact. Copy the intended label or ID from the
+dashboard or `inspect graph` and ask again.
 
-```text title="Conceptual example"
-Who can modify Home.total_label?
-```
+### Planning receipts
 
-An ambiguous phrase such as “the cart total” can match more than one state or
-permission. Jev may select `none`, or Axiom may reject the choice below its
-configured threshold. That abstention is preferable to silently tracing the
-wrong application fact.
+Every completed Jev decision writes an owner-only receipt
+(`axiom-jev-planner-receipt/v1`) under `.axiom/inspector/planner-receipts/`. It
+records the model, graph revision, a SHA-256 of the question (not the raw
+text), the candidate set, thresholds, probabilities, the selected target and
+how it was selected, the validated request, usage and gateway routing metadata.
+The receipt is planning evidence; the Inspector answer stays a separate,
+deterministic result.
 
-Use the dashboard or `inspect graph` to copy the intended semantic label or ID,
-then ask again.
-
-## Planning receipts
-
-Every completed Jev decision produces an owner-only receipt under:
-
-```text title="Conceptual example"
-.axiom/inspector/planner-receipts/
-```
-
-The receipt records the model, graph revision, question hash, bounded candidate
-set, thresholds, model probabilities, selected target and selector source,
-validated request, usage, and Gateway routing metadata. It stores a hash of the
-question rather than the raw question.
-
-The receipt is probabilistic planning evidence. The canonical Inspector answer
-remains a separate deterministic result.
-
-## Enable Jev in the dashboard
+### Enable Jev in the dashboard
 
 ```bash title="Terminal"
-infisical run --env=dev -- \
-  axiom inspect serve . --allow-remote-planner
+axiom inspect serve . --allow-remote-planner
 ```
 
-The Ask Axiom page then lets the user choose **Local deterministic** or
-**Jev · remote** for each question. Starting a normal dashboard session does not
-enable remote planning.
+The Ask Axiom view then offers **Local deterministic** or **Jev · remote** per
+question. A normal dashboard session never enables remote planning.
 
 ## When to use each mode
 
-| Mode | Prefer it when |
+| Mode | Use it when |
 | --- | --- |
-| Local deterministic | The team knows the supported intent, uses exact labels or IDs, runs offline, or needs the smallest trust boundary |
-| Jev | A human uses varied wording and accepts an explicit remote planner with visible probabilities and abstention |
-| Versioned question document | An agent, CI job, or integration needs a stable, reviewable request without natural-language ambiguity |
+| Local deterministic | You know the supported phrasing, use exact labels or IDs, work offline, or need the smallest trust boundary |
+| Jev | A person uses varied wording and accepts a remote planner with visible probabilities and abstention |
+| Question document | An agent, CI job or integration needs a stable, reviewable request |
 
-Jev improves question interpretation. It does not replace semantic diff,
-security analysis, runtime capture, source review, or application tests.
+Jev improves question interpretation only. It does not replace semantic diff,
+security analysis, runtime capture, source review or tests.
+
+## Next steps
+
+- [Trace relationships](/inspector/trace-and-explain)
+- [AI coding agents](/guides/using-ai-agents)
+- [`axiom inspect` reference](/tooling/cli-inspect)

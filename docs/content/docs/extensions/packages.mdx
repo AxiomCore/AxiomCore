@@ -1,0 +1,274 @@
+---
+title: Packages
+description: Build, lock, verify, diff and consume declarative .axiom packages such as themes and component libraries, and see what Axiom Marketplace will add.
+pageType: guide
+---
+
+import { Step, Steps } from 'fumadocs-ui/components/steps';
+
+<span id="author-and-build" />
+<span id="consume-from-acore-ui" />
+
+A package is a typed, versioned `.axiom` file that an application imports as
+data: a theme, a component library, a service contract, a database schema, an
+extension's metadata or an application policy. This guide builds a package,
+locks it, imports it into an Acore UI and reviews an upgrade.
+
+A package is a canonical JSON envelope (`axiom-package/v1`) with a kind, a
+name, an exact version, its targets and a kind-specific payload. Packages are
+declarative and capability-neutral: they carry no executable bytes and grant no
+authority.
+
+| Capability | Status |
+| --- | --- |
+| Typed package envelope, lock resolution and semantic diff | **Alpha** |
+| Theme and component-library packages | **Alpha** |
+| Database-schema packages | **Experimental** |
+| Extension packages | **Experimental** |
+| Axiom Marketplace | **Coming soon** |
+
+## Package kinds
+
+| `kind` | Payload schema | Notes |
+| --- | --- | --- |
+| `service` | `axiom-service/v1` | A service or API contract. |
+| `theme` | `axiom-theme/v1` | Typed design tokens. |
+| `component-library` | `axiom-component-library/v1` or `/v2` | Typed components with props, events, slots, composition and required theme roles. |
+| `database-schema` | `axiom-database-schema/v2` | Offline PostgreSQL contracts for server targets only. See [Database contracts](/database/contracts). |
+| `extension` | `axiom-extension/v2` | Metadata and the digest of a separately distributed WebAssembly module. See [Build an extension](/extensions/build). |
+| `application-policy` | `axiom-application-policy/v1` | Application policy data. |
+
+The database compiler validates every typed object in a v2 database-schema
+package and verifies canonical locked imports. Legacy v1 database exports stay
+inspectable data and cannot enter typed database workflows. Neither version
+carries connection or migration authority.
+
+An extension package carries no executable bytes, so it needs the separate
+signed-authority workflow in [Build an extension](/extensions/build) rather
+than the steps on this page alone.
+
+```mermaid title="Package lifecycle from envelope to consuming application"
+flowchart LR
+  A[Envelope JSON] --> B[axiom packages build]
+  B --> C[.axiom package]
+  C --> D[AxiomDeps.toml]
+  D --> E[axiom packages resolve]
+  E --> F[AxiomPackages.lock]
+  F --> G[axiom packages verify]
+  G --> H[axiom packages check-source]
+  C --> I[axiom packages diff]
+```
+
+## Use a package
+
+The steps use the `package-dependencies` example from the public examples
+repository: a prebuilt theme and component library for Android, iOS and Web.
+
+```bash title="Terminal"
+git clone --depth 1 https://github.com/AxiomCore/examples.git
+cd examples/package-dependencies
+```
+
+<Steps>
+<Step>
+
+### Declare the packages
+
+```toml title="AxiomDeps.toml"
+type = "frontend"
+targets = ["android", "ios", "web"]
+
+[packages.theme]
+artifact = "packages/neutral-theme.axiom"
+name = "example.neutral-theme"
+kind = "theme"
+version = "1.0.0"
+
+[packages.widgets]
+artifact = "packages/neutral-widgets.axiom"
+name = "example.neutral-widgets"
+kind = "component-library"
+version = "1.0.0"
+dependencies = ["theme"]
+```
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `artifact` | Yes | Path to the `.axiom` file, relative to `AxiomDeps.toml`. |
+| `name` | Yes | Exact package identity; must match the artifact and the lock. |
+| `kind` | Yes | Package kind. Database projects accept only `database-schema`. |
+| `version` | Yes | Exact version; ranges are rejected. |
+| `dependencies` | No | Other package aliases this package needs. |
+| `moduleArtifact` | No | Path to a guest module, when the kind needs one. |
+| `signature`, `publicKey` | No | Package signature and verification key; give both or neither. |
+
+The example repository uses the older `format = "axiom-package-deps/v1"`
+header. Run `axiom dependencies migrate --write` to convert it; package
+commands accept both.
+
+</Step>
+<Step>
+
+<span id="declare-and-lock-dependencies" />
+
+### Lock and verify them
+
+```bash title="Terminal"
+axiom packages resolve --lock AxiomPackages.lock
+axiom packages verify --lock AxiomPackages.lock
+axiom packages inspect theme --lock AxiomPackages.lock
+```
+
+```text title="Expected output"
+Resolved 2 package alias(es) into AxiomPackages.lock.
+Verified 2 locked package alias(es).
+```
+
+`inspect` then prints the verified envelope as JSON. Commit `AxiomDeps.toml`
+and `AxiomPackages.lock` together. `verify` re-resolves the bytes and proofs
+and never changes the lock.
+
+<Callout type="warn" title="Pass the lock path explicitly with CLI 0.149.1">
+  The default lock path is `.axiom/AxiomPackages.lock`. In CLI 0.149.1,
+  `resolve` fails if `.axiom/` does not exist, and `verify`, `inspect` and
+  `check-source` resolve artifact paths relative to the lock's folder, so a
+  lock under `.axiom/` fails with `No such file or directory`. Keep the lock
+  beside `AxiomDeps.toml` and pass `--lock` (or `--package-lock`) as shown.
+</Callout>
+
+</Step>
+<Step>
+
+### Import them in Acore
+
+Each import names a local symbol, a package alias from `AxiomDeps.toml` and an
+export of that package:
+
+```acore title="main.acore (excerpt)"
+use theme AppTheme from "theme" export "default"
+use component Card from "widgets" export "Card"
+
+page Home {
+  view {
+    SafeArea {
+      Card(title: "Locked package component")
+    }
+  }
+}
+```
+
+Check the imports against the lock and compile the unchanged source for one
+target:
+
+```bash title="Terminal"
+axiom packages check-source main.acore --target web --package-lock AxiomPackages.lock
+```
+
+```text title="Expected output"
+Validated 2 locked frontend import(s) and compiled main.acore for Web.
+```
+
+`axiom packages run main.acore --target web --package-lock AxiomPackages.lock`
+runs the same source through the normal target host; add `--once` to compile
+once and exit, or `--launch` to open the browser or simulator. Both commands
+default to `--target ios` and read the UI lock from
+`.axiom/axiom.ui.lock.json`.
+
+</Step>
+</Steps>
+
+The compiler rejects kind mismatches, missing exports, target
+incompatibility, and lock or integrity failures. A valid envelope alone does
+not prove a consumer compiles.
+
+For `axiom-component-library/v2`, the source compiler supports node property
+and event bindings, named slot placement, and bounded typed local state,
+derived values, actions and lifecycle behavior. It compiles them with the same
+component semantics as local Acore declarations and keeps artifact and export
+provenance. The package stays data-only: to trigger an application operation,
+emit a typed event to the consumer. V1 keeps its passive subset. Unsupported
+legacy metadata and refinement descriptors fail instead of disappearing during
+lowering. The exact bounds and matching compiler and host versions are in
+[Acore UI](/frontend/acore-ui).
+
+## Build a package
+
+A package source is the envelope as JSON. The output of
+`axiom packages inspect` is a valid envelope, so you can start a new version
+from an existing package: save it, change `package.version` (and anything
+else), then encode it canonically.
+
+```bash title="Terminal"
+axiom packages inspect theme --lock AxiomPackages.lock > theme.json
+axiom packages build theme.json --out theme-1.1.0.axiom
+```
+
+```text title="Expected output"
+Built theme-1.1.0.axiom (<sha256>)
+```
+
+Kind-specific validation checks exports, targets and constraints before
+encoding. Building the same envelope always produces the same bytes and
+digest.
+
+## Review an upgrade
+
+Compare the old and new package before you change `AxiomDeps.toml`:
+
+```bash title="Terminal"
+axiom packages diff packages/neutral-theme.axiom theme-1.1.0.axiom
+```
+
+```json title="Expected output (a release that drops the web target)"
+{
+  "format": "axiom-package-diff/v1",
+  "package": "example.neutral-theme",
+  "fromVersion": "1.0.0",
+  "toVersion": "1.1.0",
+  "changes": [
+    {
+      "category": "target",
+      "impact": "breaking",
+      "path": "package.targets.Web",
+      "summary": "supported target removed",
+      "approval": "target-reduction"
+    }
+  ]
+}
+```
+
+The command then fails with
+`package update requires explicit approval for TargetReduction`. Rerun it with
+exactly the approvals the report asks for, for example
+`--approve target-reduction`. Do not pre-approve changes you have not seen.
+
+| Report field | Values |
+| --- | --- |
+| `category` | `permission`, `api`, `theme`, `component`, `accessibility`, `target`, `semantic-id` |
+| `impact` | `additive`, `compatible`, `breaking`, `permission-increase` |
+| `approval` (for `--approve`) | `breaking-change`, `target-reduction`, `new-required-theme-role`, `permission-increase` |
+
+## Axiom Marketplace
+
+<StatusNote status="coming-soon" title="No supported Marketplace workflow yet">
+  Axiom Marketplace is planned. There is no public catalog and no supported
+  command to browse or install Marketplace packages.
+</StatusNote>
+
+The Marketplace is planned as one discovery surface for independently
+versioned packages: service and API contracts, themes and component libraries,
+database-schema packages, extension metadata with capability requirements, and
+application-policy packages. It will add catalog, publisher, trust, review and
+supported installation on top of the package format and lock described on this
+page.
+
+Until then, use only the local or connected package workflows that these docs
+describe. Do not depend on a
+provider's package by name unless you control and verify its artifact and lock.
+
+## Next steps
+
+- [Build an extension](/extensions/build) for executable logic
+- [Acore UI](/frontend/acore-ui) for package imports in components
+- [Database contracts](/database/contracts) for database-schema packages
+- [Contract, package and security commands](/tooling/cli-contracts)

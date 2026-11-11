@@ -1,60 +1,146 @@
 ---
 title: What is AxiomCore?
-description: Understand how AxiomCore connects application code, contracts, clients, and data.
-pageType: concept
+description: What AxiomCore is, why it uses contracts, who it is for, and which of its products are available today.
+pageType: overview
 ---
 
-AxiomCore gives an application's frontend, backend, and data model a shared
-contract. Developers can review that contract, generate a supported client,
-test expected behavior, and inspect the effect of a change.
+<span id="available-and-testable-today" />
+<span id="product-direction" />
+<span id="intended-relationship" />
+<span id="application-developers" />
+<span id="backend-developers" />
+<span id="platform-and-architecture-teams" />
+<span id="qa-and-reliability-teams" />
+<span id="security-and-governance-teams" />
+<span id="humans-and-agents" />
+<span id="the-coordination-problem" />
+<span id="the-axiomcore-approach" />
 
-Use it in two ways:
+AxiomCore gives an application's frontend, backend and data model a shared
+**contract**: a typed, versioned description of the operations, data,
+validation and behavior one part offers another. You can review the contract,
+generate a client from it, test against it and see what a change affects
+before you ship.
 
-- **Connect existing software.** Keep a supported service and client framework.
-  Extract or author the contract between them.
-- **Build with Acore.** Define API operations, managed backend logic, a user
-  interface, and a database schema in Acore.
+Use it in two ways, or mix them:
 
-## The platform in four layers
+- **Connect existing software.** Keep a supported FastAPI or Go service and a
+  web, React, Flutter or Swift client. Extract or write the contract between
+  them.
+- **Build with Acore.** Write API operations, managed backend logic, a user
+  interface and a database schema in [Acore](/introduction/what-is-acore).
 
-```mermaid title="From application source to a tested consumer"
+<span id="the-platform-in-four-layers" />
+
+## How it works
+
+```mermaid title="Source becomes a contract that is checked before clients and releases use it"
 flowchart TD
-  A[Existing backend or Acore source] --> B[Versioned contract]
-  B --> C[Inspect, diff, and test]
+  A[Existing backend or Acore source] --> B[Versioned .axiom contract]
+  B --> C[Inspect, diff and test]
   C --> D[Existing client or Acore UI]
   C --> E[Release and delivery]
 ```
 
-Source becomes a contract package. Review and test the package before using it
-from a client or delivering a release. Your database and executable backend
-remain explicit parts of the application.
-
 | Layer | What you do | Result |
 | --- | --- | --- |
-| Authoring and extraction | Write Acore or extract a supported backend surface | Reviewable source |
+| Authoring and extraction | Write Acore or extract a supported backend | Reviewable source |
 | Contracts and packages | Build, pin dependencies, compare versions | `.axiom` artifact and dependency lock |
-| Development and execution | Run an API, connect a client, test or mock behavior | Working application; `.axiomapp` when packaging Acore UI |
-| Coordination | Use implemented Cloud project and release workflows | Shared, versioned releases |
+| Development and execution | Run an API, connect a client, test or mock behavior | A working application; a `.axiomapp` when you package an Acore UI |
+| Coordination | Use Cloud project and release workflows | Shared, versioned releases |
 
-## Acore is the language, not the whole platform
+Your database and executable backend stay explicit parts of the application.
 
-[Acore](/introduction/what-is-acore) is AxiomCore's independent declarative
-language. AxiomCore also includes the CLI, packages, clients, runtime tools,
-testing, Inspector, and Cloud workflows.
+<span id="acore-is-the-language-not-the-whole-platform" />
 
-## Contracts are incremental
+Acore is the language. AxiomCore is the platform around it: the Axiom CLI,
+packages, client SDKs, runtime tools, testing, Inspector and Cloud workflows.
 
-Retain FastAPI or Go, consume contracts from web, React, Flutter, or a qualified
-Swift integration, and introduce Acore where it helps. Typed theme and
-component packages have their own contracts. Their metadata does not grant
-permission to execute package code.
+## Why contracts
 
-Each path has a separate [availability boundary](/introduction/support-matrix).
-A successful contract build does not prove that an application works on every
-target or that a deployment is production-ready.
+Teams coordinate more than endpoint shapes: retry and cache policy,
+validation, authentication expectations, streaming, projections, UI contracts
+and compatibility decisions. When those rules live in glue code or prose, each
+client reads them differently, and one backend change needs separate edits in
+web, mobile, mocks, tests, docs and release automation. Generated clients save
+typing, but generated code alone is not one auditable boundary.
 
-## Continue reading
+AxiomCore builds one versioned artifact that tools can inspect, lock, compare,
+test, mock and consume. Thin framework integrations delegate supported behavior
+to a shared runtime. Semantic diffs show important contract and package changes
+before an upgrade.
 
-Start with the [first app](/getting-started/quickstart), compare
-[existing-stack integrations](/guides), or read about
-[contracts and artifacts](/core-concepts/contracts-and-artifacts).
+<span id="contracts-are-incremental" />
+
+Adoption is incremental: keep FastAPI or Go, consume contracts from web, React,
+Flutter or a qualified Swift integration, and add Acore where it helps. Theme
+and component packages have their own typed contracts; their metadata does not
+grant permission to run package code.
+
+<span id="what-this-does-not-promise" />
+
+## What a contract does not do
+
+- It does not replace application design, backend enforcement, target testing
+  or operations. Backend code stays responsible for trusted authorization and
+  business effects.
+- A successful build does not prove the application works on every target or
+  that a deployment is production-ready.
+- It does not require you to leave Flutter, React, Swift, Python or Go.
+
+## Who it is for
+
+| Role | What you get |
+| --- | --- |
+| Application developers | Locked service contracts in a web, React, Flutter or Swift app, or the **Alpha** Acore UI path |
+| Backend developers | Extract FastAPI or Go, then add contract-level behavior, validation, variants, domain semantics and security declarations in Acore |
+| Platform and architecture teams | Package boundaries, dependency locks, semantic diffs, and separately versioned service, theme, component, database schema, extension and policy artifacts |
+| QA and reliability teams | Contract-driven mocks, tests, fault definitions, inspection and benchmarks |
+| Security and governance teams | Reviewable authentication, authorization relations, sensitive-data classes, effects, integrity metadata and release approvals; not a replacement for runtime enforcement or a security assessment |
+| Humans and AI agents | Readable source, packages, locks, diagnostics and semantic diffs that narrow the change surface |
+
+## Products and status
+
+| Product | Status | Scope |
+| --- | --- | --- |
+| Acore | **Alpha** | Language, evaluator, standard library, diagnostics, language server foundations |
+| Axiom CLI | **Alpha** | Authoring, build, inspection, diff, testing, mocking, packages, UI and app builds, security, connected Cloud commands |
+| Axiom contracts and runtime | **Alpha** | Canonical packages, resolution locks, semantic checks, native and web runtime paths, framework integrations |
+| Acore UI and application artifacts | **Alpha** | Declarative frontend authoring; `.axiomapp` builds validated on browser, Android Emulator and iOS Simulator paths |
+| Axiom Inspector | **Alpha** | CLI and secure local dashboard: relationships, authority, runtime sessions, impact, optional bounded Jev question planning |
+| Axiom Cloud Dashboard | **Alpha** | Account, project and release control plane; not yet the collaborative workspace planned below |
+
+These planned products cannot be installed or used today:
+
+<StatusNote status="coming-soon" title="Axiom Studio">
+  A visual workspace for building on AxiomCore: frontend composition, backend
+  and API management, database views, task and Kanban views, human and agent
+  collaboration, chat, and a contract-aware audit journey.
+</StatusNote>
+
+<StatusNote status="coming-soon" title="Acode">
+  A contract-aware code editor for source, semantic contract diffs and ordinary
+  imperative modules. Acore's language server and editor foundations exist, but
+  they are not Acode.
+</StatusNote>
+
+<StatusNote status="coming-soon" title="Axiom Marketplace">
+  A catalog for contracts such as UI components, themes, service and API
+  integrations, database schemas, extensions and policies. The typed package
+  format exists; Marketplace browsing and installation do not.
+</StatusNote>
+
+The direction is for Studio and Acode to work beside the CLI and Inspector on
+the same Acore source and packages, with the Cloud Dashboard coordinating
+releases and Marketplace supplying packages. This is direction, not current
+interoperability. The [support matrix](/introduction/support-matrix) lists what
+runs today.
+
+<span id="continue-reading" />
+
+## Next steps
+
+- [Run your first app](/getting-started/quickstart)
+- [Choose a path for your stack](/getting-started)
+- [What is Acore?](/introduction/what-is-acore)
+- [Contracts and artifacts](/core-concepts/contracts-and-artifacts)

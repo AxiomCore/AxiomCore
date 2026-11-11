@@ -6,6 +6,7 @@ import "./global.css";
 import { Brand } from "@/components/brand";
 import { NavigationAccessibility } from "@/components/docs/navigation-accessibility";
 import { SiteAnalytics } from "@/components/site-analytics";
+import { AskAI } from "@/components/ai/ask-ai";
 import "@/lib/brand/styles/analytics.css";
 import type { Metadata } from "next";
 
@@ -93,6 +94,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             <NavigationAccessibility />
             {children}
           </DocsLayout>
+          <AskAI />
         </RootProvider>
         <SiteAnalytics />
       </body>

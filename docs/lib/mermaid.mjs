@@ -11,6 +11,8 @@ export function renderDocumentationDiagram(source) {
 
   // The diagram uses our bundled font. Remove the renderer's optional web-font
   // import so builds and readers never depend on a third-party font service.
+  // Remove the whole statement: the font URL itself contains semicolons, and a
+  // leftover fragment breaks the rule that sets the diagram's font.
   const svg = renderMermaidSVG(source, {
     bg: '#080808',
     fg: '#eeeeee',
@@ -21,7 +23,7 @@ export function renderDocumentationDiagram(source) {
     font: 'Commit Mono',
     transparent: true,
     padding: 20,
-  }).replace(/@import\s+url\([^;]+;/g, '');
+  }).replace(/@import\s+url\((?:'[^']*'|"[^"]*"|[^)]*)\)\s*;?/g, '');
 
   if (/<(?:script|foreignObject)\b|\bon\w+\s*=|(?:href|src)\s*=|@import|url\((?!#)/i.test(svg)) {
     throw new Error('Rendered diagram contains an active or external resource.');

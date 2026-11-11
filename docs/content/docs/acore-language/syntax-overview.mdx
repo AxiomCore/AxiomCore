@@ -1,120 +1,134 @@
 ---
-title: Syntax overview
-description: The implemented lexical and structural rules of an Acore module.
+title: Syntax
+description: Lexical rules, keywords, properties, declarations and authoring shortcuts for Acore source files.
 pageType: reference
 ---
 
-Backend contracts use `type = "backend"` in `AxiomDeps.toml` and the named declarations described
-in the [backend profile](/acore-language/backend-profile). General-purpose
-Acore modules retain properties, classes, and expressions. The UI compiler has
-its own application declarations. Newlines separate declarations visually;
-semicolons are not part of the source grammar.
+<span id="infer-closed-business-failures" />
+<span id="freeze-the-approved-public-interface" />
+<span id="derive-an-api-model-from-an-offline-schema" />
+<span id="share-a-bounded-pure-library" />
+<span id="editing-and-runtime-requirements" />
+<span id="objects-and-dynamic-keys" />
+<span id="collections" />
+<span id="next" />
 
-## Module declaration
+This page lists the rules for writing an Acore source file: the three source
+shapes, comments, identifiers, keywords, properties, declarations and the
+shorthand forms that the compiler expands for you. Examples were checked with
+Axiom CLI 0.149.1.
 
-Use a dotted module name when a profile needs a stable source identity:
+## Source shapes
 
-```acore title="Acore excerpt"
-module commerce.orders
-```
+The nearest `AxiomDeps.toml` decides which grammar a file uses.
 
-The generic evaluator accepts modules without this declaration. Acore UI source
-requires it because the module identity participates in the graph and artifact.
+| Shape | Selected by | Typical source | Separators |
+| --- | --- | --- | --- |
+| General module | No `type` in the manifest | `name = value`, `name { ... }` | Newlines or spaces. No commas between object members. Commas are optional in lists. |
+| Backend declarations | `type = "backend"` | `project(id: "x", version: "1")`, `model Task { title: String }` | Named arguments separated by commas. Commas are required between list items and arguments; a trailing comma is allowed. |
+| Acore UI | `type = "frontend"` | `app`, `page`, `component`, `view { ... }` | See [Acore UI](/frontend/acore-ui). `;` is allowed between model fields. |
+
+Database schemas use the offline database compiler; see
+[Database contracts](/database/contracts). Package projects are described in
+[Packages](/extensions/packages). General modules and backend
+declarations reject `;` (`Invalid character in source` or `AXB001`).
 
 ## Comments
 
-Line comments begin with `//` and continue to the end of the line.
+| Form | General module | Backend declarations | Acore UI |
+| --- | --- | --- | --- |
+| `// line comment` | Yes | Yes | Yes |
+| `/* block comment */` | No (`Unexpected token`) | No (`AXB001`) | Yes, and blocks can nest |
 
 ```acore title="Acore excerpt"
 // Contract policy shared by all endpoints.
 policies(cache: CachePolicy(strategy: CacheStrategy.networkFirst, ttlSeconds: 60))
 ```
 
-Block comments are not part of the current lexer.
+## Module declaration
 
-## Properties
-
-In general-purpose evaluator modules, a property can have a value, a type, or
-both:
+A dotted module name gives a file a stable source identity:
 
 ```acore title="Acore excerpt"
+module commerce.orders
+```
+
+General modules and backend sources may omit it. An Acore UI file must declare
+`module <name>.ui`: a missing declaration is `AUI001` and a name without the
+`.ui` suffix is `AUI002`.
+
+## Identifiers
+
+Identifiers start with an ASCII letter or underscore and continue with
+letters, digits or underscores. Names are case-sensitive. A dot is member access,
+except inside a module name. In general modules, a property whose name starts
+with `_` is evaluated but left out of rendered output.
+
+## Keywords
+
+The general grammar reserves these words and symbols.
+
+| Keyword | Use |
+| --- | --- |
+| `null`, `true`, `false` | Literals |
+| `module` | Module name |
+| `import`, `amends`, `use` | Load source, compose source, consume a compiled contract or export |
+| `read` | Read an environment value or external property |
+| `class`, `extends`, `typealias`, `function` | Declare a class, its parent, a type alias, a function signature |
+| `local`, `hidden`, `fixed`, `const`, `abstract`, `open`, `external` | Modifiers |
+| `this`, `outer`, `super` | Scope references |
+| `if`, `else`, `let`, `throw` | Expressions |
+| `extend` | Promote an extracted model: `extend Models.Name { ... }` |
+| `Any` | The top type |
+| `is`, `as`, `trace`, `import*`, `read*` | Reserved. The 0.149.1 parser rejects them with `Unexpected token`. |
+
+Backend words such as `project`, `model`, `endpoint`, `action` and `managed` are
+declarations, not reserved words, so ordinary properties such as
+`audience = "mobile"` remain valid. Run `axiom explain --schema` for the full
+declaration catalog, or see [Backend declarations](/backend/declarations).
+
+<span id="properties" />
+
+## Properties in general modules
+
+A property can have a value, a type, or both. A name followed by a block amends
+or creates an object.
+
+```acore title="config.acore"
 name = "orders"
 port: Int = 8080
 optionalLabel: String? = null
-```
-
-Backend root declarations take named arguments:
-
-```acore title="Acore excerpt"
-project(id: "orders-api", version: "1.0.0")
-```
-
-Backend constructors also take named arguments:
-
-```acore title="Acore excerpt"
-// The cache argument of policies(...) or variant name(...).
-CachePolicy(strategy: CacheStrategy.cacheFirst, ttlSeconds: 300)
-```
-
-There is no `new` keyword. Endpoint policy shorthand uses
-`cache(strategy: CacheStrategy.cacheFirst, ttl: 5m)`.
-
-## Objects and dynamic keys
-
-Plain braces create a dynamic object. Bracketed keys are evaluated at runtime:
-
-```acore title="Acore excerpt"
-headers = {
+headers {
   contentType = "application/json"
   ["x-request-id"] = "example"
 }
-```
-
-Backend variants use declarations and ordinary list values:
-
-```acore title="Acore excerpt"
-variant mobile(include: ["public_*"])
-```
-
-## Collections
-
-Square brackets create a list expression. Backend profile values require commas
-between elements; general evaluator modules also accept whitespace separation:
-
-```acore title="Acore excerpt"
 codes = [502, 503, 504]
-names = ["tasks", "users"]
+names = ["tasks" "users"]
 ```
 
-Backend types use `List<T>` and `Map<K, V>`. Collection values remain ordinary
-bracketed arrays and colon-separated objects:
-
-```acore title="Acore excerpt"
-model Index {
-  names: List<String>
-  counts: Map<String, Int64>
-}
-```
+- `name: Type` with no value declares an abstract property.
+- Bracketed keys such as `["x-request-id"]` are evaluated, so any expression
+  that produces a string works: `{ [headerName] = "1" }`.
+- An object that contains only bare values (`xs { 1 2 3 }`) renders as a list.
+- There is no `new` keyword. Write `RetryPolicy { maxAttempts = 4 }` to create a
+  typed object.
 
 ## Strings and numbers
 
-The current parser accepts double-quoted strings, signed integers, and decimal
-floats:
-
-```acore title="Acore excerpt"
-message = "contract ready"
-attempts = 3
-sampleRate = 0.25
-```
-
-Escapes are lexed inside double-quoted strings. Triple-quoted and hash-delimited
-tokens are reserved by the lexer but are not part of the documented evaluated
-surface yet; use ordinary strings in portable source.
+| Form | General module | Backend and UI |
+| --- | --- | --- |
+| `"text"` | Yes. A backslash escape such as `\"` or `\n` is accepted, but the general evaluator keeps it verbatim in the value. | Yes |
+| `"""multi-line"""` | Yes | No |
+| `#"raw text"#` | Yes | No |
+| `$"Task {id}"` | No | Yes, in managed and UI expressions. See [Authoring shortcuts](#authoring-shortcuts). |
+| `42`, `-7` | Signed 64-bit integer | Typed by the declaration (`Int32`, `Int64`) |
+| `0.25`, `-0.5` | 64-bit float. Digits are required on both sides of the point; there is no exponent form. | Typed by the declaration |
+| `250ms`, `2s`, `5m`, `1h`, `1d` | No duration literal | Duration. Write the unsigned whole number and unit with no space. |
 
 ## Annotations and modifiers
 
-Annotations precede a member and may carry an object body. Modifiers precede
-properties, classes, type aliases, functions, or modules where supported:
+Annotations come before a member and may carry an object body. Modifiers come
+before properties, classes, type aliases, functions or modules.
 
 ```acore title="Acore excerpt"
 @deprecated { reason = "Use currentEndpoint" }
@@ -125,16 +139,180 @@ open class BasePolicy {
 }
 ```
 
-Implemented modifier tokens are `local`, `hidden`, `fixed`, `const`,
-`abstract`, `open`, and `external`. Their effect depends on the declaration and
-compiler profile; do not use them as a security boundary.
+| Modifier | Effect in 0.149.1 |
+| --- | --- |
+| `hidden`, `local` | The value can be referenced but is left out of rendered output. A `hidden` class is also left out. |
+| `open`, `abstract`, `fixed`, `const` | Parsed and recorded. Their effect depends on the compiler profile. |
+| `external` | Declares a member whose implementation a trusted host must bind. |
 
-## Identifiers
+An annotation is data for tooling and has no effect unless the active profile
+recognizes it. Do not use modifiers or annotations as a security boundary.
 
-Identifiers begin with an ASCII letter or underscore and continue with letters,
-digits, or underscores. Dots are member access except inside a module name.
-Names are case-sensitive.
+## Declarations
 
-## Next
+A backend source is a list of named declarations. Arguments are
+named, and there is no `new` keyword.
 
-Continue with [Values, types, and operators](/acore-language/values-types-and-operators).
+```acore title="backend/main.acore"
+project(id: "orders-api", version: "1.0.0")
+policies(cache: CachePolicy(strategy: CacheStrategy.cacheFirst, ttlSeconds: 300))
+model Index {
+  names: List<String>
+  counts: Map<String, Int64>
+}
+variant default(include: ["*"])
+endpoint index(method: GET, path: "/index") {
+  response(type: Models.Index)
+  cache(strategy: CacheStrategy.cacheFirst, ttl: 5m)
+}
+```
+
+Declarations refer to each other through typed namespaces instead of strings:
+
+| Reference | Points to |
+| --- | --- |
+| `Models.Task` | A model, authored or extracted |
+| `Entities.task`, `Entities.Task` | A promoted domain entity |
+| `Projections.name`, `Validators.name`, `Functions.name` | Domain projection, validator, pure function |
+| `Actions.name`, `Resources.name`, `Failures.name`, `Jobs.name`, `Guards.name` | Server-plan declarations |
+| `Configurations.name`, `Secrets.name`, `OperationPolicies.name` | Private setup and policies |
+| `Routes.name` | An endpoint from an amended source |
+| `Audience.web` or `Audience["web"]` | An audience listed in `AxiomDeps.toml` |
+| `.field` | A field of the model or entity in context, as in `fields: [.id, .email]` |
+| `Input.field`, `Input.path.id`, `Input.body.title` | Action or endpoint input |
+| `CacheStrategy.cacheFirst` | An enum member |
+
+## Authoring shortcuts
+
+<StatusBadge status="experimental" /> `axiom check` 0.149.1 accepts these forms.
+They do not change older explicit source and do not authorize extra provider
+operations. Editor support needs a matching `acore-lsp`.
+
+<span id="infer-transport-types-from-a-reusable-action" />
+
+### Endpoint types inferred from an action
+
+Keep the action's input and output and each transport location explicit. The
+compiler derives a missing response type and parameter types from the resolved
+`handle` mapping, after imports and amendments.
+
+```acore title="backend/main.acore"
+project(id: "typed-route", version: "1.0.0")
+model Selector { id: Int32(min: 1) }
+model Task { title: String }
+
+action read(kind: ActionKind.query, input: Models.Selector, output: Models.Task) {
+  native(symbol: "tasks.read")
+}
+endpoint readTask(method: GET, path: "/tasks/{id}") {
+  request { path("id") }
+  handle(action: Actions.read, input: {id: Input.path.id})
+}
+```
+
+This endpoint gets an `Int32` path parameter and a `Task` response.
+
+- Model input validation stays authoritative, and explicit annotations are still checked.
+- Ambiguous bindings, unknown actions, missing fields and optional path inputs are rejected.
+- Optionality stays explicit: a query, header or body field is not guessed from its name.
+- A response can keep its projection, status or media type and omit only the type.
+- Endpoints without an action keep explicit response types. Without a `handle`, a
+  parameter needs `type:`.
+- Inference never selects a larger public projection or audience.
+- A native action still needs a registered trusted implementation.
+
+<span id="immutable-record-updates-and-interpolation" />
+
+### Record updates and interpolation
+
+```acore title="Managed action excerpt"
+let updated = {task with title: normalized}
+let message = $"Task {task.id}: {updated.title} {{ready}}"
+```
+
+- A record update evaluates the base once, then the replacements in source
+  order. It is shallow and immutable, keeps omitted optional fields, and rejects
+  unknown, duplicate or differently typed fields. Arbitrary JSON spreading and
+  capability handles are not supported.
+- `$"..."` checks each placeholder as a pure expression. Placeholders accept
+  `String`, `Int` and `Bool`; format optional, null and other values explicitly.
+  `{{` and `}}` produce literal braces, and ordinary JSON string escapes work.
+- Backend integers keep exact `Int64` behavior; frontend integers keep the
+  portable safe range. Output and work stay bounded.
+- Ordinary strings keep their meaning. The frontend `interpolate` and
+  `to_string` functions remain separate, compatible forms. Interpolation is
+  text formatting, not HTML escaping or SQL construction.
+
+### Shared pure functions
+
+Put a library of pure functions inside the frontend workspace so the frontend's
+local import stays inside it, then import the function by name from both sides.
+
+```acore title="frontend/shared/title.acore"
+pure fn normalize(value: String): String = value.trim()
+```
+
+```acore title="backend/main.acore"
+use function normalize from "../frontend/shared/title.acore"
+```
+
+```acore title="frontend/main.acore"
+use function normalize from "./shared/title.acore"
+```
+
+The backend parses the library without executing it and selects the function
+plus the pure functions it calls from the same library. A library contains pure
+functions only: missing exports, resource declarations, ambient calls and
+recursion are rejected. Each consumer checks the library against its own type
+and numeric rules. To share models, validators or codecs where visibility or
+representation matters, use the verified contract descriptors instead.
+
+### Models derived from a database schema
+
+```acore title="backend/main.acore"
+derive model Task(
+  schema: "../database/schema.acore",
+  table: "main.tasks",
+  fields: {id: "id", title: "title"}
+) also entity
+```
+
+- The schema's own manifest must select the database type, and its source
+  declares a numeric semantic version.
+- The compiler reads an immutable snapshot of that source and creates a virtual
+  model. No `Task.acore` file is generated.
+- Only the listed columns are used, so new private or tenant columns do not
+  widen the API.
+- PostgreSQL and SQLite share one checked mapping. String bounds and `Int16`
+  limits are kept. UUID columns get a checked canonical text pattern. Exact
+  PostgreSQL `Int64` and SQLite integer columns become bounded canonical strings.
+- Decimal, date and enum columns, nullable columns and unsupported vendor or
+  codec mappings need an explicit, reviewed model. They never silently become
+  optional fields. Database defaults do not become API defaults.
+- Entity keys and audience projections follow the usual rules. The source does
+  not infer SQL queries, grants, tenant claims or migration authorization; keep
+  using [Migrations and persistence](/database/persistence). The derive CLI
+  remains available for intentional exported models.
+
+### Editor support and generated files
+
+The matching language server shows resolved endpoint and action signatures,
+closed failure sets, inferred resources, selected codecs and schema-field
+navigation. VS Code and Zed provide the `acore-derive-model`,
+`acore-errors-infer`, `acore-record-update` and `acore-interpolate` starters.
+Editing never resolves credentials or runs providers.
+
+Generated output goes under the nearest manifest's `.axiom/` directory by
+default. Dependency locks, stable identities and migration history keep their
+own version-control rules. An explicit export can include private companion
+files; keep those out of client distributions.
+
+Failure inference with `errors(infer)` and `--frozen-interface` are described in
+[Managed logic and concurrency](/acore-language/managed-language).
+
+## Related
+
+- [Values, types and operators](/acore-language/values-types-and-operators)
+- [Objects, classes and functions](/acore-language/objects-classes-and-functions)
+- [Backend declarations](/backend/declarations)
+- [Acore UI](/frontend/acore-ui)

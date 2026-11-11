@@ -1,0 +1,216 @@
+---
+title: React (atmx-react)
+description: Install atmx-react, generate React query definitions with axiom pull, wrap your app in AxiomProvider and call a contract with typed hooks.
+pageType: guide
+---
+
+<span id="generate-the-client" />
+<span id="establish-the-runtime-boundary" />
+<span id="query-with-a-hook" />
+<span id="compose-query-state" />
+<span id="browser-and-security-checks" />
+<span id="generator-compatibility" />
+
+<StatusNote status="alpha" title="atmx-react 0.147.4">
+  The provider, hooks, shared query state and declarative components are
+  implemented. Validate Wasm asset bundling, startup order, server rendering
+  and browser support in your own application.
+</StatusNote>
+
+`atmx-react` adds a provider, hooks and components on top of
+[`atmx-web`](/sdks/web), which runs the AxiomCore runtime in the browser as
+WebAssembly. This guide uses the `greetings` contract from the
+[FastAPI example](/guides/fastapi-to-web): endpoint `greet` at
+`GET /greet/{name}`, returning `Greeting { message }`.
+
+**You need:** React and React DOM 18 or 19, Node.js and npm, a backend `.axiom`
+contract, and backend CORS that allows your frontend origin.
+
+## 1. Install
+
+```bash title="Terminal (React project)"
+npm install atmx-react@0.147.4
+npm install --save-dev atmx-cli@0.146.7
+```
+
+`atmx-react` installs `atmx-web` `^0.147.5` as a dependency. Install
+`atmx-cli` before pulling: CLI 0.149.1 otherwise asks npm for an unpublished
+`atmx-cli@0.149.1` and fails with `ETARGET`.
+
+## 2. Generate query definitions
+
+```bash title="Terminal (React project)"
+axiom pull ../backend/backend.axiom --framework atmx-react --name greetings --out src/generated
+```
+
+`pull` selects `atmx-react` by itself when `package.json` lists `react`. It
+writes `public/greetings.axiom`, `src/generated/models.ts` and
+`src/generated/sdk.ts`. For each endpoint, `sdk.ts` adds two members to the
+contract's module (`greetingsModule` here):
+
+| Endpoint | Definition factory | Hook helper |
+| --- | --- | --- |
+| `greet` | `getGreetDef(args)` returns `AxiomQueryDef<models.greetings.Greeting>` | `useGreet()` |
+| `create_task` | `getCreateTaskDef(args)` | `useCreateTask()` |
+
+Import the module, not the `sdk` object, for types: `sdk` is typed `any`.
+
+## 3. Serve the Wasm engine
+
+Copy `node_modules/atmx-web/dist/axiom_runtime.wasm` into your static folder
+and set `wasmUrl`, as in [Web step 3](/sdks/web). Without it the browser
+downloads the engine from `atmx.axiomcore.dev`.
+
+## 4. Wrap the app in AxiomProvider
+
+```tsx title="src/App.tsx"
+import { AxiomProvider } from 'atmx-react';
+import { AxiomDefaultConfig } from './generated/sdk';
+import { Greeting } from './Greeting';
+
+const config = {
+  ...AxiomDefaultConfig,
+  contracts: {
+    greetings: { ...AxiomDefaultConfig.contracts.greetings, baseUrl: 'http://127.0.0.1:8083' },
+  },
+  wasmUrl: '/axiom_runtime.wasm',
+};
+
+export function App() {
+  return (
+    <AxiomProvider config={config} fallback={<p>Starting the contract runtime...</p>}>
+      <Greeting name="Ada" />
+    </AxiomProvider>
+  );
+}
+```
+
+| Prop | Meaning |
+| --- | --- |
+| `config` | An in-memory ATMX config. See the [web config fields](/sdks/web) |
+| `configUrl` | URL of a JSON config to fetch instead of `config` |
+| `fallback` | Rendered until the runtime is ready |
+| `children` | Mounted only after the runtime accepts every configured contract |
+
+The provider starts the runtime once. A `{ ok: false }` result counts as a
+failure even when nothing throws. On failure the provider renders its own
+error message and keeps children unmounted; 0.147.4 has no prop to replace
+that message, and an error boundary does not receive it. Signed contracts need
+a complete, non-blank signature and public key pair. A partial pair fails;
+omit both only for a local unsigned contract.
+
+## 5. Make a typed query
+
+```tsx title="src/Greeting.tsx"
+import { useAxiomQuery } from 'atmx-react';
+import { greetingsModule } from './generated/sdk';
+
+export function Greeting({ name }: { name: string }) {
+  const greeting = useAxiomQuery(greetingsModule.getGreetDef({ name }));
+
+  if (greeting.isLoading) return <p>Loading...</p>;
+  if (greeting.error) return <p role="alert">{greeting.error.message}</p>;
+  if (!greeting.data) return null;
+  return <h2>{greeting.data.message}</h2>;
+}
+```
+
+`useAxiomQuery(definition, { enabled })` returns `data` (typed from the
+definition), `isLoading`, `isFetching`, `source` (`cache`, `network` or null),
+`error`, the raw `state` and `refetch()`. Components that pass the same
+namespace, endpoint and arguments share one query.
+
+## 6. Run a mutation
+
+```tsx title="Mutation excerpt (a contract with create_task)"
+import { useAxiomMutation } from 'atmx-react';
+import { tasksModule } from './generated/sdk';
+
+const createTask = (args: { task: { title: string } }) => tasksModule.getCreateTaskDef(args);
+
+export function AddTask() {
+  const create = useAxiomMutation(createTask);
+  return (
+    <button disabled={create.isMutating} onClick={() => create.execute({ task: { title: 'Write docs' } })}>
+      {create.isMutating ? 'Saving...' : 'Add task'}
+    </button>
+  );
+}
+```
+
+`useAxiomMutation(fn)` takes a function from arguments to a definition. Keep
+that function stable, at module scope or in `useCallback`. It returns
+`execute(args, { headers })`, which resolves with the decoded result, plus
+`state`, `data`, `isMutating` (also `isLoading`), `error` and
+`getFieldError(field)`. Refresh related queries yourself after a successful
+write, for example with `refetch()`.
+
+## 7. Handle errors
+
+Errors are `AxiomError` objects with `stage`, `category`, `code`, `message`,
+`retryable` and optional `details`; see the [web error table](/sdks/web). A
+query exposes its error as `error`. `execute` rejects with the error and also
+stores it. For a `ValidationError`, `getFieldError('title')` returns the
+message for one field.
+
+## Declarative components
+
+| Export | Use |
+| --- | --- |
+| `AxQuery` | `call={definition}`, optional `enabled`, children or a render function receiving `{ data, state, refetch }`. Shares its state with nested components |
+| `AxWhen` | `is="loading, error"` renders children only in the listed states (`idle`, `loading`, `mutating`, `data`, `success`, `error`). Reads the nearest `AxQuery`, or `value` |
+| `AxTrigger` | Calls `onTrigger` when scrolled into view; `once` defaults to true |
+| `useAxiomData`, `useAxiomContext` | Read the nearest query state |
+| `setAuthToken`, `clearAuthToken` | Set or clear an in-memory credential for a namespace and auth method |
+
+```tsx title="AxQuery excerpt"
+<AxQuery call={greetingsModule.getGreetDef({ name: 'Ada' })}>
+  {({ data, state, refetch }) => (
+    <section>
+      {state.status === 'error' && <p>{state.error?.message}</p>}
+      {data && <h2>{data.message}</h2>}
+      <button onClick={refetch}>Refresh</button>
+    </section>
+  )}
+</AxQuery>
+```
+
+## Authentication and cache
+
+- Credentials set with `setAuthToken` live in memory only. Keep tokens out of
+  generated source and clear them on logout. Cookie sessions follow browser
+  cookie rules.
+- React query state is held in memory. The runtime's response cache uses
+  `localStorage` (`axiom_cache_*` keys), as on the [web](/sdks/web), so test
+  startup with that cache both empty and populated.
+
+## Platform limits
+
+- **Client rendering only.** Importing `atmx-react` or `atmx-web` outside a
+  browser throws a `ReferenceError`. Load them only in client code; the
+  provider starts the runtime in an effect.
+- **Generated mutation hooks.** With `atmx-cli` 0.146.7 and `atmx-react`
+  0.147.4, each generated `use<Endpoint>()` helper for a non-GET endpoint
+  passes a definition where `useAxiomMutation` expects a function, and
+  `tsc --noEmit` reports `TS2558` for it in `sdk.ts`. Call `useAxiomMutation`
+  with a definition factory instead, as in step 6. Development servers that
+  skip type checking still run.
+- **Generated query hooks take no arguments.** `use<Endpoint>()` calls the
+  definition with no arguments. Use `useAxiomQuery` with
+  `get<Endpoint>Def(args)` for any endpoint that has parameters.
+- **Projected list responses** are typed as a single element. Check the
+  generated return type against the contract.
+- **Content Security Policy.** Startup injects the runtime glue as an inline
+  script and compiles Wasm, as described for [atmx-web](/sdks/web).
+- Wasm is not a security sandbox. Application code, ATMX and the browser
+  origin share one trust boundary.
+
+The tested [FastAPI web example](/guides/fastapi-to-web) does not qualify a
+React application. Check generated hooks, bundling, startup and mounted
+behavior in your own React project before release.
+
+## Next steps
+
+- [Web (atmx-web)](/sdks/web) for configuration, errors and cache details
+- [The contract runtime](/core-concepts/the-generic-runtime)
+- [Client SDKs](/sdks)

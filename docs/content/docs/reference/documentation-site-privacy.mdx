@@ -1,77 +1,125 @@
 ---
-title: Documentation site privacy
-description: Understand the narrow analytics, server logging, search, and support-data boundaries of the AxiomCore documentation site.
+title: Docs site privacy
+description: What analytics, consent storage, search, logging, and support data apply when you visit axiomcore.dev, the documentation, or the Playground.
 pageType: reference
 ---
 
-The documentation application is primarily public content. Reading a page does
-not require an AxiomCore account, contract, project, or CLI installation.
+<span id="public-site-analytics" />
 
-## Public-site analytics
+This page explains what the public AxiomCore websites measure and store: the
+landing site (`axiomcore.dev`), this documentation (`docs.axiomcore.dev`), and
+the Playground (`playground.axiomcore.dev`). Reading the docs needs no account,
+contract, project, or CLI installation.
 
-The landing site, documentation, and Playground are hosted on Cloudflare.
-Cloudflare Web Analytics is enabled through the hosting account and measures
-aggregate visits and performance. It is separate from the optional analytics
-choice below. See [Cloudflare’s Web Analytics privacy explanation](https://developers.cloudflare.com/web-analytics/about/).
+## Analytics at a glance
 
-Google Analytics 4 is configured for the public sites. It loads only on the
-canonical public hosts and only after you select **Accept analytics**. Microsoft Clarity loads after
-the same choice on the landing site and documentation, where it measures
-navigation and provides session recordings and heatmaps. Clarity does not load
-in the Playground, where visitors can edit source code and preview their own
-content. Declining does not load either provider. **Privacy choices** lets you
-change the decision. The choice is stored in a first-party cookie shared across
-the three sites for six months. Accepting analytics allows usage measurement;
-advertising storage, Google signals, and ad personalization are disabled by
-this integration.
+| Provider | Runs on | Loads when | Measures |
+| --- | --- | --- | --- |
+| Cloudflare Web Analytics | Landing site, docs, Playground | Always; enabled through the hosting account | Aggregate visits and performance |
+| Google Analytics 4 | Landing site, docs, Playground (canonical hosts only) | Only after you select **Accept analytics** | Page views and a fixed set of action events |
+| Microsoft Clarity | Landing site and docs only | Only after you select **Accept analytics** | Navigation, session recordings, and heatmaps |
 
-GA4 page measurement sends the page origin and path, plus the allowlisted
-`utm_source`, `utm_medium`, and `utm_campaign` parameters when they contain only
-short, simple campaign labels. Other query parameters and fragments are not
-sent to GA4 by this integration. Clarity may process page URLs and referring
-URLs for the pages where it runs; do not put private data in public-site URLs.
-Custom events are limited to predefined action categories, such as
-opening documentation, copying an installation command, running the example,
-or selecting an Inspector view. Source code, request bodies, generated files,
-raw search queries, and compilation error messages are not custom event data.
-An export event records download initiation, not a confirmed local install.
+Cloudflare Web Analytics is separate from the optional choice. See
+[Cloudflare's Web Analytics privacy explanation](https://developers.cloudflare.com/web-analytics/about/).
 
-Session replay is limited to the public landing site and documentation. It is
-not installed in the Playground. Local mock runtime events and application evidence are separate
-from public-site analytics. The previous conditional Vercel analytics component
-has been removed in favor of this explicit configuration.
+Clarity never loads in the Playground, where you can edit source code and
+preview your own content. Session replay is limited to the landing site and
+the docs.
 
-Provider retention, regional processing, and access settings are managed in the
-hosting and analytics accounts. No fixed retention period is promised here.
-Questions or requests can be sent to [contact@yashmakan.com](mailto:contact@yashmakan.com).
+## Your choice
+
+- The banner offers **Decline** and **Accept analytics**. Declining loads
+  neither Google Analytics nor Clarity.
+- **Privacy choices** reopens the banner so you can change your decision.
+- The choice is stored in a first-party cookie (`axiom_analytics_consent`) on
+  `axiomcore.dev`, shared by the three sites, for six months.
+- If you decline after accepting, the sites deny analytics consent, delete the
+  Google Analytics and Clarity cookies, and reload the page.
+- Accepting allows usage measurement only. This integration disables
+  advertising storage, Google signals, and ad personalization.
+
+## What Google Analytics receives
+
+- The page origin and path.
+- The `utm_source`, `utm_medium`, and `utm_campaign` parameters, only when each
+  is a short, simple campaign label (up to 80 letters, digits, `.`, `_`, `~`,
+  or `-`).
+- The origin of the referring site, not its full URL.
+- Custom events from a fixed list of action categories, such as opening the
+  documentation, copying an installation command, running an example, or
+  selecting an Inspector view. An export event records that a download
+  started, not a confirmed local install.
+
+Other query parameters and URL fragments are not sent to Google Analytics.
+Source code, request bodies, generated files, raw search queries, and
+compilation error messages are never event data. Clarity may process the page
+URLs and referring URLs of pages where it runs, so do not put private data in
+public-site URLs.
+
+Provider retention, regional processing, and access settings are managed in
+the hosting and analytics accounts. No fixed retention period is promised
+here. Send questions or requests to
+[contact@yashmakan.com](mailto:contact@yashmakan.com).
 
 ## Search and machine-readable routes
 
-Documentation search uses the site's generated public content. The application
-also exposes public processed MDX, `llms.txt`, `llms-full.txt`, sitemap, robots,
-Open Graph, version, and health routes. Do not place secrets, private URLs,
-customer data, or unreleased implementation details in public MDX or metadata.
+Documentation search uses the site's generated public content. The site also
+serves public processed MDX, `llms.txt`, `llms-full.txt`, a sitemap, robots
+rules, Open Graph images, a version file, and a health route. Do not put
+secrets, private URLs, customer data, or unreleased implementation details in
+public MDX or metadata.
+
+## Ask AI
+
+Ask AI is an optional chat on the documentation site. It runs only when you
+send a question, and it is not covered by the analytics choice above.
+
+- When you send a question, the site sends the conversation in that chat (your
+  messages, the earlier answers, and the title and path of the page you have
+  open, without its query string) to OpenRouter, which passes it to the AI model chosen for the docs.
+  OpenRouter and the model provider handle it under their own terms and privacy
+  policies.
+- The documentation site does not store conversations. The chat lives in your
+  browser tab and is gone when you reload the page or start a new chat. Only an
+  unsent draft is kept in your browser's local storage, so it survives a reload.
+- Opening Ask AI loads Cloudflare Turnstile, which checks that a person, not an
+  automated script, is asking. Most visitors see nothing; some are asked to
+  select a checkbox. Cloudflare processes browser and device signals for this
+  check under the
+  [Turnstile privacy addendum](https://www.cloudflare.com/turnstile-privacy-policy/).
+  Turnstile does not load until you open Ask AI.
+- To limit abuse, each visitor can ask a limited number of questions per
+  minute, hour, and day, and the site has a daily total. Questions are counted
+  against a keyed one-way hash of your network address, never the address
+  itself, and each count is deleted when its period ends, at most one day later.
+- Answers come from the public documentation and can contain mistakes. Do not
+  put secrets, credentials, private code, or personal data in a question.
 
 ## Hosting logs
 
-The hosting platform or network edge may create operational request logs. This
-repository does not define their retention, regional storage, or access policy.
-Those controls belong to the deployment environment and must be reviewed by its
-owner. The health endpoint deliberately returns only a schema version, status,
-service identity, and an optional public source revision.
+The hosting platform or network edge may create operational request logs. The
+documentation repository does not define their retention, regional storage,
+or access policy; those controls belong to the deployment environment and its
+owner. The health endpoint returns only a schema version, a status, the
+service name, and an optional public source revision.
 
 ## Feedback and diagnostics
 
-Information you choose to submit through a repository, community, or private
-security channel follows that channel's controls. Sanitize diagnostic output as
+Anything you submit through a repository, community, or private security
+channel follows that channel's controls. Sanitize diagnostic output as
 described in [Support and feedback](/reference/support-and-feedback). Never
 send access tokens, cookies, signing material, DSNs, sandbox keys, private
-contracts, or sensitive request/response bodies.
+contracts, or sensitive request or response bodies.
 
 ## Separate telemetry surfaces
 
-Documentation-site analytics is distinct from Axiom CLI adoption telemetry and
-project runtime observability. Installing or running the CLI does not depend on
-visiting this site, and viewing this site does not configure runtime telemetry.
-See [Observability and telemetry](/cloud/telemetry-and-observability) for those
-separate boundaries.
+Website analytics is separate from the CLI and from your application:
+
+| Surface | Configured by | Reference |
+| --- | --- | --- |
+| Website analytics | Your consent choice on these sites | This page |
+| CLI usage telemetry | Registered CLI installations; `AXIOM_TELEMETRY=0` turns it off | [Benchmarks](/reference/benchmarks) |
+| Project runtime observability | A signed contract's scoped settings | [Observability](/cloud/telemetry-and-observability) |
+
+Installing or running the CLI does not depend on visiting these sites, and
+viewing these sites does not configure runtime telemetry.

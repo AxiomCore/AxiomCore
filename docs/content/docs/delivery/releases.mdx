@@ -1,84 +1,162 @@
 ---
-title: Release and upgrade
-description: Promote immutable contracts and applications without losing semantic review evidence.
+title: Releases and upgrades
+description: Release an immutable contract version, upgrade its consumers, release application artifacts and roll back without rewriting history.
 pageType: guide
 ---
 
-## Contract release
-
-1. Build and inspect the local `.axiom`.
-2. Run contract, domain, and security checks applicable to the project.
-3. Review the semantic diff from the previous immutable version.
-4. Release a new version with `axiom build --release --version …` or
-   `axiom release backend.axiom --version …`.
-5. Open a contract review in the Cloud control plane when team approval is
-   required.
-
-## Consumer upgrade
-
-1. Change the contract/package source to the exact candidate version.
-2. Resolve a new lock.
-3. Inspect and diff the locked artifact.
-4. Run the existing frontend or Acore UI consumer suite.
-5. Commit source intent and the lock atomically.
-
-## Application release
-
-Build `.axiomapp` once per target, inspect each artifact, and package them only
-after target validation. Current application artifacts do not imply Apple or
-Google signing, store submission, or physical-device certification.
-
-## Rollback
-
-Rollback means selecting a previously reviewed immutable release or rebuilding
-from a reviewed source/lock pair. Never rewrite an existing artifact version:
-that would detach audit evidence from the bytes it approved.
-
-See [Contract pull requests](/delivery/contract-pull-requests) for the Cloud
-review record and [Security review and release gates](/delivery/security-review)
-for security-specific evidence.
-
+<span id="rollback" />
 <span id="advanced-language-cohort-upgrades" />
+<span id="advanced-language-toolchain-upgrades" />
 
-## Advanced language toolchain upgrades
+Use this guide to release a new contract version to Axiom Cloud, move
+consumers to it, release application artifacts and roll back. Every release is
+**immutable**: once a version exists, its bytes never change. You fix or roll
+back by choosing another version.
 
-Retain the old source, public contracts, private plans, locks, SDK source/build
-receipts and compatible host before selecting the advanced application advanced language toolchain.
-Rebuild and inspect the selected public contract, prepare its exact private
-resources, then run the application and provider suites for each enabled target.
-Matching generated mobile tests and mounted web tests are separate evidence.
+Contract releases and Cloud channels are **Alpha** and need an Axiom Cloud
+account and a linked project. See [Workspaces and projects](/cloud/project-management).
 
-Use `axiom migrate OLD.acore --output NEW.acore` to create a verified sibling
-source without overwriting the original. A supported finite legacy action rewrite
-can preserve endpoint identities and public codecs while introducing checked
-managed execution. Review both the public contract diff and private behavior:
+<span id="contract-release" />
+
+## Release a contract
+
+1. Build the contract to a file you can inspect:
+
+   ```bash title="Terminal"
+   axiom build axiom.acore --out backend.axiom
+   ```
+
+2. Run the checks that apply to the project, such as `axiom test`,
+   `axiom security check` and `axiom domain validate`.
+3. Review the [semantic diff](/testing/ci) from the previous accepted version.
+4. Release the artifact with an explicit version:
+
+   ```bash title="Terminal"
+   axiom release backend.axiom --version 1.2.0
+   ```
+
+   You can also build and release in one step with
+   `axiom build --release --version 1.2.0`.
+5. When your team requires approval, open a
+   [contract pull request](/delivery/contract-pull-requests) between the
+   previous release and this one.
+
+Axiom Cloud then verifies, signs and tests the release and decides whether it
+can become `latest`. See [Releases and environments](/cloud/releases-and-environments).
+
+### How `axiom release` picks the project and version
+
+| Input | Behavior |
+| --- | --- |
+| Artifact | `axiom release` reads `./backend.axiom` by default. A plain `axiom build` writes under `.axiom/contracts/`, so pass `--out` or the artifact path. |
+| Project | `--project` (ID or slug), else the project linked to the current directory. An interactive terminal can select or create one. A non-interactive run fails and asks for `axiom project link` or `--project`. |
+| Version | `--version`, else the version declared in the contract. With neither, the command fails and asks for `--version`. |
+| Version differs from the contract | The CLI updates the version in `axiom.acore` in the current directory and rebuilds before uploading. Without that file, the command fails. |
+| Version already used | An interactive terminal suggests the next free version. A non-interactive or `CI` run fails and prints the suggestion. |
+| Same bytes released again | Treated as an idempotent retry of the existing release. |
+
+Use a semantic version such as `1.2.0`. When the CLI rewrites a version, it
+accepts only letters, digits, `.`, `_`, `-` and `+`, and `axiom pull`
+references accept only semantic versions. Each release run also links the
+current directory to the project it resolved.
+
+<span id="consumer-upgrade" />
+
+## Upgrade consumers
+
+1. Change the contract or package source to the exact candidate version.
+2. Resolve a new lock, for example `axiom contract resolve` or
+   `axiom packages resolve`.
+3. Diff the locked artifacts with `axiom contract diff` or
+   `axiom packages diff`, and inspect the result.
+4. Run the existing frontend or Acore UI consumer tests.
+5. Commit the source change and the lock together.
+
+To fetch a released contract directly, pass a reference in the form
+`organization/project[/version]`, where `organization` is the workspace slug:
 
 ```bash title="Terminal"
-axiom server diff old.axiom old.server.json new.axiom new.server.json
+axiom pull acme/payments-api/1.2.0
 ```
 
-The private report separates a verified representation change from a behavior
-change. New validation, failure exposure, authority, batch/cache policy or stream
-semantics require consumer review. Unsupported computed rewrites retain their
-legacy representation; migration never invents an equivalent managed body.
+Leave out the version to pull the release that `latest` points to. Until a
+release has been activated on `latest`, there is nothing to pull without a
+version.
 
-Development reload keeps the last good application after an invalid edit.
-Compatible replacement rechecks artifacts and ownership before transferring
-eligible logical-submission state. Incompatible contracts, descriptors or
-session identities reject transfer. Rollback uses retained immutable inputs;
-it does not reuse stale grants or claim an unknown write was rolled back.
+<span id="application-release" />
 
-The toolchain also adds classified application telemetry and an explicit
-development-only expiry environment. Rebuild the native CLI/LSP and playground
-compiler from the same compiler input closure. A telemetry policy is private;
-changing it never adds user values to metric labels. Scenario environment files
-are test inputs bound into the scenario identity, and cannot enable logical
-credential expiry in a deployed server. See [Trace and explain](/inspector/trace-and-explain)
-and [Test runner](/testing/test-runner) for the complete examples.
+## Release an application
 
-The playground includes task and inventory database examples in the same
-application editor. Their database contract, dependency manifest, bindings,
-live table preview, Changes and Impact ship together with the static site.
-The browser store demonstrates the documented checked preview profile;
-production database preparation, migrations and recovery retain their separate
-provider gates. See [Frontend quickstart](/getting-started/quickstart-frontend).
+Build an `.axiomapp` once for each target, inspect each artifact, and combine
+them with `axiom package` only after each target is validated. Application
+artifacts do not include Apple or Google signing, store submission or
+physical-device certification.
+
+## Roll back
+
+Roll back by selecting a previously reviewed immutable release, or by
+rebuilding from a reviewed source and lock pair. In Axiom Cloud, an owner moves
+the `latest` channel back to an earlier eligible release. For server bundles,
+check the pair with `axiom server rollback-check` first. See
+[Release a backend](/backend/releases).
+
+Never rewrite an existing version. That would separate the audit evidence from
+the bytes it approved.
+
+## Upgrade a legacy backend contract
+
+<StatusBadge status="experimental" /> Managed execution is **Experimental**.
+
+Before you switch a legacy backend to managed Acore, keep the old source,
+public contracts, private plans, locks, SDK build outputs and a compatible
+host, so you can return to them.
+
+1. Create a migrated copy. The original source is not changed:
+
+   ```bash title="Terminal"
+   axiom migrate OLD.acore --output NEW.acore
+   ```
+
+   A supported finite legacy action rewrite can keep endpoint identities and
+   public codecs while introducing checked managed execution. A computed
+   rewrite that is not supported keeps its legacy form. Migration never invents
+   an equivalent managed body.
+
+2. Build both versions, then compare public contracts and private behavior:
+
+   ```bash title="Terminal"
+   axiom server diff old.axiom old.server.json new.axiom new.server.json
+   ```
+
+   The report separates a verified representation change from a behavior
+   change. New validation, failure exposure, authority, batch or cache policy,
+   or stream semantics need consumer review.
+
+3. Rebuild and inspect the public contract, prepare its private resources, then
+   run the application and provider test suites for each enabled target.
+   Generated mobile tests and mounted web tests are separate evidence.
+
+Other behavior to expect after the upgrade:
+
+- Development reload keeps the last good application after an invalid edit. A
+  compatible replacement rechecks artifacts and ownership before it transfers
+  eligible in-flight submissions. Incompatible contracts, descriptors or
+  session identities reject the transfer.
+- Rollback uses the retained immutable inputs. It does not reuse stale grants
+  or claim that an unknown write was rolled back.
+- Application telemetry fields can be classified. A telemetry policy is
+  private, and changing it never adds user values to metric labels.
+- Scenario environment files are test inputs bound to the scenario. They
+  cannot enable credential expiry in a deployed server.
+- Use matching Axiom CLI and language server versions so the editor and
+  compiler agree.
+
+The browser playground includes task and inventory database examples. Its
+store is a checked preview, not production database preparation. See
+[Browser preview](/database/browser-preview).
+
+## Next steps
+
+- [Review a release in a contract pull request](/delivery/contract-pull-requests)
+- [Understand the Cloud release pipeline and latest channel](/cloud/releases-and-environments)
+- [Work through the production-readiness checklist](/delivery/production-readiness)

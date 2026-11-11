@@ -10,7 +10,7 @@ use axiom_lib::{
     application_evidence::{ApplicationEvidence, EvidenceNodeKind},
     runtime_evidence::{
         normalize_extension_audit, AuditBundle, RuntimeCaptureState, RuntimeSession,
-        AUDIT_BUNDLE_FORMAT, RUNTIME_EVIDENCE_FORMAT, MAX_RUNTIME_EVIDENCE_BYTES,
+        AUDIT_BUNDLE_FORMAT, MAX_RUNTIME_EVIDENCE_BYTES, RUNTIME_EVIDENCE_FORMAT,
     },
 };
 use serde_json::Value;
@@ -257,7 +257,7 @@ fn normalize_input(
     let bytes = read_runtime(input)?;
     let value: Value = axiom_server::serve::parse_json(&bytes, MAX_RUNTIME_EVIDENCE_BYTES)
         .context("parse unambiguous bounded runtime audit JSON")?;
-    let session=match value.get("format").and_then(Value::as_str) {
+    let session = match value.get("format").and_then(Value::as_str) {
         Some(RUNTIME_EVIDENCE_FORMAT) => RuntimeSession::decode(&bytes),
         Some(AUDIT_BUNDLE_FORMAT) => {
             let bundle: AuditBundle = serde_json::from_value(value)?;
@@ -274,11 +274,19 @@ fn normalize_input(
         }
         Some(axiom_lib::observation_evidence::NATIVE_FORMAT) => {
             axiom_lib::observation_evidence::normalize_native_observation(
-                &value, session_id, evidence, env!("CARGO_PKG_VERSION"),
+                &value,
+                session_id,
+                evidence,
+                env!("CARGO_PKG_VERSION"),
             )
         }
         Some(axiom_lib::frontend_observation_evidence::FORMAT) => {
-            axiom_lib::frontend_observation_evidence::normalize(&value, session_id, evidence, env!("CARGO_PKG_VERSION"))
+            axiom_lib::frontend_observation_evidence::normalize(
+                &value,
+                session_id,
+                evidence,
+                env!("CARGO_PKG_VERSION"),
+            )
         }
         Some(format) => bail!("unsupported runtime input format `{format}`"),
         None => bail!("runtime input has no format discriminator"),
@@ -286,9 +294,17 @@ fn normalize_input(
     if session.graph_revision != evidence.graph_revision {
         bail!("runtime observation graph revision differs from the captured workspace");
     }
-    let facts=evidence.nodes.iter().map(|node|node.id.as_str()).collect::<BTreeSet<_>>();
+    let facts = evidence
+        .nodes
+        .iter()
+        .map(|node| node.id.as_str())
+        .collect::<BTreeSet<_>>();
     for event in &session.events {
-        if event.semantic_id.as_ref().is_some_and(|id| !facts.contains(id.as_str())) {
+        if event
+            .semantic_id
+            .as_ref()
+            .is_some_and(|id| !facts.contains(id.as_str()))
+        {
             bail!("runtime observation references a fact absent from the captured workspace");
         }
     }
@@ -296,7 +312,8 @@ fn normalize_input(
 }
 
 fn verify_append_log(path: &Path, session: &RuntimeSession) -> Result<()> {
-    let content = String::from_utf8(read_runtime(path)?).context("runtime append log is not UTF-8")?;
+    let content =
+        String::from_utf8(read_runtime(path)?).context("runtime append log is not UTF-8")?;
     let records = content
         .lines()
         .filter(|line| !line.trim().is_empty())
@@ -309,8 +326,10 @@ fn verify_append_log(path: &Path, session: &RuntimeSession) -> Result<()> {
 }
 
 fn read_runtime(path: &Path) -> Result<Vec<u8>> {
-    Ok(axiom_server::serve::read(path, MAX_RUNTIME_EVIDENCE_BYTES as u64)
-        .with_context(|| format!("read bounded runtime evidence {}", path.display()))?)
+    Ok(
+        axiom_server::serve::read(path, MAX_RUNTIME_EVIDENCE_BYTES as u64)
+            .with_context(|| format!("read bounded runtime evidence {}", path.display()))?,
+    )
 }
 
 fn application_name(evidence: &ApplicationEvidence) -> String {

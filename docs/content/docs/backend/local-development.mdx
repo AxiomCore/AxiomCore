@@ -1,263 +1,306 @@
 ---
-title: Local server workflow and releases
-description: Build, run, reload, test, inspect, package and deploy a backend locally without a cloud account.
+title: Run a backend locally
+description: Run an Acore backend on your machine with real actions, reload, mocks or full server simulation, and inspect what the runtime enforces.
 pageType: guide
 ---
 
-Use `axiom serve` for a reviewed local backend and `axiom server run` for its
-compiled artifacts. Managed and verified sandbox actions require compatible
-host capabilities. Native handlers need explicit registration; FastAPI and Go
-Chi retain their separate [adapter profile](/backend/adapters).
+<span id="real-developer-command" />
+<span id="reload-and-diagnose" />
+<span id="python-rust-and-typescript-server-sandboxes" />
+<span id="package-and-deploy-locally" />
+<span id="review-a-rollback" />
 
-`axiom serve` runs real managed/sandbox actions or a declared Python/Go service.
-It defaults to local `axiom.acore`, never retrieves Cloud mock data and never
-falls back to endpoint mock responses. `axiom server run` remains the artifact
-entry point. Use `axiom mock FILE.acore --profile contract` for legacy contract
-scenarios, or `serve --mock` / `mock --profile server` for
-[full server simulation](/testing/server-simulation) with private typed fixtures.
+Run your backend's real actions on your machine. Local commands need no Axiom
+account, and real serving never falls back to mocks or Cloud data.
 
-## Real developer command
+<StatusNote status="experimental" title="Local server runtime">
+  The published CLI 0.149.1 (macOS arm64) runs managed and verified sandbox
+  actions locally. Managed logic is Experimental; requirements vary by feature
+  and host.
+</StatusNote>
 
-```sh title="Terminal"
-axiom serve service.acore --deployment deployment.json --port 8080
-axiom serve backend.axiom --plan backend.server.json --deployment deployment.json
-axiom run service.acore --mode service --deployment deployment.json
-axiom serve service.acore --deployment deployment.json --watch
+## Choose a command
+
+| Goal | Command |
+| --- | --- |
+| Run backend source with real actions | `axiom run main.acore --deployment deployment.json` |
+| Run source that has storage mappings, with a local database | `axiom run backend/sqlite.acore` |
+| Serve source or a compiled artifact | `axiom serve [INPUT]` |
+| Serve compiled artifacts on an explicit listener | `axiom server run CONTRACT PLAN --deployment FILE` |
+| Reload source on every edit | `axiom serve SOURCE --watch` or `axiom server dev SOURCE --deployment FILE` |
+| Check configuration without opening a listener | `axiom server validate CONTRACT PLAN --deployment FILE` |
+| Simulate business logic inside the real server boundary | `axiom serve SOURCE --mock`, `axiom run SOURCE --mode mock`, or `axiom mock SOURCE` |
+| Serve contract-level endpoint mocks | `axiom mock contract.acore --profile contract` |
+| Use mocks from a linked Cloud project | `axiom mock --cloud` |
+
+`axiom run` is the general runner. For a backend `.acore` source it defaults
+to `--mode service`, which is the same real serving as `axiom serve`. For
+frontend sources and `.axiomapp` packages it keeps its target behavior and
+rejects backend options such as `--mode`, `--deployment` and `--fixtures`.
+
+<span id="start-from-source" />
+
+## Run from source
+
+From a directory that contains `main.acore` and its `AxiomDeps.toml`:
+
+```bash title="Terminal"
+axiom check main.acore
+axiom build main.acore --out backend.axiom
+axiom server deployment backend.axiom backend.server.json --output deployment.json
+axiom run main.acore --deployment deployment.json --port 8081
 ```
 
-Source builds use the normal compiler in owned temporary storage. Checked
-artifacts, diff baselines, reviewed deployments and bindings are preserved.
-Explicit auxiliary paths are relative to the invocation directory; deployment
-otherwise defaults to adjacent `deployment.json`. Artifact plans default to
-adjacent `INPUT.server.json`. Source variants use `--variant`; artifact variants
-are immutable. Missing providers, credentials, grants, handlers or mismatched
-hashes fail before readiness. `--port 0` selects an ephemeral port outside watch.
-Ctrl-C/SIGTERM drain the real host and close its providers.
+Review `deployment.json` before you run: it lists providers, authentication and
+grants, and starts with no grants. The same service can be started in these
+equivalent ways:
 
-Watch requires a fixed loopback address and a source-owned managed/sandbox plan.
-The initial deployment and bindings must match exactly. Reloads temporarily
-bind the new plan within the existing interfaces and grants; invalid edits or
-failed provider preflight retain the last service. Production files are never
-rewritten. External Python/Go applications use their own reload tooling.
+```bash title="Terminal"
+axiom serve main.acore --deployment deployment.json --port 8080
+axiom serve backend.axiom --plan backend.server.json --deployment deployment.json
+```
 
-Generic CLI serving cannot register arbitrary native symbols. An embedded
-native application owns handler registration, cancellation, and signals. Declared Python/Go services run their actual entrypoint and report
-`application-adapter-required`; install the
-[application adapter](/backend/adapters) to enforce the contract. The
-CLI does not add middleware to an unadapted application or advertise readiness
-on its behalf.
+| Option (`serve`, `run`) | Default and rules |
+| --- | --- |
+| `INPUT` | `serve`: `.acore` source or `.axiom` artifact, default `axiom.acore`. `run`: `.acore` source |
+| `--deployment` | Adjacent `deployment.json`; never discovered in a parent project |
+| `--plan` | `serve` with an artifact only; defaults to the adjacent `INPUT.server.json` |
+| `--variant` | Source input only; an artifact's variant is fixed |
+| `--host`, `-p/--port` | `127.0.0.1`, `8080`; `--port 0` picks a free port (not with `--watch`) |
+| `--bindings` | Hash-bound sandbox implementation references |
+| `--delivery` | Durable delivery configuration; see [Events, jobs and webhooks](/backend/events-and-jobs) |
+| `-d/--debug` | Redacted diagnostics; never raw credentials or bodies |
 
-## Start from source
+Explicit paths are relative to the directory where you run the command. A
+source input is compiled in owned temporary storage; checked artifacts, diff
+baselines, deployments and bindings are never rewritten. Inputs are limited to
+16 MiB.
 
-For a complete published example, start with the [backend quickstart](/getting-started/quickstart-backend)
-or [SQLite task app](/examples/task-app). The template below assumes your own
-`service.acore`, file-backed `tasks.lookup` resource, `tasks.json`, and a reviewed
-API key registry. It illustrates artifact serving, not an additional downloadable
-application.
+Missing providers, credentials, grants or handlers, and mismatched hashes fail
+before the server reports ready. A source with no executable plan and no
+declared Python or Go service fails with a hint to choose `--mode mock`
+explicitly. Native actions fail too: the generic CLI cannot register native
+symbols. Ctrl-C or SIGTERM starts a drain: readiness returns `503`, new
+invocations are rejected, bounded in-flight work finishes, and owned providers
+close.
 
-```sh title="Terminal"
+## Run source with storage mappings
+
+When a backend source contains [storage mappings](/backend/declarations) and
+you pass no `--deployment`, `axiom run` sets up local development
+automatically:
+
+```bash title="Terminal"
+unset DATABASE_URL
+axiom run backend/sqlite.acore --port 8080
+```
+
+The CLI builds the contract into `.axiom/contracts/backend.axiom`, applies the
+linked database schema (a local SQLite file, or PostgreSQL from
+`--database-url` or `DATABASE_URL`), binds each storage resource and grants its
+operations. It prints `Development API key: ...` and the backend URL. Send the
+key in an `apikey` header. The key maps to one development identity
+(`local-developer` in tenant `demo`) and is stored with owner-only permissions
+under `.axiom/database/`. Unsetting `DATABASE_URL` keeps an unrelated database
+from being selected.
+
+This automatic mode binds only storage resources. A plan with other providers
+needs an explicit, reviewed deployment. A PostgreSQL schema must declare a
+managed application login role with a `credentialRef`. See
+[Migrations and persistence](/database/persistence) and the
+[task app](/examples/task-app).
+
+## Serve compiled artifacts
+
+`axiom server run` serves an artifact and its plan on an explicit listener.
+This template assumes your own `service.acore` with a file-backed
+`tasks.lookup` resource, a `tasks.json` file and an API-key registry:
+
+```bash title="Terminal"
 axiom check service.acore
 axiom build service.acore --out backend.axiom
 axiom server deployment backend.axiom backend.server.json --output deployment.json
-# Review provider references and add only the required operation grants.
 export TASKS_FILE="$PWD/tasks.json"
 export API_KEYS_FILE="$PWD/api-keys.json"
 axiom server validate backend.axiom backend.server.json --deployment deployment.json
 axiom server run backend.axiom backend.server.json --deployment deployment.json --listen 127.0.0.1:8080
 ```
 
-Before validation, review the deployment scaffold and add the explicit
-`tasks.lookup` grant, exact provider interface/plan hashes, and a private
-hashed API key registry. A scaffold alone does not grant resource authority.
-Use a synthetic local reader identity for this template.
-Configuration files contain environment reference names; credentials remain
-outside the public contract and release bundle. `validate` performs actual
-provider, authentication, capability, grant and handler preflight, then cleans
-up without opening a listener. The startup JSON is emitted only after preflight
-and listener binding succeed.
+Before validation, edit the scaffold: add the explicit `tasks.lookup` grant,
+the exact provider interface and plan hashes, and a private hashed API-key
+registry ([format](/backend/policies)). A scaffold alone grants no resource
+authority. Configuration files hold environment variable names; credentials
+stay outside the contract and any bundle. `server validate` runs the real
+provider, authentication, capability, grant and handler preflight, cleans up
+and exits without opening a listener. `server run` prints its startup JSON only
+after preflight and listener binding succeed. `--listen` defaults to
+`127.0.0.1:8080`.
 
-In another terminal, make a successful request and deliberately rejected ones:
+In a second terminal, check readiness, then send one allowed and two rejected
+requests:
 
-```sh title="Terminal"
+```bash title="Terminal 2"
 curl --fail http://127.0.0.1:8080/_axiom/ready
 curl --fail -H 'x-api-key: workflow-local-key-00000001' http://127.0.0.1:8080/tasks/1
 curl -i http://127.0.0.1:8080/tasks/1
 curl -i -H 'x-api-key: workflow-local-key-00000001' http://127.0.0.1:8080/tasks/0
 ```
 
-The responses are ready, a validated task, `401` for the missing credential,
-and `400` for invalid input. The managed wrapper calls the guarded action;
-direct invocation and nested calls enforce its guard too. Ctrl-C or SIGTERM
-starts draining, rejects new invocations, lets bounded in-flight work finish,
-and closes owned providers. Readiness returns `503` during draining. There is
-no public endpoint that supplies deployment authority or disables a guard.
+Expect readiness, a validated task, `401` for the missing credential and `400`
+for invalid input. Guards apply to direct and nested calls too. No public
+endpoint supplies deployment authority or disables a guard.
 
-## Reload and diagnose
+## Reload while editing
 
-Stop the first service, then run:
-
-```sh title="Terminal"
+```bash title="Terminal"
+axiom serve service.acore --deployment deployment.json --watch
 axiom server dev service.acore --deployment deployment.json --listen 127.0.0.1:8080
+```
+
+Both reload a source-owned managed or sandbox plan. `server dev` adds
+`--bindings`, `--delivery` and `--poll-ms` (default `250`).
+
+- Watch requires a fixed loopback address and a nonzero port. The initial
+  deployment and bindings must match the plan exactly.
+- Each change snapshots source, deployment and binding bytes together,
+  compiles in a temporary project, and binds the new plan within the existing
+  interfaces and grants.
+- Invalid source, incompatible configuration or a failed provider preflight
+  keeps the previous service. A valid candidate starts after the previous
+  listener drains; if it fails to start, the last valid snapshot restarts.
+  An unavailable external provider or credential can also block that restart.
+- Reload briefly interrupts the listener. It is not a rolling deployment.
+- Deployment file edits are watched. Environment variable changes need a
+  restart.
+- Snapshots are limited to 1,024 files, 16 directory levels and 16 MiB (32 MiB
+  including reviewed companions). Build and preflight each have 30 seconds.
+  Install dependencies and resolve locks before you start.
+
+External Python and Go applications use their own reload tooling.
+
+## Run a declared Python or Go service
+
+For a source that declares `backend(language:, entrypoint:)` and no executable
+plan, real serving starts the application itself: Python runs
+`python3 -m uvicorn module:app --host HOST --port PORT`, and Go runs
+`go run ENTRYPOINT` with `HOST` and `PORT` set. Startup reports
+`"enforcement":"application-adapter-required"`. The CLI does not add middleware
+or report readiness for that application; install a
+[framework adapter](/backend/deployment) in the application to enforce the
+contract. Deployment and binding files are rejected in this mode.
+
+## Mocks and full simulation
+
+Choose a mock profile explicitly:
+
+| Intent | Command |
+| --- | --- |
+| Endpoint mock responses from source | `axiom mock contract.acore --profile contract` |
+| Mocks from the linked Cloud project | `axiom mock --cloud` |
+| Simulate a private server API with its guards | `axiom serve service.acore --mock --fixtures mock.json --identities mock-identities.json` |
+| The same, through `run` | `axiom run service.acore --mode mock --fixtures mock.json --identities mock-identities.json` |
+| Reload source and simulation fixtures | `axiom mock service.acore --fixtures mock.json --identities mock-identities.json --watch --port 8080` |
+
+- `axiom mock` uses `--profile auto` by default: full simulation when the
+  source compiles a private plan, contract mocks otherwise.
+  `--profile contract` rejects a private plan instead of ignoring its
+  authority, and `serve --mock` never downgrades to contract mocks.
+- Real serving rejects `--fixtures` and `--identities`. Simulation rejects real
+  deployments, bindings and delivery files. Identities default to an adjacent
+  `mock-identities.json`.
+- Full simulation needs fixtures bound to the exact contract and plan hashes,
+  with typed resource and action replies. Do not rename endpoint fixtures into
+  a private fixture document.
+- A successful simulation reload resets state and rotates development
+  credentials; an invalid edit keeps the last valid service. Public type,
+  guard or authority changes need review and a restart.
+- Contract scenarios keep their selection strategies, state, docs and reset
+  controls. Non-loopback contract listeners protect those routes with an owned
+  sandbox key. Cloud mocks keep authentication and ETag caching, need a linked
+  project and Cloud session, and do not support `--watch`. Contract mocks
+  cannot enforce private actions. Mocks are a development aid, not a
+  replacement for a production server.
+
+See [Server simulation](/testing/server-simulation) for the fixture format and
+generated credentials, and [Mocks](/testing/mocks) for contract mocks.
+
+## Inspect and generate interfaces
+
+```bash title="Terminal"
 axiom server inspect backend.axiom backend.server.json
 axiom inspect backend . --format json
+axiom server openapi backend.axiom backend.server.json --output openapi.json
 axiom server types backend.axiom backend.server.json --language python --output handlers.py
 axiom server types backend.axiom backend.server.json --language go --output handlers.go
 ```
 
-The development supervisor snapshots source into a temporary project, compiles
-it, rebinds only its temporary plan hash, and validates the reviewed provider
-interfaces and grants. Invalid source or incompatible configuration leaves the
-previous service running. A valid candidate is activated after the previous
-listener drains; a startup failure restarts the last validated snapshot.
-External provider or credential unavailability can also prevent that restart
-and produces an actionable error. Reload has a short listener interruption;
-it is not a rolling production deployment. Checked source artifacts and the
-reviewed deployment are never rewritten by reload. Source, deployment and binding bytes are captured together before compilation. Environment changes require
-restarting the supervisor; edits to the deployment file are watched.
+`server inspect` validates the exact contract identity and reports effective
+guards and policies, action programs, implementation kind (`managed`, `native`
+or `sandbox`), nested effects, dependencies and source provenance. Declared
+facts stay labeled `declared`; a verified hash does not make them runtime
+evidence. A managed action that calls opaque native code keeps an incomplete
+effect summary. Invocation traces separately report what the running host
+observed or enforced.
 
-Source snapshots are bounded to 1,024 files, 16 levels and 16 MiB, with a 32 MiB total including reviewed companions. Build and
-preflight processes have a 30-second limit. Keep third-party dependencies
-installed and use the normal manifest/lock workflow before starting reload.
-Native application hosts manage their own registrations and development runner.
+`server openapi` writes OpenAPI 3.1 and `server types` writes Python or Go
+handler input and output types. Both require a new output path. Generated Go
+types also include typed stream frame and message aliases.
 
-Inspection shows effective endpoint guards and policies, action programs,
-implementation kind, nested effects, dependencies and source provenance.
-`managed`, `native`, and `sandbox` are implementation kinds. Declared facts stay
-`declared`; they do not become runtime enforcement evidence because a hash was
-verified. A managed action calling an opaque native dependency retains an
-incomplete effect summary. Invocation traces separately report guards and
-effects observed or enforced by the running host.
+Startup prints a private, mode `0600` `sessionFile`. Pass it with the matching
+artifacts to `axiom inspect server backend.axiom backend.server.json --session PATH --format json`
+to see the selected mode and implementation and provider categories. Without
+it, the mode is `not-observed`. This local startup record does not capture
+requests or certify production internals. Shutdown deletes it. Inspector keeps
+declared facts, local startup observations and unknown production internals
+separate.
 
-Startup prints a private mode-0600 `sessionFile`. Use the exact matching artifacts
-with `axiom inspect server backend.axiom backend.server.json --session PATH --format json`
-to see the selected mode and implementation/provider categories. Without the
-receipt, mode is `not-observed`. This local startup observation does not capture
-requests or certify production internals. Shutdown deletes the owned receipt.
+## Sandbox actions
 
-The LSP uses the compiler's declaration catalog for completion, signatures,
-hover, navigation, rename and formatting. Enum/reference diagnostics offer
-compiler-owned token quick fixes; stale diagnostics cannot modify another token.
-The playground's **Managed · local server** example is editable and inspectable.
-It identifies its external runtime requirement, preserves source downloads,
-and disables browser mock execution and application export for private plans. Its source download includes setup helpers for real and full-mock CLI execution. Browser contract previews label private guards unavailable and production internals unknown.
+An action can run a verified WebAssembly [extension](/extensions) export
+through `sandbox(extension:, export:)`. Rust compiles to WebAssembly,
+TypeScript runs through Javy, and Python uses the portable ahead-of-time
+subset; none starts an unrestricted interpreter. Each needs a signed release,
+a verified module identity and a pinned authority lock. Pass
+`--bindings bindings.json` to validation, serving and packaging. Today the
+server sandbox denies every external host operation; see
+[Execution plan](/backend/execution) for its limits.
 
-## Test the actual host
-
-```sh title="Terminal"
-python3 verify.py --cli /absolute/path/to/axiom
-```
-
-This exercise copies only example source into a clean temporary directory. It
-checks deterministic builds, direct and real HTTP requests, authorization and
-validation failures, inspection, generated interfaces, semantic diff, packaging,
-local deployment, reload recovery, tamper rejection, drain and rollback checks.
-It removes its listeners and temporary releases afterwards.
-
-Test both the generated interfaces and the real adapter request path.
-Authentication, grants, typed output, cancellation, and cleanup should remain
-enforced in tests. A test clock can control only the boundary it explicitly
-replaces; JWT/session expiry, action deadlines, cache clocks, and Redis time
-need their corresponding real checks.
-
-The [adapter guide](/backend/adapters) lists useful acceptance cases. A passing
-adapter test does not certify the broader service or deployment.
-
-## Python, Rust and TypeScript server sandboxes
-
-`examples/server-workflow/sandbox/{python,rust,typescript}` contains a pure
-`echo` export, its pinned manifest and a guarded `.acore` action. Each uses the
-maintained extension SDK, signed local source-release workflow, verified module
-identity, pinned authority lock and backend capability broker. No external host
-operations are granted. Python uses the portable AOT subset; TypeScript uses
-Javy; Rust compiles to WASM. This does not start an unrestricted interpreter.
-
-Install the guest toolchains documented in the example README, then run:
-
-```sh title="Terminal"
-python3 sandbox/verify.py --cli /absolute/path/to/axiom
-```
-
-The script creates and verifies each signed local release in a clean temporary
-project, invokes its typed action directly, packages it, and invokes the packaged
-server through real HTTP. Unauthorized and invalid inputs fail. Sandbox package
-exports using the standard `Invocation` → `GuestMessage` envelope describe the
-transport ABI. The host still validates the concrete action input and completed
-payload. Packages declaring concrete payload type names must match the action.
-The package's implementation language never implies that its effects are proven.
-
-## Package and deploy locally
-
-Packaging needs only declared sandbox artifact references. Supply the earlier
-production configuration references when validating or starting the bundle:
-
-```sh title="Terminal"
-axiom server targets
-axiom server package backend.axiom backend.server.json --deployment deployment.json --target native-server --output release-v1
-axiom server verify-bundle release-v1
-release-v1/bin/axiom server run-bundle release-v1 --listen 127.0.0.1:8080
-```
-
-For a sandbox plan, pass `--bindings bindings.json` to validation, execution and
-packaging. Packaging seals its verified package, module and authority bytes;
-startup consumes these captured assets from the verified inventory. Credential registries and
-resource configuration remain external. Native symbols require their registered
-Rust application host and are rejected by this generic CLI bundle workflow.
-Delivery workers use their separate documented runner and durable queue setup;
-this CLI HTTP release profile does not certify a queue worker deployment.
-
-A v2 release contains the exact CLI executable, canonical public artifact, private
-plan and deployment, optional sealed sandbox assets, a launch template and a
-bounded SHA-256 inventory. It binds the complete target/runtime contract and
-recomputed transitive requirements. Packaging preflight checks artifacts only;
-production configuration is checked at activation. The same executable and inputs produce identical file and manifest
-bytes. This is packaging reproducibility; it is not a promise that arbitrary
-Rust toolchains produce identical executable bytes. The release records its
-native architecture/OS. Startup checks the exact file closure and packaged executable, rejects unlisted
-assets, path aliases, links and special files, validates all bound artifacts,
-and repeats private configuration preflight. Files are bounded individually and to 512 MiB total.
-The manifest is an integrity inventory, not a publisher signature; distribute
-bundles through your trusted release channel. Existing release directories are
-immutable; choose a new output path.
-
-| Profile | Current status |
-| --- | --- |
-| Conventional native server | Certified on macOS `aarch64` and Linux `aarch64`/`x86_64`; the matching target/runtime is required. Linux amd64 runtime checks use emulation in the recorded local gate. |
-| Container | `container-arm64` / `container-amd64` build Linux managed/sandbox images from pinned inputs. See [Linux containers](/backend/containers). |
-| Serverless / edge | Rejected until target capability, lifecycle and conformance gates exist. |
-
-See [target and release verification](/backend/targets-and-releases)
-for the complete v2 contract, offline packaging boundary and native v1 migration.
-Legacy v1 bundles must be repackaged from original artifacts before verification,
-activation or rollback.
-
-## Review a rollback
-
-```sh title="Terminal"
-axiom server diff previous.axiom previous.server.json backend.axiom backend.server.json
-axiom server rollback-check release-v2 release-v1
-release-v1/bin/axiom server run-bundle release-v1 --listen 127.0.0.1:8080
-```
-
-`rollback-check` verifies both v2 inventories and target/runtime compatibility, compares the complete public semantics, including IR, codec/schema bytes,
-validators, security manifests, client policies and UI metadata, and reports the private behavior
-diff. A public contract change exits with failure; a private-only change still
-needs review. The command does not activate a release or reverse provider data.
-Stop/drain the active listener, preflight the previous release against current
-private configuration, and explicitly run its packaged executable. Schema/data
-migrations and cloud orchestration are outside this profile.
-
-Follow the [server release workflow](/backend/release-workflow) for one
-API across real serving, full mocks, native bundles, both Linux container
-architectures and local Workers, including capability diagnostics, external
-credential rotation, promotion and compatible rollback. Hosted AWS and
-Cloudflare certification remain unavailable. The playground's **Portable ·
-deployment profiles** example exposes source-only target assessments and
-includes downloadable setup helpers.
+Packages that export the standard `Invocation` to `GuestMessage` envelope
+describe the transport ABI; the host still validates the concrete action input
+and completed payload. A package that declares concrete payload type names must
+match the action. The
+implementation language never implies that a package's effects are proven.
 
 ## Typed provider setup
 
-Private provider scaffolds include typed configuration digests, reference names and
-empty grants. Review/select a compatible factory and supply required references
-before readiness. Public configuration uses a separate field/audience projection.
-The default environment resolver resolves once at startup; file/vault resolvers
-and stronger rotation lifecycles require qualified trusted implementations.
+Private provider scaffolds include typed configuration digests, reference
+names and empty grants. Choose a compatible factory and supply every required
+reference before readiness. Public configuration uses a separate field and
+audience projection. The default environment resolver reads references once
+at startup; file and vault resolvers and stronger rotation need qualified
+trusted implementations. For purpose-bound credentials, see
+[Secrets at runtime](/backend/runtime-secrets).
+
+<span id="test-the-actual-host" />
+
+## Test the running host
+
+Test the real request path as well as the generated interfaces. Cover
+authentication, grants, typed output, cancellation and cleanup. A test clock
+controls only the boundary it replaces; JWT and session expiry, action
+deadlines, cache clocks and Redis time need their own real checks. A passing
+local run does not certify a deployment.
+
+The [playground](https://playground.axiomcore.dev) **Managed · local server**
+example is editable and inspectable. It names its external runtime
+requirement, disables browser mock execution and application export for
+private plans, and shows private guards as unavailable and production internals
+as unknown. Its source download includes setup helpers for real and full-mock
+CLI runs.
+
+## Next steps
+
+- [Identity and policies](/backend/policies)
+- [Server simulation](/testing/server-simulation)
+- [Deployment targets](/backend/deployment)
+- [Release a backend](/backend/releases)

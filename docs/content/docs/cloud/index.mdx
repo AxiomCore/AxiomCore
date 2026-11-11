@@ -1,55 +1,93 @@
 ---
 title: Axiom Cloud
-description: Accounts, projects, immutable contracts, release evidence, managed sandboxes, and observability.
+description: What the Axiom Cloud dashboard and API do today, what is Coming soon, and how workspaces, projects, releases, environments, secrets and resources fit together.
 pageType: overview
 ---
 
+<span id="current-product-boundary" />
+
 <StatusNote status="alpha" title="Connected control plane">
   Axiom Cloud implements accounts, workspaces, projects, contracts, release
-  evidence, channel operations, managed environments, contract tests, and
-  observability surfaces. Availability depends on a live deployment and account
-  access; APIs and operational limits remain pre-stable.
+  evidence, channel operations, managed environments, contract tests and
+  observability. Availability depends on a live deployment and account access.
+  APIs and operational limits are not yet stable.
 </StatusNote>
 
-Axiom Cloud is the connected control plane for artifacts and their operational
-evidence. It complements local Acore and CLI workflows; it is not required to
-parse Acore, run local checks, or build an unsigned development artifact.
+Axiom Cloud is the hosted control plane for your contracts and their
+operational evidence. It has two surfaces: the
+[Cloud Dashboard](https://app.axiomcore.dev) in the browser, and the API that
+the Axiom CLI calls for `axiom login`, `axiom project`, `axiom release`,
+`axiom pull` and `axiom deploy`.
 
-```text title="Conceptual example"
-developer / CI
-  -> immutable contract upload
-  -> hash + Cloud signature
-  -> durable validation, semantic diff, sandbox, tests, policy
-  -> activation-eligible release
-  -> versioned latest channel
-  -> pull by authorized clients
+Cloud is optional. You do not need it to write Acore, run local checks or build
+an unsigned development artifact.
+
+## How Cloud is organized
+
+```mermaid title="How Axiom Cloud organizes workspaces, projects and their records"
+flowchart TD
+  W[Workspace] --> M[Members and invitations]
+  W --> P[Project]
+  P --> R[Contract releases]
+  R --> L[latest channel]
+  R --> PR[Contract pull requests]
+  P --> S[Managed sandbox and tests]
+  P --> E[Project environments]
+  E --> SE[Secrets]
+  E --> DB[Managed database]
+  P --> O[Observability]
 ```
 
-## Current product boundary
+A **workspace** groups members and projects. A **project** owns everything
+else: immutable contract releases, the `latest` channel that consumers pull
+from, contract pull requests, a managed sandbox for tests, and observability
+data. A project **environment** (such as `development`, `staging` or
+`production`) is a separate configuration scope. Secrets and a managed database
+attach to one environment.
 
-| Capability | Status | Supported scope |
+## What Cloud does today
+
+| Capability | Status | Scope |
 | --- | --- | --- |
-| Accounts, workspaces, and projects | **Alpha** | Browser sessions, CLI device login, memberships, invitations, project roles, settings, and keys. |
-| Contracts and releases | **Alpha** | Immutable versions, manifests, verification, semantic diff, durable pipeline evidence, explicit latest channel, activation, and rollback. |
-| Managed sandbox and mock | **Alpha** | Project-scoped synthetic environment lifecycle where the deployment enables managed environments. |
-| Contract tests and delivery policy | **Alpha** | Declared tests against the matching sandbox with persisted results and release-policy outcomes. |
-| Runtime observability | **Alpha** | Scoped OTLP sources, traces, traffic, logs, retention, alerts, and security posture. |
-| Contract pull requests | **Alpha** | Proposals, semantic changes, review comments, and review-state workflow. |
-| Hosted CI/CD for every repository | **Coming soon** | Current release pipelines process Axiom artifacts; they are not a general replacement for arbitrary repository CI. |
-| Axiom Studio, Acode, and Marketplace | **Coming soon** | Planned products, not additional tabs that can be inferred from the Cloud implementation. |
+| Accounts, workspaces and projects | **Alpha** | Browser sessions, CLI device login, memberships, invitations, project roles, settings and signing keys. |
+| Contracts and releases | **Alpha** | Immutable versions, manifests, verification, semantic diff, durable pipeline evidence, an explicit `latest` channel, activation and rollback. |
+| Contract pull requests | **Alpha** | Proposals, semantic changes, review comments and review states. |
+| Managed sandbox and mock | **Alpha** | A project-scoped synthetic environment, where the deployment enables managed environments. |
+| Contract tests and release policy | **Alpha** | Declared tests against the matching sandbox, with saved results and release-policy outcomes. |
+| Runtime observability | **Alpha** | Scoped OTLP sources, traces, traffic, logs, retention, alerts and security posture. |
+| Project secrets | **Alpha** management; **Experimental** protected consumption | Write-only values, versions, bindings, grants and activity. Application use has separate [runtime limits](/backend/runtime-secrets). |
+| Managed databases | **Alpha** | Database preferences, provisioning in available locations, suspend, resume, access rotation and deletion. |
+| Hosted database connections, hosted migrations and managed application authentication | **Coming soon** | Storage can be provisioned, but applications cannot connect to it through Cloud yet. |
+| Database archive, restore and customer-owned connections | **Coming soon** | No hosted recovery SLA is announced. |
+| Public paid checkout | **Coming soon** | Pro can be selected as a preference. Only controlled test checkout runs today. |
+| Hosted CI/CD for every repository | **Coming soon** | Release pipelines process Axiom artifacts. They do not replace general repository CI. |
+| Axiom Studio, Acode and Axiom Marketplace | **Coming soon** | Planned products. They are not hidden parts of the Cloud Dashboard. |
+
+## Find your way around the dashboard
+
+| Dashboard area | Pages | Guide |
+| --- | --- | --- |
+| Workspace | Projects, Recent Activity, workspace settings | [Workspaces and projects](/cloud/project-management) |
+| Project | Overview, Contracts, Pull Requests | [Releases and environments](/cloud/releases-and-environments), [Contract pull requests](/delivery/contract-pull-requests) |
+| Development | Sandbox, Tests | [Cloud mocks](/cloud/deploying-mocks) |
+| Observability | Traffic, Logs, Traces, Speed Insights, Alerts | [Observability](/cloud/telemetry-and-observability) |
+| Settings | CI/CD Actions, Resources, Secrets, Project settings, Security Audit, Usage & Limits | [Managed resources](/cloud/project-resources), [Secrets](/cloud/secrets) |
 
 ## Choose local or connected work
 
-Use local commands for authoring, evaluation, security/domain validation,
-semantic diff, mocks, and contract tests. Use Cloud when a team needs shared
+Use local commands for authoring, evaluation, security and domain validation,
+semantic diff, mocks and contract tests. Use Cloud when a team needs shared
 identity, immutable distribution, signing provenance, review records, release
-channels, managed environments, or retained runtime evidence.
+channels, managed environments or retained runtime evidence.
 
-Cloud records are not substitutes for backend authorization or repository
-review. A signed contract states provenance; a passing contract test states the
-bounded declared checks passed against the selected environment.
+Cloud records do not replace backend authorization or code review. A signed
+contract states where an artifact came from. A passing contract test states
+that the declared checks passed against the selected environment.
 
 ## Start
+
+Cloud access is invite-only during the Alpha. The first Cloud command asks for
+a referral code. Without one, join the waitlist with `axiom join <EMAIL>`.
 
 ```bash title="Terminal"
 axiom login
@@ -59,5 +97,12 @@ axiom build --release --version 1.2.0 --out backend.axiom
 ```
 
 The CLI resolves the linked project from the current directory. In automation,
-pass an explicit project and immutable version and retain the resulting release
-identifier in deployment evidence.
+pass an explicit `--project` and immutable `--version`, and keep the released
+project and version with your deployment evidence.
+
+## Next steps
+
+- [Create a workspace project and link a directory](/cloud/project-management)
+- [Follow a release through the Cloud pipeline](/cloud/releases-and-environments)
+- [Store project secrets](/cloud/secrets)
+- [Provision a managed database](/cloud/project-resources)

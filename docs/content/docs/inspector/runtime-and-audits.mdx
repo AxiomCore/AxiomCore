@@ -1,224 +1,340 @@
 ---
-title: Runtime evidence and audits
-description: Capture, normalize, inspect, import, export, and interpret redacted runtime sessions without mixing them with static reachability.
+title: Runtime evidence, security and audits
+description: Review security facts and authority, then capture, import, inspect, export and hand off redacted runtime evidence with Axiom Inspector.
 pageType: guide
 ---
 
-Static evidence answers what an application declares or can reach. Runtime
-evidence answers what a particular captured session observed.
+<span id="create-or-normalize-a-session" />
+<span id="start-with-four-views" />
+<span id="examine-one-finding" />
+<span id="typed-setup-is-separate-from-authority" />
 
-## Create or normalize a session
+Static evidence answers what an application declares or can reach. Security
+views show who may do what, and runtime evidence shows what one captured
+session actually did. This guide covers both, and how to keep them apart.
 
-Create a bounded session for a target:
+<StatusNote status="alpha" title="Security views and runtime sessions">
+  Inspector security views, runtime sessions, audit bundles and signed handoff
+  are **Alpha**. Native server and frontend observation capture, and classified
+  telemetry fields, are **Experimental**.
+</StatusNote>
+
+## Review security and authority
+
+Inspector shows concrete security facts and their evidence, never an
+unexplained score.
+
+```bash title="Terminal"
+axiom inspect security .
+axiom inspect authority .
+axiom inspect exposure .
+axiom inspect readiness .
+```
+
+| View | Shows |
+| --- | --- |
+| `security` | Auth and security policies, permissions, advisories, build scripts, release policies, findings and readiness |
+| `authority` | The resolved bill of authority: extensions, permissions and policies, direct and transitive |
+| `exposure` | Backend operations explicitly declared public or restricted |
+| `readiness` | Blocker and warning counts with evidence |
+| `finding [SELECTOR]` | All findings, or one finding and its evidence |
+| `access SELECTOR` | Who requests, receives or effectively holds access to one fact |
+
+Add `--format json` for CI and agents. For one finding, review its
+classification, affected fact and target, source or artifact evidence, layer
+(declared, resolved or observed), the remediation or approval boundary, and any
+missing evidence. Examples include unsigned development artifacts, explicit
+public endpoints, permission increases and unverifiable provenance. A warning is
+never silently promoted to a blocker, and a blocker is never hidden in a score.
+
+<span id="read-extension-authority-correctly" />
+
+### Read extension authority in stages
+
+```text title="Conceptual example"
+requested by package or local source
+            intersect
+granted by the application
+            intersect
+enabled by the selected target policy
+            bounded by
+runtime limits
+            =
+effective authority
+```
+
+An extension never receives application memory, a native pointer, a database
+connection or ambient network access. It receives typed host services,
+snapshots, handles and limits tied to its effective authority. Use
+`inspect access`, `inspect executable-closure ALIAS --target ios` and
+`inspect provenance` to review each stage. See [Extensions](/extensions).
+
+### Inspector security versus Acore security analysis
+
+| Command | Analyzes |
+| --- | --- |
+| `axiom security check axiom.acore` | The optional Acore backend security model and its policies |
+| `axiom inspect security .` | Security and trust facts across all available evidence: dependencies, extensions, locks, target authority and imported artifacts |
+
+Use both for a backend that declares Acore security policy.
+
+### Readiness is not certification
+
+A clean `readiness` report does not prove that external code is safe, that
+physical devices are certified or that an environment is deployed correctly.
+Pair it with semantic diff and impact, contract and package verification,
+extension and denial tests, target tests, dependency and signer review, and
+your release policy.
+
+<span id="privacy-boundary" />
+
+### Privacy and typed setup
+
+Inspector explains authority without secret values: permission names, resource
+identities, policies, hashes and redacted audit metadata are enough. When an
+answer depends on an unavailable value or external enforcement, the result keeps
+that limitation instead of copying the value in.
+
+Configuration and interface digests prove compatible wiring, not authority.
+Inferred dependencies and resolved secret references grant nothing. The
+`signRequest` binding exposes a purpose-specific operation to a trusted
+provider, never secret bytes to authored or guest code. Passive inspection reads
+references and schema identities; it never resolves credentials or starts
+providers.
+
+<span id="inspect-a-session" />
+
+## Record a runtime session
 
 ```bash title="Terminal"
 axiom inspect record . --target web --session demo
-```
-
-Normalize an existing supported audit export:
-
-```bash title="Terminal"
-axiom inspect record . \
-  --target server \
-  --input extension-audit.json \
-  --session checkout-review
-```
-
-If capture was intentionally unavailable, record that explicitly rather than
-presenting an empty session as proof of no activity:
-
-```bash title="Terminal"
+axiom inspect record . --target server --input extension-audit.json --session checkout-review
 axiom inspect record . --target ios --session release-check --disabled
 ```
 
-Sessions are kept under the ignored local Inspector workspace and remain bound
-to their application graph revision.
+| Form | Result |
+| --- | --- |
+| No `--input` | An empty session in the `Recording` state; the running dashboard's local API ingests events into it |
+| `--input FILE` | Normalizes a supported export into a session |
+| `--disabled` | Records that capture was intentionally off, so an empty session is never read as "no activity" (cannot combine with `--input`) |
 
-## Native managed observations
+Sessions live in `.axiom/inspector/runtime/<session>/` and are bound to the
+workspace graph revision. A session ID uses ASCII letters, digits, `-` or `_`
+(up to 128 characters), defaults to `session-<uuid>`, and cannot be reused.
+`latest` always names the most recent session.
 
-The candidate source-built CLI also accepts `axiom-observation/v2` snapshots.
-The inspected workspace must contain the exact public contract and private
-server plan. Its compiler-owned `axiom-observation-catalog/v1` binds supported
-action, resource, cache, batch and endpoint event labels to precise graph facts.
-Matching names in another plan cannot establish that relationship.
+`--input` accepts these formats, up to 25 MiB and 100,000 events:
 
-The native HTTP host can export its bounded observations after owned shutdown:
+| Format | Source |
+| --- | --- |
+| `axiom-runtime-evidence/v1` | A normalized Inspector session |
+| `axiom-inspector-audit/v1` | An exported audit bundle |
+| `axiom-extension-audit-export/v1` | An extension host audit export |
+| `axiom-observation/v2` | Native server or scenario observations |
+| `acore-observation-session/v1` | Frontend owner observations |
+
+Import fails if the input's graph revision or target differs from the workspace
+and `--target`, or if an event references a fact that does not exist there.
+
+<span id="native-managed-observations" />
+
+## Capture native server observations
+
+<StatusBadge status="experimental" />
+
+A backend can opt in to bounded telemetry, including a small catalog of
+classified application fields:
+
+```acore title="Acore excerpt"
+serverTelemetry(maxSeries: 32, maxEvents: 128, applicationFields: {
+  stage: {type: "enum", classification: "public", values: ["started", "complete"]},
+  count: {type: "int32", classification: "public"},
+  draft: {type: "string", classification: "private"},
+  credential: {type: "string", classification: "secret"}
+})
+```
+
+- Defaults are `maxSeries: 256` and `maxEvents: 64`. Field types are `bool`,
+  `int32`, `enum` and `string`.
+- At most 16 fields and 32 enum values. Public fields cannot be `string`.
+- Private and secret values become the literal `[redacted]` before collection;
+  they are never hashed. Unknown fields, wrong types and undeclared enum values
+  fail without emitting a partial event. Fields never become metric labels.
+- Without `applicationFields`, telemetry stays payload-free. Declaring fields
+  grants no guest capability (sandbox events stay host-owned), and passive
+  editor analysis cannot emit telemetry. Inspector imports only the exact
+  compiled field catalog and rejects unredacted private values.
+
+Export observations from the native HTTP host after it shuts down, then import
+them:
 
 ```bash title="Terminal"
-axiom server run backend.axiom prepared.server.json \
+axiom server run backend.axiom backend.server.json \
   --deployment deployment.json --bindings bindings.json \
   --observations actual.observation.json
-# Exercise the application, then stop the host with Ctrl+C.
-axiom inspect record . --target server \
-  --input actual.observation.json --session actual-observed
+axiom inspect record . --target server --input actual.observation.json --session actual-observed
 axiom inspect runtime . --session actual-observed --format json
 ```
 
-The destination must be new. The CLI prepares private output before activation
-and writes it after host cleanup; Unix output permissions are `0600`. The
-snapshot labels its layer `native-host`, binds the executed contract/plan and
-keeps only the events allowed by `serverTelemetry` bounds. It excludes request
-arguments, results, credentials and submission keys. Native observations do
-not establish unobserved provider or guest internals. Capturing and importing
-the file are explicit actions.
+Exercise the application, then stop the host with Ctrl-C. The destination file
+must be new; the CLI writes it privately (Unix mode `0600`) after host cleanup.
+The snapshot labels its layer `native-host` and binds the exact contract and
+plan digests. The workspace must contain that public contract and private plan:
+their compiler-owned catalog (`axiom-observation-catalog/v1`) links each action,
+resource, cache, batch and endpoint label to one graph fact, and a matching name
+in another plan cannot.
 
-The complete [deterministic scenario example](/testing/test-runner)
-can export actual host boundaries with synthetic read providers:
+[`axiom scenario run`](/tooling/cli-testing) can export the same format from a
+deterministic scenario with synthetic providers, labeled `scripted-provider`:
 
 ```bash title="Terminal"
-axiom scenario run axiom.axiom \
-  --plan axiom.server.json --deployment deployment.json \
-  --scenario retry.scenario.json --report retry.report.json \
-  --observations retry.observation.json
-axiom inspect record . --target server \
-  --input retry.observation.json --session retry-observed
-axiom inspect runtime . --session retry-observed --format json
+axiom scenario run axiom.axiom --plan axiom.server.json \
+  --deployment deployment.json --scenario retry.scenario.json \
+  --report retry.report.json --observations retry.observation.json
+axiom inspect record . --target server --input retry.observation.json --session retry-observed
 ```
 
-The export labels its execution layer `scripted-provider`. Normalization keeps
-producer order, trace and parent span, root/operation identity, attempt, owner
-generation, work ceiling and stable terminal cause. It rejects mismatched
-artifacts, unknown/private fields, invalid trace identities, unsupported catalog
-labels and excess retention. Input and stored session reads are bounded to
-25 MiB before JSON parsing. Truncated events retain their original source
-sequence and a partial retention label; aggregate durations do not invent an
-ordering between independent work.
+What a native observation contains:
 
-This is explicit offline observation. Passive source editing does not capture
-runtime values or execute tests. A scripted provider observation proves the
-checked host boundary and does not qualify production durability or native
-provider internals. Complete cross-transport and installed editor delivery are
-still under qualification.
+- Ordered events with an `observed` label and a terminal cause: `success`,
+  `businessFailure`, `abort`, `fault`, `cleanupFailure` or `indeterminate`. A
+  cleanup failure gets its own event and keeps the primary outcome.
+- Root and operation IDs, attempt, owner generation, inherited deadline tick
+  and remaining shared work, plus trace and parent span.
+- Cache labels `cache.hit`, `cache.fill`, `cache.join` and `cache.invalidate`,
+  named after declared policies and free of cache keys, inputs, credentials and
+  verified principal values. An invalidation means the action succeeded, not
+  that a database commit was observed.
+- Resource dispatch evidence, including typed failure or unknown outcome.
+  Admission denial is not a dispatch, and canceled batch items removed before
+  flushing get no dispatch evidence. The physical batch count advances at
+  dispatch, and a malformed reply cannot erase a dispatch that happened.
+  Native provider internals stay `unknown`.
 
-## Frontend owner observations
+The collector validates labels against the exact plan; unknown labels
+aggregate into overflow, and saturation reports `droppedEvents`. Payloads,
+request arguments, results, credential bytes, principal claims, error messages
+and submission keys are never collected. Normalization rejects mismatched
+artifacts, unknown or private fields, invalid trace IDs, unsupported labels and
+excess retention. Truncated events keep their source sequence and a partial
+retention label, and aggregate durations never invent an order between
+independent work. These values describe the executed boundary; they do not
+imply that an external commit succeeded.
 
-The candidate browser host offers explicit bounded capture through its developer
-console. Start recording before the interaction to diagnose, then stop and save
-the returned JSON object as `frontend.observation.json`:
+Capture and import are always explicit: a static trace never fetches
+observations or starts application work, and passive source editing never
+captures runtime values or runs tests. A scripted observation proves the
+checked host boundary only. Neither layer reveals provider or guest internals,
+production durability or a complete cross-transport timeline. See [Contract tests](/testing/contracts) for scenario
+files.
 
-```javascript title="JavaScript excerpt"
+<span id="frontend-owner-observations" />
+
+## Capture frontend observations
+
+<StatusBadge status="experimental" />
+
+A web host that provides the developer-console capture API can record owner
+events from a mounted application. Start before the interaction, then save the
+object `stop()` returns as `frontend.observation.json`:
+
+```javascript title="Browser developer console"
 window.__axiomObservations.start({ maximumEvents: 512 });
 // Perform the interaction in the mounted application.
 window.__axiomObservations.stop();
 ```
 
-`acore-observation-session/v1` binds the exact compiled UI IR digest and target.
-It retains capture order separately from coordinator/owner order, generation,
-operation terminal category and validated trace/span IDs. Captures omit request
-arguments, result payloads, credentials, submission keys and runtime route keys.
-At most 1,024 events can be retained; replaced records remain counted as dropped.
-
-Import against the same compiled frontend workspace:
-
 ```bash title="Terminal"
-axiom inspect record . --target web \
-  --input frontend.observation.json --session frontend-observed
-axiom inspect runtime . --session frontend-observed --format json
+axiom inspect record . --target web --input frontend.observation.json --session frontend-observed
 ```
 
-The compiler-owned `acore-observation-catalog/v1` maps runtime symbols to authored
-graph facts. Import rejects stale IR digests, missing source facts, private or
-unknown fields and invalid source order. Portable owner tests label their layer
-`compiled-portable-owner`; actual browser capture labels `mounted-web`. Neither
-label establishes provider internals. Transport dispatch carries a secure trace
-parent when the host supports it, including a physical-dispatch link for shared
-queries. Cross-host events keep their producer order; a common trace does not
-establish a total order. Browser delivery and the final installed editor toolchain
-remain under qualification.
+The `acore-observation-session/v1` envelope binds the compiled UI IR digest and
+target. It keeps capture order separate from coordinator and owner order, plus
+generation, operation terminal category and validated trace and span IDs. It
+omits request arguments, results, credentials, submission keys and route keys.
+`maximumEvents` defaults to 512 (maximum 1,024); replaced records count as
+dropped. Import against the same compiled workspace: stale IR digests, missing
+facts, private or unknown fields and invalid order are rejected.
 
-## Inspect a session
+Portable owner tests label their layer `compiled-portable-owner`; browser
+capture labels `mounted-web`. Neither label covers provider internals.
+Transport dispatch carries a secure trace parent when the host supports it,
+including a physical-dispatch link for shared queries, so frontend and native
+events can share a trace. Each host keeps its own order; a shared trace is not
+a total order. Portable tests, generated adapter tests, native host tests,
+mounted targets and installed editor views are separate qualification levels,
+and the complete cross-transport timeline is not yet qualified.
+
+<span id="import-and-export-audit-bundles" />
+
+## Inspect, export and import sessions
 
 ```bash title="Terminal"
 axiom inspect runtime . --session latest
 axiom inspect runtime . --session checkout-review --format json
+axiom inspect export-audit . --session checkout-review --output checkout-review.audit.json
+axiom inspect import-audit checkout-review.audit.json . --session imported-checkout
 ```
 
-Normalized evidence can include supported versions of:
+A normalized session can include session and target identity, trace and
+invocation correlation, extension load, completion, failure, denial,
+cancellation, drain and teardown, host calls with bounded resource metadata,
+state patch decisions and changed paths, cache decisions, dropped or truncated
+indicators and redaction state. Application payload values are never included.
 
-- session and target identity;
-- trace and invocation correlation;
-- extension load, completion, failure, denial, cancellation, drain, and teardown;
-- host calls and bounded resource metadata;
-- state patch or transaction decisions and changed paths;
-- cache decisions and operation identities;
-- dropped, truncated, or unavailable evidence indicators; and
-- redaction state.
-
-Application payload values are not part of normalized runtime evidence. The
-audit model retains semantic identities and safe metadata needed to explain the
-event without turning Inspector into a secret or production-data viewer.
-
-## Import and export audit bundles
-
-Export one canonical redacted runtime session:
-
-```bash title="Terminal"
-axiom inspect export-audit . \
-  --session checkout-review \
-  --output checkout-review.audit.json
-```
-
-Import a supported offline runtime or extension audit export:
-
-```bash title="Terminal"
-axiom inspect import-audit checkout-review.audit.json . \
-  --session imported-checkout
-```
-
-Import validates the schema and application correlation instead of accepting an
-arbitrary log file. Preserve the original artifact when it forms part of a
-review or incident record.
+`export-audit` writes one canonical, redacted bundle and prints its SHA-256.
+`import-audit` validates the schema and application correlation instead of
+accepting an arbitrary log. Keep the original file when it is part of a review
+or incident record.
 
 ## Live development evidence
 
-Start the dashboard before the target application:
+Start the dashboard first, then the application in development mode:
 
 ```bash title="Terminal"
 axiom inspect serve .
 axiom run frontend/main.acore --target web
 ```
 
-Development hosts can attach through the owner-only loopback descriptor and
-submit versioned, redacted selection and causal events. Web uses Alt-click and
-supported native development hosts use long-press selection.
-
-The dashboard refuses current correlation when the running application reports
-a different graph revision. Reload the application instead of interpreting
-stale state against new source.
+Development hosts find the owner-only descriptor
+`.axiom/inspector/live-connection.json` and send versioned, redacted selection
+and causal events. Alt-click selects an element on web; long-press does so on
+iOS and Android. If the app reports a different graph revision, the dashboard
+refuses to correlate it as current: reload the app. See
+[Local dashboard](/inspector/local-dashboard).
 
 ## Audit interpretation rules
 
 1. A static path is not an observed invocation.
 2. An effective permission is not proof that it was used.
-3. An observed invocation does not prove that every statically reachable path
-   ran.
+3. An observed invocation does not prove every reachable path ran.
 4. A disabled or truncated capture is not evidence of absence.
-5. Timing differences are operational measurements, not automatically semantic
-   application changes.
+5. Timing differences are measurements, not semantic changes.
 6. Redaction and dropped-event metadata are part of the evidence.
 
 ## Signed Inspector handoff
 
-A runtime audit bundle contains a session. A signed Inspector exchange can
-carry a complete application snapshot plus optional matching runtime and change
-evidence:
+An audit bundle carries one session. A signed handoff carries a complete
+application snapshot, plus optional runtime and change evidence, for offline
+transfer.
 
 ```bash title="Terminal"
 chmod 600 inspector-signing-key
-
-axiom inspect export-inspector . \
-  --key inspector-signing-key \
-  --runtime \
-  --output application.inspector.json
-
-axiom inspect import-inspector application.inspector.json \
-  --output-dir imported-inspector
+axiom inspect export-inspector . --key inspector-signing-key --runtime --output application.inspector.json
+axiom inspect import-inspector application.inspector.json --output-dir imported-inspector
 ```
 
-Import verifies the Ed25519 signature, payload digest, schema, canonical bytes,
-graph revision, and nested evidence before writing to an empty directory. A
-valid signature establishes integrity relative to a key; the recipient must
-still decide whether that signer is trusted.
+The key is a 32-byte Ed25519 seed (raw, hex or Base64) that group and others
+cannot read or write. `--runtime` adds the latest session; `--changes FILE` adds
+a semantic-change report. Import verifies the signature, payload digest, schema,
+canonical bytes, graph revision and nested evidence, then writes
+`application-evidence.jcs.json` and any runtime or change files into an empty
+directory. A valid signature proves integrity relative to a key; you still
+decide whether to trust the signer. Nothing is uploaded automatically.
 
-Inspector does not upload this exchange automatically. It is an explicit
-offline handoff boundary.
+## Next steps
+
+- [Changes and impact](/inspector/changes-impact-and-ci)
+- [Artifact trust](/core-concepts/trust-and-security)
+- [Production readiness](/delivery/production-readiness)
+- [`axiom inspect` reference](/tooling/cli-inspect)

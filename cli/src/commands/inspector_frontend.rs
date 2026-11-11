@@ -91,7 +91,7 @@ fn compile_source(root: &Path, path: &Path, evidence: &mut ApplicationEvidence) 
     let lock = axiom_lib::project_state::ui_lock(parent);
     let generated_lock = parent.join(".axiom/dev/axiom.ui.lock.json");
     let lock = if lock.is_file() { lock } else { generated_lock };
-    let package_lock = axiom_lib::project_state::read_path(parent,"AxiomPackages.lock");
+    let package_lock = axiom_lib::project_state::read_path(parent, "AxiomPackages.lock");
     let reference = EvidenceReference {
         kind: "source-span".into(),
         path: Some(relative.clone()),

@@ -12,7 +12,7 @@ use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 const TOKEN_FILE: &str = "auth.json";
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default)]
 pub struct AuthData {
     pub access_token: String,
     pub refresh_token: String,
@@ -29,12 +29,32 @@ pub struct AuthData {
 /// A loopback `AXIOM_CLOUD_URL` automatically receives its own profile, so a
 /// developer cannot accidentally use a production token or project link with a
 /// local control plane (or overwrite production state while testing locally).
-pub fn get_config_dir() -> Result<PathBuf> {
+impl std::fmt::Debug for AuthData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("AuthData([redacted])")
+    }
+}
+
+fn profile_directory() -> Result<PathBuf> {
+    let local = axiom_cloud::uses_local_cloud()?;
+    if local {
+        if let Some(value) = std::env::var_os("AXIOM_LOCAL_PROFILE_DIR") {
+            let path = PathBuf::from(value);
+            if !path.is_absolute() {
+                anyhow::bail!("AXIOM_LOCAL_PROFILE_DIR must be absolute");
+            }
+            return Ok(path);
+        }
+    }
     let mut path = dirs::config_dir().context("Could not find config directory")?;
     path.push("axiom");
-    if axiom_cloud::uses_local_cloud()? {
+    if local {
         path.push("local");
     }
+    Ok(path)
+}
+pub fn get_config_dir() -> Result<PathBuf> {
+    let mut path = profile_directory()?;
     fs::create_dir_all(&path)?;
     #[cfg(unix)]
     fs::set_permissions(&path, fs::Permissions::from_mode(0o700))
@@ -52,11 +72,7 @@ pub fn get_auth_file_path() -> Result<PathBuf> {
 /// directory. Diagnostics use this so `axiom doctor` can honestly be a
 /// non-mutating command in a brand-new repository and on a new machine.
 pub fn get_existing_auth_file_path() -> Result<PathBuf> {
-    let mut path = dirs::config_dir().context("Could not find config directory")?;
-    path.push("axiom");
-    if axiom_cloud::uses_local_cloud()? {
-        path.push("local");
-    }
+    let mut path = profile_directory()?;
     path.push(TOKEN_FILE);
     Ok(path)
 }

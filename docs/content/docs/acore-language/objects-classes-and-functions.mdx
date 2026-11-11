@@ -1,40 +1,106 @@
 ---
-title: Objects, classes, and functions
-description: Declare reusable shapes, construct values, and understand Acore scope.
+title: Objects, classes and functions
+description: Build and amend objects, declare classes and type aliases, use this, outer and super, and write lambdas and pure functions in Acore.
 pageType: reference
 ---
 
-## Dynamic and typed objects
+<span id="dynamic-and-typed-objects" />
+<span id="class-declarations" />
+<span id="dynamic-property-names" />
 
-```acore title="Acore excerpt"
-metadata = {
+This page covers how you shape data in Acore: objects, typed objects, classes,
+type aliases, scope references and functions. The general-module examples were
+evaluated with `axiom eval` from CLI 0.149.1; backend examples were checked with
+`axiom check`.
+
+## Objects
+
+A name followed by a block, or a brace literal, creates an object. Bracketed
+keys are evaluated.
+
+```acore title="objects.acore"
+metadata {
   owner = "platform"
   ["x-contract-version"] = "1"
 }
-
-retry = RetryPolicy {
-  maxAttempts = 4
-  backoff = ExponentialBackoff { initialDelay = "250ms" }
+defaults {
+  retries = 3
+  region = "eu"
+}
+production = (defaults) {
+  region = "us"
+  label = "prod-" + super.region
+}
+service {
+  base = 10
+  nested { total = outer.base + 5 }
 }
 ```
 
-The class supplies defaults and constraints. Acore does not use `new`.
+```json title="Output of axiom eval objects.acore -f json (condensed)"
+{
+  "defaults": { "region": "eu", "retries": 3 },
+  "metadata": { "owner": "platform", "x-contract-version": "1" },
+  "production": { "label": "prod-eu", "region": "us", "retries": 3 },
+  "service": { "base": 10, "nested": { "total": 15 } }
+}
+```
 
-## Class declarations
+- `(defaults) { ... }` and `defaults { ... }` both amend an existing object: the
+  result keeps every property you do not override.
+- `Name { ... }` creates a typed object from a class, which supplies defaults.
+  There is no `new` keyword and no constructor runs.
+- The parser does not expose `for` or `when` generators inside objects. Do not
+  use those forms.
 
-```acore title="Acore excerpt"
-open class BaseService {
+## Scope: this, outer and super
+
+| Reference | Points to |
+| --- | --- |
+| `this` | The object being evaluated. A bare property name also resolves here. |
+| `outer` | The enclosing object |
+| `super` | The object being amended, or the parent class value |
+
+Properties are lazy and immutable. A property cycle such as `a = b` and `b = a`
+aborts evaluation: CLI 0.149.1 stops with a stack overflow instead of a
+diagnostic. An import cycle reports `Cycle: <module>`.
+
+## Classes
+
+```acore title="classes.acore"
+hidden open class BaseService {
   enabled: Boolean = true
   timeoutSeconds: Int(this > 0) = 30
 }
 
-class BillingService extends BaseService {
+hidden class BillingService extends BaseService {
   endpoint: String
+}
+
+billing = BillingService {
+  endpoint = "https://billing.example.com"
 }
 ```
 
-The parser supports optional class bodies, type parameters, and one `extends`
-type. A class describes a value shape; it does not execute a constructor.
+```json title="Output of axiom eval classes.acore -f json"
+{
+  "billing": {
+    "enabled": true,
+    "endpoint": "https://billing.example.com",
+    "timeoutSeconds": 30
+  }
+}
+```
+
+- A class describes a value shape. It may omit its body, take type parameters
+  (`class Box<T>`) and extend one parent type.
+- `axiom eval` renders a class declaration like any other property, with its
+  defaults. Mark classes `hidden` or `local` to keep them out of output.
+- A class property with no default, such as `endpoint: String`, must be set by
+  each typed object. If the class itself is rendered, its null value fails the
+  type check.
+- A typed object does not re-check overridden properties against the class's
+  type or constraint in 0.149.1; see [Types](/acore-language/values-types-and-operators#types-in-general-modules).
 
 ## Type aliases
 
@@ -43,42 +109,27 @@ typealias Environment = "development" | "staging" | "production"
 typealias StringMap = Mapping<String, String>
 ```
 
-The current evaluator is structurally typed in several contract positions, so
-profile-specific schema validation remains authoritative.
+Several contract positions are structurally typed, so the schema validation of
+each profile remains authoritative. A property typed with a literal-union alias
+is not checked against the literals in 0.149.1.
 
-## Dynamic property names
+## Functions
 
-Bracketed expressions can produce a property name:
-
-```acore title="Acore excerpt"
-headerName = "x-contract-version"
-metadata = { [headerName] = "1" }
-```
-
-The evaluator contains internal generator nodes, but the current source parser
-does not expose `for` or `when` object-member syntax. Do not use those forms in
-portable Acore source.
-
-## Scope: `this`, `outer`, and `super`
-
-- `this` refers to the object currently being evaluated.
-- `outer` refers to the enclosing object.
-- `super` refers to inherited context where supported.
+Lambdas are the callable form in general modules.
 
 ```acore title="Acore excerpt"
-service = {
-  base = 10
-  nested = { total = outer.base + 5 }
-}
+upper = (value: String) -> value.toUpperCase()
+labels = ["one", "two"].map(upper)
 ```
 
-Properties are lazily evaluated. Cycles result in evaluation errors rather than
-mutable execution.
+| Declaration | Behavior in 0.149.1 |
+| --- | --- |
+| `(params) -> expression` | A closure. Call it with `name(args)` or pass it to a collection method. |
+| `function name(params): Type { ... }` | Parsed as a signature. It is not bound as a callable name (`Undefined: name`). |
+| `external function name(params): Type` | A member a trusted host must implement. Without a host binding the name is undefined. |
 
-## Functions and external members
-
-The standard library uses `external` declarations to bind trusted native
-implementations:
+`external` does not let package code run. The standard library declares its
+native members this way:
 
 ```acore title="Acore excerpt"
 external function parse(source: String): Any
@@ -86,15 +137,6 @@ external function parse(source: String): Any
 class Parser {
   external function render(value: Any): String
 }
-```
-
-`external` does not permit arbitrary package code. A host must provide the
-native binding. For portable transformations, use lambdas and implemented
-collection intrinsics:
-
-```acore title="Acore excerpt"
-upper = (value: String) -> value.toUpperCase()
-labels = ["one", "two"].map(upper)
 ```
 
 ## Annotations
@@ -107,21 +149,49 @@ oldName: String = "legacy"
 An annotation is data for tooling. It has no effect unless the active compiler
 profile recognizes it.
 
-## Inheritance versus composition
+<span id="inheritance-versus-composition" />
+
+## Inheritance and composition
+
+These forms are deliberately different.
 
 | Syntax | Purpose |
 | --- | --- |
-| `class Child extends Parent` | Class/type inheritance |
-| `entity customer(model: Models.Customer)` | Promote an extracted model in the backend profile |
-| `amends "./base.acore"` | Compose authoring input before a build |
-| `import "./shared.acore"` | Evaluate trusted source as a module |
+| `class Child extends Parent` | Class inheritance |
+| `base { ... }` or `(base) { ... }` | Amend an object value |
+| `entity customer(model: Models.Customer)` | Promote a model to a domain entity (backend) |
+| `extend Models.Name { ... }` | Older form that promotes an extracted model. `extend` accepts only `Models.Name`. |
+| `amends "./base.acore"` | Compose source before a build |
+| `import "./shared.acore"` | Load trusted source as a module |
 
-Continue with [Imports, contracts, and composition](/acore-language/imports-and-contracts).
+A top-level `extends "..."` is rejected because it made source composition and
+value inheritance ambiguous. See
+[Imports, amends and variants](/acore-language/imports-and-contracts).
+
+<span id="functions-and-external-members" />
 
 ## Backend pure functions and managed locals
 
-Backend `pure fn` functions use explicit parameter/result types and a bounded
-expression body. They may call other acyclic pure functions and bounded string/
-collection methods. They cannot capture state, host services, clock or randomness.
-Managed locals are immutable and lexical; branch/handler locals cannot escape.
-See [managed language](/acore-language/managed-language).
+```acore title="backend/main.acore"
+project(id: "pure-example", version: "1.0.0")
+pure fn normalizeTitle(value: String): String = value.trim()
+pure fn label(count: Int32): String = count > 1 ? "many" : "one"
+```
+
+- A `pure fn` declares explicit parameter and result types and a single bounded
+  expression body.
+- It may call other pure functions and bounded string and list methods. The call
+  graph must be acyclic: recursion fails with
+  `recursive or excessive-depth pure functions are forbidden`.
+- It cannot capture state, host services, the clock or randomness.
+- In a `managed` block, `let` creates an immutable lexical local. Locals cannot be
+  shadowed, and a local declared in a branch or handler cannot escape it.
+
+See [Managed logic and concurrency](/acore-language/managed-language) for
+statements and effects.
+
+## Related
+
+- [Values, types and operators](/acore-language/values-types-and-operators)
+- [Imports, amends and variants](/acore-language/imports-and-contracts)
+- [Standard library](/acore-language/standard-library)

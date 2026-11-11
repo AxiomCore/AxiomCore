@@ -33,17 +33,31 @@ impl Kind {
 pub enum Action {
     /// Read-only saved private-input and graph report; no provider is contacted
     Report {
-        #[arg(long)] entry: PathBuf,
-        #[arg(long)] root: PathBuf,
-        #[arg(long,value_enum)] kind: Kind,
-        #[arg(long="target")] targets: Vec<String>,
-        #[arg(long)] variant: Option<String>,
-        #[arg(long)] json: bool,
+        #[arg(long)]
+        entry: PathBuf,
+        #[arg(long)]
+        root: PathBuf,
+        #[arg(long, value_enum)]
+        kind: Kind,
+        #[arg(long = "target")]
+        targets: Vec<String>,
+        #[arg(long)]
+        variant: Option<String>,
+        #[arg(long)]
+        json: bool,
     },
     /// Describe explicit editor tasks using this CLI's actual argument contract
-    Workflows { #[arg(long)] json: bool },
+    Workflows {
+        #[arg(long)]
+        json: bool,
+    },
     /// Validate a typed workflow request without executing it
-    ValidateWorkflow { #[arg(long)] request: String, #[arg(long)] root: PathBuf },
+    ValidateWorkflow {
+        #[arg(long)]
+        request: String,
+        #[arg(long)]
+        root: PathBuf,
+    },
     /// Explicitly run declared native extractors and persist the fenced cache
     RefreshExtraction {
         #[arg(long)]
@@ -82,9 +96,27 @@ pub enum Action {
 pub fn handle(action: &Action) -> Result<()> {
     use axiom_lib::editor_protocol::*;
     match action {
-        Action::Report {entry,root,kind,targets,variant,..}=>println!("{}",serde_json::to_string_pretty(&acore::editor::check::report(entry,root,kind.wire(),targets.clone(),variant.clone())?)?),
+        Action::Report {
+            entry,
+            root,
+            kind,
+            targets,
+            variant,
+            ..
+        } => println!(
+            "{}",
+            serde_json::to_string_pretty(&acore::editor::check::report(
+                entry,
+                root,
+                kind.wire(),
+                targets.clone(),
+                variant.clone()
+            )?)?
+        ),
         Action::Workflows { .. } => println!("{}", super::editor_workflows::catalog()),
-        Action::ValidateWorkflow { request, root } => println!("{}", super::editor_workflows::validate(request, root)?),
+        Action::ValidateWorkflow { request, root } => {
+            println!("{}", super::editor_workflows::validate(request, root)?)
+        }
         Action::RefreshExtraction {
             entry,
             root,

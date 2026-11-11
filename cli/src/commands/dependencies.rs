@@ -368,6 +368,92 @@ pub async fn handle_cache_recover(lock: PathBuf, cache: Option<PathBuf>, json: b
     Ok(())
 }
 
+/// `axiom dependencies check-compat <package>@<version>`: builds and runs a
+/// probe extension that imports the package, using this application's
+/// TypeScript environment, registry and policy, and reports the first stage
+/// that fails with what to do about it.
+pub async fn handle_check_compat(
+    spec: String,
+    deps: PathBuf,
+    registry: Option<String>,
+    cache: Option<PathBuf>,
+    json: bool,
+) -> Result<()> {
+    use axiom_build::core::typescript_compat::{check_typescript_package, CompatibilityRequest};
+    let (package, version) = split_package_spec(&spec)?;
+    let cache = dependency_cache_root(cache)?;
+    let work = tempfile::Builder::new().prefix("axiom-check-compat-").tempdir()?;
+    let request = CompatibilityRequest {
+        deps,
+        package,
+        version,
+        registry,
+        cache,
+        work_root: work.path().to_path_buf(),
+    };
+    // Resolution, the build tools and the sandbox all block; keep them off
+    // Tokio's async workers (see `handle_resolve`).
+    let report = tokio::task::spawn_blocking(move || {
+        check_typescript_package(&request, &HttpRegistryTransport)
+    })
+    .await
+    .context("compatibility check worker failed")??;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        let verdict = if report.compatible { "compatible" } else { "not compatible" };
+        println!("{}@{}: {verdict}", report.package, report.version);
+        for stage in &report.stages {
+            println!("  {} {}", if stage.passed { "ok  " } else { "FAIL" }, stage.stage);
+            if let Some(detail) = &stage.detail {
+                for line in detail.lines().take(8) {
+                    println!("       {line}");
+                }
+            }
+        }
+        if let Some(remediation) = &report.remediation {
+            println!("  What to do: {remediation}");
+        }
+        if let Some(caveat) = &report.caveat {
+            println!("  Caveat: {caveat}");
+        }
+        for lint in &report.lints {
+            println!("  note: {lint}");
+        }
+    }
+    if !report.compatible {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+/// `name@version`, with scoped names (`@scope/name@1.2.3`).
+fn split_package_spec(spec: &str) -> Result<(String, String)> {
+    let at = spec[1..]
+        .rfind('@')
+        .map(|index| index + 1)
+        .context("give the package as <name>@<exact version>, for example zod@4.1.12")?;
+    let (name, version) = (&spec[..at], &spec[at + 1..]);
+    if name.is_empty() || version.is_empty() {
+        bail!("give the package as <name>@<exact version>, for example zod@4.1.12");
+    }
+    Ok((name.to_string(), version.to_string()))
+}
+
+#[cfg(test)]
+mod check_compat_tests {
+    use super::split_package_spec;
+
+    #[test]
+    fn package_specs_split_at_the_version_separator() {
+        assert_eq!(split_package_spec("zod@4.1.12").unwrap(), ("zod".into(), "4.1.12".into()));
+        assert_eq!(split_package_spec("@scope/name@1.0.0").unwrap(), ("@scope/name".into(), "1.0.0".into()));
+        assert!(split_package_spec("zod").is_err());
+        assert!(split_package_spec("@scope/name").is_err());
+        assert!(split_package_spec("zod@").is_err());
+    }
+}
+
 fn dependency_cache_root(explicit: Option<PathBuf>) -> Result<PathBuf> {
     explicit
         .or_else(|| dirs::cache_dir().map(|root| root.join("axiom/dependencies/v1")))

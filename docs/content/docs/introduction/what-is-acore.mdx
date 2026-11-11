@@ -1,66 +1,103 @@
 ---
 title: What is Acore?
-description: The declarative, contract-oriented language at the center of AxiomCore.
+description: Acore is AxiomCore's declarative language for describing APIs, UIs, databases and packages as typed contracts.
 pageType: concept
 ---
 
-Acore is an independent declarative language for describing software contracts.
-It provides typed declarations, composition, validation, a standard library,
-diagnostics, and editor support. A `.acore` file is source code; it is
-not the distributable artifact that a consumer locks and runs.
+Acore is AxiomCore's independent, declarative language for describing software
+contracts. It has typed declarations, composition, validation, a standard
+library, diagnostics and editor support. A `.acore` file is source code. It is
+not the artifact a consumer locks and runs; the Axiom CLI builds that from it.
 
 <StatusNote status="alpha" title="Language maturity">
-  Acore is implemented and testable, but its language and standard-library
-  surfaces are still evolving. Commit generated locks and review semantic diffs
-  when upgrading.
+  Acore is implemented and testable, but the language and standard library are
+  still evolving. Commit generated locks and review semantic diffs when you
+  upgrade.
 </StatusNote>
+
+## A small example
+
+This file defines a model, an action that returns it, and a public endpoint
+that runs the action:
+
+```acore title="main.acore"
+project(id: "docs.hello", version: "1.0.0")
+variant default(include: ["*"])
+model Greeting { message: String }
+action hello(kind: ActionKind.query, output: Models.Greeting) {
+  managed { return {message: "Hello from Acore"} }
+}
+endpoint hello(method: GET, path: "/hello") {
+  handle(action: Actions.hello)
+  response(type: Models.Greeting)
+}
+```
+
+`axiom check main.acore` validates it, and `axiom build` turns it into a
+`.axiom` contract. [Build your first API](/getting-started/quickstart-backend)
+runs it.
 
 ## What Acore can describe
 
-- backend service routes, models, caching, retry, authentication, validation,
-  streaming, and mock behavior;
-- durable domain entities, relationships, invariants, projections, and security
-  declarations;
-- Acore UI trees, typed text and layout, interactions, effects, assets, and
-  target-specific application builds;
-- typed theme and component-library package consumption;
-- versioned package boundaries for services, themes, component libraries,
-  database schemas, extensions, and application policies.
+- Backend routes, models, caching, retry, authentication, validation,
+  streaming and mock behavior.
+- Durable domain entities, relationships, invariants, projections and security
+  declarations.
+- Acore UI trees: typed text and layout, interactions, effects, assets and
+  target-specific application builds.
+- Use of typed theme and component-library packages.
+- Versioned package boundaries for services, themes, component libraries,
+  database schemas, extensions and application policies.
 
-Not every kind exposes the same authoring or runtime surface yet. The
+Not every kind has the same authoring or runtime surface yet. The
 [support matrix](/introduction/support-matrix) gives the current boundary.
 
-## Source, package, and application are different artifacts
+<span id="source-package-and-application-are-different-artifacts" />
 
-| Form | Purpose | May be changed by a consumer? |
+## Source, contract and application
+
+```mermaid title="Acore source builds into a locked contract or a packaged application"
+flowchart LR
+  A[.acore source] -->|axiom build| B[.axiom contract or package]
+  B -->|pinned in a lock| C[Consumers]
+  A -->|axiom ui build| D[.axiomapp application]
+```
+
+| File | Purpose | Can a consumer change it? |
 | --- | --- | --- |
-| `.acore` | Human- and agent-authored declarative source | Yes, inside the source owner's build |
-| `.axiom` | Canonical versioned contract/package | No; select a version and lock it |
+| `.acore` | Declarative source written by people or agents | Yes, inside the source owner's build |
+| `.axiom` | Canonical, versioned contract or package | No; select a version and lock it |
 | `.axiomapp` | Built UI application for one or more targets | No; rebuild from source and dependencies |
 
 ## Composition keywords
 
-```text title="Conceptual example"
+```acore title="Conceptual example"
 import "./shared.acore"
 amends "axiom-fastapi:./app.py:app"
 use contract Billing from "billing" audience "mobile"
 use theme AppTheme from "design-system" export "default"
 ```
 
-- `import` reuses trusted source within a build.
-- `amends` composes an Acore or supported extractor input before building.
-- `use contract` consumes a compiled service contract selected by a committed
-  dependency lock.
-- `use theme` and `use component` bind verified exports from typed packages.
-- `extend` inherits or promotes a declared value; it does not load a file.
+| Keyword | What it does |
+| --- | --- |
+| `import` | Reuses trusted source within one build |
+| `amends` | Composes an Acore file or a supported extractor input before building |
+| `use contract` | Consumes a compiled service contract selected by a committed dependency lock |
+| `use theme`, `use component` | Bind verified exports from typed packages |
+| `extend` | Inherits or promotes a declared value; it does not load a file |
 
-See [Imports, contracts, and composition](/acore-language/imports-and-contracts)
-for ownership and trust boundaries.
+[Imports, amends and variants](/acore-language/imports-and-contracts) covers
+ownership and trust boundaries.
 
 ## Acore is optional at integration edges
 
-You do not have to rewrite an entire application. Existing Python and Go
-services can participate through supported extractors. Existing web, React,
-Flutter, and Swift applications can use their current integration paths. Acore
-becomes the common contract layer where declarative behavior and auditable
-composition are valuable.
+You do not have to rewrite an application. Existing Python and Go services take
+part through supported extractors. Existing web, React, Flutter and Swift apps
+keep their current integration paths. Use Acore where declarative behavior and
+auditable composition help.
+
+## Next steps
+
+- [Acore language overview](/acore-language)
+- [Build your first API](/getting-started/quickstart-backend)
+- [Use your existing stack](/guides)

@@ -1,30 +1,33 @@
 ---
-title: Contract runtime
-description: Native and browser execution, request lifecycle, caching, authentication, and events.
+title: The contract runtime
+description: How native and browser runtimes load a contract and handle requests, caching, authentication, errors and tracing.
 pageType: concept
 ---
 
-The Axiom Runtime consumes compiled contract data and executes declared client
-behavior. It resolves endpoint identity, builds and validates requests, applies
-authentication and cache policy, performs transport, validates responses, and
-returns structured events or errors to the framework binding.
+The contract runtime is the engine inside each client. It loads compiled
+contract data, resolves endpoint identity, builds and validates requests,
+applies authentication and cache policy, sends the request, validates the
+response and returns structured events or errors to your framework binding.
 
 <StatusNote status="alpha" title="Shared semantics, platform-specific lifecycle">
-  Native and browser runtimes consume the same contract concepts. They do not
-  have identical storage engines, networking APIs, startup behavior, or
-  framework integration. Validate each shipping target independently.
+  Native and browser runtimes share the same contract concepts. They do not
+  share storage engines, networking APIs, startup behavior or framework
+  integration. Validate each target you ship.
 </StatusNote>
 
 ## Runtime targets
 
-| Target | Engine and bridge | Network | Local cache boundary |
-| --- | --- | --- | --- |
-| Flutter/Dart | Rust runtime through native bindings | Native HTTP client | Optional persistent cache configured by the application |
-| Browser/ATMX | Rust compiled to Wasm plus the ATMX JavaScript layer | Browser fetch and WebSocket facilities | ATMX query snapshots in `sessionStorage` for the current browser session |
-| Swift/Apple | Native runtime distribution foundations | Native runtime transport | Experimental binding and lifecycle surface |
+| Target | Status | Engine and bridge | Network | Local cache |
+| --- | --- | --- | --- | --- |
+| Vanilla web (ATMX) | Available | Rust compiled to WebAssembly plus the ATMX JavaScript layer | Browser fetch and WebSocket | Query snapshots in `sessionStorage` (`atmx_cache_*`); the runtime's response cache in `localStorage` (`axiom_cache_*`), or in memory when storage is blocked |
+| React (ATMX) | Alpha | Same engine through the React provider | Browser fetch and WebSocket | Query state in memory; the runtime's response cache in `localStorage` (`axiom_cache_*`) |
+| Flutter and Dart | Alpha | Rust runtime through native bindings | Native HTTP client | Optional persistent cache at a database path the application chooses |
+| Swift and Apple platforms | Experimental | Native runtime distribution foundations | Native runtime transport | Binding and lifecycle surface is incomplete |
 
-The browser cache is not documented as an IndexedDB durability guarantee, and
-the native cache is not automatically shared with a browser or another app.
+The browser cache is not an IndexedDB durability guarantee, and a native cache
+is never shared with a browser or another app. ATMX cache methods do not clear
+the runtime's `localStorage` entries, so remove private cached responses on
+logout yourself.
 
 ## Request lifecycle
 
@@ -38,46 +41,55 @@ flowchart TD
   F --> G[Update cache and framework state]
 ```
 
-The runtime resolves endpoint identity, constructs and validates input, applies
-cache policy, and performs authenticated transport. It validates the response
-before updating cache and framework state. Cache hits can be published while
-a network refresh continues.
+The runtime validates input before sending and validates the response before
+it updates cache or framework state. A cache hit can be published while a
+network refresh continues.
 
-
-Failures retain their stage, category, symbolic code, retryability, and safe
-details when available. This lets an application distinguish a missing
-contract from request validation, authentication, timeout, HTTP status,
-decoding, or cache failure. See [Runtime errors](/reference/error-codes).
+Failures keep their stage, category, symbolic code, retryability and safe
+details when available. Your application can tell a missing contract apart from
+request validation, authentication, timeout, HTTP status, decoding or cache
+failure. See [Runtime errors](/reference/error-codes).
 
 ## Cache behavior
 
-Cache behavior comes from the compiled endpoint policy and target runtime. A
-query can emit cached data and remain in a fetching state while the network
-refresh proceeds. Mutations and invalidation should be tested together: a
-successful mutation does not imply that every related query is automatically
-invalidated unless the generated client or application declares that link.
+Cache behavior comes from the compiled endpoint policy and the target runtime.
+A query can emit cached data and stay in a fetching state while the refresh
+runs. A successful mutation does not invalidate related queries unless the
+generated client or your application declares that link, so test mutations and
+invalidation together.
 
-ATMX exposes targeted invalidation, cache reads and writes, namespace clearing,
-and a full session-cache purge. Native applications choose a database path
-when they require persistence. Cache entries are application data: apply the
-same privacy and logout-clearing policy you would use for any client store.
+ATMX exposes `getCachedQueryData`, `setQueryData`, targeted `invalidate`,
+`clearCache` (clears and refetches, optionally for one namespace) and
+`purgeCache` (clears without refetching). Native applications choose a
+database path when they need persistence. Cache entries are application data:
+apply the same privacy and logout-clearing policy as any client store.
 
 ## Authentication
 
-Contracts describe how credentials are attached; applications remain
-responsible for obtaining and protecting them. ATMX accepts method,
-namespace, or global in-memory tokens and does not persist those token values.
-Cookie sessions use browser cookie behavior when the contract declares a
-cookie session. Native bindings expose runtime token APIs so the application
-can restore a token from its platform-secure store.
+Contracts describe how credentials attach to a request. Your application
+obtains and protects them.
+
+- ATMX keeps method, namespace or global bearer tokens in memory only and never
+  persists them. It removes tokens that older versions stored in `localStorage`.
+- Cookie sessions use normal browser cookie behavior (for example HttpOnly
+  cookies) when the contract declares a cookie session.
+- Native bindings expose token APIs so the application can restore a token from
+  its platform secure store after a restart.
 
 Never put a production credential in Acore source, a generated config, a
-contract artifact, or a committed mock.
+contract artifact or a committed mock.
 
 ## Tracing
 
-The native runtime can accept incoming W3C `traceparent` context and attach it
-to runtime spans. Runtime OTLP export is configuration-dependent; it is not an
-automatic promise that every request reaches a hosted observability service.
-Keep runtime tracing separate from the CLI's optional, aggregate adoption
-telemetry.
+The native runtime accepts W3C `traceparent` context with a call and attaches
+it to runtime spans. OTLP export depends on configuration; it does not promise
+that every request reaches a hosted observability service. Runtime tracing is
+separate from the CLI's optional, aggregate adoption telemetry. See
+[Observability](/cloud/telemetry-and-observability).
+
+## Next steps
+
+- [Client SDKs](/sdks)
+- [Web (atmx-web)](/sdks/web)
+- [Artifact trust](/core-concepts/trust-and-security)
+- [Runtime errors](/reference/error-codes)

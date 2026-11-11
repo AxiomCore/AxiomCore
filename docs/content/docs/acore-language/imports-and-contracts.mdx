@@ -1,48 +1,67 @@
 ---
-title: Imports, Contracts, and Composition
-description: Choose the Acore keyword that matches the ownership and trust boundary.
+title: Imports, amends and variants
+description: Choose the Acore keyword that matches the ownership and trust boundary, compose backend sources with amends, and select variants.
 pageType: reference
 ---
 
-Acore uses different keywords for source reuse, immutable contracts, source
-composition, and value inheritance. They are deliberately not synonyms.
+<span id="basic-usage" />
+<span id="deep-merging-microservices" />
+<span id="what-amends-is-not" />
+<span id="internal-source-modules-import" />
+<span id="backend-composition-amends" />
+
+Acore has separate keywords for reusing source, composing source, consuming a
+compiled contract and promoting a model. They are deliberately not synonyms.
+This page also covers variants, which select part of a backend contract at build
+time. Backend examples were checked with Axiom CLI 0.149.1.
 
 | Intent | Syntax | What crosses the boundary |
 | --- | --- | --- |
 | Reuse trusted source in the same build | `import "./shared.acore"` | A source module |
-| Consume a compiled contract | `use contract Tasks from "tasks" audience "mobile"` | A `.axiom` artifact selected by `AxiomDeps.toml` and a lock |
-| Consume a typed frontend package export | `use theme AppTheme from "theme" export "default"` | A verified theme or component-library export selected by a package lock |
-| Add declarations to Acore or extracted backend input | `amends "..."` | Build-time authoring input |
+| Compose Acore or extracted backend input | `amends "./base.acore"` | Build-time authoring input |
+| Consume a compiled contract in Acore UI | `use contract Tasks from "tasks" audience "mobile"` | A `.axiom` selected by `AxiomDeps.toml` and a lock |
+| Consume a typed package export in Acore UI | `use theme AppTheme from "theme" export "default"` | A verified theme or component-library export selected by a package lock |
+| Share a pure function | `use function normalize from "./shared/title.acore"` | Selected pure functions, not executed at import |
 | Promote a backend model | `entity task(model: Models.Task)` | A resolved model reference; no file is loaded |
 
-## Internal source modules: `import`
+## import
 
 ```acore title="Acore excerpt"
 import "./shared.acore"
+import "acore:math"
 ```
 
-`import` is eager, source-to-source reuse within one trusted build. Use it for
-internal backend/shared modules. It does not create a release boundary and it
-must not load a compiled `.axiom` contract. Keep imported source within the
-same reviewed build boundary.
+`import` loads trusted source within one build. It does not create a release
+boundary.
 
-## Compiled contracts: `use contract`
+- In a general module, every top-level property of the imported module,
+  including `hidden` ones, becomes available by name. Imported values are not
+  added to your output.
+- In a backend source, `import` does not add the imported file's models or
+  endpoints to the contract. Use `amends` to compose declarations, and
+  `use function` to share pure functions.
+- `import` rejects a compiled `.axiom` file and tells you to use
+  `use contract` instead.
+- `acore:` URIs load [standard library](/acore-language/standard-library) modules.
 
-```acore title="Acore excerpt"
+<span id="compiled-contracts-use-contract" />
+
+## use contract
+
+```acore title="frontend/main.acore"
 use contract Tasks from "tasks" audience "mobile"
 ```
 
-Here `Tasks` is the local facade name and `tasks` is a stable alias in
-the frontend project's `AxiomDeps.toml` and `axiom.ui.lock.json`. The alias must resolve to a compiled
-file whose extension is `.axiom`. The compiler exposes only the
-selected operations, fields, audience, and policy metadata; it never loads the
-backend's `.acore` source or runs an extractor.
+`Tasks` is the local facade name and `tasks` is an alias in the frontend
+project's `AxiomDeps.toml` and lock. The alias must resolve to a compiled
+`.axiom` file. The compiler exposes only the operations, fields, audience and
+policy metadata selected for that audience. It never loads the backend's
+`.acore` source or runs an extractor. Because of this indirection, you can
+change a contract's version or location in the manifest and lock without
+editing every source file.
 
-This indirection lets an application update a package version or location in
-its manifest/lock without rewriting every source use. The current UI facade
-schema exposes the service operations and fields selected for its audience.
-
-Declare that alias in the frontend's own manifest:
+Declare the alias in the frontend's own manifest. Paths are relative to the
+manifest.
 
 ```toml title="frontend/AxiomDeps.toml"
 type = "frontend"
@@ -52,85 +71,177 @@ artifact = "../backend/backend.axiom"
 baseUrl = "http://127.0.0.1:8080"
 ```
 
-Paths are relative to the manifest. The backend has a separate
-`AxiomDeps.toml` with `type = "backend"`; that file selects backend syntax and
-may declare `audiences = ["mobile"]` for typed `Audience.mobile` references.
-Frontend dependency settings do not alter that vocabulary.
+The backend has its own `AxiomDeps.toml` with `type = "backend"`. That file
+selects backend syntax and may declare `audiences = ["mobile"]` for typed
+`Audience.mobile` references. Frontend dependency settings do not change it.
 
 Operations are inferred from the contract and filtered by audience. Omit the
-dependency's `audience` when the contract has one audience, or no audience
-restrictions. Select it explicitly when the diagnostic lists multiple choices.
-The source's `audience "mobile"` must agree with the resolved lock. New
-manifests need neither `format` nor an `operations` list.
+dependency's `audience` key when the contract has one audience or no audience
+restrictions; set it when a diagnostic lists several choices. The source's
+`audience "mobile"` must agree with the resolved lock. New manifests need
+neither `format` nor an `operations` list.
 
-```bash title="Terminal"
-# Run in the frontend directory after building the backend contract.
+```bash title="Terminal, in the frontend directory after building the backend contract"
 axiom contract resolve
-axiom ui check frontend.acore --target web
+axiom ui check main.acore --target web
 ```
 
-The [playground example](/acore-language/backend-profile#frontend-contract-imports)
-shows both editable manifests and how its local `tasks` import is resolved.
+`axiom contract resolve` writes the lock to `.axiom/axiom.ui.lock.json` by
+default; pass `--lock` to choose a path you commit. Without a lock, `ui check`
+fails with `AUI010: cannot read committed UI lock`.
 
-## Typed frontend packages: `use theme` and `use component`
+<span id="typed-frontend-packages-use-theme-and-use-component" />
 
-Theme and component-library packages use kind-specific declarations:
+## use theme and use component
 
-```acore title="Acore excerpt"
+```acore title="frontend/main.acore"
 use theme Material from "material-theme" export "default" appearance "light"
 use component Controls from "controls" export "PrimaryButton"
 ```
 
 Both aliases resolve through the committed package lock. The declaration must
 match the artifact kind and name an export present in the locked package.
-Editor analysis provides diagnostics, completion, and definition links from
-that verified surface. Package source is neither executed nor merged into the
-consumer.
+`appearance` is accepted only on `use theme`. Editor analysis provides
+diagnostics, completion and definition links from that verified surface.
+Package source is neither executed nor merged into the consumer. Acore UI also
+accepts `use extension Name from "alias" export "name"`; see
+[Extension reference](/extensions/reference).
 
-## Backend composition: `amends`
+## amends
+
+`amends` composes authoring input before a contract is built.
+
+In a general module, `amends` deep-merges the base module with your file:
+
+```acore title="base.acore"
+name = "base"
+port = 8080
+retry { attempts = 3 timeout = "5s" }
+```
+
+```acore title="child.acore"
+amends "./base.acore"
+port = 9090
+retry { attempts = 5 }
+```
+
+`axiom eval child.acore` keeps `name` and `retry.timeout` from the base and
+takes `port = 9090` and `retry.attempts = 5` from the child.
+
+In a backend source, `amends` accepts a local Acore base or a supported
+extractor input:
 
 ```acore title="Acore excerpt"
 amends "./base.acore"
 amends "axiom-openapi:./openapi.yaml"
-amends "axiom-fastapi:./app.py:app"
+amends "axiom-fastapi:./main.py:app"
 amends "axiom-go:./cmd/api"
 ```
 
-`amends` composes authoring inputs before an immutable contract is built. Use
-it for a local Acore base or supported extractor input such as OpenAPI,
-FastAPI, or Go. A compiled `.axiom` is immutable and cannot be amended.
-
-Top-level `extends "..."` is rejected because it made source composition and
-value inheritance ambiguous. `amends` is the one spelling for source
-composition.
-
-## Promote a backend model
+After an amend, `Models` and `Routes` hold the amended models and endpoints.
+Change an amended endpoint with `override`; do not redeclare its transport.
 
 ```acore title="Acore excerpt"
-// In a backend project with Models.Task available.
-entity task(model: Models.Task)
+override endpoint Routes.get_user_by_id {
+  cache(strategy: CacheStrategy.cacheFirst, ttl: 5m)
+}
 ```
 
-`entity` promotes an already declared or extracted model. For a local model
-whose entity shares its shape and conventional identity key, append `also entity`
-to the model declaration; `model Task { id: String } also entity` creates
-`Entities.Task`. The older `Entities.task` spelling remains compatible. It does not import a
-file, run an extractor, or cross a trust boundary. General evaluator modules
-retain `extend` for value inheritance, and classes may use the conventional
-`class Child extends Parent` form. These differ from a top-level input directive.
+| Situation | Result |
+| --- | --- |
+| You redeclare an amended endpoint | `AXB002: endpoint 'name' already exists in an amended source; use an explicit override` |
+| You amend several sources, for example a gateway over two services | Their declarations are deep-merged into one contract |
+| Two amended sources declare the same model or endpoint | `AXB002: independently amended sources both declare /models/Name`. Ordering never silently changes a released surface. |
+| You amend a `.axiom` file | Rejected. A compiled contract is immutable. |
+| You write a top-level `extends "..."` | Rejected as ambiguous. `amends` is the one spelling for source composition. |
+
+`override` accepts `endpoint` and `model`. An extractor input must already be
+cached; otherwise the build reports `AXB005` and asks you to refresh extraction.
+
+<span id="promote-a-backend-model" />
+
+## Promote a model
+
+```acore title="backend/main.acore"
+project(id: "also-entity", version: "1.0.0")
+model Task { id: String title: String } also entity
+projection publicTask(entity: Entities.Task, fields: [.id, .title])
+```
+
+`entity task(model: Models.Task)` promotes an already declared or extracted
+model. For a local model whose entity has the same shape and a conventional
+identity key, append `also entity` to create `Entities.Task`; the older
+`Entities.task` spelling still works. Promotion does not import a file, run an
+extractor or cross a trust boundary. See
+[Domain and security models](/acore-language/domain-and-security-models).
 
 ## Contract build flow
 
-```text title="Conceptual example"
-backend source/OpenAPI -- amends/import --> build --> .axiom
-                                            local: unsigned + warning
-                                            Cloud release: signed
-                                                   |
-frontend AxiomDeps.toml + lock -- use contract <---+
+```mermaid title="How backend source becomes a contract that a frontend consumes through a lock"
+flowchart LR
+  A["Backend .acore or extractor input"] -->|"amends"| B["axiom build"]
+  B --> C["Local .axiom, unsigned"]
+  B --> D["Cloud release .axiom, signed"]
+  C --> E["Frontend AxiomDeps.toml"]
+  D --> E
+  E -->|"axiom contract resolve"| F["Lock file"]
+  F -->|"use contract"| G["Frontend source"]
 ```
 
-The frontend resolves `AxiomDeps.toml` and commits the resulting
-`axiom.ui.lock.json`. Local unsigned `.axiom` artifacts are accepted with a
-warning. A Cloud-released contract includes signature/public-key proof and is
-verified. A missing lock is a hard error: Axiom does not fall back to backend
-source or network discovery.
+The frontend resolves its `AxiomDeps.toml` into a lock. A local unsigned
+`.axiom` is accepted with a warning. A Cloud-released contract carries a
+signature and public-key proof, which is verified. A missing lock is a hard
+error: Axiom never falls back to backend source or network discovery.
+
+## Variants
+
+A variant selects endpoint and model names while the contract is materialized,
+then prunes the rest.
+
+```acore title="backend/main.acore"
+variant default(include: ["*"])
+variant mobile(
+  include: ["public_*", "profile"],
+  exclude: ["admin_*"],
+  includeModels: ["User", "Profile"],
+  cache: CachePolicy(strategy: CacheStrategy.networkFirst, ttlSeconds: 60)
+)
+variant operations(
+  include: ["admin_*", "internal_metrics"],
+  cache: CachePolicy(strategy: CacheStrategy.networkOnly, ttlSeconds: 0)
+)
+```
+
+| Argument | Type | Applies to |
+| --- | --- | --- |
+| `include` | `List<String>?` | Endpoint names, as glob patterns such as `public_*` |
+| `exclude` | `List<String>?` | Endpoint names; narrows `include` |
+| `includeModels` | `List<String>?` | Model names. Without it, every model is kept. |
+| `excludeModels` | `List<String>?` | Model names |
+| `cache` | `CachePolicy?` | A cache policy for the variant |
+
+```bash title="Terminal"
+axiom build main.acore --variant mobile --out backend.axiom
+```
+
+- `check`, `build`, `explain` and `eval` use the `default` variant unless you
+  pass `--variant` (`-v` for `eval`).
+- With no `variant` declarations, an implicit `default` includes everything.
+  Once you declare any variant, also declare `variant default(include: ["*"])`,
+  or commands without `--variant` fail with `Variant 'default' not found.`
+- A variant that excludes a model a selected endpoint needs fails, for example
+  `Variant 'mobile' excludes model 'A' required by endpoint 'a'`.
+- An explicit endpoint cache policy takes precedence over a variant cache
+  policy, which takes precedence over project defaults.
+
+Variants reduce what a consumer receives; they are not authorization. Protect
+the backend independently and use signed audience and
+[security declarations](/acore-language/domain-and-security-models) for
+reviewable access boundaries.
+
+## Related
+
+- [Contracts and artifacts](/core-concepts/contracts-and-artifacts)
+- [Backend declarations](/backend/declarations)
+- [Acore UI](/frontend/acore-ui)
+- [How extraction works](/guides/backend-extraction)

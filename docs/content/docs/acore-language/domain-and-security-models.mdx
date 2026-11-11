@@ -1,0 +1,409 @@
+---
+title: Domain and security models
+description: Add optional entities, relationships, invariants, projections and security policy to a backend contract, compiled into signed manifests.
+pageType: reference
+---
+
+<span id="the-authoring-model" />
+<span id="identity-and-model-changes" />
+<span id="relationships-and-enums" />
+<span id="runnable-fixture" />
+<span id="opt-in-deliberately" />
+
+Domain Model v1 and Security Model v1 are optional layers on top of a backend
+contract. The domain layer names the application concepts behind your models;
+the security layer declares who may call what, and with which data and side
+effects. Both compile into canonical manifests inside the `.axiom` artifact.
+Examples were checked with Axiom CLI 0.149.1 (`axiom check`,
+`axiom domain validate`, `axiom security check`).
+
+Both layers are part of the Acore language toolchain (**Alpha**). Bootstrapping
+a domain block from OpenAPI or SQL is **Experimental**.
+
+```mermaid title="How domain and security declarations reach a signed artifact and review"
+flowchart LR
+  A["Models from source or extractor"] --> B["entity, relationship, invariant, projection"]
+  A --> C["security(...) declaration"]
+  B --> D["axiom-domain-manifest/v1"]
+  C --> E["axiom-security-manifest/v1"]
+  D --> F[".axiom artifact"]
+  E --> F
+  F --> G["Release signing, pull request review, impact view"]
+```
+
+## Domain Model v1
+
+The domain layer describes application concepts; it is not another copy of
+your schema. An extractor for FastAPI or Go discovers models, field validation
+and association candidates, and you promote the concepts that matter. The
+compiler owns all semantic IDs, picks conventional `id` or `uuid` keys, resolves
+promoted entities, folds extractor relationship candidates into the manifest,
+and signs the canonical payload as part of the normal release artifact.
+
+`Models` holds the backend's models. `Entities` is a separate vocabulary for
+semantic boundaries:
+
+- Append `also entity` to a local model and refer to it with the model's case,
+  `Entities.Task`, like `Models.Task`.
+- Or promote a model with `entity name(model: Models.Name)` and refer to
+  `Entities.name`.
+
+```acore title="backend/axiom.acore"
+// Models and routes come from the existing service.
+amends "axiom-fastapi:./main.py:app"
+
+entity customer(model: Models.Customer, doc: "A purchaser with a durable account.")
+entity order(model: Models.Order)
+
+// Customer.orders and Order.customer are discovered from the source model.
+invariant orderTotal(
+  scope: Entities.order,
+  expression: "total_cents >= 0",
+  fields: ["total_cents"]
+)
+projection publicCustomer(entity: Entities.customer, fields: [.id, .email])
+
+override endpoint Routes.get_customer {
+  response(type: Entities.customer, projection: Projections.publicCustomer)
+}
+```
+
+| Declaration | Signature |
+| --- | --- |
+| `entity` | `entity name(model: Models.Name, doc: String?, key: List<String> = [])` |
+| `relationship` | `relationship name(from: Entities.a, to: Entities.b, via: String, inverse: String, cardinality: Cardinality, ownership: Ownership, required: Boolean = false, doc: String?)` |
+| `invariant` | `invariant name(scope: Entities.a, expression: String, fields: List<String>, rules: Json?, severity: String = "error", doc: String?)` |
+| `projection` | `projection name(entity: Entities.a, fields: [.field], audience: Audience.name?, doc: String?)` |
+
+Constructor calls use named arguments, such as
+`DomainInvariant(scope: ..., fields: [...])`. Literal objects use
+colon-separated fields and commas.
+
+### Identity
+
+The `model` argument is a resolved model reference. Never repeat a model name as
+a string or assign a domain `id`. The key is inferred from `id`, `uuid` or a
+case-insensitive equivalent; only an unconventional durable key needs `key`:
+
+```acore title="Acore excerpt"
+// An unconventional entity key is explicit; IDs remain compiler-owned.
+entity invoice(model: Models.Invoice, key: ["invoice_number"])
+```
+
+Entity arguments can add documentation or entity-level metadata without a
+second model declaration.
+
+### Relationships
+
+The Python and Go extractors recognize direct model fields and model
+collections. A bidirectional association becomes one relationship candidate
+with `via` and `inverse`. A candidate is included only after both models are
+promoted, so not every DTO becomes a domain concept. When an association cannot
+be inferred, declare it with `Entities.*` and the enum helpers instead of raw
+wire values:
+
+```acore title="Acore excerpt"
+relationship orderCustomer(
+  from: Entities.order,
+  to: Entities.customer,
+  via: "customer_id",
+  cardinality: Cardinality.manyToOne,
+  ownership: Ownership.reference
+)
+```
+
+`Cardinality`: `oneToOne`, `oneToMany`, `manyToOne`, `manyToMany`.
+`Ownership`: `owned`, `reference`, `shared`. The compiler checks `via` on the
+source entity and `inverse` on the target, defaults an omitted ownership to
+`reference`, and derives cardinality from a collection field when it can. These
+declarations never run a database migration or change runtime ownership.
+
+### Invariants and Rod rules
+
+An invariant is evidence for review, generation and impact analysis, not code
+that runs. It can be a bounded readable expression, a structured Rod validation
+rule, or both. Its `scope` must be an `Entities.<name>` reference.
+
+```acore title="Acore excerpt"
+invariant validShippingAddress(
+  scope: Entities.order,
+  fields: ["shipping_address"],
+  rules: {
+    type: "object",
+    properties: { postal_code: { type: "string", min: 3, max: 16 } },
+    required: ["postal_code"]
+  }
+)
+```
+
+Field validation extracted from Pydantic and other Rod-compatible schemas
+becomes inferred `*.rod` invariants when its model is promoted. Rule objects
+have depth, property and collection limits and allow only the supported Rod
+kinds, so validation cannot become an arbitrary code execution channel.
+
+<span id="compile-sign-and-generate" />
+
+### Compile, validate and generate
+
+```bash title="Terminal"
+axiom domain validate axiom.acore
+axiom build axiom.acore --variant default --out backend.axiom
+```
+
+For a contract with three entities, `axiom domain validate axiom.acore --json`
+prints:
+
+```json title="Example output of axiom domain validate --json"
+{
+  "endpoint_bindings": 1,
+  "entities": 3,
+  "format": "axiom-domain-manifest/v1",
+  "hash": "fa92f9ab770294948a968f1abb159f217b3e9e8551f8a3505c21a0e7654c28fa",
+  "invariants": 2,
+  "projections": 1,
+  "relationships": 1
+}
+```
+
+Without `--json`, it prints the entity, relationship and projection counts and
+the manifest hash, or a note that no Domain Model v1 block is declared. `axiom build` validates the resolved domain and embeds the
+manifest in the `.axiom` artifact. The manifest is canonicalized before its hash
+is calculated, and Cloud release signing covers those exact bytes.
+
+Generated ATMX clients keep the transport models and add typed projection
+aliases. A response bound to `publicCustomer` uses its allowlist, while the
+runtime keeps validating the signed transport contract.
+
+### Review and impact
+
+The dashboard stores the compiled semantic manifest beside the signed release.
+Axiom pull requests classify entity, relationship, invariant, projection and
+binding changes. The impact view follows the dependency graph to affected
+endpoints and routes and attaches observed consumer telemetry for the source
+release. The member-only semantic endpoint is:
+
+```text title="Axiom Cloud API route"
+GET /api/v1/projects/{project_slug}/contracts/{version}/semantic-view
+```
+
+It requires project access even for public projects and excludes raw contract
+bytes, source code, credentials and runtime payloads.
+
+### Bootstrap from an existing schema
+
+<StatusBadge status="experimental" /> OpenAPI JSON and exported SQL DDL can
+produce a reviewable promotion suggestion:
+
+```bash title="Terminal"
+axiom domain bootstrap openapi.json --source openapi --output axiom.domain.acore
+axiom domain bootstrap schema.sql --source sql --output axiom.domain.acore
+```
+
+The command reads a file of at most 8 MiB, never inspects a live database, and
+refuses to overwrite an existing `--output` file (default `axiom.domain.acore`).
+Its output uses model references, `Entities.*` and inferred defaults, and
+assumes matching extracted model symbols exist in the contract. Review
+projections and any unconventional key before release.
+
+The public [`domain-inference-fastapi` example](https://github.com/AxiomCore/examples/tree/main/domain-inference-fastapi)
+is a compact source-to-manifest fixture with Pydantic validation and a
+bidirectional `Customer` and `Order` association; its Acore file promotes only
+the two entities. Its README lists the local commands.
+
+## Security Model v1
+
+The security layer covers authorization, authentication, data boundaries, side
+effects and application-wide requirements. Go and Python extractors may report
+evidence without adding an SDK to your application, but only a contract can
+declare a policy. The compiler canonicalizes declarations, AXSEC findings,
+coverage, the policy graph and extractor facts into
+`axiom-security-manifest/v1`, which the `.axiom` artifact signs with the rest of
+the contract. The manifest never contains a token, cookie value, API key or
+request payload.
+
+### Modes
+
+| Mode | Behavior |
+| --- | --- |
+| `audit` (default) | Reports every finding and still builds and releases, so a team can form a baseline. |
+| `strict` | Treats findings as blocking. A build or release with a blocking AXSEC finding fails: `security strict mode rejected build: 1 blocking AXSEC finding(s)`. |
+
+Structural errors, such as an unknown policy reference or an unsupported
+invariant kind, always stop compilation because the declaration would be
+ambiguous.
+
+```acore title="Acore excerpt"
+// Add to a contract declaring Entities.document and UpdateDocument.
+security(
+  mode: "audit",
+  principals: { workspaceMember: SecurityPrincipal(roles: ["member", "owner"]) },
+  auth: {
+    browserSession: AuthenticationPolicy(
+      transport: "cookie", secure: true, httpOnly: true,
+      sameSite: "lax", sessionRotation: true
+    )
+  },
+  permissions: {
+    editDocument: Permission(
+      requiresRateLimit: true, requiresIdempotency: true, requiresCsrf: true
+    )
+  },
+  resources: { document: ProtectedResource(entity: Entities.document) },
+  policies: {
+    documentEditor: SecurityPolicy(
+      principals: ["workspaceMember"], auth: "browserSession", resource: "document",
+      permissions: ["editDocument"], relationship: "workspaceDocument",
+      resourceBinding: "principal.workspaceId == resource.workspaceId"
+    )
+  },
+  endpoints: {
+    UpdateDocument: EndpointGuard(
+      policy: "documentEditor", resource: "document", permission: "editDocument",
+      writableFields: ["title", "body"], idempotent: true
+    )
+  },
+  rateLimits: { memberWrite: RateLimit(maxRequests: 60, windowSeconds: 60, key: "principal") },
+  csrf: CsrfPolicy(strategy: "double_submit", sameSite: "lax", secure: true, httpOnly: true)
+)
+```
+
+```bash title="Terminal"
+axiom security check axiom.acore
+```
+
+```text title="Example output"
+Security Mode audit · 0 error(s), 1 warning(s) · 1 of 1 endpoints covered (1 direct, 0 default-policy)
+AXSEC-061 WARNING [UpdateDocument] `UpdateDocument` uses permission `editDocument` which requires rate limiting.
+  → Bind a declared rate limit to this endpoint.
+```
+
+Adding `rateLimit: "memberWrite"` to the `EndpointGuard` clears the warning.
+`axiom security check` accepts `--json`, and `--fail-on-warning` returns a
+non-zero result for a review-only CI job.
+
+Principal, permission, policy, authentication-profile, resource and rate-limit
+names belong to your application. AxiomCore does not keep a hard-coded list of
+business action types.
+
+### Security declarations
+
+| Argument | Value |
+| --- | --- |
+| `mode` | `"audit"` or `"strict"` |
+| `principals` | `SecurityPrincipal(roles: [...], doc)` |
+| `auth` | `AuthenticationPolicy(transport, issuer, audience, secure = false, httpOnly = false, sameSite = "lax", sessionRotation = false, validateExpiry = true, doc)` |
+| `permissions` | `Permission(requiresRateLimit = false, requiresIdempotency = false, requiresCsrf = false, doc)` |
+| `resources` | `ProtectedResource(entity: Entities.name, doc)` |
+| `policies` | `SecurityPolicy(principals, roles, auth, resource, permissions, relationship, resourceBinding, doc)` |
+| `defaultPolicy` | Name of a project-wide fallback policy |
+| `endpoints` | `EndpointGuard(policy, resource, permission, auth, rateLimit, effects, writableFields, idempotent = false, public = false, csrfExempt = false)` |
+| `rateLimits` | `RateLimit(maxRequests, windowSeconds, key)` |
+| `csrf` | `CsrfPolicy(strategy, sameSite = "lax", secure = true, httpOnly = true)` |
+| `cors` | `CorsPolicy(origins, credentials = false, methods, headers)` |
+| `classifications` | `SensitiveData(target, classification, audiences, redact = false, doc)` |
+| `services`, `effects`, `uploads` | See [Declared side effects](#declared-side-effects) |
+| `invariants` | `SecurityRequirement(kind, target, severity = "error", doc)` |
+
+### Authorization and authentication
+
+- `ProtectedResource.entity` takes an `Entities.*` reference. The compiler
+  resolves it to the promoted model and its compiler-managed entity ID in the
+  signed manifest.
+- A route with a resource parameter should bind a policy and state
+  `resourceBinding`. AXSEC-014 makes missing IDOR evidence visible.
+- `defaultPolicy` is a reviewable project-wide fallback and must name a declared
+  policy. Every public endpoint must set `public: true`; neither a missing
+  security block nor an undeclared endpoint is silently treated as protected.
+
+Authentication profiles describe transports, not providers:
+
+| `transport` | Requirement |
+| --- | --- |
+| `bearer` | Requires `issuer` and `audience` |
+| `cookie` | Requires `sameSite` of `lax`, `strict` or `none`. The analyzer reports missing `secure` or `httpOnly` flags and missing CSRF coverage for browser mutations. |
+| `mTLS` and adapter-specific transports | Allowed where a trusted server adapter verifies them. Server secrets stay outside the contract. |
+
+Attach a profile to a `SecurityPolicy` as a reusable default, or to an
+`EndpointGuard` as a route-specific override.
+
+### Data and output boundaries
+
+Use `classifications` to label extracted model fields without repeating
+schemas. `audiences` is optional, but required when a projection intentionally
+exposes classified data.
+
+```acore title="Acore excerpt"
+// Include classifications in the contract's security(...) declaration.
+security(classifications: {
+  accountEmail: SensitiveData(
+    target: "Account.email", classification: "PII",
+    audiences: ["workspaceMember"], redact: true
+  )
+})
+```
+
+For an endpoint that returns a model with classified data, bind a domain
+response projection. AXSEC-081 reports an unprojected return, and AXSEC-082
+reports a classified projection field with no audience. This is an allowlist
+boundary, not runtime response inspection.
+
+### Declared side effects
+
+Effects make sensitive sinks reviewable without imperative code:
+
+```acore title="Acore excerpt"
+// Include these arguments in the contract's security(...) declaration.
+security(
+  services: { billing: NetworkService(origin: "https://api.example.com") },
+  effects: { createCharge: SecurityEffect(kind: "network", service: "billing") },
+  uploads: {
+    avatar: UploadPolicy(
+      maxBytes: 5242880, mediaTypes: ["image/jpeg", "image/png"],
+      inspectContent: true, generatedFilename: true,
+      privateStorage: true, executable: false
+    )
+  }
+)
+```
+
+- Effect kinds: `network`, `html_output`, `upload`, `filesystem_read`,
+  `filesystem_write`, `process`, `log`, `analytics`, `cache`, `response`.
+- Network, upload, filesystem and process effects bind to declared policies
+  instead of user-controlled destinations.
+- `NetworkService` defaults: `allowPrivateNetworks = false`,
+  `allowRedirects = false`. `UploadPolicy` defaults: `inspectContent`,
+  `generatedFilename` and `privateStorage` are `true`, `executable` is `false`;
+  `maxBytes` is required.
+
+### Whole-application requirements
+
+`invariants` use bounded, deterministic kinds, not an expression language:
+
+| Kind | Requires |
+| --- | --- |
+| `require_authorization` | Authorization on the target |
+| `require_rate_limit` | A rate limit |
+| `require_idempotency` | Idempotency |
+| `require_csrf` | CSRF protection |
+| `no_secret_exposure` | No secret exposure |
+| `declared_network_only` | Only declared network services |
+| `no_public_cache` | No public caching |
+| `declared_projection_only` | Only declared projections |
+
+```acore title="Acore excerpt"
+invariants: { csrfOnWrites: SecurityRequirement(kind: "require_csrf", target: "UpdateDocument") }
+```
+
+`severity` is `"error"` or `"warning"`. The application-owned `target` is signed
+and diffed with the same AXSEC rule families. An unsupported kind fails with
+`AXB004: security invariant ... has unsupported kind`.
+
+See [Security rules](/reference/security-rules) for the complete AXSEC catalog,
+extractor evidence and the enforcement boundary.
+
+## Related
+
+- [Security rules](/reference/security-rules)
+- [Identity and policies](/backend/policies)
+- [Validation](/acore-language/validation)
+- [Changes and impact](/inspector/changes-impact-and-ci)

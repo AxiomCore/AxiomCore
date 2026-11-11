@@ -1,50 +1,73 @@
 ---
-title: Build and connect with AxiomCore
-description: Keep your stack or build with Acore. Connect frontend, backend, and data through typed contracts.
+title: AxiomCore documentation
+description: Learn what AxiomCore is, how its parts connect through typed contracts, and where to start.
 pageType: overview
 ---
 
 import { Card, Cards } from 'fumadocs-ui/components/card';
 
-**AxiomCore connects the parts of an application through typed, versioned
-contracts.** Keep a supported backend and frontend, or use **Acore** to author
-your API, UI, and database schema.
-
-A contract describes the operations, data, validation, and behavior a consumer
-can rely on. Build it, review changes, and use it from a compatible client.
+**AxiomCore connects the frontend, backend and database of an application
+through typed, versioned contracts.** A contract describes the operations,
+data, validation and behavior a consumer can rely on. You can keep a supported
+backend and frontend, or write your API, UI and database schema in **Acore**,
+AxiomCore's declarative language.
 
 <StatusNote status="alpha" title="Check the path you plan to use">
-  Availability varies by framework, database, and target. Start with the
+  Availability varies by framework, database and target. Start with the
   [support matrix](/introduction/support-matrix).
 </StatusNote>
 
-## Choose your path
+<span id="one-contract-path-multiple-adoption-models" />
+
+## How the pieces connect
+
+```mermaid title="Acore source or an existing backend becomes a contract that clients, UI, database and tools use"
+flowchart LR
+  A[Acore source] --> C[.axiom contract]
+  B[Existing FastAPI or Go backend] --> C
+  C --> D[Client SDKs]
+  C --> E[Acore UI app]
+  C --> F[Database migrations and storage]
+  C --> G[Axiom Inspector]
+  C --> H[Axiom Cloud releases]
+```
+
+1. **Source.** Write `.acore` files, or extract the contract from a FastAPI or
+   Go service.
+2. **Contract.** The Axiom CLI builds a `.axiom` contract you can review, diff,
+   test and lock.
+3. **Consumers.** Web, React, Flutter and Swift clients call the API through
+   generated SDKs. An Acore UI app uses the same contract. Database contracts
+   drive SQLite or PostgreSQL migrations and typed storage.
+4. **Tools.** Axiom Inspector shows relationships and the impact of a change.
+   Axiom Cloud stores shared releases.
+
+<span id="choose-your-path" />
+
+## Choose a starting point
 
 <Cards>
-  <Card title="Run your first app" href="/getting-started/quickstart" description="Start an Acore frontend and backend with a real SQLite database." />
-  <Card title="Connect your existing stack" href="/guides" description="Keep FastAPI, Go, web, React, or Flutter and add a contract boundary." />
-  <Card title="Learn Acore" href="/acore-language" description="Learn the language, then build an API, UI, and data model." />
+  <Card title="Run your first app" href="/getting-started/quickstart" description="Clone the task app and run an Acore UI and API on a real SQLite database." />
+  <Card title="Learn Acore" href="/acore-language" description="Learn the language, then build an API, UI and data model." />
+  <Card title="Use your existing stack" href="/guides" description="Keep FastAPI, Go, web, React or Flutter and add a contract boundary." />
+  <Card title="Client SDKs" href="/sdks" description="Call a contract from web, React, Flutter or Swift." />
+  <Card title="CLI reference" href="/tooling/cli-reference" description="Every axiom command, argument and flag." />
 </Cards>
 
-## One contract path, multiple adoption models
+<span id="what-exists-today" />
 
-<ConceptDiagram kind="contract" />
+## Find your way
 
-Start with existing code or Acore source. Review the resulting `.axiom`
-contract, test it, and connect it to the application's consumers.
-
-## What exists today
-
-| Work | Start here |
+| You want to | Start here |
 | --- | --- |
-| Understand the product and its scope | [Introduction](/introduction) and [product landscape](/introduction/product-landscape) |
-| Build or connect an API | [Backend](/backend) |
-| Use an existing client or author a UI | [Frontend](/frontend) |
-| Define data and manage schema changes | [Databases](/database) |
+| Understand the product and its status | [What is AxiomCore?](/introduction) |
+| Build or connect an API | [Build a backend](/backend) |
+| Author a UI or use an existing client | [Build a frontend](/frontend) |
+| Define data and change a schema | [Databases](/database) |
 | Learn from working applications | [Examples](/examples) |
-| Inspect relationships and changes | [Inspector](/inspector) |
-| Find exact commands, syntax, or errors | [Reference](/reference) |
-| Work with an AI coding agent | [Agent workflow](/guides/using-ai-agents) |
+| See what a change affects | [Axiom Inspector](/inspector) |
+| Work with an AI coding agent | [AI coding agents](/guides/using-ai-agents) |
+| Look up syntax, errors or limits | [Reference](/reference) |
 
-Cloud account, project, and release workflows are available in alpha.
-Axiom Studio, Acode, and Axiom Marketplace are **Coming soon**.
+Cloud account, project and release workflows are **Alpha**. Axiom Studio, Acode
+and Axiom Marketplace are **Coming soon**.

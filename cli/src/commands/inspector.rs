@@ -5,24 +5,24 @@ use std::{
     time::Instant,
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use axiom_lib::{
     application_change::{
-        ChangeImpact, ImpactReport, SemanticChangeReport, attach_runtime_diff, impact,
-        semantic_diff,
+        attach_runtime_diff, impact, semantic_diff, ChangeImpact, ImpactReport,
+        SemanticChangeReport,
     },
     application_evidence::{
-        AXIOM_QUERY_FORMAT, ApplicationEvidence, AxiomQuery, EvidenceIndex, EvidenceNode,
-        EvidenceNodeKind, QUERY_RESULT_FORMAT, QueryDirection, QueryOperation, QueryResult,
+        ApplicationEvidence, AxiomQuery, EvidenceIndex, EvidenceNode, EvidenceNodeKind,
+        QueryDirection, QueryOperation, QueryResult, AXIOM_QUERY_FORMAT, QUERY_RESULT_FORMAT,
     },
     application_inspector::inspect_workspace,
     inspector_exchange::{InspectorExchange, InspectorExchangePayload},
     question::{
-        ANSWER_FORMAT, QuestionAnswer, QuestionRequest, answer_question, plan_question,
-        unsupported_answer,
+        answer_question, plan_question, unsupported_answer, QuestionAnswer, QuestionRequest,
+        ANSWER_FORMAT,
     },
 };
-use base64::{Engine, engine::general_purpose::STANDARD};
+use base64::{engine::general_purpose::STANDARD, Engine};
 use clap::{Subcommand, ValueEnum};
 use ed25519_dalek::{Signer, SigningKey};
 use serde::{Deserialize, Serialize};
@@ -2316,126 +2316,106 @@ mod tests {
             "web,ios",
         ]);
         assert!(parsed.is_ok());
-        assert!(
-            Harness::try_parse_from([
-                "test",
-                "record",
-                ".",
-                "--target",
-                "ios",
-                "--input",
-                "audit.json",
-            ])
-            .is_ok()
-        );
-        assert!(
-            Harness::try_parse_from([
-                "test",
-                "runtime",
-                ".",
-                "--session",
-                "latest",
-                "--format",
-                "jsonl",
-            ])
-            .is_ok()
-        );
-        assert!(
-            Harness::try_parse_from([
-                "test",
-                "export-audit",
-                ".",
-                "--session",
-                "latest",
-                "--output",
-                "audit.axinspect",
-            ])
-            .is_ok()
-        );
+        assert!(Harness::try_parse_from([
+            "test",
+            "record",
+            ".",
+            "--target",
+            "ios",
+            "--input",
+            "audit.json",
+        ])
+        .is_ok());
+        assert!(Harness::try_parse_from([
+            "test",
+            "runtime",
+            ".",
+            "--session",
+            "latest",
+            "--format",
+            "jsonl",
+        ])
+        .is_ok());
+        assert!(Harness::try_parse_from([
+            "test",
+            "export-audit",
+            ".",
+            "--session",
+            "latest",
+            "--output",
+            "audit.axinspect",
+        ])
+        .is_ok());
         assert!(
             Harness::try_parse_from(["test", "serve", ".", "--no-open", "--api-only",]).is_ok()
         );
-        assert!(
-            Harness::try_parse_from([
-                "test",
-                "diff",
-                "before.json",
-                "after.json",
-                "--fail-on",
-                "breaking,permission-increase",
-                "--output",
-                "changes.json",
-            ])
-            .is_ok()
-        );
-        assert!(
-            Harness::try_parse_from([
-                "test",
-                "impact",
-                "state:cart.discount_cents",
-                ".",
-                "--against",
-                "after.json",
-                "--format",
-                "json",
-            ])
-            .is_ok()
-        );
-        assert!(
-            Harness::try_parse_from([
-                "test",
-                "ask",
-                "what executes when i press primitive:button",
-                ".",
-                "--format",
-                "json",
-            ])
-            .is_ok()
-        );
-        assert!(
-            Harness::try_parse_from([
-                "test",
-                "answer",
-                "question.json",
-                ".",
-                "--output",
-                "answer.json",
-            ])
-            .is_ok()
-        );
-        assert!(
-            Harness::try_parse_from([
-                "test",
-                "export-inspector",
-                ".",
-                "--key",
-                "key.seed",
-                "--output",
-                "app.axinspect",
-            ])
-            .is_ok()
-        );
-        assert!(
-            Harness::try_parse_from([
-                "test",
-                "import-inspector",
-                "app.axinspect",
-                "--output-dir",
-                "verified",
-            ])
-            .is_ok()
-        );
-        assert!(
-            Harness::try_parse_from([
-                "test",
-                "release-check",
-                ".",
-                "--enforce",
-                "--format",
-                "json",
-            ])
-            .is_ok()
-        );
+        assert!(Harness::try_parse_from([
+            "test",
+            "diff",
+            "before.json",
+            "after.json",
+            "--fail-on",
+            "breaking,permission-increase",
+            "--output",
+            "changes.json",
+        ])
+        .is_ok());
+        assert!(Harness::try_parse_from([
+            "test",
+            "impact",
+            "state:cart.discount_cents",
+            ".",
+            "--against",
+            "after.json",
+            "--format",
+            "json",
+        ])
+        .is_ok());
+        assert!(Harness::try_parse_from([
+            "test",
+            "ask",
+            "what executes when i press primitive:button",
+            ".",
+            "--format",
+            "json",
+        ])
+        .is_ok());
+        assert!(Harness::try_parse_from([
+            "test",
+            "answer",
+            "question.json",
+            ".",
+            "--output",
+            "answer.json",
+        ])
+        .is_ok());
+        assert!(Harness::try_parse_from([
+            "test",
+            "export-inspector",
+            ".",
+            "--key",
+            "key.seed",
+            "--output",
+            "app.axinspect",
+        ])
+        .is_ok());
+        assert!(Harness::try_parse_from([
+            "test",
+            "import-inspector",
+            "app.axinspect",
+            "--output-dir",
+            "verified",
+        ])
+        .is_ok());
+        assert!(Harness::try_parse_from([
+            "test",
+            "release-check",
+            ".",
+            "--enforce",
+            "--format",
+            "json",
+        ])
+        .is_ok());
     }
 
     #[test]

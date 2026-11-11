@@ -1,79 +1,165 @@
 ---
 title: Workspaces and projects
-description: Identity, roles, project links, signing keys, and the local-to-Cloud boundary.
+description: Sign in to Axiom Cloud, invite workspace members, create and link projects, understand roles, rotate signing keys and control contract visibility.
 pageType: guide
 ---
 
-A workspace groups members and projects. A project owns contracts, signing-key
-history, release channels, mocks, managed environments, tests, and operational
-evidence.
+<span id="authentication-paths" />
+<span id="database-resources-and-environments" />
 
-## Authentication paths
+Use this guide to sign in to Axiom Cloud, set up a workspace and project, and
+link a local directory so the Axiom CLI knows where to release. Workspaces and
+projects are **Alpha**.
 
-- The dashboard uses an authenticated browser session.
-- The CLI uses a device login and stores its session in the active Axiom CLI
-  profile.
-- Runtime ingestion and managed sandboxes use narrowly scoped credentials,
-  not browser or CLI tokens.
+A **workspace** groups members and projects. A **project** owns contracts,
+signing-key history, release channels, mocks, managed environments, tests,
+secrets, resources and operational evidence.
+
+## Get access and sign in
+
+Cloud access is invite-only during the Alpha. The first command that talks to
+Cloud asks for a referral code and registers this machine. Without a code, join
+the waitlist:
+
+```bash title="Terminal"
+axiom join you@example.com
+```
+
+In CI, set `AXIOM_REFERRAL_CODE`. A CI run without it fails instead of
+prompting.
+
+Each surface signs in separately:
+
+| Surface | How it signs in |
+| --- | --- |
+| Cloud Dashboard | A browser session at [app.axiomcore.dev](https://app.axiomcore.dev). |
+| Axiom CLI | `axiom login` shows a verification URL and a user code to approve in the browser. The session is saved in your user configuration folder (`~/Library/Application Support/axiom/` on macOS, `~/.config/axiom/` on Linux). |
+| Runtime ingestion and managed sandboxes | Narrowly scoped credentials issued by the project, never a browser or CLI session. |
 
 ```bash title="Terminal"
 axiom login
 axiom project list
 ```
 
-Do not copy a browser cookie into the CLI or put a CLI token in an application
-contract.
+`axiom login` is interactive and has no token option. Do not copy a browser
+cookie into the CLI, and never put a CLI token in an application contract.
 
-## Create and link
+## Manage the workspace
+
+Open the workspace settings from the workspace switcher. **General**,
+**Organization**, **Billing** and **Support** pages live there.
+
+- Maintainers and owners invite teammates by email as **Maintainer** or
+  **Reader**. Each invitation is a one-time link that expires after seven days.
+- Owners change member roles and remove members.
+
+Workspace membership does not grant access to a project. Project access comes
+from a project membership, which the service checks on every request. The
+person who creates a project becomes its owner. The dashboard does not yet
+offer a way to add other members to a project.
+
+<span id="create-and-link" />
+<span id="project-privacy-and-pulls" />
+
+## Create and link a project
+
+Create a project in the dashboard (**Projects**, then **New project**), where
+you can also save [database preferences](/cloud/project-resources). Or use the
+CLI:
 
 ```bash title="Terminal"
 axiom project create --name "Payments API" --slug payments-api
-axiom project link
 ```
 
-The link associates the current directory with a project. It is local CLI
-configuration, not a declaration inside the `.axiom` artifact. Run
-`axiom project list` before release when you work across multiple accounts or
-workspaces.
+The slug is the lowercase identifier used in release URLs: lowercase letters,
+digits and single hyphens. In CLI 0.149.1, `project create` needs an
+interactive terminal even when you pass `--name` and `--slug`. It links the
+current directory to the new project.
+
+To link an existing project:
+
+```bash title="Terminal"
+axiom project link --project-id payments-api
+```
+
+`--project-id` accepts a project ID or slug. Without it, an interactive
+terminal lets you pick or create a project. The link is saved in your CLI
+profile against the directory's absolute path. It is not stored in your
+repository or in the `.axiom` artifact, so a fresh clone or CI machine has no
+link until you create one or pass `--project`. Each release run also re-links
+the directory to the project it used.
+
+Run `axiom project list` (name and slug for each project) before a release when
+you work across several accounts or workspaces.
 
 ## Roles
 
-The current release and environment control plane distinguishes three project
-roles:
+Projects use three roles:
 
 | Capability | Reader | Maintainer | Owner |
 | --- | :---: | :---: | :---: |
-| View artifacts, diffs, checks, and environment state | Yes | Yes | Yes |
-| Upload/import/sign/retry artifacts | No | Yes | Yes |
-| Configure mocks or managed sandboxes | No | Yes | Yes |
+| View artifacts, diffs, checks and environment state | Yes | Yes | Yes |
+| Comment on contract pull requests | Yes | Yes | Yes |
+| Upload, import, sign or retry artifacts | No | Yes | Yes |
+| Create contract pull requests and change their state | No | Yes | Yes |
+| Configure mocks, sandboxes, OTLP sources, retention and alerts | No | Yes | Yes |
+| Rotate the project signing key | No | Yes | Yes |
+| Edit project name, description and default branch | No | Yes | Yes |
 | Activate or roll back the `latest` channel | No | No | Yes |
-| Rotate keys and manage sensitive project settings | No | No | Yes |
+| Change contract visibility | No | No | Yes |
+| Manage resources and billing | No | No | Yes |
 
-Workspace membership and project membership are enforced by the service; a
-valid browser session alone does not grant project access.
+A valid browser session alone never grants project access. Secrets have their
+own [operation-level permissions](/cloud/secrets). Owning a project does not let
+an application use a secret: that needs an explicit binding and an expiring
+grant.
 
-## Rotate a signing key
+<span id="rotate-a-signing-key" />
+
+## Rotate the signing key
+
+Cloud signs each release with the project's signing key. To replace the active
+key:
 
 ```bash title="Terminal"
 axiom project rotate-key --project payments-api
 ```
 
-Rotation replaces the active signing key while retaining prior public keys so
-existing releases remain verifiable. It does not re-sign or mutate immutable
-artifact bytes.
+Rotation keeps earlier public keys, so existing releases stay verifiable. It
+does not re-sign or change any released artifact.
 
-## Project privacy and pulls
+## Contract visibility and pulls
 
-Projects are private unless the service explicitly exposes a public contract
-reference. Private pulls require membership. Clients should handle an
-unauthorized or not-found response without revealing resource existence in
-their own UI or logs.
+New projects are **private**. In **Project settings**, an owner can make a
+project **public**:
+
+| Visibility | Who can pull signed contracts |
+| --- | --- |
+| Private | Project members only. |
+| Public | Anyone with the project reference. |
+
+A public project exposes only Cloud-signed contract artifacts. Settings,
+environments, logs and every management API stay private.
+
+When a private contract is requested, an anonymous caller gets a not-found
+response, an expired or invalid credential gets an authentication error, and a
+signed-in non-member gets an access-denied error. In your own UI and logs,
+handle these responses without revealing whether the project exists.
 
 ## Release hygiene
 
-- use an immutable version for every release;
-- keep the local directory link out of portable build assumptions;
-- inspect the candidate artifact and semantic diff before upload;
-- record the release attempt and channel generation used for activation; and
-- rotate credentials through their owning service rather than editing
-  generated config.
+- Use an immutable version for every release.
+- Do not rely on the directory link in portable builds. Pass `--project`.
+- Inspect the candidate artifact and its semantic diff before upload.
+- Record the release attempt and channel generation used for activation.
+- Rotate credentials through the service that owns them, not by editing
+  generated configuration.
+
+Cloud membership is separate from the users who sign in to an application you
+build.
+
+## Next steps
+
+- [Release a contract and follow its pipeline](/cloud/releases-and-environments)
+- [Add project secrets](/cloud/secrets)
+- [Provision a managed database](/cloud/project-resources)

@@ -23,11 +23,19 @@ pub async fn handle(input: ServeInput) -> Result<()> {
                 bail!("watch requires source input");
             };
             let deployment = resolved.deployment.as_deref().context("watch requires a source-owned server plan and reviewed --deployment (or adjacent deployment.json); external Python/Go services use their own reload tooling")?;
+            if let Some(environment)=resolved.environment.as_deref() {
+                return super::secret_development::supervise(path,deployment,resolved.bindings.as_deref(),resolved.delivery.as_deref(),listen,resolved.debug,variant.as_deref(),environment,cancellation).await;
+            }
             return super::server_development::supervise(path, deployment, resolved.bindings.as_deref(), resolved.delivery.as_deref(), listen, 250, variant.as_deref(), cancellation).await;
         }
         // Source compilation and provider preflight can block; use the existing
         // compiler on a worker thread and write only to an owned temporary dir.
         let prepared = tokio::task::spawn_blocking(move || -> Result<_> {
+            let secret_root=match &resolved.input {
+                PreparationInput::Source{path,..}=>path.parent(),
+                PreparationInput::Artifact{contract,..}=>contract.parent(),
+                _=>None,
+            }.map(std::path::Path::to_path_buf);
             let mut temporary = None;
             let (contract, plan) = match resolved.input {
                 PreparationInput::Source { path, variant } => {
@@ -40,6 +48,7 @@ pub async fn handle(input: ServeInput) -> Result<()> {
                     let plan = artifact.with_extension("server.json");
                     if !plan.is_file() {
                         ensure!(resolved.deployment.is_none() && resolved.bindings.is_none() && resolved.delivery.is_none(), "external services cannot consume ActionHost deployment/bindings without a private server plan; configure their application adapter explicitly");
+                        ensure!(resolved.environment.is_none(),"AXSECRET_UNSUPPORTED_TARGET: external Python/Go adapters need a qualified protected runtime integration");
                         let backend = backend.context("no executable server plan or declared Python/Go backend; real serving never starts a mock or retrieves cloud mock data. Declare action implementations or use `axiom run <source.acore> --mode mock` explicitly")?;
                         return Ok(Prepared::External { source: path, backend, listen, debug: resolved.debug });
                     }
@@ -50,7 +59,11 @@ pub async fn handle(input: ServeInput) -> Result<()> {
                 PreparationInput::Cloud => bail!("real serving never retrieves cloud mock data"),
             };
             let deployment = resolved.deployment.context("real action serving requires reviewed --deployment or adjacent deployment.json; run `axiom server deployment` to scaffold and explicitly review providers, credentials and grants")?;
-            let host = load_host(&contract, &plan, &deployment, resolved.bindings.as_deref(), resolved.delivery.as_deref())?;
+            let secrets=if let Some(environment)=resolved.environment.as_deref() {
+                let private_plan:ServerPlan=axiom_server::serve::read_json(&plan,16_777_216)?;
+                Some(Arc::new(tokio::runtime::Handle::current().block_on(super::secrets::runtime(secret_root.as_deref().context("runtime profile requires a project root")?,environment,&private_plan))?))
+            }else{None};
+            let host = load_host_with_resolver(&contract, &plan, &deployment, resolved.bindings.as_deref(), resolved.delivery.as_deref(), secrets.clone())?;
             Ok(Prepared::Host { host, listen, debug: resolved.debug, _artifacts: temporary })
         }).await.context("real server preparation task failed")??;
         match prepared {
@@ -110,26 +123,80 @@ pub(super) fn load_host(
     bindings: Option<&std::path::Path>,
     delivery: Option<&std::path::Path>,
 ) -> Result<Arc<ActionHost>> {
+    load_host_with_resolver(contract, plan, deployment, bindings, delivery, None)
+}
+
+pub(super) fn load_host_with_resolver(
+    contract: &std::path::Path,
+    plan: &std::path::Path,
+    deployment: &std::path::Path,
+    bindings: Option<&std::path::Path>,
+    delivery: Option<&std::path::Path>,
+    secrets: Option<Arc<axiom_server::secret_runtime::RuntimeSecrets>>,
+) -> Result<Arc<ActionHost>> {
     let contract: AxiomFile = axiom_server::serve::read_json(contract, 16_777_216)?;
     let plan: ServerPlan = axiom_server::serve::read_json(plan, 16_777_216)?;
     plan.validate(&contract)?;
     ensure!(plan.actions.values().all(|action| !matches!(action.implementation, axiom_lib::backend::Implementation::Native { .. })), "native actions require a registered trusted Rust application host; generic `axiom serve` cannot resolve arbitrary native symbols. Use that application's runner and `axiom_server::development::real_session`");
-    let mut registry = axiom_server::serve::registry_from_file(&contract, &plan, bindings)?;
-    attach_delivery(&contract,&plan,&mut registry,delivery)?;
-    Ok(Arc::new(ActionHost::new(
+    let legacy = |key: &str| std::env::var(key).ok();
+    let resolver: &dyn axiom_server::providers::ConfigurationResolver = secrets
+        .as_deref()
+        .map(|value| value as &dyn axiom_server::providers::ConfigurationResolver)
+        .unwrap_or(&legacy);
+    let mut registry = axiom_server::serve::registry_from_file_with_resolver(
+        &contract, &plan, bindings, resolver,
+    )?;
+    let delivery_resolver: Arc<dyn axiom_server::providers::ConfigurationResolver + Send + Sync> =
+        match &secrets {
+            Some(value) => value.clone(),
+            None => Arc::new(|key: &str| std::env::var(key).ok()),
+        };
+    attach_delivery_with_resolver(&contract, &plan, &mut registry, delivery, delivery_resolver)?;
+    let host = Arc::new(ActionHost::configured(
         contract,
         plan,
         axiom_server::serve::read_json(deployment, 16_777_216)?,
         registry,
-    )?))
+        resolver,
+    )?);
+    if let Some(secrets) = secrets {
+        host.retain_runtime_secrets(secrets)?;
+    }
+    Ok(host)
 }
 
 /// Explicit private configuration; never discovered from an action input.
-pub(super) fn attach_delivery(contract:&AxiomFile,plan:&ServerPlan,registry:&mut axiom_server::host::HostRegistry,path:Option<&std::path::Path>)->Result<()> {
-    if let Some(path)=path {
-        let bytes=axiom_server::serve::read(path,1_048_576)?;
-        let config=axiom_server::delivery::DeliveryDeployment::from_json(std::str::from_utf8(&bytes)?)?;
-        let controller=axiom_server::delivery::DeliveryController::connect(contract.clone(),plan.clone(),config,Arc::new(|key:&str|std::env::var(key).ok()))?;
+pub(super) fn attach_delivery(
+    contract: &AxiomFile,
+    plan: &ServerPlan,
+    registry: &mut axiom_server::host::HostRegistry,
+    path: Option<&std::path::Path>,
+) -> Result<()> {
+    attach_delivery_with_resolver(
+        contract,
+        plan,
+        registry,
+        path,
+        Arc::new(|key: &str| std::env::var(key).ok()),
+    )
+}
+pub(super) fn attach_delivery_with_resolver(
+    contract: &AxiomFile,
+    plan: &ServerPlan,
+    registry: &mut axiom_server::host::HostRegistry,
+    path: Option<&std::path::Path>,
+    resolver: Arc<dyn axiom_server::providers::ConfigurationResolver + Send + Sync>,
+) -> Result<()> {
+    if let Some(path) = path {
+        let bytes = axiom_server::serve::read(path, 1_048_576)?;
+        let config =
+            axiom_server::delivery::DeliveryDeployment::from_json(std::str::from_utf8(&bytes)?)?;
+        let controller = axiom_server::delivery::DeliveryController::connect(
+            contract.clone(),
+            plan.clone(),
+            config,
+            resolver,
+        )?;
         registry.delivery(Arc::new(controller))?;
     }
     Ok(())

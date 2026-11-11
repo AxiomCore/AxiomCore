@@ -1,53 +1,92 @@
 ---
-title: Explore a database in the browser
-description: Edit Acore database examples in the playground and understand what their simulated previews prove.
+title: Browser preview
+description: Edit Acore database examples in the playground and understand what their simulated storage, versions and history prove.
 pageType: guide
 ---
 
-Use the [playground](https://playground.axiomcore.dev) to explore contracts
-without installing tools. Choose **Database · tasks**, **Database · inventory**,
-or the SQLite example.
+<span id="edit-all-three-layers" />
 
-## Edit all three layers
+Use the [playground](https://playground.axiomcore.dev) to explore database
+contracts without installing anything. The browser compiles real database and
+version metadata in WebAssembly, then simulates storage and history. It never
+performs a native migration.
 
-The workspace exposes frontend, backend, and database source in separate tabs.
-Each has its own manifest. Database edits appear in Changes and Impact with
-the backend and frontend fields that consume them.
+<StatusNote status="experimental" title="Experimental simulation">
+The browser database preview is Experimental. Its rows, versions, history,
+identity and tenant isolation are simulations. No PostgreSQL connection or
+SQLite file is created.
+</StatusNote>
 
-The lower **Database** tab lists tables and their rows. Add, update, complete,
-restock, or delete a record in a supported example to see the table activity.
-The preview checks storage types, primary keys, unique keys, foreign keys,
-and supported check constraints before accepting a complete mutation.
-An invalid mutation retains the previous accepted store.
+## Open an example
 
-## Schema versions and resets
+1. Open the playground and choose **Database · tasks**, **Database · inventory**
+   or **Database · SQLite**.
+2. Edit the frontend, backend and database source in their tabs. Each layer has
+   its own manifest.
+3. Watch **Changes** and **Impact**: a database edit lists the backend and
+   frontend fields that consume it.
+4. Open the lower **Database** tab to see tables and rows. Add, update,
+   complete, restock or delete a record in a supported example to see the table
+   activity.
+
+```mermaid title="What the browser preview runs and what it hands off"
+flowchart LR
+  A[Edit Acore source] --> B[Compile in WebAssembly]
+  B --> C[Check rows against the schema]
+  C --> D[Bounded in-memory store]
+  D --> E[Download source]
+  E --> F[Run natively with the Axiom CLI]
+```
+
+Before accepting a complete mutation, the preview checks storage types,
+primary keys, unique keys, foreign keys and supported check constraints. An
+invalid mutation keeps the previous accepted store.
+
+<span id="schema-versions-and-resets" />
+
+## Versions, history and resets
 
 | Action | Browser behavior |
 | --- | --- |
-| Run valid source | Recompile and preserve compatible accepted rows |
-| Edit a used schema version | Suggest a fresh version; accepting it updates the source buffer |
-| Make an invalid schema change | Retain the last accepted preview |
-| Compare or roll back | Show simulated schema/history changes |
-| Reset data or history | Perform the explicitly selected session-local reset |
-| Download Source or Schema | Export source/manifests/mappings or the compiled database package |
+| Run valid source | Recompile and keep compatible accepted rows |
+| Edit a schema version that is already used | Suggest a fresh version; accepting it updates the source buffer |
+| Make an invalid schema change | Keep the last accepted preview |
+| Compare or roll back | Show simulated schema and history changes |
+| Reset data or history | Perform only the reset you select, in this session |
+| Download Source or Schema | Export source, manifests and mappings, or the compiled database package |
 
-The browser's history is session-local. It does not replace native migration
-history, signing, deployment review, or backup/recovery checks.
+Preview migrations, version conflicts, comparisons and rollbacks are simulation
+events. History lasts for the browser session. It does not replace native
+migration history, signing, deployment review, or backup and recovery checks.
 
 ## Know the execution boundary
 
-The browser interprets supported declared backend storage operations against a
-bounded in-memory store. Endpoint mock data may supply initial fixtures; it
-does not implement the application's CRUD operations. Mapping API fields to a
-table also does not itself implement a write.
+- The preview runs declared backend storage operations through the checked
+  managed-flow interpreter, with a bounded in-memory provider.
+- Storage bindings supply the field and table associations. Endpoint mock data
+  may seed initial fixtures, but mock mutations do not implement create, read,
+  update or delete. Mapping API fields to a table does not itself implement a
+  write.
+- Browser authentication, development identity, tenant context, provider
+  observations and migration authority are synthetic and grant no native
+  authority. Host operations the browser cannot run need the local CLI.
+- A successful preview does not prove database persistence or a production
+  security boundary.
 
-Its development identity, tenant isolation, provider observations, and migration
-authority are simulations. No native PostgreSQL connection or SQLite file is
-created. A successful preview does not prove database persistence or a production
-security boundary.
+## Run the downloaded source
 
-Download the source to run a real application with the compatible CLI. Review
-its manifests, database grants/row policies where applicable, and development
-API key setup. The [first app](/getting-started/quickstart) provides a checked
-local SQLite path. The [database guide](/database/contracts) covers native
-PostgreSQL connections and migrations.
+A **Source** download contains Acore mappings and manifests, executable native
+handlers, hidden artifact references, web targets and instructions for the real
+development API key. PostgreSQL examples declare application grants and
+row-level security, and explain how to seed any referenced parent rows through
+the Axiom SQL console. Review the manifests, grants and row policies, and the
+API key setup before running.
+
+Native and browser evidence stay distinct: run the downloaded project with the
+Axiom CLI to test real persistence.
+
+## Next steps
+
+- Run a checked local SQLite app in [Run your first app](/getting-started/quickstart).
+- Connect PostgreSQL and migrate natively with [Database contracts](/database/contracts).
+- Wire endpoints to tables in [Migrations and persistence](/database/persistence).

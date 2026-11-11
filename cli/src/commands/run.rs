@@ -49,7 +49,9 @@ fn default_application_version() -> String {
 
 pub fn classify_acore_source(source: &Path) -> Result<AcoreSourceKind> {
     if source.extension().is_some_and(|e| e == "axiom") {
-        if axiom_database::developer::read_release(source).is_ok() || axiom_database::developer::read_bundle(source).is_ok() {
+        if axiom_database::developer::read_release(source).is_ok()
+            || axiom_database::developer::read_bundle(source).is_ok()
+        {
             return Ok(AcoreSourceKind::Database);
         }
         if let Ok(axiom_lib::package::DecodedAxiomPackage::Package(package)) =
@@ -91,6 +93,7 @@ pub fn classify_acore_source(source: &Path) -> Result<AcoreSourceKind> {
 pub async fn handle_backend(
     source: PathBuf,
     mode: RunMode,
+    environment: Option<String>,
     host: String,
     port: u16,
     debug: bool,
@@ -108,6 +111,7 @@ pub async fn handle_backend(
                 cloud: false,
                 profile: super::server_command_contract::MockProfile::Auto,
                 common: super::server_command_contract::CommonInput {
+                    environment: environment.clone(),
                     input: Some(source),
                     plan: None,
                     delivery,
@@ -128,6 +132,7 @@ pub async fn handle_backend(
             super::serve::handle(super::server_command_contract::ServeInput {
                 mock: false,
                 common: super::server_command_contract::CommonInput {
+                    environment,
                     input: Some(source),
                     plan: None,
                     delivery,
@@ -341,16 +346,29 @@ pub fn frontend_target(source: &Path, explicit: Option<&str>) -> Result<String> 
     let targets = if configuration.is_file() {
         let manifest: axiom_ui::project::Manifest =
             serde_json::from_slice(&fs::read(configuration)?)?;
-        manifest.targets.iter().map(|t| t.as_str().to_string()).collect::<Vec<_>>()
+        manifest
+            .targets
+            .iter()
+            .map(|t| t.as_str().to_string())
+            .collect::<Vec<_>>()
     } else if root.join("AxiomDeps.toml").is_file() {
-        axiom_lib::deps_manifest::parse_axiom_deps_v2(&fs::read_to_string(root.join("AxiomDeps.toml"))?)?
-            .targets.iter().map(|t| t.as_str().to_string()).collect::<Vec<_>>()
-    } else { vec![] };
+        axiom_lib::deps_manifest::parse_axiom_deps_v2(&fs::read_to_string(
+            root.join("AxiomDeps.toml"),
+        )?)?
+        .targets
+        .iter()
+        .map(|t| t.as_str().to_string())
+        .collect::<Vec<_>>()
+    } else {
+        vec![]
+    };
     Ok(if targets.iter().any(|t| t == "web") {
         "web".into()
     } else if let Some(target) = targets.first() {
         target.clone()
-    } else { "ios".into() })
+    } else {
+        "ios".into()
+    })
 }
 
 /// Runtime lock inputs are deliberately confined beneath the lock directory.
@@ -481,9 +499,17 @@ async fn prepare_local_contracts(manifest: &Path) -> Result<()> {
 }
 
 fn local_contract_source(artifact: &Path) -> PathBuf {
-    if artifact.parent().is_some_and(|p|p.ends_with(".axiom/contracts")){
-        let owner=axiom_lib::project_state::root(artifact);
-        for name in ["main.acore","backend.acore","axiom.acore"]{let source=owner.join(name);if source.is_file(){return source;}}
+    if artifact
+        .parent()
+        .is_some_and(|p| p.ends_with(".axiom/contracts"))
+    {
+        let owner = axiom_lib::project_state::root(artifact);
+        for name in ["main.acore", "backend.acore", "axiom.acore"] {
+            let source = owner.join(name);
+            if source.is_file() {
+                return source;
+            }
+        }
     }
     if matches!(
         artifact.file_name().and_then(|value| value.to_str()),
@@ -511,7 +537,9 @@ fn newer_than(source: &Path, artifact: &Path) -> Result<bool> {
 
 async fn build_local_contract(source: &Path, artifact: &Path) -> Result<()> {
     let source = fs::canonicalize(source)?;
-    if let Some(parent) = artifact.parent() { fs::create_dir_all(parent)?; }
+    if let Some(parent) = artifact.parent() {
+        fs::create_dir_all(parent)?;
+    }
     let artifact = normalized_destination(artifact)?;
     // Compile directly to the owning artifact and private companion. The legacy
     // builder emitted axiom.axiom/axiom.server.json in the source directory.

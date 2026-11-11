@@ -1,0 +1,181 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.axiomcore.dev/agent-semantic/v1/operations/change.inspect.result.json",
+  "title": "change.inspect result",
+  "description": "Semantic diff, optional bounded source diff or full content, affected nodes, risks and check results of one candidate.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "candidate",
+    "files"
+  ],
+  "properties": {
+    "candidate": {
+      "$ref": "../edits.json#/$defs/candidate"
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "$ref": "../edits.json#/$defs/fileChange"
+      },
+      "minItems": 1
+    },
+    "semantic_diff": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "node",
+          "change"
+        ],
+        "properties": {
+          "node": {
+            "$ref": "../common.json#/$defs/nodeId"
+          },
+          "change": {
+            "enum": [
+              "added",
+              "removed",
+              "modified",
+              "relocated"
+            ]
+          },
+          "new_id": {
+            "$ref": "../common.json#/$defs/nodeId"
+          },
+          "properties": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "name",
+                "before",
+                "after"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "before": {
+                  "$ref": "../common.json#/$defs/jsonValue"
+                },
+                "after": {
+                  "$ref": "../common.json#/$defs/jsonValue"
+                }
+              }
+            }
+          },
+          "expected": {
+            "description": "False for a semantic change no operation asked for (reported, never silently accepted).",
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "source_diff": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "hunks"
+        ],
+        "properties": {
+          "path": {
+            "$ref": "../common.json#/$defs/path"
+          },
+          "hunks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "old_start",
+                "old_lines",
+                "new_start",
+                "new_lines",
+                "lines"
+              ],
+              "properties": {
+                "old_start": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "old_lines": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "new_start": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "new_lines": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "lines": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "affected": {
+      "type": "array",
+      "items": {
+        "$ref": "../common.json#/$defs/nodeSummary"
+      }
+    },
+    "risks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "detail"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "detail": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "node": {
+            "$ref": "../common.json#/$defs/nodeId"
+          }
+        }
+      }
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "$ref": "../edits.json#/$defs/checkResult"
+      }
+    }
+  },
+  "x-errors": [
+    "invalid_arguments",
+    "not_found",
+    "internal",
+    "resource_limit",
+    "permission_denied",
+    "unsupported_operation",
+    "snapshot_expired"
+  ]
+}

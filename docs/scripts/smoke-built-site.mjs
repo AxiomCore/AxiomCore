@@ -38,6 +38,9 @@ const routes = [
   ['/sitemap.xml', 'application/xml', 'https://docs.axiomcore.dev/reference/support-and-feedback'],
   ['/robots.txt', 'text/plain', 'Sitemap: https://docs.axiomcore.dev/sitemap.xml'],
   ['/og/docs/reference/versioning-and-deprecation/image.png', 'image/png', null],
+  ['/semantic-service/schemas/index.json', 'application/json', 'https://docs.axiomcore.dev/semantic-service/schemas/operations/node.find.request.json'],
+  ['/semantic-service/schemas/operations/node.find.request.json', 'application/json', '"$schema": "https://json-schema.org/draft/2020-12/schema"'],
+  ['/semantic-service/skill/SKILL.md', 'text/markdown', 'name: acore-semantic'],
 ];
 
 const requiredSecurityHeaders = new Map([

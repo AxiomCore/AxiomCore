@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.axiomcore.dev/agent-semantic/v1/operations/node.edits.result.json",
+  "title": "node.edits result",
+  "description": "Per node: every advertised option (advertised iff accepted), ordered by kind then property in node.get order.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "nodes"
+  ],
+  "properties": {
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "node",
+          "node_version",
+          "options"
+        ],
+        "properties": {
+          "node": {
+            "$ref": "../common.json#/$defs/nodeId"
+          },
+          "node_version": {
+            "$ref": "../common.json#/$defs/fingerprint"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "$ref": "../edits.json#/$defs/editOption"
+            }
+          },
+          "unavailable": {
+            "type": "array",
+            "items": {
+              "$ref": "../edits.json#/$defs/unavailableEdit"
+            }
+          }
+        }
+      }
+    }
+  },
+  "x-errors": [
+    "invalid_arguments",
+    "not_found",
+    "internal",
+    "resource_limit",
+    "permission_denied",
+    "unsupported_operation",
+    "snapshot_expired",
+    "stale_snapshot",
+    "compile_failed"
+  ]
+}

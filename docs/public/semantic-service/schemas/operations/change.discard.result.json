@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.axiomcore.dev/agent-semantic/v1/operations/change.discard.result.json",
+  "title": "change.discard result",
+  "description": "The candidate in state discarded. Discarding a discarded candidate returns the same result.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "candidate",
+    "released"
+  ],
+  "properties": {
+    "candidate": {
+      "$ref": "../edits.json#/$defs/candidate"
+    },
+    "released": {
+      "description": "Overlay resources were freed.",
+      "type": "boolean"
+    }
+  },
+  "x-errors": [
+    "invalid_arguments",
+    "not_found",
+    "internal",
+    "resource_limit",
+    "permission_denied",
+    "unsupported_operation",
+    "precondition_failed"
+  ]
+}

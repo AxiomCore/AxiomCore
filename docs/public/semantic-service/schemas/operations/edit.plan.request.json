@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.axiomcore.dev/agent-semantic/v1/operations/edit.plan.request.json",
+  "title": "edit.plan request",
+  "description": "params of edit.plan: the operations change.propose would take. Nothing is applied or stored; the service may compile intermediate states.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "operations"
+  ],
+  "properties": {
+    "operations": {
+      "type": "array",
+      "items": {
+        "$ref": "../edits.json#/$defs/editOperation"
+      },
+      "minItems": 1,
+      "maxItems": 50
+    }
+  }
+}

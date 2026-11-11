@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.axiomcore.dev/agent-semantic/v1/operations/node.edits.request.json",
+  "title": "node.edits request",
+  "description": "params of node.edits (batched).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "nodes"
+  ],
+  "properties": {
+    "nodes": {
+      "type": "array",
+      "items": {
+        "$ref": "../common.json#/$defs/nodeId"
+      },
+      "minItems": 1,
+      "maxItems": 20,
+      "uniqueItems": true
+    },
+    "kinds": {
+      "type": "array",
+      "items": {
+        "$ref": "../edits.json#/$defs/editKind"
+      },
+      "uniqueItems": true
+    },
+    "include_unavailable": {
+      "description": "Also list families that do not apply, with the reason.",
+      "type": "boolean"
+    }
+  }
+}

@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.axiomcore.dev/agent-semantic/v1/operations/project.overview.result.json",
+  "title": "project.overview result",
+  "description": "Modules, entry points, imported contracts and diagnostics; signatures and summaries only.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "projects",
+    "modules",
+    "entry_points",
+    "contracts",
+    "diagnostics"
+  ],
+  "properties": {
+    "projects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "project_id",
+          "entry",
+          "language_profile",
+          "target",
+          "semantic_state"
+        ],
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "entry": {
+            "$ref": "../common.json#/$defs/path"
+          },
+          "language_profile": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "target": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "semantic_state": {
+            "$ref": "../common.json#/$defs/semanticState"
+          },
+          "diagnostic_counts": {
+            "description": "Error and warning counts over every compiler diagnostic of the snapshot (the diagnostics list pages them).",
+            "$ref": "../common.json#/$defs/diagnosticCounts"
+          }
+        }
+      }
+    },
+    "modules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "owners",
+          "imports",
+          "errors",
+          "warnings"
+        ],
+        "properties": {
+          "path": {
+            "$ref": "../common.json#/$defs/path"
+          },
+          "owners": {
+            "type": "array",
+            "items": {
+              "$ref": "../common.json#/$defs/nodeSummary"
+            }
+          },
+          "imports": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "symbol"
+              ],
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 32
+                },
+                "symbol": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "from": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1024
+                }
+              }
+            }
+          },
+          "errors": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "warnings": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "entry_points": {
+      "type": "array",
+      "items": {
+        "$ref": "../common.json#/$defs/nodeSummary"
+      }
+    },
+    "contracts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "path",
+          "sha256"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "path": {
+            "$ref": "../common.json#/$defs/path"
+          },
+          "sha256": {
+            "$ref": "../common.json#/$defs/sha256"
+          },
+          "node": {
+            "$ref": "../common.json#/$defs/nodeId"
+          }
+        }
+      }
+    },
+    "diagnostics": {
+      "$ref": "../common.json#/$defs/diagnostics"
+    }
+  },
+  "x-errors": [
+    "invalid_arguments",
+    "not_found",
+    "internal",
+    "resource_limit",
+    "permission_denied",
+    "unsupported_operation",
+    "snapshot_expired",
+    "stale_snapshot"
+  ]
+}

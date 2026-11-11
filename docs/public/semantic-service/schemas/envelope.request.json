@@ -1,0 +1,340 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.axiomcore.dev/agent-semantic/v1/envelope.request.json",
+  "title": "Request envelope",
+  "description": "Every request. params is validated by schemas/operations/<operation>.request.json.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol",
+    "operation",
+    "params"
+  ],
+  "properties": {
+    "protocol": {
+      "$ref": "common.json#/$defs/protocol"
+    },
+    "operation": {
+      "$ref": "common.json#/$defs/operation"
+    },
+    "workspace": {
+      "$ref": "common.json#/$defs/workspaceId"
+    },
+    "snapshot": {
+      "description": "Read operations: the snapshot to read (id or latest).",
+      "$ref": "common.json#/$defs/snapshotSelector"
+    },
+    "base_snapshot": {
+      "description": "change.propose and edit.plan: the snapshot the edits are written against. Must be an id, not latest.",
+      "$ref": "common.json#/$defs/snapshotId"
+    },
+    "request_id": {
+      "$ref": "common.json#/$defs/requestId"
+    },
+    "limits": {
+      "$ref": "common.json#/$defs/limits"
+    },
+    "params": {
+      "description": "Operation arguments; schemas/operations/<operation>.request.json.",
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "type": "object",
+        "required": [
+          "operation"
+        ],
+        "properties": {
+          "operation": {
+            "enum": [
+              "capabilities",
+              "workspace.open"
+            ]
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "workspace"
+              ]
+            },
+            {
+              "required": [
+                "base_snapshot"
+              ]
+            },
+            {
+              "required": [
+                "request_id"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "type": "object",
+        "required": [
+          "operation"
+        ],
+        "properties": {
+          "operation": {
+            "enum": [
+              "capabilities"
+            ]
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "snapshot"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "type": "object",
+        "required": [
+          "operation"
+        ],
+        "properties": {
+          "operation": {
+            "enum": [
+              "project.overview",
+              "node.find",
+              "node.get",
+              "node.edits",
+              "graph.query",
+              "context.build",
+              "impact.analyze",
+              "changes.since",
+              "node.relocate"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "workspace",
+          "snapshot"
+        ],
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "base_snapshot"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "type": "object",
+        "required": [
+          "operation"
+        ],
+        "properties": {
+          "operation": {
+            "enum": [
+              "change.propose"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "workspace",
+          "base_snapshot",
+          "request_id"
+        ],
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "snapshot"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "type": "object",
+        "required": [
+          "operation"
+        ],
+        "properties": {
+          "operation": {
+            "enum": [
+              "edit.plan"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "workspace",
+          "base_snapshot"
+        ],
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "snapshot"
+              ]
+            },
+            {
+              "required": [
+                "request_id"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "type": "object",
+        "required": [
+          "operation"
+        ],
+        "properties": {
+          "operation": {
+            "enum": [
+              "change.inspect",
+              "change.discard"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "workspace"
+        ],
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "snapshot"
+              ]
+            },
+            {
+              "required": [
+                "base_snapshot"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "type": "object",
+        "required": [
+          "operation"
+        ],
+        "properties": {
+          "operation": {
+            "enum": [
+              "check.run"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "workspace"
+        ],
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "base_snapshot"
+              ]
+            }
+          ]
+        },
+        "oneOf": [
+          {
+            "required": [
+              "snapshot"
+            ],
+            "properties": {
+              "params": {
+                "not": {
+                  "required": [
+                    "candidate"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "not": {
+              "required": [
+                "snapshot"
+              ]
+            },
+            "properties": {
+              "params": {
+                "required": [
+                  "candidate"
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "type": "object",
+        "required": [
+          "operation"
+        ],
+        "properties": {
+          "operation": {
+            "enum": [
+              "change.apply"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "workspace",
+          "request_id"
+        ],
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "snapshot"
+              ]
+            },
+            {
+              "required": [
+                "base_snapshot"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

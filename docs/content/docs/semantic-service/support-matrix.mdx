@@ -1,0 +1,184 @@
+---
+title: Semantic service support matrix
+description: Which acore-semantic operations, edit families, checks and publication guarantees are implemented or partial, with their limits and exclusions.
+pageType: reference
+---
+
+This page lists what the preview `acore-semantic` serves. Ask a running
+service with the `capabilities` operation; its manifest is the authority, and
+the tables below are generated from the same manifest and the service's
+support record. A table entry never claims more than the manifest. The
+manifest's fields, including the status values, are defined by the schema
+[`operations/capabilities.result.json`](https://docs.axiomcore.dev/semantic-service/schemas/operations/capabilities.result.json).
+
+<StatusNote status="experimental" title="Preview">
+  The whole service is a preview on macOS arm64. The statuses below describe
+  the service's own scope, not production readiness.
+</StatusNote>
+
+## Status definitions
+
+| Status | Meaning |
+| --- | --- |
+| `implemented` | Served, with passing tests for every declared behavior. |
+| `partial` | Served, but some declared behavior is missing. The Missing column lists exactly what. |
+| `planned` | Not served. A request answers `unsupported_operation` (`not_implemented`). No entry is planned in this build. |
+
+## Summary
+
+{/* BEGIN GENERATED summary */}
+
+- Protocol: `axiom-agent-semantic/v1`. Service version: `0.1.4`.
+- Profiles: `acore-ui` (partial; targets `web`).
+- Operations: 5 implemented, 12 partial. Edit families: 7 implemented. Checks: 2 implemented.
+- Publication: `local_filesystem`, partial. Not provided: atomicity across files for other readers; power-loss and OS-crash durability; remote publication.
+
+{/* END GENERATED summary */}
+
+The service works on one root per workspace, the local filesystem, profile
+`acore-ui` and target `web`. It was tested on four Acore UI projects, from the
+one-page example to applications with several pages and components.
+On 11 Nov 2026, Claude Code and Codex each completed 16 of 17 edit tasks on three real projects through the MCP server; neither miss was a wrong or broken edit by the service.
+
+## Operations
+
+{/* BEGIN GENERATED operations */}
+
+| Name | Status | Limits | Missing (partial only) |
+| --- | --- | --- | --- |
+| `capabilities` | implemented | One profile (`acore-ui`) and one target (`web`); `params.profiles` filters that list. `error_codes` lists only the codes this build emits. |  |
+| `workspace.open` | partial | Exactly one root per workspace, and only the process's `--root`; entry `main.acore` only. Captures the latest snapshot (one compile); never installs, extracts or executes anything. | Multi-root (multi-project) workspaces: the protocol allows up to 16 roots; this build refuses a second root with `invalid_arguments` `multiple_roots`. Entries other than `main.acore` are refused (`unsupported_entry`). |
+| `project.overview` | implemented | The workspace's one project; summaries only, never bodies. Cursor bound to the snapshot and include set (`cursor_snapshot`, `cursor_request`). |  |
+| `node.find` | implemented | Limit 1..50; more matches are a `max_items` omission with up to 50 frontier ids, without a continuation cursor (the request has no cursor field): narrow the query instead. Matches names, ids and authored string literal values (case-insensitive substring), plus kind, owner and path filters. |  |
+| `node.get` | partial | 1..50 ids per batch; properties and edges capped at min(limit, `max_items`). Over `max_bytes`, optional parts are dropped (bodies, then edges, properties, edits, provenance) as one `max_bytes` omission with expansion refs. | No observed-layer edges (declared and resolved only). Derived values have an empty edit summary: edit families do not address derived ids. |
+| `node.edits` | partial | 1..20 ids; options carry `option_id` and fingerprint bound to snapshot, node version and edit rules. Import options only on a file's first page or component. | Unavailable entries of served families give no specific reason ("not offered for this node"). No options for derived values. |
+| `graph.query` | partial | Per-request edge index. Foreign extension actions and unresolved handlers are boundaries with partial coverage. | No observed layer (declared and resolved facts only). No continuation cursor: a truncated answer is explicit (omissions with frontiers) but cannot be continued. A contract version mismatch is only `compile_failed`: no boundary kind or coverage gap reason for it. A foreign boundary cannot say which states it may affect. |
+| `context.build` | partial | Purposes `understand`, `change_input`, `change_behavior` and `diagnose`; exact byte accounting; `insufficient_context` with `required_bytes`. Optional readers capped at 5 per rule (`max_items` omission with expansion refs). | `change_schema` is `unsupported_operation` (needs a backend profile). Include tests and authorization produce coverage gaps: no test associations or authorization policies in `acore-ui`. |
+| `impact.analyze` | partial | 1..20 targets; `limits.max_depth` levels; boundaries and unresolved facts are coverage gaps. | No test associations (`result.tests` is omitted). |
+| `changes.since` | partial | Relocations are inferred only (`node.relocate`'s passes); evicted history is expired, unrelated history unknown, both as coverage gaps. | No continuation cursor (the request has `params.cursor`; it is not honoured). Relocations are never proven (relation inferred only). |
+| `node.relocate` | partial | `from_snapshot` is a stored snapshot of the workspace, or the `--from-root` files. | Relation is always inferred (basis `exact`, `text`, `path` or `missing`): never proven, never basis `id_map`. Derived ids are not mapped. |
+| `change.propose` | partial | 1..50 operations, all-or-nothing; groups validated on the final state only; group compile budget 20 s (`budget_exhausted`). Conservative stale-base rejection: `stale_snapshot` when the head changed the base's files. | No expression- or statement-level bounded-body edit: the only bounded body is a whole state or action declaration. No edit family changes a cross-module signature (component parameters and events, model fields), so signature-plus-callers groups are same-module only. No rebase or composition of concurrent candidates. |
+| `change.inspect` | implemented | Source diff is bounded; content only when requested. |  |
+| `check.run` | partial | Checks `compile` and `repair`; overlay files only with the envelope snapshot, 64 files, 2 MiB. | Only the profile compile (and repair) checks: no behavioural, contract, authorization or test checks. `check.run` does not accept the `last_validated` snapshot. |
+| `change.apply` | partial | Local filesystem only; file by file (temp, fsync, rename) after journal and backups. | Not atomic across files for other readers. Proven against process kills only, not power loss or OS crashes. No read-set precondition: other base inputs edited externally are reported in `base_changes` and accepted; no `require_current_base` option. No remote or Cloud publication. |
+| `change.discard` | implemented |  |  |
+| `edit.plan` | partial | Stores nothing; same engine as `change.propose`. | Only refusals `edit_not_offered`, `still_referenced` and `group_unresolvable` become outcomes; every other refusal (`compile_failed` of the final state included) is `change.propose`'s error. |
+
+{/* END GENERATED operations */}
+
+## Edit families
+
+An edit family is a kind of operation in `change.propose` and `edit.plan`.
+`replace_region` is a fallback offered only on a snapshot with syntax errors.
+
+{/* BEGIN GENERATED edit-kinds */}
+
+| Name | Status | Limits | Missing (partial only) |
+| --- | --- | --- | --- |
+| `set_property` | implemented | Authored literal scalars (String, Int, Float, Bool) on element nodes only. `Float` values are covered by unit tests only, not yet on a real project. |  |
+| `bind_property` | implemented | Binds an element property to a state of its owner; shadowed or duplicate owners are `ambiguous_owner`. |  |
+| `list_element` | implemented | Remove or insert one child of an element or conditional; long nodes are not offered. |  |
+| `declaration` | implemented | Create, update and remove of state and action declarations in pages and components; bodies bounded (20,000 characters); removal of a referenced declaration is `still_referenced`. |  |
+| `set_reference` | implemented | `on_*` handlers to an action of the element's owner with the same parameter types. |  |
+| `import` | implemented | Add and remove component and model use lines on a file's first page or component. |  |
+| `replace_region` | implemented | Fallback capability: offered only on syntax snapshots, the smallest whole-line region around a syntax error (at most 200 lines and 16 KiB), alone in its batch, judged by the repair rule. |  |
+
+{/* END GENERATED edit-kinds */}
+
+## Checks
+
+{/* BEGIN GENERATED checks */}
+
+| Name | Status | Limits | Missing (partial only) |
+| --- | --- | --- | --- |
+| `compile` | implemented | Profile compile for target `web`; warnings do not fail it. |  |
+| `repair` | implemented | Only on a syntax or resolved base. |  |
+
+{/* END GENERATED checks */}
+
+## Publication
+
+`change.apply` publishes to the local filesystem only. Its guarantees, as the
+manifest lists them (see [Apply, receipts and recovery](/semantic-service/protocol#apply-receipts-and-recovery)):
+
+{/* BEGIN GENERATED publication */}
+
+- `content_preconditions_before_any_write`
+- `precondition_failure_before_first_write_writes_nothing`
+- `later_failures_restore_earlier_files_when_possible`
+- `per_file_atomic_replace`
+- `only_candidate_files_replaced_in_project_sources`
+- `idempotent_by_request_id`
+- `receipt_with_before_and_after_digests`
+- `journal_and_backups_written_before_first_write`
+- `interrupted_apply_reconciled_before_next_apply`
+- `outcome_unknown_only_while_a_journal_is_unreconciled`
+- `no_torn_file_after_a_process_kill`
+- `killed_apply_ends_applied_rolled_back_or_needs_attention`
+- `external_edit_kept_unless_made_between_recheck_and_rename`
+- `reconcile_removes_temp_backup_and_journal_leftovers`
+
+{/* END GENERATED publication */}
+
+## External writes
+
+The service detects files changed by other programs by comparing each
+snapshot's inputs with the disk before it answers (file metadata first, then
+the SHA-256 of each file whose metadata changed; the hash decides). It does not
+isolate you from other writers, and a write after the last check is not
+detected. Guarantees:
+
+{/* BEGIN GENERATED external-writes */}
+
+- `reads_revalidated_against_disk_before_answering`
+- `changed_snapshot_marked_never_presented_as_current`
+- `latest_read_retried_when_inputs_change_during_the_read`
+- `content_hash_decides_stat_only_selects`
+- `apply_refuses_deleted_or_renamed_base_inputs`
+- `apply_reports_other_changed_base_inputs`
+- `service_published_changes_reported_as_concurrent_candidate`
+- `watcher_failure_never_changes_an_answer`
+
+{/* END GENERATED external-writes */}
+
+## Not supported
+
+{/* BEGIN GENERATED unsupported */}
+
+- Multi-root (multi-project) workspaces.
+- Profiles other than `acore-ui` and targets other than `web` (reported as `unsupported_profile`).
+- `context.build` purpose `change_schema` (backend profile).
+- Observed-layer facts, test associations and authorization policies.
+- Expression- or statement-level bounded-body edits; cross-module signature edits; rename, move and extract refactors.
+- Concurrent candidate rebase and read-set preconditions.
+- Backend, data, schema and API edit families.
+
+{/* END GENERATED unsupported */}
+
+Other limits of this build:
+
+- One service process serves one project root. There is no isolation between
+  callers inside one process.
+- The project must be on a local filesystem. Remote and network filesystems
+  are not supported. This is separate from remote publication, which
+  `change.apply` does not offer either.
+- A project with more than 64 source files (the entry and every file it
+  imports) is refused: `workspace.open` answers `resource_limit` with reason
+  `too_many_modules` (bound `source_files_max`). See [Limits](/semantic-service/protocol#limits) for
+  the other size bounds.
+- Idempotency records have no retention limit. The service keeps one small
+  record for each distinct `request_id` of `change.propose` and
+  `change.apply` (requests and receipts) and for each discarded candidate,
+  so `.axiom/semantic` grows by a few KB per proposal. Stored snapshots (at
+  most 16) and open candidates (at most 32) are bounded. See
+  [Clean up](/semantic-service/quickstart#clean-up) for what is safe to
+  delete.
+- Secrets written in `.acore` source are source text and are returned by
+  reads. The service has no secret store.
+- Only `project.overview` has a continuation cursor. Other truncated answers
+  report what they omitted; narrow the request instead.
+
+## Related pages
+
+- [Protocol reference](/semantic-service/protocol)
+- [Semantic service overview](/semantic-service)

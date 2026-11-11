@@ -1,0 +1,164 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.axiomcore.dev/agent-semantic/v1/operations/workspace.open.result.json",
+  "title": "workspace.open result",
+  "description": "The workspace, its projects, the selected snapshot (also in the envelope) and the capability manifest.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "workspace",
+    "projects",
+    "capabilities"
+  ],
+  "properties": {
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "roots",
+        "source_authority"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "../common.json#/$defs/workspaceId"
+        },
+        "roots": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "root_id",
+              "path"
+            ],
+            "properties": {
+              "root_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "path": {
+                "$ref": "../common.json#/$defs/hostPath"
+              }
+            }
+          },
+          "minItems": 1
+        },
+        "source_authority": {
+          "enum": [
+            "local_filesystem"
+          ]
+        }
+      }
+    },
+    "projects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "project_id",
+          "root_id",
+          "entry",
+          "language_profile",
+          "target",
+          "status"
+        ],
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "root_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "entry": {
+            "$ref": "../common.json#/$defs/path"
+          },
+          "language_profile": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "target": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "status": {
+            "enum": [
+              "ready",
+              "needs_preparation",
+              "unsupported"
+            ]
+          },
+          "preparation": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "detail"
+              ],
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "missing_lock",
+                    "missing_dependency",
+                    "unsupported_toolchain",
+                    "unsupported_profile"
+                  ]
+                },
+                "path": {
+                  "$ref": "../common.json#/$defs/path"
+                },
+                "detail": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                }
+              }
+            }
+          },
+          "semantic_state": {
+            "description": "The semantic state of the project's current compile (the captured snapshot's, or the root's when nothing could be captured).",
+            "$ref": "../common.json#/$defs/semanticState"
+          },
+          "diagnostic_counts": {
+            "description": "Error and warning counts of that compile. Absent when the project could not be compiled at all.",
+            "$ref": "../common.json#/$defs/diagnosticCounts"
+          },
+          "last_validated_snapshot": {
+            "description": "The most recent stored validated snapshot of the workspace, or null. Read it only explicitly (snapshot last_validated, or this id); it is never substituted for the current state.",
+            "anyOf": [
+              {
+                "$ref": "../common.json#/$defs/snapshotId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "minItems": 1
+    },
+    "capabilities": {
+      "$ref": "capabilities.result.json#/$defs/manifest"
+    }
+  },
+  "x-errors": [
+    "invalid_arguments",
+    "not_found",
+    "permission_denied",
+    "resource_limit",
+    "internal",
+    "unsupported_operation",
+    "compile_failed"
+  ]
+}

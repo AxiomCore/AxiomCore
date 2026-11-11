@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.axiomcore.dev/agent-semantic/v1/operations/node.relocate.request.json",
+  "title": "node.relocate request",
+  "description": "params of node.relocate. The envelope snapshot is to_revision; from_snapshot is from_revision.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "from_snapshot",
+    "nodes"
+  ],
+  "properties": {
+    "from_snapshot": {
+      "$ref": "../common.json#/$defs/snapshotId"
+    },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "$ref": "../common.json#/$defs/nodeId"
+      },
+      "minItems": 1,
+      "maxItems": 200,
+      "uniqueItems": true
+    }
+  }
+}

@@ -1,0 +1,552 @@
+---
+title: Semantic service quick start
+description: Create a one-file Acore UI project, connect acore-semantic to Claude Code or Codex, then make a first read and a first checked edit from the command line.
+pageType: tutorial
+testedWith: Preview build of acore-semantic 0.1.4 on macOS arm64
+---
+
+By the end of this page an MCP client can use `acore-semantic` on a project,
+and you will have made one edit yourself: renaming a button label, checked by
+the compiler before any file changed, with a receipt that says what was
+written. You create the example project on this page; it is one file.
+
+<StatusNote status="experimental" title="Preview">
+  The semantic service is a preview. It serves Acore UI projects (profile
+  `acore-ui`, target `web`) on macOS arm64. See [Support matrix](/semantic-service/support-matrix).
+</StatusNote>
+
+## Prerequisites
+
+- macOS on Apple silicon (arm64). No other platform has a build.
+- The `acore-semantic` binary on your `PATH` (see [Install](#1-install)).
+- `jq`, for the command-line walkthrough only. The walkthrough uses it to keep
+  ids from one response for the next request.
+
+You do not need the Axiom CLI for this page. The service reads an Acore UI
+project whose entry file is `main.acore` in the project root. The example
+page imports no backend contract, so `main.acore` is the only file it needs.
+A project whose source imports a contract with `use contract` also needs that
+contract and a UI lock, which the [Axiom CLI](/tooling/cli-ui) produces (see
+[Build your first UI](/getting-started/quickstart-frontend) and
+[`axiom contract resolve`](/tooling/cli-contracts#axiom-contract-resolve)).
+The service never installs or prepares anything; it tells you when a step is
+missing.
+
+## 1. Install
+
+`acore-semantic` 0.1.4 is a preview release for macOS on Apple silicon. Install
+it with [Homebrew](https://brew.sh):
+
+```bash title="Any directory"
+brew install axiomcore/tap/acore-semantic
+```
+
+Without Homebrew, download the archive from the
+[GitHub release](https://github.com/AxiomCore/AxiomCore/releases/tag/acore-semantic-v0.1.4),
+check it against the published SHA-256 checksum, and put the binary in a
+directory on your `PATH`. These commands use `~/.local/bin`:
+
+```bash title="Direct download, an empty directory"
+curl -fsSLO https://github.com/AxiomCore/AxiomCore/releases/download/acore-semantic-v0.1.4/acore-semantic-macos-arm64.tar.gz
+curl -fsSLO https://github.com/AxiomCore/AxiomCore/releases/download/acore-semantic-v0.1.4/acore-semantic-macos-arm64.tar.gz.sha256
+shasum -a 256 -c acore-semantic-macos-arm64.tar.gz.sha256
+tar -xzf acore-semantic-macos-arm64.tar.gz
+mkdir -p ~/.local/bin
+mv acore-semantic ~/.local/bin/
+```
+
+```text title="Output"
+acore-semantic-macos-arm64.tar.gz: OK
+```
+
+Stop if `shasum` prints anything other than `OK`. The archive holds one file,
+the `acore-semantic` binary. If `~/.local/bin` is not on your `PATH`, add
+`export PATH="$HOME/.local/bin:$PATH"` to your shell profile and open a new
+terminal. Use `curl` as shown: the binary is not notarized, so macOS blocks
+it when a web browser downloaded the archive. If that happened, download it
+again with `curl`, or remove the mark the browser added with
+`xattr -d com.apple.quarantine ~/.local/bin/acore-semantic`.
+
+Every example on these pages calls `acore-semantic` directly and assumes the
+binary is on your `PATH`. Check it from any directory:
+
+```bash title="Any directory"
+acore-semantic --version
+```
+
+```text title="Output"
+acore-semantic@0.1.4 axiom-agent-semantic/v1 studio/v1
+```
+
+The line names the service and its version, then the protocols it speaks.
+`axiom-agent-semantic/v1` is the public protocol these pages describe.
+`studio/v1` is a legacy internal protocol and not part of the public interface.
+
+Ask the binary what it serves. `--capabilities` prints the same manifest as
+the protocol's `capabilities` operation, plus the compiler identity
+(`toolchain`), without opening a project:
+
+```bash title="Any directory"
+acore-semantic --capabilities | jq '{service: .manifest.service, protocol: .manifest.protocol.name, operations: [.manifest.operations[] | "\(.name): \(.status)"]}'
+```
+
+```json title="Output (excerpt)"
+{
+  "service": {
+    "name": "acore-semantic",
+    "version": "0.1.4"
+  },
+  "protocol": "axiom-agent-semantic/v1",
+  "operations": [
+    "capabilities: implemented",
+    "workspace.open: partial",
+    "project.overview: implemented",
+    …
+  ]
+}
+```
+
+The manifest lists 17 operations. `implemented` and `partial` are defined in
+the [support matrix](/semantic-service/support-matrix#status-definitions).
+
+## 2. Create the example project
+
+Create a directory `task-app` with one file, `main.acore`: a page with a text
+input, an **Add** button and a line of text.
+
+```bash title="An empty directory"
+mkdir task-app
+cd task-app
+cat > main.acore <<'ACORE'
+module tasks.app.ui
+
+app TasksApp { route "/" => Home }
+
+page Home {
+  state draft: String = ""
+
+  action submit() {
+    draft = ""
+  }
+
+  view {
+    View {
+      Input(value: draft, placeholder: "Add a task")
+      Button(label: "Add", on_press: submit)
+      Text(draft)
+    }
+  }
+}
+ACORE
+```
+
+Run every later command on this page from `task-app`, in the same terminal.
+
+<Callout type="info" title="Using your own project">
+  Run the commands from your project's root instead. The values this page
+  uses come from the example: the query `"Add"`, the node id
+  `element:Home/view/0/1` (kept in `BUTTON`), the property `label`, the
+  values `"Add"` and `"Add task"`, and the file `main.acore` in the output.
+  Take each of them from your own responses: node ids from `node.find` on
+  your project, current values from `node.get`.
+</Callout>
+
+## 3. Connect an MCP client
+
+`acore-semantic mcp` is an MCP server on standard input and output. `--root`
+names the project it serves; without it, the server serves its working
+directory. One server serves one project.
+
+Register it from the project directory, so that `$PWD` is the project:
+
+```bash title="Claude Code, project directory"
+claude mcp add acore-semantic -- acore-semantic mcp --root "$PWD"
+```
+
+```bash title="Codex, project directory"
+codex mcp add acore-semantic -- acore-semantic mcp --root "$PWD"
+```
+
+Everything after `--` is the command the client starts. Use the binary's
+absolute path if the client does not see your `PATH`. Check the result with
+`claude mcp list` or `codex mcp list`.
+
+The two clients store the registration differently:
+
+- **Claude Code** has scopes: `-s local` (the default: this project, for you
+  only), `-s user` and `-s project`. Whatever the scope, `--root "$PWD"`
+  names this one project; with `-s user`, every project you open in Claude
+  Code would be served this one.
+- **Codex** has no scope option: `codex mcp add` writes the server to your
+  Codex configuration (`~/.codex/config.toml`), which every Codex session
+  reads. With `--root "$PWD"`, every Codex session, in any directory, serves
+  this one project. To work on another project, run
+  `codex mcp remove acore-semantic` and register again from that project, or
+  register it under a different name (for example
+  `codex mcp add acore-semantic-shop -- acore-semantic mcp --root <other-project>`).
+
+The server offers 17 tools, one per protocol operation, named with `_`
+instead of `.` (`node_find` for `node.find`). Each tool takes one object: the
+operation's arguments go in a nested `params` member, next to the envelope
+fields the operation uses (`snapshot` or `base_snapshot`, `request_id`,
+`limits`). The server fills in `workspace` and `protocol`. For example, the
+arguments of a `node_find` call that searches for "Add":
+
+```json title="tools/call arguments for node_find"
+{"snapshot": "latest", "params": {"query": "Add", "kind": "element", "limit": 10}}
+```
+
+The tool result's structured content is the protocol's response.
+[Protocol reference](/semantic-service/protocol) describes every operation.
+
+Give the client the [agent skill](/semantic-service/agent-skill) so it follows
+the read, propose, check and apply workflow. A good first task: "Using the
+acore-semantic tools, rename the Add button on the Home page to Add task and
+apply it."
+
+## 4. First read from the command line
+
+The one-shot command reads one request from standard input, writes one
+response to standard output and exits:
+
+```text title="Command forms"
+acore-semantic --root <project> < request.json
+acore-semantic serve --root <project>
+acore-semantic mcp --root <project>
+```
+
+Each request is a JSON object in the same envelope: the protocol name, the
+operation, ids, and the operation's `params`. Run these steps in order, in one
+terminal, from the project directory.
+
+First attach the project with `workspace.open`. This captures a **snapshot**:
+an immutable copy of the project's sources and inputs, identified by a
+content hash. Every read names a snapshot, and the answer describes exactly
+that snapshot.
+
+```bash title="Project directory"
+OPEN=$(acore-semantic --root . <<EOF
+{"protocol": "axiom-agent-semantic/v1", "operation": "workspace.open", "snapshot": "latest",
+ "params": {"roots": [{"path": "$PWD"}]}}
+EOF
+)
+echo "$OPEN" | jq '{workspace, snapshot: .snapshot.id, state: .snapshot.semantic_state, status: .result.projects[0].status}'
+WS=$(echo "$OPEN" | jq -r .workspace)
+SNAP=$(echo "$OPEN" | jq -r .snapshot.id)
+```
+
+```json title="Output"
+{
+  "workspace": "ws-…",
+  "snapshot": "snap-5c9f765d19dcf4214d9181212b9d474a81db0a3df310c785c3b8c00c31a700ee",
+  "state": "validated",
+  "status": "ready"
+}
+```
+
+`ready` means the project compiled and can be read and edited. Your workspace
+id differs, because it is derived from the project's path; the snapshot id is
+the same for the same sources and compiler.
+
+Find the button with `node.find`. Each result is a **node**: a page,
+component, state, action or element, with a **node id** that is valid within
+this snapshot. Treat node ids as opaque and copy them from responses.
+
+```bash title="Project directory"
+acore-semantic --root . <<EOF | jq -c '.result.nodes[] | {id, name}'
+{"protocol": "axiom-agent-semantic/v1", "operation": "node.find", "workspace": "$WS", "snapshot": "$SNAP",
+ "params": {"query": "Add", "kind": "element", "limit": 10}}
+EOF
+```
+
+```text title="Output"
+{"id":"element:Home/view/0/0","name":"Input"}
+{"id":"element:Home/view/0/1","name":"Button"}
+```
+
+The Input matched because its placeholder contains "Add". Keep the button's
+id in `BUTTON`, read its properties with `node.get`, and ask which edits are
+legal with `node.edits`. `node.edits` answers with **options**: each option
+is one edit the service will accept on this node now, with an `option_id`
+(such as `o1`) and a **fingerprint**, a hash of the option, the snapshot, the
+node's version and the edit rules. If any of those changes, the fingerprint no
+longer matches and an edit citing it is refused.
+
+```bash title="Project directory"
+BUTTON="element:Home/view/0/1"
+acore-semantic --root . <<EOF | jq -c '.result.nodes[0].properties[]'
+{"protocol": "axiom-agent-semantic/v1", "operation": "node.get", "workspace": "$WS", "snapshot": "$SNAP",
+ "params": {"nodes": ["$BUTTON"]}}
+EOF
+EDITS=$(acore-semantic --root . <<EOF
+{"protocol": "axiom-agent-semantic/v1", "operation": "node.edits", "workspace": "$WS", "snapshot": "$SNAP",
+ "params": {"nodes": ["$BUTTON"]}}
+EOF
+)
+echo "$EDITS" | jq -c '.result.nodes[0].options[] | {option_id, kind, property}'
+```
+
+```text title="Output"
+{"editable":true,"name":"label","type":"String","value":"Add"}
+{"editable":false,"name":"on_press","type":"Action","value":"submit"}
+{"option_id":"o1","kind":"set_property","property":"label"}
+{"option_id":"o2","kind":"bind_property","property":"label"}
+{"option_id":"o3","kind":"list_element","property":null}
+```
+
+The label can be set to another string (`set_property`), bound to a state
+(`bind_property`), or the whole element removed or a sibling inserted
+(`list_element`). An edit that is not offered here is refused if you propose it.
+
+## 5. First edit: propose, check, apply
+
+An edit happens in three steps. Nothing on disk changes until the last one.
+
+1. `change.propose` applies your operations to a private copy of the project
+   and compiles it. The result is a **candidate**: a proposed change with an id
+   and a version, readable only by you.
+2. `change.inspect` and `check.run` show what the candidate changes and
+   whether it passes the checks.
+3. `change.apply` writes the candidate's files and returns a **receipt**: the
+   record of what was written.
+
+Propose the rename. Copy three things from the responses above: the current
+value (`old_value`, the `value` of `label` in the `node.get` response), the
+node's version (`node_version` in the `node.edits` response), and the
+option's id and fingerprint (also from `node.edits`). If any of them has
+changed, the service refuses the edit instead of editing the wrong thing.
+`request_id` is a key you choose, unique per intended change.
+
+```bash title="Project directory"
+VERSION=$(echo "$EDITS" | jq -r '.result.nodes[0].node_version')
+FINGERPRINT=$(echo "$EDITS" | jq -r '.result.nodes[0].options[] | select(.option_id == "o1") | .fingerprint')
+PROPOSE=$(acore-semantic --root . <<EOF
+{"protocol": "axiom-agent-semantic/v1", "operation": "change.propose", "workspace": "$WS",
+ "base_snapshot": "$SNAP", "request_id": "rename-add-1",
+ "params": {"operations": [{"kind": "set_property", "node": "$BUTTON", "property": "label",
+   "old_value": "Add", "new_value": "Add task", "expected_node_version": "$VERSION",
+   "option": {"option_id": "o1", "fingerprint": "$FINGERPRINT"}}]}}
+EOF
+)
+echo "$PROPOSE" | jq '{candidate: .result.candidate | {id, version, state}, files: [.result.files[] | {path, change}], checks: [.result.checks[] | {check, status}]}'
+CAND=$(echo "$PROPOSE" | jq -r .result.candidate.id)
+```
+
+```json title="Output"
+{
+  "candidate": {
+    "id": "cand-…",
+    "version": 1,
+    "state": "open"
+  },
+  "files": [
+    {
+      "path": "main.acore",
+      "change": "modified"
+    }
+  ],
+  "checks": [
+    {
+      "check": "compile",
+      "status": "passed"
+    }
+  ]
+}
+```
+
+Inspect the candidate. The semantic diff lists each changed node and property;
+`expected: true` means the change is one an operation asked for.
+
+```bash title="Project directory"
+acore-semantic --root . <<EOF | jq '{semantic_diff: .result.semantic_diff, source: .result.source_diff[0].hunks[0].lines}'
+{"protocol": "axiom-agent-semantic/v1", "operation": "change.inspect", "workspace": "$WS",
+ "params": {"candidate": "$CAND", "include": ["semantic_diff", "source_diff"]}}
+EOF
+```
+
+```json title="Output"
+{
+  "semantic_diff": [
+    {
+      "change": "modified",
+      "expected": true,
+      "node": "element:Home/view/0/1",
+      "properties": [
+        {
+          "after": "Add task",
+          "before": "Add",
+          "name": "label"
+        }
+      ]
+    }
+  ],
+  "source": [
+    "   view {",
+    "     View {",
+    "       Input(value: draft, placeholder: \"Add a task\")",
+    "+      Button(label: \"Add task\", on_press: submit)",
+    "-      Button(label: \"Add\", on_press: submit)",
+    "       Text(draft)",
+    "     }",
+    "   }"
+  ]
+}
+```
+
+`change.propose` already compiled the candidate. `check.run` runs a check
+again on demand; a failing check is reported as `ok: false`, not as an error.
+
+```bash title="Project directory"
+acore-semantic --root . <<EOF | jq -c '{ok: .result.ok, checks: [.result.checks[] | {check, status}]}'
+{"protocol": "axiom-agent-semantic/v1", "operation": "check.run", "workspace": "$WS",
+ "params": {"candidate": "$CAND", "checks": ["compile"]}}
+EOF
+```
+
+```text title="Output"
+{"ok":true,"checks":[{"check":"compile","status":"passed"}]}
+```
+
+Apply it, with a new `request_id`:
+
+```bash title="Project directory"
+acore-semantic --root . <<EOF | jq '.result.receipt | {outcome, receipt_id, files, id_map, result_snapshot}'
+{"protocol": "axiom-agent-semantic/v1", "operation": "change.apply", "workspace": "$WS",
+ "request_id": "apply-rename-add-1",
+ "params": {"candidate": "$CAND", "expected_candidate_version": 1, "require_checks": ["compile"]}}
+EOF
+grep -n 'Button' main.acore
+```
+
+```text title="Output"
+{
+  "outcome": "applied",
+  "receipt_id": "rcpt-…",
+  "files": [
+    {
+      "after_sha256": "af5821688535ae569f0e31c20e55d540a0874eea35e01c4750496d484aeb04c5",
+      "before_sha256": "22017c5c2a8612ba3968412cf8ec41044df7ec5982226d3f8994525418f0ffc4",
+      "change": "modified",
+      "path": "main.acore"
+    }
+  ],
+  "id_map": [],
+  "result_snapshot": "snap-a18c6d551f1cebb7cdcc303f87cda8e65f28227e235b3a5890ed107bf24f7c20"
+}
+15:      Button(label: "Add task", on_press: submit)
+```
+
+## 6. Read the receipt
+
+| Field | Meaning |
+| --- | --- |
+| `outcome` | `applied`: the files were written. `not_applied`: nothing was written. `unknown`: the service could not tell whether writing finished; send the same `change.apply` again with the same `request_id` (see [Apply, receipts and recovery](/semantic-service/protocol#apply-receipts-and-recovery)). |
+| `files` | Each written file with its SHA-256 before and after. |
+| `id_map` | Node ids the change replaced. Empty here: changing a property changes no ids. Ids not listed keep their value. |
+| `result_snapshot` | The snapshot of the project after the change. Continue from it. |
+| `receipt_id`, `request_id`, `journal` | Identify the receipt. Sending the same `change.apply` again returns this receipt with `replayed: true` and writes nothing. |
+
+To undo an applied change, propose a new change that reverses it.
+`change.discard` drops an open candidate; it never undoes an applied change.
+
+## 7. Keep a session open with `serve`
+
+`serve` reads one request per line and writes one response per line, in
+order, until standard input closes. It prints the workspace id on standard
+error when it starts.
+
+```bash title="Project directory"
+printf '%s\n' \
+  '{"protocol": "axiom-agent-semantic/v1", "operation": "capabilities", "params": {}}' \
+  "{\"protocol\": \"axiom-agent-semantic/v1\", \"operation\": \"node.find\", \"workspace\": \"$WS\", \"snapshot\": \"latest\", \"params\": {\"query\": \"Add task\", \"limit\": 5}}" \
+  | acore-semantic serve --root . 2>/dev/null \
+  | jq -c '{operation, snapshot: .snapshot.id, nodes: [.result.nodes[]?.id]}'
+```
+
+```text title="Output"
+{"operation":"capabilities","snapshot":null,"nodes":[]}
+{"operation":"node.find","snapshot":"snap-a18c6d551f1cebb7cdcc303f87cda8e65f28227e235b3a5890ed107bf24f7c20","nodes":["element:Home/view/0/1"]}
+```
+
+`latest` resolved to the snapshot written by the apply. The responses are the
+same as the one-shot command's and the MCP server's.
+
+## Common failures
+
+| Symptom | Cause and fix |
+| --- | --- |
+| `status` is `needs_preparation` with `missing_lock` | The source imports a backend contract (`use contract`) and the service found no UI lock. It reads the first of `.axiom/axiom.ui.lock.json`, `axiom.ui.lock.json` (project root) and `.axiom/dev/axiom.ui.lock.json` (where `axiom run` keeps its development lock) that exists. The message always names `.axiom/axiom.ui.lock.json`, but any of the three works. Create the lock with the Axiom CLI: [`axiom contract resolve`](/tooling/cli-contracts#axiom-contract-resolve), or run the project once with [`axiom run`](/tooling/cli-build-and-run#axiom-run). Example below. |
+| `status` is `needs_preparation` with `missing_dependency` | The UI lock names a contract artifact that is missing. Paths in the lock are relative to the lock's directory. Restore the file, or create the lock again with the Axiom CLI. |
+| `status` is `unsupported` | The project is not an `acore-ui` project for target `web`. |
+| `not_found` with reason `project_not_found` on `workspace.open` | There is no `main.acore` in the directory you passed. The entry file must be `main.acore` in the project root. |
+| `resource_limit` with reason `too_many_modules` | The project has more than 64 source files, counting the entry and every file it imports. This build does not serve it. |
+| `stale_snapshot` on `change.propose` | The project changed since your `base_snapshot` in a file your edit touches. Read again on `latest` and propose on the new snapshot with a new `request_id`. |
+| `precondition_failed` with reason `old_value_mismatch` | The value in `old_value` is not the current value. Read the node again. |
+| `conflict` with reason `request_id_reused` | You reused a `request_id` for a different request. Use a new one. |
+| The client shows no tools | Run `acore-semantic mcp --root <project>` in a terminal. It should wait silently on standard input (Ctrl-C stops it). `command not found` means the client cannot see the binary; register its absolute path. |
+
+The command-line forms exit with status 0 whenever they wrote a response,
+including an error response. Check the response for an `error` member, not the
+exit status.
+
+If you add the line `use contract Tasks from "tasks" audience "mobile"` to the
+example's `main.acore`, between the `module` line and the `app` line, and
+create no lock, `workspace.open` reports, in `result.projects[0]`:
+
+```json title="Output: needs_preparation (excerpt)"
+{
+  "diagnostic_counts": {
+    "errors": 1,
+    "warnings": 0
+  },
+  "entry": "main.acore",
+  "language_profile": "acore-ui",
+  "last_validated_snapshot": null,
+  "preparation": [
+    {
+      "detail": "No UI lock; run the Axiom CLI's lock step explicitly. The service never installs dependencies.",
+      "kind": "missing_lock",
+      "path": ".axiom/axiom.ui.lock.json"
+    }
+  ],
+  "project_id": "task-app",
+  …
+  "semantic_state": "unavailable",
+  "status": "needs_preparation",
+  "target": "web"
+}
+```
+
+## Clean up
+
+The service keeps its state in `.axiom/semantic` under the project root,
+with a `.gitignore` that keeps it out of version control. It holds stored
+snapshots (at most 16), candidates, the journal of applies, and one small
+record for each `request_id` of `change.propose` and `change.apply` and for
+each discarded candidate. Those records have no retention limit, so the
+directory grows by a few KB per proposal.
+
+To reclaim the space, delete `.axiom/semantic` while no `acore-semantic`
+process serves the project (close MCP clients that started one), and only if
+no apply ended with `outcome: unknown` that you have not yet sent again. The
+service creates the directory again on the next request. Deleting it loses:
+
+- stored snapshots: an earlier snapshot id answers `not_found`
+  (`snapshot_unknown`), unless it is the project's current state, which is
+  captured again;
+- open candidates, which can no longer be inspected or applied;
+- receipts and request records: sending an earlier `change.apply` again
+  answers `not_found` instead of returning its receipt.
+
+Remove a registered server with `claude mcp remove acore-semantic` or
+`codex mcp remove acore-semantic`. To remove the example, delete the
+`task-app` directory.
+
+To uninstall the service, run `brew uninstall acore-semantic`, or delete
+`~/.local/bin/acore-semantic` if you downloaded it directly.
+
+## Next steps
+
+- [Protocol reference](/semantic-service/protocol): every operation, error and limit.
+- [Agent skill](/semantic-service/agent-skill): the workflow to give your coding agent.
+- [Support matrix](/semantic-service/support-matrix): what is implemented and what is partial.

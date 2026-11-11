@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.axiomcore.dev/agent-semantic/v1/operations/node.find.request.json",
+  "title": "node.find request",
+  "description": "params of node.find: query, kind and limit, plus the owner and path filters.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "query",
+    "limit"
+  ],
+  "properties": {
+    "query": {
+      "description": "Trimmed, case-insensitive substring of name, id, or a string-literal property value. Empty matches every node.",
+      "type": "string",
+      "maxLength": 200
+    },
+    "kind": {
+      "description": "Exact kind filter; an unknown kind matches nothing.",
+      "$ref": "../common.json#/$defs/nodeKind"
+    },
+    "owner": {
+      "description": "Only nodes owned (transitively) by this page or component.",
+      "$ref": "../common.json#/$defs/nodeId"
+    },
+    "path": {
+      "description": "Only nodes whose authored declaration is in this file.",
+      "$ref": "../common.json#/$defs/path"
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 50
+    }
+  }
+}

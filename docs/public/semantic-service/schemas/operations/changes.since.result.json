@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.axiomcore.dev/agent-semantic/v1/operations/changes.since.result.json",
+  "title": "changes.since result",
+  "description": "File and node deltas between since and the envelope snapshot, filtered to scope. history says whether the service could compute them.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "since",
+    "history",
+    "files",
+    "nodes",
+    "relevant"
+  ],
+  "properties": {
+    "since": {
+      "$ref": "../common.json#/$defs/snapshotId"
+    },
+    "history": {
+      "description": "known: deltas below are complete for scope. unknown: since is not related to this snapshot by captured history. expired: since was evicted; deltas are empty.",
+      "enum": [
+        "known",
+        "unknown",
+        "expired"
+      ]
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "$ref": "../edits.json#/$defs/fileChange"
+      }
+    },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "$ref": "../edits.json#/$defs/relocation"
+      }
+    },
+    "relevant": {
+      "description": "True when anything in scope changed (with scope.candidate: anything the candidate read or wrote).",
+      "type": "boolean"
+    }
+  },
+  "x-errors": [
+    "invalid_arguments",
+    "not_found",
+    "internal",
+    "resource_limit",
+    "permission_denied",
+    "unsupported_operation",
+    "snapshot_expired",
+    "stale_snapshot"
+  ]
+}

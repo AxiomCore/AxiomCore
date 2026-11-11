@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.axiomcore.dev/agent-semantic/v1/operations/node.get.result.json",
+  "title": "node.get result",
+  "description": "One entry per requested id, in request order. An unknown id fails the whole request with not_found (target.nodes).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "nodes"
+  ],
+  "properties": {
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "node"
+        ],
+        "properties": {
+          "node": {
+            "$ref": "../common.json#/$defs/nodeSummary"
+          },
+          "properties": {
+            "type": "array",
+            "items": {
+              "$ref": "../common.json#/$defs/property"
+            }
+          },
+          "edges": {
+            "description": "child_of, then contains, then outgoing relations by kind and target order: the evidence relations merged with the graph.query index's derived facts (component relations, conditions, structured statements, navigation targets; layer resolved) and declared facts (extension permissions; layer declared); incoming edges, from the same index, only with include incoming.",
+            "type": "array",
+            "items": {
+              "$ref": "../common.json#/$defs/edge"
+            }
+          },
+          "body": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "path",
+              "text",
+              "start_line",
+              "end_line"
+            ],
+            "properties": {
+              "path": {
+                "$ref": "../common.json#/$defs/path"
+              },
+              "text": {
+                "type": "string"
+              },
+              "start_line": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "end_line": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          },
+          "provenance": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "owner",
+              "path"
+            ],
+            "properties": {
+              "owner": {
+                "$ref": "../common.json#/$defs/nodeId"
+              },
+              "path": {
+                "$ref": "../common.json#/$defs/path"
+              },
+              "generated": {
+                "type": "boolean"
+              },
+              "read_only_origin": {
+                "type": "boolean"
+              }
+            }
+          },
+          "edits": {
+            "description": "Compact edit summary: kinds with at least one option. Use node.edits for the options.",
+            "type": "array",
+            "items": {
+              "$ref": "../edits.json#/$defs/editKind"
+            },
+            "uniqueItems": true
+          }
+        }
+      }
+    }
+  },
+  "x-errors": [
+    "invalid_arguments",
+    "not_found",
+    "internal",
+    "resource_limit",
+    "permission_denied",
+    "unsupported_operation",
+    "snapshot_expired",
+    "stale_snapshot",
+    "compile_failed"
+  ]
+}

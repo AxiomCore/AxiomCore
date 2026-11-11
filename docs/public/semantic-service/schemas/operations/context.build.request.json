@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.axiomcore.dev/agent-semantic/v1/operations/context.build.request.json",
+  "title": "context.build request",
+  "description": "params of context.build. Caps come from limits (max_bytes, max_nodes, max_depth).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "focus",
+    "purpose"
+  ],
+  "properties": {
+    "focus": {
+      "type": "array",
+      "items": {
+        "$ref": "../common.json#/$defs/nodeId"
+      },
+      "minItems": 1,
+      "maxItems": 20,
+      "uniqueItems": true
+    },
+    "purpose": {
+      "description": "Deterministic recipe.",
+      "enum": [
+        "understand",
+        "change_input",
+        "change_behavior",
+        "change_schema",
+        "diagnose"
+      ]
+    },
+    "include": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "signature",
+          "implementation",
+          "input_constraints",
+          "callers",
+          "consumers",
+          "authorization",
+          "diagnostics",
+          "tests"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "expand": {
+      "description": "expansionRef.ref values from an earlier response on the same snapshot.",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 512
+      },
+      "maxItems": 50
+    }
+  }
+}

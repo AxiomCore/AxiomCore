@@ -1,0 +1,892 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.axiomcore.dev/agent-semantic/v1/common.json",
+  "title": "Shared definitions",
+  "description": "Shared definitions of axiom-agent-semantic/v1: identifiers, workspace and snapshot identity, node references, limits, truncation and continuation, coverage and diagnostics.",
+  "$defs": {
+    "protocol": {
+      "description": "Protocol string: axiom-agent-semantic/v1.",
+      "const": "axiom-agent-semantic/v1"
+    },
+    "operation": {
+      "description": "Every operation of v1. The capability manifest says which are implemented.",
+      "enum": [
+        "capabilities",
+        "workspace.open",
+        "project.overview",
+        "node.find",
+        "node.get",
+        "node.edits",
+        "graph.query",
+        "context.build",
+        "impact.analyze",
+        "changes.since",
+        "node.relocate",
+        "change.propose",
+        "change.inspect",
+        "check.run",
+        "change.apply",
+        "change.discard",
+        "edit.plan"
+      ]
+    },
+    "workspaceId": {
+      "description": "Opaque workspace handle returned by workspace.open. Scoped to the host process and caller.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "snapshotId": {
+      "description": "Opaque id of one immutable captured snapshot. Never the reserved word latest.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "not": {
+        "const": "latest"
+      }
+    },
+    "snapshotSelector": {
+      "description": "A snapshot id, latest, or last_validated (the workspace's most recent stored validated snapshot, read as history and marked historical; never chosen unless named). latest and last_validated are resolved once at request entry; the response names the snapshot it chose.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "candidateId": {
+      "description": "Opaque id of a private candidate (change.propose).",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "requestId": {
+      "description": "Caller-chosen idempotency key, scoped to workspace and caller. Bound to the request's input fingerprint.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "nodeId": {
+      "description": "Opaque node id, valid within one snapshot only. Compare exactly; never parse.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "nodeKind": {
+      "description": "Open node kind string. The service's vocabulary: contract_import, page, component, state, derived (v1 read operations), query, mutation, stream, action, element, conditional.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "path": {
+      "description": "Project-relative file path: forward slashes, no leading slash, no empty, . or .. segment, no backslash or control character.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^[^/\\\\\\u0000-\\u001f\\u007f]+(/[^/\\\\\\u0000-\\u001f\\u007f]+)*$",
+      "not": {
+        "pattern": "(^|/)\\.{1,2}(/|$)"
+      }
+    },
+    "hostPath": {
+      "description": "Absolute host filesystem path (workspace.open only). Never returned for files inside a root; those use path.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "sha256": {
+      "description": "Lowercase hex SHA-256 (64 characters).",
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "fingerprint": {
+      "description": "Lowercase hex SHA-256 over a documented canonical input (node version, option fingerprint, input fingerprint).",
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "timestamp": {
+      "description": "RFC 3339 with an explicit offset, uppercase T and Z.",
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:[0-5]\\d(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
+    },
+    "cursor": {
+      "description": "Opaque continuation token bound to one snapshot and one request shape. Valid until the snapshot expires.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "jsonValue": {
+      "description": "Any JSON value, including null."
+    },
+    "edgeKind": {
+      "description": "Open snake_case relation kind: child_of, contains, reads, writes, triggers, calls, invokes, navigates_to, imports, protected_by, accepts, returns and other compiler-supported relations.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,63}$"
+    },
+    "edgeLayer": {
+      "description": "Kind of fact: declared (written in source), resolved (compiler-resolved), observed (runtime or evidence index).",
+      "enum": [
+        "declared",
+        "resolved",
+        "observed"
+      ]
+    },
+    "edgeDirection": {
+      "enum": [
+        "outgoing",
+        "incoming"
+      ]
+    },
+    "semanticState": {
+      "description": "How far the snapshot got: syntax (parsed only), resolved (names resolved, not validated), validated (compiled without errors), unavailable (not even parsed).",
+      "enum": [
+        "syntax",
+        "resolved",
+        "validated",
+        "unavailable"
+      ]
+    },
+    "nodeSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "name",
+        "path",
+        "version"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "common.json#/$defs/nodeId"
+        },
+        "kind": {
+          "$ref": "common.json#/$defs/nodeKind"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "path": {
+          "description": "File that owns the node's authored declaration.",
+          "$ref": "common.json#/$defs/path"
+        },
+        "version": {
+          "description": "Node version: fingerprint over the node's kind, name, file and authored text in this snapshot. Edits take it as expected_node_version.",
+          "$ref": "common.json#/$defs/fingerprint"
+        }
+      },
+      "description": "A node reference: id, kind, name and path, plus version."
+    },
+    "property": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "value",
+        "type",
+        "editable"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "value": {
+          "description": "Decoded JSON for literal scalars; authored source text (a JSON string) otherwise.",
+          "$ref": "common.json#/$defs/jsonValue"
+        },
+        "type": {
+          "description": "Open string: String, Int, Float, Bool (literals); Binding, Lambda, Action, Expression, Operation, Generated (source text).",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "editable": {
+          "description": "True when a set_property option exists for this property.",
+          "type": "boolean"
+        },
+        "origin": {
+          "description": "authored (written on this node), generated (compiler), inherited (a default or another declaration owns it). Optional: absent means authored.",
+          "enum": [
+            "authored",
+            "generated",
+            "inherited"
+          ]
+        }
+      }
+    },
+    "edge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "direction",
+        "node"
+      ],
+      "properties": {
+        "kind": {
+          "$ref": "common.json#/$defs/edgeKind"
+        },
+        "direction": {
+          "$ref": "common.json#/$defs/edgeDirection"
+        },
+        "node": {
+          "description": "The node at the other end.",
+          "$ref": "common.json#/$defs/nodeId"
+        },
+        "layer": {
+          "$ref": "common.json#/$defs/edgeLayer"
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {
+        "max_bytes": {
+          "description": "Authoritative cap on the UTF-8 byte length of the compact serialization of the response's result member.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4194304
+        },
+        "max_nodes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "max_depth": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16
+        },
+        "max_items": {
+          "description": "Page size for listings.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        }
+      },
+      "description": "Request limits. Omitted fields take the defaults the capability manifest lists. Bytes are authoritative; tokens are never a request limit."
+    },
+    "effectiveLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_bytes",
+        "max_nodes",
+        "max_depth",
+        "max_items"
+      ],
+      "properties": {
+        "max_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4194304
+        },
+        "max_nodes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "max_depth": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16
+        },
+        "max_items": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        }
+      },
+      "description": "The limits the service applied (request values or defaults, lowered to the service maximums)."
+    },
+    "expansionRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ref",
+        "kind",
+        "reason"
+      ],
+      "properties": {
+        "ref": {
+          "description": "Opaque handle the caller passes back (node.get, context.build expand) to fetch the omitted part. Bound to the snapshot.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "kind": {
+          "enum": [
+            "node",
+            "body",
+            "edges",
+            "diagnostics",
+            "source_region",
+            "page"
+          ]
+        },
+        "node": {
+          "$ref": "common.json#/$defs/nodeId"
+        },
+        "estimated_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        }
+      }
+    },
+    "omission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reason",
+        "omitted",
+        "frontier"
+      ],
+      "properties": {
+        "reason": {
+          "description": "Which cap or boundary stopped the walk.",
+          "enum": [
+            "max_bytes",
+            "max_nodes",
+            "max_depth",
+            "max_items",
+            "unsupported",
+            "unavailable"
+          ]
+        },
+        "omitted": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "frontier": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/nodeId"
+          },
+          "maxItems": 50,
+          "uniqueItems": true
+        },
+        "expand": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/expansionRef"
+          },
+          "maxItems": 50
+        }
+      }
+    },
+    "tokensEstimate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "value",
+        "estimator"
+      ],
+      "properties": {
+        "value": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "estimator": {
+          "description": "How it was estimated, for example bytes/4. Always an estimate.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      }
+    },
+    "truncation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "truncated",
+        "limits",
+        "used",
+        "omissions",
+        "continuation"
+      ],
+      "properties": {
+        "truncated": {
+          "type": "boolean"
+        },
+        "limits": {
+          "$ref": "common.json#/$defs/effectiveLimits"
+        },
+        "used": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "bytes"
+          ],
+          "properties": {
+            "bytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "nodes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "depth": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "tokens_estimate": {
+              "$ref": "common.json#/$defs/tokensEstimate"
+            }
+          }
+        },
+        "omissions": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/omission"
+          }
+        },
+        "continuation": {
+          "description": "Cursor for the next page on the same snapshot, or null.",
+          "anyOf": [
+            {
+              "$ref": "common.json#/$defs/cursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "description": "Present on every response. truncated is false exactly when nothing was omitted and there is no continuation.",
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "required": [
+              "truncated"
+            ],
+            "properties": {
+              "truncated": {
+                "const": false
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "omissions": {
+                "maxItems": 0
+              },
+              "continuation": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "anyOf": [
+              {
+                "properties": {
+                  "omissions": {
+                    "minItems": 1
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "continuation": {
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "coverageGap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reason",
+        "detail"
+      ],
+      "properties": {
+        "reason": {
+          "enum": [
+            "unsupported_kind",
+            "unsupported_profile",
+            "unavailable_evidence",
+            "unresolved_reference",
+            "foreign_boundary",
+            "broken_source",
+            "not_indexed"
+          ]
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/nodeId"
+          },
+          "maxItems": 50,
+          "uniqueItems": true
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/path"
+          },
+          "maxItems": 50,
+          "uniqueItems": true
+        },
+        "edge_kinds": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/edgeKind"
+          },
+          "uniqueItems": true
+        },
+        "detail": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "completeness",
+        "exhaustive",
+        "gaps"
+      ],
+      "properties": {
+        "completeness": {
+          "description": "complete: every relevant fact was available. partial: gaps lists what was not. unknown: the service cannot tell (for example no graph).",
+          "enum": [
+            "complete",
+            "partial",
+            "unknown"
+          ]
+        },
+        "exhaustive": {
+          "description": "True when an empty or short answer proves absence (a negative claim). Never true with gaps.",
+          "type": "boolean"
+        },
+        "gaps": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/coverageGap"
+          }
+        }
+      },
+      "description": "Present on every response.",
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "required": [
+              "completeness"
+            ],
+            "properties": {
+              "completeness": {
+                "const": "complete"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "gaps": {
+                "maxItems": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "exhaustive": {
+                "const": false
+              }
+            }
+          }
+        }
+      ]
+    },
+    "snapshotIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "requested",
+        "semantic_state",
+        "sources",
+        "dependencies",
+        "overlay",
+        "captured_at"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "common.json#/$defs/snapshotId"
+        },
+        "requested": {
+          "description": "What the request asked for (latest, or the id itself).",
+          "$ref": "common.json#/$defs/snapshotSelector"
+        },
+        "semantic_state": {
+          "$ref": "common.json#/$defs/semanticState"
+        },
+        "sources": {
+          "description": "Fingerprint of the captured .acore sources.",
+          "$ref": "common.json#/$defs/sha256"
+        },
+        "dependencies": {
+          "description": "Fingerprint of every other captured input (locks, contracts, manifests, stylesheets, assets).",
+          "$ref": "common.json#/$defs/sha256"
+        },
+        "overlay": {
+          "description": "The candidate whose overlay this snapshot includes, or null for a captured base.",
+          "anyOf": [
+            {
+              "$ref": "common.json#/$defs/candidateId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "captured_at": {
+          "$ref": "common.json#/$defs/timestamp"
+        },
+        "historical": {
+          "description": "True when the request named last_validated: this answer describes the last validated snapshot as history, not the current state of the project. Absent otherwise.",
+          "type": "boolean"
+        },
+        "disk": {
+          "description": "What request-time revalidation found when it compared this snapshot's captured inputs with the files under the workspace root, before the response was sent (stat first, then SHA-256 of each file whose stat changed; the hash decides). current: every input still holds the captured bytes. changed: an external writer changed, deleted, renamed or created an input since the capture; the answer describes this snapshot, not the files on disk now (read latest for those). Set on reads (workspace.open, project.overview, node.*, graph.query, context.build, impact.analyze, changes.since, check.run, edit.plan) of a captured snapshot; absent on candidate overlays, historical reads and change operations. A read on latest whose inputs changed while it was answered is answered again, so changed on latest means they kept changing.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state"
+          ],
+          "properties": {
+            "state": {
+              "enum": [
+                "current",
+                "changed"
+              ]
+            },
+            "changes": {
+              "description": "The inputs that differ, by path; absent when current.",
+              "type": "array",
+              "items": {
+                "$ref": "common.json#/$defs/inputChange"
+              },
+              "maxItems": 50
+            },
+            "omitted": {
+              "description": "Changed inputs left out of changes (more than 50).",
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      }
+    },
+    "toolchain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "acore_version",
+        "compiler_identity",
+        "identity_scheme",
+        "edit_rules_identity",
+        "language_profile",
+        "target"
+      ],
+      "properties": {
+        "acore_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "compiler_identity": {
+          "description": "AXIOM_COMPILER_IDENTITY, a content digest over the compiler inputs.",
+          "$ref": "common.json#/$defs/sha256"
+        },
+        "identity_scheme": {
+          "description": "For example axiom-compiler-identity/v3.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "edit_rules_identity": {
+          "description": "Digest of the edit rules.",
+          "$ref": "common.json#/$defs/sha256"
+        },
+        "build_profile": {
+          "description": "Cargo build profile of this build.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "language_profile": {
+          "description": "Language profile of the snapshot, for example acore-ui. null when no workspace is involved.",
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "target": {
+          "description": "Compile target, for example web. null when no workspace is involved.",
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "severity": {
+      "enum": [
+        "error",
+        "warning",
+        "info"
+      ]
+    },
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "severity",
+        "message"
+      ],
+      "properties": {
+        "severity": {
+          "$ref": "common.json#/$defs/severity"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "code": {
+          "description": "Compiler diagnostic code, for example AUI029.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "path": {
+          "$ref": "common.json#/$defs/path"
+        },
+        "line": {
+          "description": "1-based.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "column": {
+          "description": "1-based, in Unicode scalar values (not UTF-16 units, not bytes).",
+          "type": "integer",
+          "minimum": 1
+        },
+        "end_line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "end_column": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "node": {
+          "$ref": "common.json#/$defs/nodeId"
+        }
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "$ref": "common.json#/$defs/diagnostic"
+      },
+      "maxItems": 200
+    },
+    "nextAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "reason"
+      ],
+      "properties": {
+        "operation": {
+          "$ref": "common.json#/$defs/operation"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "params": {
+          "description": "Suggested params, when the service can fill them.",
+          "type": "object"
+        }
+      }
+    },
+    "diagnosticCounts": {
+      "description": "Error and warning counts over every compiler diagnostic of a compile.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "errors",
+        "warnings"
+      ],
+      "properties": {
+        "errors": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "warnings": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "inputChange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "change"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "common.json#/$defs/path"
+        },
+        "change": {
+          "description": "modified: other bytes (or no longer a readable regular file). deleted: gone, deleted or renamed away. created: an input that was absent when the snapshot was captured (the UI lock) now exists.",
+          "enum": [
+            "modified",
+            "deleted",
+            "created"
+          ]
+        }
+      }
+    }
+  }
+}

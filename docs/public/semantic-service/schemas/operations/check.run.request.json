@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.axiomcore.dev/agent-semantic/v1/operations/check.run.request.json",
+  "title": "check.run request",
+  "description": "params of check.run: run admitted checks against a candidate, or against the envelope snapshot plus optional overlay files.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "checks"
+  ],
+  "properties": {
+    "candidate": {
+      "$ref": "../common.json#/$defs/candidateId"
+    },
+    "files": {
+      "description": "Overlay files; only with the envelope snapshot. [] checks the snapshot as is.",
+      "type": "array",
+      "items": {
+        "$ref": "../edits.json#/$defs/file"
+      },
+      "maxItems": 64
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    }
+  },
+  "oneOf": [
+    {
+      "required": [
+        "candidate"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "files"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "not": {
+        "required": [
+          "candidate"
+        ]
+      }
+    }
+  ]
+}

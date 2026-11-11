@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.axiomcore.dev/agent-semantic/v1/operations/graph.query.request.json",
+  "title": "graph.query request",
+  "description": "params of graph.query. Depth comes from limits.max_depth.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "from",
+    "mode"
+  ],
+  "properties": {
+    "from": {
+      "type": "array",
+      "items": {
+        "$ref": "../common.json#/$defs/nodeId"
+      },
+      "minItems": 1,
+      "maxItems": 20,
+      "uniqueItems": true
+    },
+    "mode": {
+      "description": "dependencies: outgoing; dependents: incoming; references: incoming use sites; paths: connecting paths from -> to.",
+      "enum": [
+        "dependencies",
+        "dependents",
+        "references",
+        "paths"
+      ]
+    },
+    "to": {
+      "type": "array",
+      "items": {
+        "$ref": "../common.json#/$defs/nodeId"
+      },
+      "minItems": 1,
+      "maxItems": 20,
+      "uniqueItems": true
+    },
+    "edge_kinds": {
+      "description": "Restrict to these relations. Omitted: the profile's default dependency relations, disclosed in result.traversed.",
+      "type": "array",
+      "items": {
+        "$ref": "../common.json#/$defs/edgeKind"
+      },
+      "uniqueItems": true
+    },
+    "layers": {
+      "type": "array",
+      "items": {
+        "$ref": "../common.json#/$defs/edgeLayer"
+      },
+      "uniqueItems": true
+    },
+    "transitive": {
+      "type": "boolean"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "type": "object",
+        "required": [
+          "mode"
+        ],
+        "properties": {
+          "mode": {
+            "const": "paths"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "to"
+        ]
+      },
+      "else": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "to"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1978,7 +1978,7 @@ Ignore the `studio/v1` named in that message: send `axiom-agent-semantic/v1`.
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
 | `code` | yes | `unsupported_operation`, `invalid_arguments`, `ambiguous_owner`, `read_only_origin`, `stale_snapshot`, `precondition_failed`, `compile_failed`, `conflict`, `insufficient_context`, `snapshot_expired`, `permission_denied`, `resource_limit`, `not_found`, `internal` | One of the closed list of error codes (see [Error codes and what to do](#error-codes-and-what-to-do)). |
-| `reason` | no | string | Open refinement of code, for example `old_value_mismatch`, `request_id_reused`, `external_write`. |
+| `reason` | no | string | Open refinement of code (the protocol reference lists the values in use), for example `old_value_mismatch`, `request_id_reused`, `external_write`. |
 | `message` | yes | string (at most 4000 characters) | A sentence for people. Do not parse it; use `code` and `reason`. |
 | `operation_index` | no | integer (0..) | Index in `params.operations` of the operation that failed (batched edits). |
 | `target` | no | object (`target`) | What the error is about. |

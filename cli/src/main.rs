@@ -197,6 +197,18 @@ enum Commands {
     Mock(commands::server_command_contract::MockInput),
     /// Start the Acore REPL
     Repl,
+    /// Run the acore-semantic service (one-shot, serve, capabilities); arguments pass through
+    #[command(disable_help_flag = true, disable_version_flag = true)]
+    Semantic {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<std::ffi::OsString>,
+    },
+    /// Run the acore-semantic MCP server over stdin/stdout; arguments pass through
+    #[command(disable_help_flag = true, disable_version_flag = true)]
+    Mcp {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<std::ffi::OsString>,
+    },
     /// Run the Acore language server over stdin/stdout without cloud access
     Lsp {
         #[arg(long, conflicts_with = "version")]
@@ -1501,6 +1513,9 @@ async fn main() -> anyhow::Result<()> {
     if commands::lsp::native_entry().await? {
         return Ok(());
     }
+    if commands::semantic::native_entry()? {
+        return Ok(());
+    }
     // 1. Setup Error Hooks
     let (panic_hook, eyre_hook) = color_eyre::config::HookBuilder::default().into_hooks();
     eyre_hook.install()?;
@@ -1718,6 +1733,8 @@ async fn main() -> anyhow::Result<()> {
         Commands::Server { .. } => "server",
         Commands::Repl => "repl",
         Commands::Lsp { .. } => "lsp",
+        Commands::Semantic { .. } => "semantic",
+        Commands::Mcp { .. } => "mcp",
         Commands::Scenario { .. } => "scenario",
     };
 
@@ -1744,6 +1761,7 @@ fn is_local_command(command: &Commands) -> bool {
         Commands::Secrets { .. } => true,
         Commands::Editor { .. } => true,
         Commands::Scenario { .. } => true,
+        Commands::Semantic { .. } | Commands::Mcp { .. } => true,
         Commands::Package { .. }
         | Commands::Packages { .. }
         | Commands::Database { .. }
@@ -2871,6 +2889,15 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             .unwrap();
             Ok(())
         }
+        // `commands::semantic::native_entry` handles these before clap; this
+        // arm only keeps the parsed form equivalent.
+        Commands::Semantic { args } => match commands::semantic::delegate(args)? {},
+        Commands::Mcp { args } => {
+            let forwarded: Vec<_> = std::iter::once("mcp".into())
+                .chain(args.iter().cloned())
+                .collect();
+            match commands::semantic::delegate(&forwarded)? {}
+        }
         Commands::Lsp {
             version_json,
             version,
@@ -3332,6 +3359,21 @@ pub async fn handle_inspect(file_path: &Path) -> anyhow::Result<()> {
 #[cfg(test)]
 mod launch_tests {
     use super::*;
+
+    #[test]
+    fn semantic_and_mcp_accept_any_arguments_for_delegation() {
+        let cli =
+            Cli::try_parse_from(["axiom", "semantic", "--help", "--root", "x", "-V"]).unwrap();
+        let Commands::Semantic { args } = *cli.command else {
+            panic!("expected semantic");
+        };
+        assert_eq!(args, ["--help", "--root", "x", "-V"]);
+        let cli = Cli::try_parse_from(["axiom", "mcp", "--version", "--unknown"]).unwrap();
+        let Commands::Mcp { args } = *cli.command else {
+            panic!("expected mcp");
+        };
+        assert_eq!(args, ["--version", "--unknown"]);
+    }
 
     #[test]
     fn database_controlled_execution_requires_a_bundle_and_explicit_binding() {

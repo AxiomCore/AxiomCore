@@ -39,6 +39,7 @@ pub mod run;
 pub mod scenario;
 pub mod secrets;
 pub mod security;
+pub mod semantic;
 pub mod serve;
 pub mod server;
 #[allow(dead_code)] // Standalone mock CLI types remain reserved for their execution phase.

@@ -1,0 +1,10 @@
+{
+  "title": "Semantic service",
+  "pages": [
+    "index",
+    "quickstart",
+    "protocol",
+    "support-matrix",
+    "agent-skill"
+  ]
+}

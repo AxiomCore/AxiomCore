@@ -1,0 +1,2180 @@
+---
+title: Semantic service protocol reference
+description: The axiom-agent-semantic/v1 envelope, snapshots, the 17 operations with their params, results and errors, limits, and the apply and recovery rules.
+pageType: reference
+testedWith: Preview build of acore-semantic 0.1.4 on macOS arm64
+---
+
+`acore-semantic` speaks one protocol, `axiom-agent-semantic/v1`, over three
+transports: MCP (`acore-semantic mcp`), JSON lines (`acore-semantic serve`) and
+a one-shot command (`acore-semantic --root <project> < request.json`). The
+operations, fields and errors are the same on all three.
+
+<StatusNote status="experimental" title="Preview">
+  Read operations and edit operations of v1 are frozen: later versions of v1
+  only add operations, optional fields and values of open strings. Which
+  operations are fully implemented is in the [Support matrix](/semantic-service/support-matrix).
+</StatusNote>
+
+The protocol is defined by JSON Schema (draft 2020-12) files: an envelope
+schema for requests and responses, `error.json`, shared definitions in
+`common.json` and `edits.json`, and one request and one result schema per
+operation in `operations/`. They live in the `protocol/semantic/schemas/`
+directory of the Acore compiler source. Their `$id`s
+(`https://schemas.axiomcore.dev/agent-semantic/v1/<file>`) are identifiers
+only; nothing is served at those URLs. The tables marked as generated on this
+page are produced from those schemas and from the service's capability
+manifest.
+
+## Conventions
+
+- Field names and enum values are `snake_case`. Readers ignore fields they do
+  not know; the service rejects unknown fields inside edit operations and
+  apply preconditions, because ignoring a precondition could apply an edit you
+  did not intend.
+- Paths are relative to the project root with `/` separators, except
+  `workspace.open` roots, which are absolute.
+- SHA-256 values are lowercase hex. Timestamps are RFC 3339 with an offset.
+  Diagnostic `line` and `column` start at 1; lengths and columns count Unicode
+  scalar values.
+- Over MCP each operation is a tool named with `_` for `.` (`node_find`). The
+  tool's arguments are the request envelope without `protocol` and
+  `operation`; the server fills `workspace`. The tool result's structured
+  content is the response envelope.
+
+The examples on this page run in order against the one-page project from the
+[quick start](/semantic-service/quickstart#prerequisites). Values in angle
+brackets, such as `<workspace>`, stand for ids from earlier responses. In
+responses, `…` marks text left out, including the end of long hashes.
+
+## Request envelope
+
+```json title="A request"
+{
+  "protocol": "axiom-agent-semantic/v1",
+  "operation": "node.find",
+  "workspace": "<workspace>",
+  "snapshot": "latest",
+  "limits": {"max_bytes": 65536},
+  "params": {"query": "Add", "limit": 10}
+}
+```
+
+{/* BEGIN GENERATED envelope-fields */}
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `protocol` | yes | `"axiom-agent-semantic/v1"` |  |
+| `operation` | yes | `capabilities`, `workspace.open`, `project.overview`, `node.find`, `node.get`, `node.edits`, `graph.query`, `context.build`, `impact.analyze`, `changes.since`, `node.relocate`, `change.propose`, `change.inspect`, `check.run`, `change.apply`, `change.discard`, `edit.plan` | Every operation of v1. The capability manifest says which are implemented. |
+| `workspace` | no | string (at most 256 characters) | Opaque workspace handle returned by workspace.open. Scoped to the host process and caller. |
+| `snapshot` | no | string (at most 256 characters) | Read operations: the snapshot to read (id or latest). |
+| `base_snapshot` | no | string (at most 256 characters) | Change.propose and edit.plan: the snapshot the edits are written against. Must be an id, not latest. |
+| `request_id` | no | string (at most 128 characters) | Caller-chosen idempotency key, scoped to workspace and caller. Bound to the request's input fingerprint. |
+| `limits` | no | object (`limits`) | Request limits. Omitted fields take the defaults the capability manifest lists. Bytes are authoritative; tokens are never a request limit. |
+| `params` | yes | object | Operation arguments; schemas/operations/&#60;operation&#62;.request.json. |
+
+{/* END GENERATED envelope-fields */}
+
+`request_id` is an idempotency key: the same `request_id` with the same input
+returns the recorded result with `replayed: true`, and the same `request_id`
+with different input is `conflict` (`request_id_reused`). Only edit and apply
+operations record it; elsewhere it is echoed.
+
+Which envelope fields each operation takes:
+
+{/* BEGIN GENERATED envelope-rules */}
+
+| Operation | `workspace` | `snapshot` | `base_snapshot` | `request_id` |
+| --- | --- | --- | --- | --- |
+| `capabilities` | not allowed | not allowed | not allowed | not allowed |
+| `workspace.open` | not allowed | optional | not allowed | not allowed |
+| `project.overview` | required | required | not allowed | optional |
+| `node.find` | required | required | not allowed | optional |
+| `node.get` | required | required | not allowed | optional |
+| `node.edits` | required | required | not allowed | optional |
+| `graph.query` | required | required | not allowed | optional |
+| `context.build` | required | required | not allowed | optional |
+| `impact.analyze` | required | required | not allowed | optional |
+| `changes.since` | required | required | not allowed | optional |
+| `node.relocate` | required | required | not allowed | optional |
+| `change.propose` | required | not allowed | required | required |
+| `change.inspect` | required | not allowed | not allowed | optional |
+| `check.run` | required | required unless `params.candidate` is given | not allowed | optional |
+| `change.apply` | required | not allowed | not allowed | required |
+| `change.discard` | required | not allowed | not allowed | optional |
+| `edit.plan` | required | not allowed | required | not allowed |
+
+{/* END GENERATED envelope-rules */}
+
+## Response envelope
+
+Every response, success or error, has these fields, and exactly one of
+`result` and `error`:
+
+| Field | Meaning |
+| --- | --- |
+| `protocol`, `operation` | `operation` echoes the request. |
+| `request_id` | Present when the request had one. |
+| `workspace` | The workspace id, or `null` for `capabilities` and errors raised before a workspace was resolved. |
+| `snapshot` | The snapshot the answer describes (for an edit, its base; for a candidate, the candidate's snapshot with `overlay` set), or `null`. See [Snapshots](#snapshots-and-workspaces). |
+| `toolchain` | Compiler version and identity, edit rules identity, `language_profile` and `target`. |
+| `coverage` | `completeness` (`complete`, `partial` or `unknown`), `exhaustive`, and `gaps`, each with a reason. An empty answer proves absence only when `exhaustive` is `true`. |
+| `truncation` | `truncated`, the `limits` applied, bytes `used`, `omissions` (each with a reason, a count, up to 50 omitted node ids and expansion refs) and a `continuation` cursor or `null`. |
+| `result` | The operation's result. |
+| `error` | The [error object](#errors). |
+
+A response never silently drops content. When a limit cuts an answer,
+`truncation.truncated` is `true` and `omissions` say what was left out.
+`max_bytes` counts the UTF-8 bytes of the compact JSON of `result`.
+
+## Snapshots and workspaces
+
+A **workspace** is one attached project root. `workspace.open` returns its
+id; every later request except `capabilities` names it. The service serves
+one root per process: the `--root` it was started with.
+
+A **snapshot** is an immutable capture of the project's sources and inputs
+(contracts and lock) under one compiler, language profile and target. Its id
+is derived from its content. `latest` captures the files on disk now; the
+response names the snapshot it used, so you can keep reading that exact
+state. A snapshot's `semantic_state` says how far compilation got:
+
+{/* BEGIN GENERATED semantic-states */}
+
+- `syntax`: parsed only
+- `resolved`: names resolved, not validated
+- `validated`: compiled without errors
+- `unavailable`: not even parsed
+
+{/* END GENERATED semantic-states */}
+
+A read on a `syntax` or `resolved` snapshot is `partial` with a
+`broken_source` gap. Edits need a `validated` base, except bounded repairs:
+an edit on a broken base is accepted when it leaves fewer errors and none
+outside the declarations it changed.
+
+When a file changes on disk after a snapshot was captured, reads of that
+snapshot still describe the captured state and add `snapshot.disk.state:
+changed` with the changed paths. Read `latest` for the current files.
+
+A **node id** names a node within one snapshot, for example
+`element:Home/view/0/1`. Do not build or parse ids. To follow nodes to a
+newer snapshot, use an edit's `id_map`, `changes.since` or `node.relocate`.
+Every node carries a `version`, a fingerprint of its kind, name, file and
+authored text; pass it as `expected_node_version` to refuse an edit if the
+node changed.
+
+A **candidate** is a proposed change: your operations applied to a private
+copy of the base snapshot and compiled. It has an id and a version (1 when
+created, increased each time you extend it) and is `open`, `applied` or
+`discarded`. Only `change.apply` writes it to the project.
+
+## Operations
+
+The 17 operations, in the order a client usually needs them. Each section
+lists the params and result fields generated from the schemas, then a real
+request and response.
+
+### capabilities
+
+The manifest of what this service serves: each operation and edit kind with
+its status (`implemented`, `partial` or `planned`), profiles, checks, limits,
+publication guarantees and error codes. Call it first, and use only what it
+lists. It needs no workspace.
+
+{/* BEGIN GENERATED operation:capabilities */}
+
+**Params** (`schemas/operations/capabilities.request.json`)
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `profiles` | no | array of string (at most 64 characters) | Restrict the manifest to these language profiles. |
+
+**Result** (`schemas/operations/capabilities.result.json`)
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `manifest` | yes | object |  |
+| `manifest_fingerprint` | yes | string | Lowercase hex SHA-256 over a documented canonical input (node version, option fingerprint, input fingerprint). |
+
+`manifest` fields:
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `protocol` | yes | object |  |
+| `service` | yes | object |  |
+| `operations` | yes | array of object |  |
+| `edit_kinds` | yes | array of object |  |
+| `profiles` | yes | array of object |  |
+| `limits` | yes | object |  |
+| `checks` | no | array of object |  |
+| `publication` | yes | array of object |  |
+| `error_codes` | yes | array of `unsupported_operation`, `invalid_arguments`, `ambiguous_owner`, `read_only_origin`, `stale_snapshot`, `precondition_failed`, `compile_failed`, `conflict`, `insufficient_context`, `snapshot_expired`, `permission_denied`, `resource_limit`, `not_found`, `internal` |  |
+| `external_writes` | no | object | How the service detects writes by editors and tools it does not coordinate (external writers). |
+
+**Error codes:** `internal`, `unsupported_operation`, `invalid_arguments`, `resource_limit`.
+
+{/* END GENERATED operation:capabilities */}
+
+```json title="Request: capabilities"
+{"protocol": "axiom-agent-semantic/v1", "operation": "capabilities", "params": {}}
+```
+
+```json title="Response (excerpt)"
+{
+  "workspace": null,
+  "result": {
+    "manifest": {
+      "edit_kinds": [
+        {
+          "kind": "set_property",
+          "status": "implemented",
+          …
+        },
+        {
+          "kind": "bind_property",
+          "status": "implemented",
+          …
+        },
+        …
+      ],
+      "operations": [
+        {
+          "name": "capabilities",
+          "status": "implemented",
+          …
+        },
+        {
+          "name": "workspace.open",
+          "status": "partial",
+          …
+        },
+        {
+          "name": "project.overview",
+          "status": "implemented",
+          …
+        },
+        …
+      ],
+      "protocol": {
+        "name": "axiom-agent-semantic/v1",
+        "status": "frozen",
+        …
+      },
+      "service": {
+        "name": "acore-semantic",
+        "version": "0.1.4"
+      },
+      …
+    },
+    …
+  },
+  …
+}
+```
+
+### workspace.open
+
+Attaches the project root and captures a snapshot. Each project reports a
+`status`: `ready`, `needs_preparation` (with `preparation` steps for you to run
+with the Axiom CLI) or `unsupported`. The result also includes the
+manifest. It never installs, extracts or runs anything.
+
+{/* BEGIN GENERATED operation:workspace.open */}
+
+**Params** (`schemas/operations/workspace.open.request.json`)
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `roots` | yes | array of object, 1 to 16 items |  |
+| `language_profile` | no | string (at most 64 characters) |  |
+| `target` | no | string (at most 64 characters) |  |
+
+**Result** (`schemas/operations/workspace.open.result.json`)
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `workspace` | yes | object |  |
+| `projects` | yes | array of object, 1 to any items |  |
+| `capabilities` | yes | object (`manifest`) |  |
+
+`workspace` fields:
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `id` | yes | string (at most 256 characters) | Opaque workspace handle returned by workspace.open. Scoped to the host process and caller. |
+| `roots` | yes | array of object, 1 to any items |  |
+| `source_authority` | yes | `local_filesystem` |  |
+
+`capabilities` fields:
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `protocol` | yes | object |  |
+| `service` | yes | object |  |
+| `operations` | yes | array of object |  |
+| `edit_kinds` | yes | array of object |  |
+| `profiles` | yes | array of object |  |
+| `limits` | yes | object |  |
+| `checks` | no | array of object |  |
+| `publication` | yes | array of object |  |
+| `error_codes` | yes | array of `unsupported_operation`, `invalid_arguments`, `ambiguous_owner`, `read_only_origin`, `stale_snapshot`, `precondition_failed`, `compile_failed`, `conflict`, `insufficient_context`, `snapshot_expired`, `permission_denied`, `resource_limit`, `not_found`, `internal` |  |
+| `external_writes` | no | object | How the service detects writes by editors and tools it does not coordinate (external writers). |
+
+**Error codes:** `invalid_arguments`, `not_found`, `permission_denied`, `resource_limit`, `internal`, `unsupported_operation`, `compile_failed`.
+
+{/* END GENERATED operation:workspace.open */}
+
+```json title="Request: workspace.open"
+{"protocol": "axiom-agent-semantic/v1", "operation": "workspace.open", "snapshot": "latest",
+ "params": {"roots": [{"path": "<project-path>"}]}}
+```
+
+```json title="Response (excerpt)"
+{
+  "operation": "workspace.open",
+  "workspace": "ws-f2b7ec0822ce…",
+  "snapshot": {
+    "id": "snap-3c995aab4e94…",
+    "semantic_state": "validated",
+    …
+  },
+  "result": {
+    "projects": [
+      {
+        "project_id": "my-app",
+        "semantic_state": "validated",
+        "status": "ready",
+        …
+      }
+    ],
+    "workspace": {
+      "id": "ws-f2b7ec0822ce…",
+      "source_authority": "local_filesystem",
+      …
+    },
+    …
+  },
+  …
+}
+```
+
+### project.overview
+
+Modules with their owners (pages and components), imports and diagnostic
+counts, entry points, imported contracts and diagnostics. Every list is paged
+by `limits.max_items`; pass `truncation.continuation` back as `params.cursor`
+for the next page. The cursor stays on the same snapshot.
+
+{/* BEGIN GENERATED operation:project.overview */}
+
+**Params** (`schemas/operations/project.overview.request.json`)
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `projects` | no | array of string (at most 128 characters) |  |
+| `include` | no | array of `modules`, `entry_points`, `contracts`, `diagnostics` |  |
+| `cursor` | no | string (at most 1024 characters) | Opaque continuation token bound to one snapshot and one request shape. Valid until the snapshot expires. |
+
+**Result** (`schemas/operations/project.overview.result.json`)
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `projects` | yes | array of object |  |
+| `modules` | yes | array of object |  |
+| `entry_points` | yes | array of object (`nodeSummary`) |  |
+| `contracts` | yes | array of object |  |
+| `diagnostics` | yes | array of object, 0 to 200 items (`diagnostics`) |  |
+
+**Error codes:** `invalid_arguments`, `not_found`, `internal`, `resource_limit`, `permission_denied`, `unsupported_operation`, `snapshot_expired`, `stale_snapshot`.
+
+{/* END GENERATED operation:project.overview */}
+
+```json title="Request: project.overview"
+{"protocol": "axiom-agent-semantic/v1", "operation": "project.overview", "workspace": "<workspace>",
+ "snapshot": "<snapshot>", "params": {"include": ["entry_points", "contracts"]}}
+```
+
+```json title="Response (excerpt)"
+{
+  "snapshot": {
+    "id": "snap-3c995aab4e94…",
+    …
+  },
+  "truncation": {
+    "truncated": false,
+    …
+  },
+  "result": {
+    "contracts": [
+      {
+        "name": "Tasks",
+        "node": "contract_import:Tasks",
+        "path": ".axiom/dev/contracts/tasks.axiom",
+        "sha256": "52cd75a52c98…"
+      }
+    ],
+    "diagnostics": [],
+    "entry_points": [
+      {
+        "id": "page:Home",
+        "kind": "page",
+        "name": "Home",
+        "path": "main.acore",
+        "version": "7dd07ff0bbad…"
+      }
+    ],
+    "modules": [],
+    "projects": [
+      {
+        "diagnostic_counts": {
+          "errors": 0,
+          "warnings": 1
+        },
+        "entry": "main.acore",
+        "language_profile": "acore-ui",
+        "project_id": "my-app",
+        "semantic_state": "validated",
+        "target": "web"
+      }
+    ]
+  },
+  …
+}
+```
+
+### node.find
+
+Finds nodes by a case-insensitive substring of their name, id or a string
+literal property value, with optional `kind`, `owner` and `path` filters.
+Results are in document order, not ranked. More matches than `limit` are
+reported as an omission: narrow the query.
+
+{/* BEGIN GENERATED operation:node.find */}
+
+**Params** (`schemas/operations/node.find.request.json`)
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `query` | yes | string (at most 200 characters) | Trimmed, case-insensitive substring of name, id, or a string-literal property value. Empty matches every node. |
+| `kind` | no | string (at most 64 characters) | Exact kind filter; an unknown kind matches nothing. |
+| `owner` | no | string (at most 1024 characters) | Only nodes owned (transitively) by this page or component. |
+| `path` | no | string (at most 1024 characters) | Only nodes whose authored declaration is in this file. |
+| `limit` | yes | integer (1..50) |  |
+
+**Result** (`schemas/operations/node.find.result.json`)
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `nodes` | yes | array of object (`nodeSummary`) |  |
+| `matches` | no | array of object | One entry per node, same order: why it matched. |
+
+**Error codes:** `invalid_arguments`, `not_found`, `internal`, `resource_limit`, `permission_denied`, `unsupported_operation`, `snapshot_expired`, `stale_snapshot`, `compile_failed`.
+
+{/* END GENERATED operation:node.find */}
+
+```json title="Request: node.find"
+{"protocol": "axiom-agent-semantic/v1", "operation": "node.find", "workspace": "<workspace>",
+ "snapshot": "<snapshot>", "params": {"query": "Add", "kind": "element", "limit": 10}}
+```
+
+```json title="Response (excerpt)"
+{
+  "coverage": {
+    "completeness": "complete",
+    "exhaustive": true,
+    "gaps": []
+  },
+  "result": {
+    "matches": [
+      {
+        "node": "element:Home/view/0/0",
+        "reasons": [
+          "property_value"
+        ]
+      },
+      {
+        "node": "element:Home/view/0/1",
+        "reasons": [
+          "property_value"
+        ]
+      }
+    ],
+    "nodes": [
+      {
+        "id": "element:Home/view/0/0",
+        "kind": "element",
+        "name": "Input",
+        "path": "main.acore",
+        "version": "47220ffb7c58…"
+      },
+      {
+        "id": "element:Home/view/0/1",
+        "kind": "element",
+        "name": "Button",
+        "path": "main.acore",
+        "version": "24495d3190bd…"
+      }
+    ]
+  },
+  …
+}
+```
+
+### node.get
+
+Properties, edges, source and an edit summary for up to 50 node ids.
+`projection` (`summary`, `standard`, `full`) and `include` choose the parts.
+Over `max_bytes`, optional parts are dropped and listed as an omission with
+expansion refs.
+
+{/* BEGIN GENERATED operation:node.get */}
+
+**Params** (`schemas/operations/node.get.request.json`)
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `nodes` | yes | array of string (at most 1024 characters), 1 to 50 items |  |
+| `projection` | no | `summary`, `standard`, `full` | Preset. summary: node only. standard (default): properties and edges. full: also body and provenance. |
+| `include` | no | array of `properties`, `edges`, `incoming`, `body`, `provenance`, `edits` | Adds to the preset. |
+| `limit` | no | integer (1..200) | Caps properties and edges per node independently. |
+
+**Result** (`schemas/operations/node.get.result.json`)
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `nodes` | yes | array of object |  |
+
+**Error codes:** `invalid_arguments`, `not_found`, `internal`, `resource_limit`, `permission_denied`, `unsupported_operation`, `snapshot_expired`, `stale_snapshot`, `compile_failed`.
+
+{/* END GENERATED operation:node.get */}
+
+```json title="Request: node.get"
+{"protocol": "axiom-agent-semantic/v1", "operation": "node.get", "workspace": "<workspace>",
+ "snapshot": "<snapshot>", "params": {"nodes": ["element:Home/view/0/1"]}}
+```
+
+```json title="Response (excerpt)"
+{
+  "result": {
+    "nodes": [
+      {
+        "edges": [
+          {
+            "direction": "outgoing",
+            "kind": "child_of",
+            "layer": "declared",
+            "node": "element:Home/view/0"
+          },
+          {
+            "direction": "outgoing",
+            "kind": "triggers",
+            "layer": "resolved",
+            "node": "action:Home.submit"
+          }
+        ],
+        "node": {
+          "id": "element:Home/view/0/1",
+          "kind": "element",
+          "name": "Button",
+          "path": "main.acore",
+          "version": "24495d3190bd…"
+        },
+        "properties": [
+          {
+            "editable": true,
+            "name": "label",
+            "type": "String",
+            "value": "Add"
+          },
+          {
+            "editable": false,
+            "name": "on_press",
+            "type": "Action",
+            "value": "submit"
+          }
+        ]
+      }
+    ]
+  },
+  …
+}
+```
+
+### node.edits
+
+The edits each node accepts now. Every option has an `option_id` and a
+`fingerprint` bound to the snapshot, the node version and the edit rules;
+cite it in `change.propose` as `option` and a stale option is refused.
+An edit that is not offered is not legal; `include_unavailable: true` lists
+what is not offered.
+
+{/* BEGIN GENERATED operation:node.edits */}
+
+**Params** (`schemas/operations/node.edits.request.json`)
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `nodes` | yes | array of string (at most 1024 characters), 1 to 20 items |  |
+| `kinds` | no | array of `set_property`, `bind_property`, `list_element`, `declaration`, `set_reference`, `import`, `replace_region` |  |
+| `include_unavailable` | no | boolean | Also list families that do not apply, with the reason. |
+
+**Result** (`schemas/operations/node.edits.result.json`)
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `nodes` | yes | array of object |  |
+
+**Error codes:** `invalid_arguments`, `not_found`, `internal`, `resource_limit`, `permission_denied`, `unsupported_operation`, `snapshot_expired`, `stale_snapshot`, `compile_failed`.
+
+{/* END GENERATED operation:node.edits */}
+
+```json title="Request: node.edits"
+{"protocol": "axiom-agent-semantic/v1", "operation": "node.edits", "workspace": "<workspace>",
+ "snapshot": "<snapshot>", "params": {"nodes": ["element:Home/view/0/1"], "include_unavailable": true}}
+```
+
+```json title="Response (excerpt)"
+{
+  "result": {
+    "nodes": [
+      {
+        "node": "element:Home/view/0/1",
+        "node_version": "24495d3190bd…",
+        "options": [
+          {
+            "accepts": "String",
+            "fingerprint": "821350eccaab…",
+            "kind": "set_property",
+            "option_id": "o1",
+            "property": "label"
+          },
+          {
+            "accepts": "String",
+            "fingerprint": "0c63deec5e84…",
+            "kind": "bind_property",
+            "option_id": "o2",
+            "property": "label",
+            "states": [
+              "state:Home.draft"
+            ]
+          },
+          {
+            "accepts": "Element",
+            "fingerprint": "9813a397f99b…",
+            "kind": "list_element",
+            "ops": [
+              "remove",
+              "insert"
+            ],
+            "option_id": "o3",
+            "text": "Button(label: \"Add\", on_press: submit)"
+          }
+        ],
+        "unavailable": [
+          {
+            "code": "unsupported_operation",
+            "kind": "declaration",
+            "reason": "declaration is not offered for this node; acore does not report why"
+          },
+          {
+            "code": "unsupported_operation",
+            "kind": "set_reference",
+            "reason": "set_reference is not offered for this node; acore does not report why"
+          },
+          {
+            "code": "unsupported_operation",
+            "kind": "import",
+            "reason": "import is not offered for this node; acore does not report why"
+          }
+        ]
+      }
+    ]
+  },
+  …
+}
+```
+
+### graph.query
+
+Relationships from compiler facts: `dependencies` (outgoing), `dependents`
+(incoming), `references` (incoming use sites) or `paths` (from `from` to
+`to`). Each edge has a `kind` (`reads`, `writes`, `triggers` and others), a
+`layer` (`declared` or `resolved`) and a source `site`. Edges to code the
+compiler cannot see, such as foreign extension actions, are reported as
+`boundaries` with partial coverage.
+
+{/* BEGIN GENERATED operation:graph.query */}
+
+**Params** (`schemas/operations/graph.query.request.json`)
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `from` | yes | array of string (at most 1024 characters), 1 to 20 items |  |
+| `mode` | yes | `dependencies`, `dependents`, `references`, `paths` | Dependencies: outgoing; dependents: incoming; references: incoming use sites; paths: connecting paths from -&#62; to. |
+| `to` | no | array of string (at most 1024 characters), 1 to 20 items |  |
+| `edge_kinds` | no | array of string | Restrict to these relations. Omitted: the profile's default dependency relations, disclosed in result.traversed. |
+| `layers` | no | array of `declared`, `resolved`, `observed` |  |
+| `transitive` | no | boolean |  |
+
+**Result** (`schemas/operations/graph.query.result.json`)
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `traversed` | yes | object |  |
+| `nodes` | yes | array of object (`nodeSummary`) |  |
+| `edges` | yes | array of object |  |
+| `paths` | no | array of object |  |
+| `boundaries` | yes | array of object | Where the walk met something it cannot see through (foreign implementation, unresolved reference). Not an empty dependency set. |
+
+`traversed` fields:
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `direction` | yes | `outgoing`, `incoming`, `both` |  |
+| `edge_kinds` | yes | array of string |  |
+| `layers` | yes | array of `declared`, `resolved`, `observed` |  |
+
+**Error codes:** `invalid_arguments`, `not_found`, `internal`, `resource_limit`, `permission_denied`, `unsupported_operation`, `snapshot_expired`, `stale_snapshot`, `compile_failed`.
+
+{/* END GENERATED operation:graph.query */}
+
+```json title="Request: graph.query"
+{"protocol": "axiom-agent-semantic/v1", "operation": "graph.query", "workspace": "<workspace>",
+ "snapshot": "<snapshot>", "params": {"from": ["state:Home.draft"], "mode": "dependents"}}
+```
+
+```json title="Response (excerpt)"
+{
+  "result": {
+    "edges": [
+      {
+        "depth": 1,
+        "from": "mutation:Home.create",
+        "kind": "reads",
+        "layer": "resolved",
+        "site": {
+          "column": 12,
+          "line": 10,
+          "path": "main.acore"
+        },
+        "to": "state:Home.draft"
+      },
+      {
+        "depth": 1,
+        "from": "element:Home/view/0/0",
+        "kind": "reads",
+        "layer": "resolved",
+        "site": {
+          "column": 7,
+          "line": 19,
+          "path": "main.acore"
+        },
+        "to": "state:Home.draft"
+      },
+      …
+    ],
+    "traversed": {
+      "direction": "incoming",
+      "edge_kinds": [
+        "reads",
+        "writes",
+        "triggers",
+        "calls",
+        "invokes",
+        "navigates_to"
+      ],
+      "layers": [
+        "declared",
+        "resolved"
+      ]
+    },
+    …
+  },
+  …
+}
+```
+
+### context.build
+
+A bounded slice of the project for a task. `purpose` selects a fixed recipe
+(`understand`, `change_input`, `change_behavior`, `diagnose`); each item says
+why it is included and whether it is `required`. Required context is never
+cut: if it does not fit in `max_bytes` the answer is `insufficient_context`
+with the bytes it needs and refs you can pass in `expand`.
+
+{/* BEGIN GENERATED operation:context.build */}
+
+**Params** (`schemas/operations/context.build.request.json`)
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `focus` | yes | array of string (at most 1024 characters), 1 to 20 items |  |
+| `purpose` | yes | `understand`, `change_input`, `change_behavior`, `change_schema`, `diagnose` | Deterministic recipe. |
+| `include` | no | array of `signature`, `implementation`, `input_constraints`, `callers`, `consumers`, `authorization`, `diagnostics`, `tests` |  |
+| `expand` | no | array of string (at most 512 characters), 0 to 50 items | ExpansionRef.ref values from an earlier response on the same snapshot. |
+
+**Result** (`schemas/operations/context.build.result.json`)
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `items` | yes | array of object |  |
+| `edges` | yes | array of object |  |
+
+**Error codes:** `invalid_arguments`, `not_found`, `internal`, `resource_limit`, `permission_denied`, `unsupported_operation`, `snapshot_expired`, `stale_snapshot`, `compile_failed`, `insufficient_context`.
+
+{/* END GENERATED operation:context.build */}
+
+```json title="Request: context.build"
+{"protocol": "axiom-agent-semantic/v1", "operation": "context.build", "workspace": "<workspace>",
+ "snapshot": "<snapshot>", "limits": {"max_bytes": 4096},
+ "params": {"focus": ["element:Home/view/0/1"], "purpose": "change_input"}}
+```
+
+```json title="Response (excerpt)"
+{
+  "truncation": {
+    "truncated": false,
+    "used": {
+      "bytes": 1693
+    },
+    …
+  },
+  "result": {
+    "items": [
+      {
+        "node": {
+          "id": "element:Home/view/0/1",
+          …
+        },
+        "reasons": [
+          {
+            "kind": "focus",
+            "text": "element:Home/view/0/1: focus of change_input"
+          }
+        ],
+        "required": true,
+        "signature": "Button(label: \"Add\", on_press: submit)",
+        …
+      },
+      {
+        "node": {
+          "id": "action:Home.submit",
+          …
+        },
+        "reasons": [
+          {
+            "kind": "signature",
+            "text": "action:Home.submit: element:Home/view/0/1 triggers it",
+            "via": "element:Home/view/0/1"
+          }
+        ],
+        "required": false,
+        "signature": "submit()",
+        …
+      },
+      …
+    ],
+    …
+  },
+  …
+}
+```
+
+With a limit smaller than the required context:
+
+```json title="Request: context.build over the limit"
+{"protocol": "axiom-agent-semantic/v1", "operation": "context.build", "workspace": "<workspace>",
+ "snapshot": "<snapshot>", "limits": {"max_bytes": 256},
+ "params": {"focus": ["page:Home"], "purpose": "understand"}}
+```
+
+```json title="Response (excerpt)"
+{
+  "error": {
+    "code": "insufficient_context",
+    "message": "the required context of understand on page:Home is 294 bytes, more than limits.max_bytes (256); it is never cut. Repeat with limits.max_bytes of at least 294 (and max_nodes of at least 1), a narrower include, or fewer focus nodes",
+    "target": {
+      "nodes": [
+        "page:Home"
+      ]
+    },
+    "diagnostics": [],
+    "retryable": "none",
+    "next_actions": [
+      {
+        "operation": "context.build",
+        "reason": "Repeat with limits.max_bytes of at least details.required_bytes, or a narrower include"
+      }
+    ],
+    "details": {
+      "expand": [
+        {
+          "estimated_bytes": 272,
+          "kind": "node",
+          "node": "page:Home",
+          "reason": "the item page:Home (required context); pass this ref in params.expand to include it as required",
+          "ref": "ctx1:3c995aab4e949381:node:page:Home"
+        }
+      ],
+      "required_bytes": 294,
+      "required_items": 1
+    }
+  },
+  …
+}
+```
+
+### impact.analyze
+
+Everything that depends on the targets, transitively up to `limits.max_depth`
+levels, with the edge that links each impacted node.
+
+{/* BEGIN GENERATED operation:impact.analyze */}
+
+**Params** (`schemas/operations/impact.analyze.request.json`)
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `targets` | yes | array of string (at most 1024 characters), 1 to 20 items |  |
+| `direction` | yes | `dependents`, `dependencies`, `both` |  |
+| `edge_kinds` | no | array of string |  |
+
+**Result** (`schemas/operations/impact.analyze.result.json`)
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `impacted` | yes | array of object |  |
+| `tests` | no | array of object |  |
+
+**Error codes:** `invalid_arguments`, `not_found`, `internal`, `resource_limit`, `permission_denied`, `unsupported_operation`, `snapshot_expired`, `stale_snapshot`, `compile_failed`.
+
+{/* END GENERATED operation:impact.analyze */}
+
+```json title="Request: impact.analyze"
+{"protocol": "axiom-agent-semantic/v1", "operation": "impact.analyze", "workspace": "<workspace>",
+ "snapshot": "<snapshot>", "params": {"targets": ["state:Home.draft"], "direction": "dependents"}}
+```
+
+```json title="Response (excerpt)"
+{
+  "result": {
+    "impacted": [
+      {
+        "depth": 1,
+        "edge_kind": "reads",
+        "from": "state:Home.draft",
+        "node": {
+          "id": "mutation:Home.create",
+          …
+        },
+        …
+      },
+      {
+        "depth": 1,
+        "edge_kind": "reads",
+        "from": "state:Home.draft",
+        "node": {
+          "id": "element:Home/view/0/0",
+          …
+        },
+        …
+      },
+      {
+        "depth": 1,
+        "edge_kind": "writes",
+        "from": "state:Home.draft",
+        "node": {
+          "id": "action:Home.submit",
+          …
+        },
+        …
+      },
+      {
+        "depth": 2,
+        "edge_kind": "triggers",
+        "from": "action:Home.submit",
+        "node": {
+          "id": "element:Home/view/0/1",
+          …
+        },
+        …
+      }
+    ]
+  },
+  …
+}
+```
+
+### edit.plan
+
+A dry run of `change.propose`: the same operations, checked by the same
+rules, returning the owners, files and required checks. It stores nothing and
+takes no `request_id`.
+
+{/* BEGIN GENERATED operation:edit.plan */}
+
+**Params** (`schemas/operations/edit.plan.request.json`)
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `operations` | yes | array of object or object or object or object or object or object or object or object or object or object or object, 1 to 50 items |  |
+
+**Result** (`schemas/operations/edit.plan.result.json`)
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `outcome` | yes | `supported`, `required_but_missing`, `unsupported` |  |
+| `reason` | no | string (at most 2000 characters) |  |
+| `owners` | yes | array of object |  |
+| `operations` | yes | array of object |  |
+| `id_map` | no | array of object (`idMap`) | Optional: the id_map change.propose would return, composed over the batch from base_snapshot; present when the outcome is supported. |
+| `files` | yes | array of string (at most 1024 characters) |  |
+| `required_checks` | no | array of string (at most 64 characters) |  |
+
+**Error codes:** `invalid_arguments`, `not_found`, `internal`, `resource_limit`, `permission_denied`, `unsupported_operation`, `stale_snapshot`, `snapshot_expired`, `precondition_failed`, `ambiguous_owner`, `read_only_origin`, `compile_failed`.
+
+{/* END GENERATED operation:edit.plan */}
+
+```json title="Request: edit.plan"
+{"protocol": "axiom-agent-semantic/v1", "operation": "edit.plan", "workspace": "<workspace>",
+ "base_snapshot": "<snapshot>",
+ "params": {"operations": [{"kind": "set_property", "node": "element:Home/view/0/1", "property": "label",
+   "old_value": "Add", "new_value": "Add task"}]}}
+```
+
+```json title="Response (excerpt)"
+{
+  "result": {
+    "files": [
+      "main.acore"
+    ],
+    "id_map": [],
+    "operations": [
+      {
+        "index": 0,
+        "kind": "set_property",
+        "node": "element:Home/view/0/1",
+        "outcome": "supported",
+        "path": "main.acore",
+        "property": "label"
+      }
+    ],
+    "outcome": "supported",
+    "owners": [
+      {
+        "kind": "page",
+        "node": "page:Home",
+        "path": "main.acore"
+      }
+    ],
+    "required_checks": [
+      "compile"
+    ]
+  },
+  …
+}
+```
+
+### change.propose
+
+Applies 1 to 50 edit operations, in order, to a private copy of
+`base_snapshot`, compiles the result and returns a candidate. The batch is
+all or nothing: each operation sees the result of the ones before it, only the
+final state must compile, and on failure nothing is created and
+`operation_index` names the operation. An operation can name what it creates
+with `handle`, and a later operation refers to it as `{"handle": "<name>"}`.
+To extend an open candidate, pass `candidate` and `expected_candidate_version`.
+
+{/* BEGIN GENERATED operation:change.propose */}
+
+**Params** (`schemas/operations/change.propose.request.json`)
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `candidate` | no | string (at most 256 characters) | Extend this open candidate instead of starting one. Its base must equal base_snapshot. |
+| `expected_candidate_version` | no | integer (1..) | Required with candidate. |
+| `operations` | yes | array of object or object or object or object or object or object or object or object or object or object or object, 1 to 50 items |  |
+| `checks` | no | array of string (at most 64 characters) | Checks to run on the final candidate before returning; compile always runs. |
+
+**Result** (`schemas/operations/change.propose.result.json`)
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `candidate` | yes | object (`candidate`) |  |
+| `replayed` | yes | boolean |  |
+| `operations` | yes | array of object (`operationOutcome`), 1 to any items |  |
+| `id_map` | yes | array of object (`idMap`) | Composed over the batch, from base_snapshot (or the previous candidate version) to this version. |
+| `files` | yes | array of object (`fileChange`), 1 to any items |  |
+| `diagnostics` | yes | array of object, 0 to 200 items (`diagnostics`) |  |
+| `checks` | yes | array of object (`checkResult`), 1 to any items |  |
+| `evidence` | yes | object (`evidence`) |  |
+| `impact` | no | object |  |
+| `repair` | no | object (`repairOutcome`) | Present when the base is not validated (syntax or resolved): the accepted repair's base and result states and error counts. |
+
+`candidate` fields:
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `id` | yes | string (at most 256 characters) | Opaque id of a private candidate (change.propose). |
+| `version` | yes | integer (1..) | Increases with every successful change.propose on the candidate. |
+| `state` | yes | `open`, `applied`, `discarded`, `expired` |  |
+| `base_snapshot` | yes | string (at most 256 characters) | Opaque id of one immutable captured snapshot. Never the reserved word latest. |
+| `snapshot` | yes | string (at most 256 characters) | Snapshot id of base plus overlay; readable by the owning caller. |
+| `request_id` | yes | string (at most 128 characters) | The request_id of the change.propose that produced this version. |
+| `input_fingerprint` | yes | string | Lowercase hex SHA-256 over a documented canonical input (node version, option fingerprint, input fingerprint). |
+| `expires_at` | no | string | RFC 3339 with an explicit offset, uppercase T and Z. |
+
+`evidence` fields:
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `toolchain` | yes | object (`toolchain`) |  |
+| `inputs` | yes | object |  |
+
+`impact` fields:
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `nodes` | yes | array of string (at most 1024 characters), 0 to 200 items |  |
+| `more` | no | boolean |  |
+
+`repair` fields:
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `base_state` | yes | `syntax`, `resolved`, `validated`, `unavailable` | How far the snapshot got: syntax (parsed only), resolved (names resolved, not validated), validated (compiled without errors), unavailable (not even parsed). |
+| `base_errors` | yes | integer (0..) |  |
+| `result_state` | yes | `syntax`, `resolved`, `validated`, `unavailable` | How far the snapshot got: syntax (parsed only), resolved (names resolved, not validated), validated (compiled without errors), unavailable (not even parsed). |
+| `result_errors` | yes | integer (0..) |  |
+| `touched` | yes | array of string (at most 1024 characters), 0 to 50 items | Declarations the candidate changed, as &#60;path&#62;: &#60;kind&#62; &#60;name&#62;. |
+| `regressed` | no | array of string (at most 1024 characters), 0 to 50 items | In a refusal's details only: declarations that gained errors outside the broken ones the candidate changed. |
+
+**Error codes:** `invalid_arguments`, `not_found`, `internal`, `resource_limit`, `permission_denied`, `unsupported_operation`, `stale_snapshot`, `snapshot_expired`, `precondition_failed`, `ambiguous_owner`, `read_only_origin`, `compile_failed`, `conflict`.
+
+{/* END GENERATED operation:change.propose */}
+
+The edit operations (generated from `edits.json`). Every operation carries
+an exact precondition, `old_value` or `old_text`, copied from `node.get` or
+`node.edits`:
+
+{/* BEGIN GENERATED edit-operations */}
+
+**`set_property`**: Set one authored literal scalar.
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `kind` | yes | `"set_property"` |  |
+| `node` | yes | string (at most 1024 characters) or object | A node id of the base snapshot, or &#123;handle&#125; naming a node an earlier operation of the same batch created. |
+| `property` | yes | string (at most 256 characters) |  |
+| `old_value` | yes | any JSON value | Exact precondition, as node.get returned it. |
+| `new_value` | yes | any JSON value | Any JSON value, including null. |
+| `handle` | no | string | Names this operation's created node for later operations in the same batch (intra-batch handle). |
+| `expected_node_version` | no | string | Optional precondition: the node's version from node.get or node.edits. |
+| `option` | no | object (`optionRef`) |  |
+
+**`bind_property`**: Bind one authored property to a state of the same owner.
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `kind` | yes | `"bind_property"` |  |
+| `node` | yes | string (at most 1024 characters) or object | A node id of the base snapshot, or &#123;handle&#125; naming a node an earlier operation of the same batch created. |
+| `property` | yes | string (at most 256 characters) |  |
+| `old_value` | yes | any JSON value | Any JSON value, including null. |
+| `target` | yes | string (at most 1024 characters) or object | A state node of the element's owner. |
+| `handle` | no | string | Names this operation's created node for later operations in the same batch (intra-batch handle). |
+| `expected_node_version` | no | string | Optional precondition: the node's version from node.get or node.edits. |
+| `option` | no | object (`optionRef`) |  |
+
+**`list_element`, `op: remove`**: Remove one element or conditional from a view children list.
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `kind` | yes | `"list_element"` |  |
+| `op` | yes | `"remove"` |  |
+| `node` | yes | string (at most 1024 characters) or object | A node id of the base snapshot, or &#123;handle&#125; naming a node an earlier operation of the same batch created. |
+| `old_text` | yes | string (at most 4096 characters) | Exact tight-span text (node.edits option text). |
+| `handle` | no | string | Names this operation's created node for later operations in the same batch (intra-batch handle). |
+| `expected_node_version` | no | string | Optional precondition: the node's version from node.get or node.edits. |
+| `option` | no | object (`optionRef`) |  |
+
+**`list_element`, `op: insert`**: Insert one view element before or after an anchor.
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `kind` | yes | `"list_element"` |  |
+| `op` | yes | `"insert"` |  |
+| `anchor` | yes | string (at most 1024 characters) or object | A node id of the base snapshot, or &#123;handle&#125; naming a node an earlier operation of the same batch created. |
+| `position` | yes | `before`, `after` |  |
+| `old_text` | yes | string (at most 4096 characters) |  |
+| `element` | yes | string (at most 16384 characters) | Source of one view element, no indentation on its first line. |
+| `handle` | no | string | Names this operation's created node for later operations in the same batch (intra-batch handle). |
+| `expected_node_version` | no | string | Optional precondition: the node's version from node.get or node.edits. |
+| `option` | no | object (`optionRef`) |  |
+
+**`declaration`, `op: create`**: Create a state or action in a page or component.
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `kind` | yes | `"declaration"` |  |
+| `op` | yes | `"create"` |  |
+| `anchor` | yes | string (at most 1024 characters) or object | A node id of the base snapshot, or &#123;handle&#125; naming a node an earlier operation of the same batch created. |
+| `position` | yes | `before`, `after`, `first` |  |
+| `old_text` | yes | string (at most 4096 characters) | The anchor's tight text, or the owner's header line for position first. |
+| `declaration` | yes | string (at most 20000 characters) |  |
+| `handle` | no | string | Names this operation's created node for later operations in the same batch (intra-batch handle). |
+| `expected_node_version` | no | string | Optional precondition: the node's version from node.get or node.edits. |
+| `option` | no | object (`optionRef`) |  |
+
+**`declaration`, `op: update`**: Replace a state or action declaration, keeping kind and name.
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `kind` | yes | `"declaration"` |  |
+| `op` | yes | `"update"` |  |
+| `node` | yes | string (at most 1024 characters) or object | A node id of the base snapshot, or &#123;handle&#125; naming a node an earlier operation of the same batch created. |
+| `old_text` | yes | string (at most 20000 characters) |  |
+| `declaration` | yes | string (at most 20000 characters) |  |
+| `handle` | no | string | Names this operation's created node for later operations in the same batch (intra-batch handle). |
+| `expected_node_version` | no | string | Optional precondition: the node's version from node.get or node.edits. |
+| `option` | no | object (`optionRef`) |  |
+
+**`declaration`, `op: remove`**: Remove an unreferenced state or action.
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `kind` | yes | `"declaration"` |  |
+| `op` | yes | `"remove"` |  |
+| `node` | yes | string (at most 1024 characters) or object | A node id of the base snapshot, or &#123;handle&#125; naming a node an earlier operation of the same batch created. |
+| `old_text` | yes | string (at most 20000 characters) |  |
+| `handle` | no | string | Names this operation's created node for later operations in the same batch (intra-batch handle). |
+| `expected_node_version` | no | string | Optional precondition: the node's version from node.get or node.edits. |
+| `option` | no | object (`optionRef`) |  |
+
+**`set_reference`**: Point an on_* handler at another action of the same owner.
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `kind` | yes | `"set_reference"` |  |
+| `node` | yes | string (at most 1024 characters) or object | A node id of the base snapshot, or &#123;handle&#125; naming a node an earlier operation of the same batch created. |
+| `property` | yes | string (at most 256 characters) |  |
+| `old_value` | yes | string (at most 256 characters) | The current action identifier. |
+| `target` | yes | string (at most 1024 characters) or object | A node id of the base snapshot, or &#123;handle&#125; naming a node an earlier operation of the same batch created. |
+| `handle` | no | string | Names this operation's created node for later operations in the same batch (intra-batch handle). |
+| `expected_node_version` | no | string | Optional precondition: the node's version from node.get or node.edits. |
+| `option` | no | object (`optionRef`) |  |
+
+**`import`, `op: add`**: Add one use line to a file.
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `kind` | yes | `"import"` |  |
+| `op` | yes | `"add"` |  |
+| `path` | yes | string (at most 1024 characters) | Project-relative file path: forward slashes, no leading slash, no empty, . or .. segment, no backslash or control character. |
+| `import_kind` | yes | `component`, `model` |  |
+| `symbol` | yes | string (at most 256 characters) |  |
+| `from` | yes | string (at most 1024 characters) | Relative path of the module that exports symbol. |
+| `handle` | no | string | Names this operation's created node for later operations in the same batch (intra-batch handle). |
+| `expected_node_version` | no | string | Optional precondition: the node's version from node.get or node.edits. |
+| `option` | no | object (`optionRef`) |  |
+
+**`import`, `op: remove`**: Remove one use line whose symbol the file no longer references.
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `kind` | yes | `"import"` |  |
+| `op` | yes | `"remove"` |  |
+| `path` | yes | string (at most 1024 characters) | Project-relative file path: forward slashes, no leading slash, no empty, . or .. segment, no backslash or control character. |
+| `symbol` | yes | string (at most 256 characters) |  |
+| `old_text` | yes | string (at most 1024 characters) | The exact use line. |
+| `handle` | no | string | Names this operation's created node for later operations in the same batch (intra-batch handle). |
+| `expected_node_version` | no | string | Optional precondition: the node's version from node.get or node.edits. |
+| `option` | no | object (`optionRef`) |  |
+
+**`replace_region`**: The only operation of its batch (invalid_arguments, region_alone, otherwise); never a whole file.
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `kind` | yes | `"replace_region"` |  |
+| `path` | yes | string (at most 1024 characters) | Project-relative file path: forward slashes, no leading slash, no empty, . or .. segment, no backslash or control character. |
+| `start_line` | yes | integer (1..) | 1-based first line of the region. |
+| `end_line` | yes | integer (1..) | 1-based last line of the region (inclusive); at most 200 lines in all. |
+| `old_text` | yes | string (at most 16384 characters) | The region's exact text (node.edits option region.old_text): lines start_line..=end_line without the last newline. |
+| `new_text` | yes | string (at most 16384 characters) | Replaces exactly the region's bytes; at most 200 lines and 16384 bytes (empty removes the lines' text). |
+| `option` | yes | object (`optionRef`) | Required: the region option (option_id r&#60;N&#62; and fingerprint) node.edits offered on this snapshot. |
+
+{/* END GENERATED edit-operations */}
+
+A proposal whose `old_value` is not the current value:
+
+```json title="Request: change.propose with a wrong old_value"
+{"protocol": "axiom-agent-semantic/v1", "operation": "change.propose", "workspace": "<workspace>",
+ "base_snapshot": "<snapshot>", "request_id": "rename-add-0",
+ "params": {"operations": [{"kind": "set_property", "node": "element:Home/view/0/1", "property": "label",
+   "old_value": "Create", "new_value": "Add task"}]}}
+```
+
+```json title="Response (excerpt)"
+{
+  "error": {
+    "code": "precondition_failed",
+    "reason": "old_value_mismatch",
+    "message": "label is \"Add\", expected \"Create\"",
+    "operation_index": 0,
+    "target": {
+      "node": "element:Home/view/0/1",
+      "property": "label"
+    },
+    "diagnostics": [],
+    "retryable": "after_refresh",
+    "next_actions": [
+      {
+        "operation": "node.get",
+        "reason": "Re-read the node and rebuild the operation"
+      }
+    ]
+  },
+  …
+}
+```
+
+With the current value:
+
+```json title="Request: change.propose"
+{"protocol": "axiom-agent-semantic/v1", "operation": "change.propose", "workspace": "<workspace>",
+ "base_snapshot": "<snapshot>", "request_id": "rename-add-1",
+ "params": {"operations": [{"kind": "set_property", "node": "element:Home/view/0/1", "property": "label",
+   "old_value": "Add", "new_value": "Add task"}]}}
+```
+
+```json title="Response (excerpt)"
+{
+  "request_id": "rename-add-1",
+  "result": {
+    "candidate": {
+      "id": "cand-…",
+      "state": "open",
+      "version": 1,
+      …
+    },
+    "checks": [
+      {
+        "check": "compile",
+        "status": "passed",
+        …
+      }
+    ],
+    "files": [
+      {
+        "after_sha256": "6fa9d35dbcf8…",
+        "before_sha256": "c7ac07a1c507…",
+        "change": "modified",
+        "path": "main.acore"
+      }
+    ],
+    "id_map": [],
+    "operations": [
+      {
+        "id_map": [],
+        "index": 0,
+        "kind": "set_property"
+      }
+    ],
+    "replayed": false,
+    …
+  },
+  …
+}
+```
+
+The same `request_id` with a different input:
+
+```json title="Request: change.propose reusing a request_id"
+{"protocol": "axiom-agent-semantic/v1", "operation": "change.propose", "workspace": "<workspace>",
+ "base_snapshot": "<snapshot>", "request_id": "rename-add-1",
+ "params": {"operations": [{"kind": "set_property", "node": "element:Home/view/0/1", "property": "label",
+   "old_value": "Add", "new_value": "Add a task"}]}}
+```
+
+```json title="Response (excerpt)"
+{
+  "error": {
+    "code": "conflict",
+    "reason": "request_id_reused",
+    "message": "request_id rename-add-1 was used for a different request (2c8d01ea63af…); use a new request_id",
+    "target": {
+      "request_id": "rename-add-1"
+    },
+    "diagnostics": [],
+    "retryable": "none",
+    "next_actions": []
+  },
+  …
+}
+```
+
+### change.inspect
+
+What a candidate changes: a semantic diff (each changed node and property,
+with `expected: false` for a change no operation asked for), a source diff or
+full content, affected nodes, risks and checks.
+
+{/* BEGIN GENERATED operation:change.inspect */}
+
+**Params** (`schemas/operations/change.inspect.request.json`)
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `candidate` | yes | string (at most 256 characters) | Opaque id of a private candidate (change.propose). |
+| `include` | no | array of `semantic_diff`, `source_diff`, `content`, `affected`, `checks` |  |
+
+**Result** (`schemas/operations/change.inspect.result.json`)
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `candidate` | yes | object (`candidate`) |  |
+| `files` | yes | array of object (`fileChange`), 1 to any items |  |
+| `semantic_diff` | no | array of object |  |
+| `source_diff` | no | array of object |  |
+| `affected` | no | array of object (`nodeSummary`) |  |
+| `risks` | no | array of object |  |
+| `checks` | no | array of object (`checkResult`) |  |
+
+`candidate` fields:
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `id` | yes | string (at most 256 characters) | Opaque id of a private candidate (change.propose). |
+| `version` | yes | integer (1..) | Increases with every successful change.propose on the candidate. |
+| `state` | yes | `open`, `applied`, `discarded`, `expired` |  |
+| `base_snapshot` | yes | string (at most 256 characters) | Opaque id of one immutable captured snapshot. Never the reserved word latest. |
+| `snapshot` | yes | string (at most 256 characters) | Snapshot id of base plus overlay; readable by the owning caller. |
+| `request_id` | yes | string (at most 128 characters) | The request_id of the change.propose that produced this version. |
+| `input_fingerprint` | yes | string | Lowercase hex SHA-256 over a documented canonical input (node version, option fingerprint, input fingerprint). |
+| `expires_at` | no | string | RFC 3339 with an explicit offset, uppercase T and Z. |
+
+**Error codes:** `invalid_arguments`, `not_found`, `internal`, `resource_limit`, `permission_denied`, `unsupported_operation`, `snapshot_expired`.
+
+{/* END GENERATED operation:change.inspect */}
+
+```json title="Request: change.inspect"
+{"protocol": "axiom-agent-semantic/v1", "operation": "change.inspect", "workspace": "<workspace>",
+ "params": {"candidate": "<candidate>", "include": ["semantic_diff", "source_diff"]}}
+```
+
+```json title="Response (excerpt)"
+{
+  "snapshot": {
+    "id": "snap-c3f91ac2416b…",
+    "overlay": "cand-…",
+    …
+  },
+  "result": {
+    "semantic_diff": [
+      {
+        "change": "modified",
+        "expected": true,
+        "node": "element:Home/view/0/1",
+        "properties": [
+          {
+            "after": "Add task",
+            "before": "Add",
+            "name": "label"
+          }
+        ]
+      }
+    ],
+    "source_diff": [
+      {
+        "hunks": [
+          {
+            "lines": [
+              "   view {",
+              "     View {",
+              "       Input(value: draft, placeholder: \"Add a task\")",
+              "+      Button(label: \"Add task\", on_press: submit)",
+              "-      Button(label: \"Add\", on_press: submit)",
+              " ",
+              "       if tasks.pending { Text(\"Loading...\") }",
+              "       else if tasks.error { Text(\"Could not load tasks\") }"
+            ],
+            "old_start": 17,
+            …
+          }
+        ],
+        "path": "main.acore"
+      }
+    ],
+    …
+  },
+  …
+}
+```
+
+### check.run
+
+Runs checks on a candidate, or on a snapshot plus unsaved file contents
+(`files`, each with the SHA-256 of the file it replaces). The checks are
+`compile` and, on a broken base, `repair`. A failed check is a result with
+`ok: false`, never an error.
+
+{/* BEGIN GENERATED operation:check.run */}
+
+**Params** (`schemas/operations/check.run.request.json`)
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `candidate` | no | string (at most 256 characters) | Opaque id of a private candidate (change.propose). |
+| `files` | no | array of object (`file`), 0 to 64 items | Overlay; only with the envelope snapshot. [] checks the snapshot as is. |
+| `checks` | yes | array of string (at most 64 characters), 1 to any items |  |
+
+**Result** (`schemas/operations/check.run.result.json`)
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `ok` | yes | boolean | True when every requested check passed. |
+| `candidate` | no | string (at most 256 characters) | Opaque id of a private candidate (change.propose). |
+| `checks` | yes | array of object (`checkResult`), 1 to any items |  |
+
+**Error codes:** `invalid_arguments`, `not_found`, `internal`, `resource_limit`, `permission_denied`, `unsupported_operation`, `stale_snapshot`, `snapshot_expired`.
+
+{/* END GENERATED operation:check.run */}
+
+```json title="Request: check.run"
+{"protocol": "axiom-agent-semantic/v1", "operation": "check.run", "workspace": "<workspace>",
+ "params": {"candidate": "<candidate>", "checks": ["compile"]}}
+```
+
+```json title="Response (excerpt)"
+{
+  "result": {
+    "candidate": "cand-…",
+    "checks": [
+      {
+        "check": "compile",
+        "diagnostics": [
+          {
+            "column": 26,
+            "line": 3,
+            "message": "development contract `tasks` uses an unsigned local artifact; a production release requires Axiom Cloud signing",
+            "path": "main.acore",
+            "severity": "warning"
+          }
+        ],
+        "status": "passed",
+        …
+      }
+    ],
+    "ok": true
+  },
+  …
+}
+```
+
+To compile the files on disk now, name a snapshot and pass no files:
+
+```json title="Request: check.run on the current files"
+{"protocol": "axiom-agent-semantic/v1", "operation": "check.run", "workspace": "<workspace>",
+ "snapshot": "latest", "params": {"files": [], "checks": ["compile"]}}
+```
+
+### change.apply
+
+Writes a candidate to the project and returns a receipt. It first rechecks
+the candidate version, the required checks and that every file it writes still
+has the base content. See [Apply, receipts and recovery](#apply-receipts-and-recovery).
+
+{/* BEGIN GENERATED operation:change.apply */}
+
+**Params** (`schemas/operations/change.apply.request.json`)
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `candidate` | yes | string (at most 256 characters) | Opaque id of a private candidate (change.propose). |
+| `expected_candidate_version` | yes | integer (1..) |  |
+| `preconditions` | no | array of object, 1 to any items | Explicit content preconditions (sha256 null: the file must not exist). Must include every written file when given. |
+| `require_checks` | no | array of string (at most 64 characters) | Checks that must have passed on this exact candidate version. |
+
+**Result** (`schemas/operations/change.apply.result.json`)
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `replayed` | yes | boolean | True when this is the recorded receipt of an earlier identical request. |
+| `receipt` | yes | object |  |
+| `base_changes` | no | array of object (`inputChange`), 0 to 50 items | Inputs of the candidate's base snapshot that the candidate does not write and that differed on disk when it was applied (allowed by the content rule; a deleted or renamed one is refused instead). The published head is then not exactly the base plus the candidate. Absent when none, and on replays (replayed: true). |
+
+`receipt` fields:
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `receipt_id` | yes | string (at most 128 characters) |  |
+| `request_id` | yes | string (at most 128 characters) | Caller-chosen idempotency key, scoped to workspace and caller. Bound to the request's input fingerprint. |
+| `input_fingerprint` | yes | string | Lowercase hex SHA-256 over a documented canonical input (node version, option fingerprint, input fingerprint). |
+| `outcome` | yes | `applied`, `not_applied`, `unknown` |  |
+| `candidate` | yes | string (at most 256 characters) | Opaque id of a private candidate (change.propose). |
+| `candidate_version` | yes | integer (1..) |  |
+| `base_snapshot` | yes | string (at most 256 characters) | Opaque id of one immutable captured snapshot. Never the reserved word latest. |
+| `result_snapshot` | no | string (at most 256 characters) | Captured after publication; present when applied. |
+| `files` | yes | array of object (`fileChange`), 1 to any items |  |
+| `id_map` | yes | array of object (`idMap`) | Every node id the edit changed (completeness guarantee: an unlisted node keeps its id). [] when none. |
+| `journal` | yes | object |  |
+| `recorded_at` | yes | string | RFC 3339 with an explicit offset, uppercase T and Z. |
+
+**Error codes:** `invalid_arguments`, `not_found`, `internal`, `resource_limit`, `permission_denied`, `unsupported_operation`, `snapshot_expired`, `precondition_failed`, `conflict`, `compile_failed`.
+
+{/* END GENERATED operation:change.apply */}
+
+```json title="Request: change.apply"
+{"protocol": "axiom-agent-semantic/v1", "operation": "change.apply", "workspace": "<workspace>",
+ "request_id": "apply-rename-add-1",
+ "params": {"candidate": "<candidate>", "expected_candidate_version": 1, "require_checks": ["compile"]}}
+```
+
+```json title="Response (excerpt)"
+{
+  "request_id": "apply-rename-add-1",
+  "result": {
+    "receipt": {
+      "base_snapshot": "snap-3c995aab4e94…",
+      "candidate": "cand-…",
+      "candidate_version": 1,
+      "files": [
+        {
+          "after_sha256": "6fa9d35dbcf8…",
+          "before_sha256": "c7ac07a1c507…",
+          "change": "modified",
+          "path": "main.acore"
+        }
+      ],
+      "id_map": [],
+      "input_fingerprint": "8686c4ac35a5…",
+      "journal": {
+        "id": "jrnl-…",
+        "state": "committed"
+      },
+      "outcome": "applied",
+      "receipt_id": "rcpt-…",
+      "recorded_at": "…",
+      "request_id": "apply-rename-add-1",
+      "result_snapshot": "snap-c3f91ac2416b…"
+    },
+    "replayed": false
+  },
+  …
+}
+```
+
+Sending the same request again returns the recorded receipt and writes
+nothing:
+
+```json title="Request: change.apply again"
+{"protocol": "axiom-agent-semantic/v1", "operation": "change.apply", "workspace": "<workspace>",
+ "request_id": "apply-rename-add-1",
+ "params": {"candidate": "<candidate>", "expected_candidate_version": 1, "require_checks": ["compile"]}}
+```
+
+```json title="Response (excerpt)"
+{
+  "request_id": "apply-rename-add-1",
+  "result": {
+    "receipt": {
+      "outcome": "applied",
+      "receipt_id": "rcpt-…",
+      "recorded_at": "…",
+      …
+    },
+    "replayed": true
+  },
+  …
+}
+```
+
+### change.discard
+
+Closes an open candidate and releases it. It never undoes an applied change;
+to undo, propose a compensating change.
+
+{/* BEGIN GENERATED operation:change.discard */}
+
+**Params** (`schemas/operations/change.discard.request.json`)
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `candidate` | yes | string (at most 256 characters) | Opaque id of a private candidate (change.propose). |
+| `expected_candidate_version` | no | integer (1..) |  |
+
+**Result** (`schemas/operations/change.discard.result.json`)
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `candidate` | yes | object (`candidate`) |  |
+| `released` | yes | boolean | Overlay resources were freed. |
+
+`candidate` fields:
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `id` | yes | string (at most 256 characters) | Opaque id of a private candidate (change.propose). |
+| `version` | yes | integer (1..) | Increases with every successful change.propose on the candidate. |
+| `state` | yes | `open`, `applied`, `discarded`, `expired` |  |
+| `base_snapshot` | yes | string (at most 256 characters) | Opaque id of one immutable captured snapshot. Never the reserved word latest. |
+| `snapshot` | yes | string (at most 256 characters) | Snapshot id of base plus overlay; readable by the owning caller. |
+| `request_id` | yes | string (at most 128 characters) | The request_id of the change.propose that produced this version. |
+| `input_fingerprint` | yes | string | Lowercase hex SHA-256 over a documented canonical input (node version, option fingerprint, input fingerprint). |
+| `expires_at` | no | string | RFC 3339 with an explicit offset, uppercase T and Z. |
+
+**Error codes:** `invalid_arguments`, `not_found`, `internal`, `resource_limit`, `permission_denied`, `unsupported_operation`, `precondition_failed`.
+
+{/* END GENERATED operation:change.discard */}
+
+```json title="Request: change.propose of a change to drop"
+{"protocol": "axiom-agent-semantic/v1", "operation": "change.propose", "workspace": "<workspace>",
+ "base_snapshot": "<snapshot>", "request_id": "placeholder-1",
+ "params": {"operations": [{"kind": "set_property", "node": "element:Home/view/0/0", "property": "placeholder",
+   "old_value": "Add a task", "new_value": "New task"}]}}
+```
+
+```json title="Request: change.discard"
+{"protocol": "axiom-agent-semantic/v1", "operation": "change.discard", "workspace": "<workspace>",
+ "params": {"candidate": "<candidate>", "expected_candidate_version": 1}}
+```
+
+```json title="Response (excerpt)"
+{
+  "result": {
+    "candidate": {
+      "base_snapshot": "snap-c3f91ac2416b…",
+      "id": "cand-…",
+      "input_fingerprint": "d17b269a13c4…",
+      "request_id": "placeholder-1",
+      "snapshot": "snap-683da73c7205…",
+      "state": "discarded",
+      "version": 1
+    },
+    "released": true
+  },
+  …
+}
+```
+
+### changes.since
+
+What changed between an older snapshot (`since`) and the request's snapshot:
+changed files with digests, and where the nodes you hold (`scope.nodes`) are
+now. `history` is `known`, `unknown` or `expired`. Node mappings here are
+inferred (`relation: inferred`) from ids, paths and text.
+
+{/* BEGIN GENERATED operation:changes.since */}
+
+**Params** (`schemas/operations/changes.since.request.json`)
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `since` | yes | string (at most 256 characters) | Opaque id of one immutable captured snapshot. Never the reserved word latest. |
+| `scope` | no | object |  |
+| `cursor` | no | string (at most 1024 characters) | Opaque continuation token bound to one snapshot and one request shape. Valid until the snapshot expires. |
+
+**Result** (`schemas/operations/changes.since.result.json`)
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `since` | yes | string (at most 256 characters) | Opaque id of one immutable captured snapshot. Never the reserved word latest. |
+| `history` | yes | `known`, `unknown`, `expired` | Known: deltas below are complete for scope. unknown: since is not related to this snapshot by captured history. expired: since was evicted; deltas are empty. |
+| `files` | yes | array of object (`fileChange`) |  |
+| `nodes` | yes | array of object (`relocation`) |  |
+| `relevant` | yes | boolean | True when anything in scope changed (with scope.candidate: anything the candidate read or wrote). |
+
+**Error codes:** `invalid_arguments`, `not_found`, `internal`, `resource_limit`, `permission_denied`, `unsupported_operation`, `snapshot_expired`, `stale_snapshot`.
+
+{/* END GENERATED operation:changes.since */}
+
+```json title="Request: changes.since"
+{"protocol": "axiom-agent-semantic/v1", "operation": "changes.since", "workspace": "<workspace>",
+ "snapshot": "latest",
+ "params": {"since": "<first-snapshot>", "scope": {"nodes": ["element:Home/view/0/1"]}}}
+```
+
+```json title="Response (excerpt)"
+{
+  "snapshot": {
+    "id": "snap-c3f91ac2416b…",
+    …
+  },
+  "result": {
+    "files": [
+      {
+        "after_sha256": "6fa9d35dbcf8…",
+        "before_sha256": "c7ac07a1c507…",
+        "change": "modified",
+        "path": "main.acore"
+      }
+    ],
+    "history": "known",
+    "nodes": [
+      {
+        "basis": "path",
+        "new_id": "element:Home/view/0/1",
+        "old_id": "element:Home/view/0/1",
+        "relation": "inferred",
+        "status": "ok"
+      }
+    ],
+    "relevant": true,
+    "since": "snap-3c995aab4e94…"
+  },
+  …
+}
+```
+
+### node.relocate
+
+Maps up to 200 node ids from an older snapshot (`from_snapshot`) to the
+request's snapshot, one entry per id in request order. Each entry has a
+`status`, the `new_id` and the `basis` of the match (`exact`, `text`, `path` or
+`missing`); this build's matches are always `relation: inferred`.
+
+{/* BEGIN GENERATED operation:node.relocate */}
+
+**Params** (`schemas/operations/node.relocate.request.json`)
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `from_snapshot` | yes | string (at most 256 characters) | Opaque id of one immutable captured snapshot. Never the reserved word latest. |
+| `nodes` | yes | array of string (at most 1024 characters), 1 to 200 items |  |
+
+**Result** (`schemas/operations/node.relocate.result.json`)
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `relocations` | yes | array of object (`relocation`), 1 to 200 items |  |
+
+**Error codes:** `invalid_arguments`, `not_found`, `internal`, `resource_limit`, `permission_denied`, `unsupported_operation`, `snapshot_expired`, `stale_snapshot`, `compile_failed`.
+
+{/* END GENERATED operation:node.relocate */}
+
+```json title="Request: node.relocate"
+{"protocol": "axiom-agent-semantic/v1", "operation": "node.relocate", "workspace": "<workspace>",
+ "snapshot": "latest",
+ "params": {"from_snapshot": "<first-snapshot>", "nodes": ["element:Home/view/0/1", "state:Home.draft"]}}
+```
+
+```json title="Response (excerpt)"
+{
+  "result": {
+    "relocations": [
+      {
+        "basis": "path",
+        "new_id": "element:Home/view/0/1",
+        "old_id": "element:Home/view/0/1",
+        "relation": "inferred",
+        "status": "ok"
+      },
+      {
+        "basis": "exact",
+        "new_id": "state:Home.draft",
+        "old_id": "state:Home.draft",
+        "relation": "inferred",
+        "status": "ok"
+      }
+    ]
+  },
+  …
+}
+```
+
+## Errors
+
+An error response has `error` instead of `result`. Decide what to do from
+`code`, `reason`, `retryable` and `next_actions`; `message` is for people and
+may change.
+
+{/* BEGIN GENERATED error-object */}
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `code` | yes | `unsupported_operation`, `invalid_arguments`, `ambiguous_owner`, `read_only_origin`, `stale_snapshot`, `precondition_failed`, `compile_failed`, `conflict`, `insufficient_context`, `snapshot_expired`, `permission_denied`, `resource_limit`, `not_found`, `internal` |  |
+| `reason` | no | string | Open refinement of code, for example old_value_mismatch, request_id_reused, external_write. |
+| `message` | yes | string (at most 4000 characters) |  |
+| `operation_index` | no | integer (0..) | Index in params.operations of the operation that failed (batched edits). |
+| `target` | no | object (`target`) | What the error is about. |
+| `diagnostics` | yes | array of object, 0 to 200 items (`diagnostics`) |  |
+| `retryable` | yes | `none`, `same_request`, `after_refresh` | None: the same request will fail again. same_request: retry unchanged (transient). after_refresh: re-read (new snapshot, node versions, options) and rebuild the request. |
+| `next_actions` | yes | array of object (`nextAction`), 0 to 10 items |  |
+| `details` | no | object | Code-specific structured data (current value, expansion refs, conflicting paths, receipt). |
+
+{/* END GENERATED error-object */}
+
+`retryable` is authoritative for each error:
+
+| `retryable` | Meaning | What to do |
+| --- | --- | --- |
+| `none` | The same request fails again. | Change the arguments, scope, limits or approach. Do not loop. |
+| `same_request` | Transient, or an apply that must be resolved. | Send the identical request again, with the same `request_id`. |
+| `after_refresh` | Your view is out of date. | Read again (new snapshot, node versions, options, values), rebuild the request and send it with a new `request_id`. |
+
+### Error codes and what to do
+
+| Code | Meaning | Default `retryable` | What a client should do |
+| --- | --- | --- | --- |
+| `stale_snapshot` | The base snapshot is not the current one, and a file the edit touches changed (reason `base_not_head`). | `after_refresh` | Call `changes.since` with your old snapshot and the ids you hold, map them, read the values again and propose on the current snapshot with a new `request_id`. |
+| `precondition_failed` | An explicit precondition does not hold. Reasons: `old_value_mismatch`, `old_text_mismatch`, `node_version_mismatch`, `option_stale`, `external_write`, `candidate_version_mismatch`, `candidate_closed`, `candidate_applied`, `incomplete_graph`, `check_required`. | `after_refresh` (`candidate_applied`: `none`) | Read again with `node.get` or `node.edits` and rebuild the operation. On `external_write` at apply, someone edited the file: discard the candidate and start from `latest`. |
+| `insufficient_context` | The required context exceeds your limits. `details.required_bytes` and `details.expand` say what it needs. | `none` | Narrow `include` or `focus`, then pass selected refs from `details.expand`. Raise `max_bytes` only up to the manifest maximum. |
+| `compile_failed` | The base or the candidate does not compile; `diagnostics` has the compiler errors. Reasons include `not_validated` and `repair_regression`. | `none` | Read `diagnostics` and `operation_index`, fix the operation and propose again. If the base is broken, start from `project.overview` diagnostics. |
+| `unsupported_operation` | The protocol, operation, edit kind or option is not served. Reasons include `protocol_unsupported`, `unknown_operation`, `not_implemented`, `edit_not_offered`, `still_referenced` and `group_unresolvable`. | `none` | Do not retry. Check `capabilities` and `node.edits` for a supported route. For `still_referenced`, remove the references first. |
+| `invalid_arguments` | Malformed or unusable arguments (for example reason `schema`, `no_op`, `incompatible_target`, `multiple_roots`). | `none` | Fix the request against the schema. |
+| `ambiguous_owner` | No single authored owner (for example reason `shadowed_name`, `duplicate_property`). `details.owners` lists the choices when known. | `none` | Target one owner from `details.owners` explicitly, or ask the user. Never choose by text position. |
+| `read_only_origin` | The value is generated, inherited or owned by a dependency. | `none` | Edit the owner that produces the value. |
+| `conflict` | `request_id_reused`, `recovery_required` (an interrupted apply left files that match neither the base nor the candidate) or `concurrent_candidate`. | `none` (`concurrent_candidate`: `after_refresh`) | Use a new `request_id`; for `recovery_required` stop and show the user the paths; for `concurrent_candidate` read again and propose again. |
+| `snapshot_expired` | The snapshot or candidate was evicted, or was stored by another compiler build. | `after_refresh` | Read again on `latest`; propose again if a candidate was lost. |
+| `permission_denied` | Outside the attached root, or refused by policy (`path_escape`, `root_not_allowed`, `not_owner`, `policy`). | `none` | Do not work around it. |
+| `resource_limit` | A service bound was hit; `reason` names it (see [Limits](#limits)). | `none`; `same_request` for `queue_full` and for a `change.apply` that hit `timeout` | Make the request smaller or page it. For an apply `timeout`, follow [After an apply timeout](#after-an-apply-timeout). |
+| `not_found` | Unknown node, candidate, snapshot or workspace (for example reason `snapshot_unknown`, `candidate_expired`). | `none` | Find the node again; never guess an id. |
+| `internal` | An unexpected failure. | `same_request`, once | Retry once unchanged, then report it. |
+
+Which operations can return each code (generated from each result schema's
+`x-errors`):
+
+{/* BEGIN GENERATED errors-by-operation */}
+
+| Code | Operations that can return it |
+| --- | --- |
+| `unsupported_operation` | every operation |
+| `invalid_arguments` | every operation |
+| `ambiguous_owner` | `change.propose`, `edit.plan` |
+| `read_only_origin` | `change.propose`, `edit.plan` |
+| `stale_snapshot` | `project.overview`, `node.find`, `node.get`, `node.edits`, `graph.query`, `context.build`, `impact.analyze`, `changes.since`, `node.relocate`, `change.propose`, `check.run`, `edit.plan` |
+| `precondition_failed` | `change.propose`, `change.apply`, `change.discard`, `edit.plan` |
+| `compile_failed` | `workspace.open`, `node.find`, `node.get`, `node.edits`, `graph.query`, `context.build`, `impact.analyze`, `node.relocate`, `change.propose`, `change.apply`, `edit.plan` |
+| `conflict` | `change.propose`, `change.apply` |
+| `insufficient_context` | `context.build` |
+| `snapshot_expired` | `project.overview`, `node.find`, `node.get`, `node.edits`, `graph.query`, `context.build`, `impact.analyze`, `changes.since`, `node.relocate`, `change.propose`, `change.inspect`, `check.run`, `change.apply`, `edit.plan` |
+| `permission_denied` | `workspace.open`, `project.overview`, `node.find`, `node.get`, `node.edits`, `graph.query`, `context.build`, `impact.analyze`, `changes.since`, `node.relocate`, `change.propose`, `change.inspect`, `check.run`, `change.apply`, `change.discard`, `edit.plan` |
+| `resource_limit` | every operation |
+| `not_found` | `workspace.open`, `project.overview`, `node.find`, `node.get`, `node.edits`, `graph.query`, `context.build`, `impact.analyze`, `changes.since`, `node.relocate`, `change.propose`, `change.inspect`, `check.run`, `change.apply`, `change.discard`, `edit.plan` |
+| `internal` | every operation |
+
+{/* END GENERATED errors-by-operation */}
+
+Three more error examples, run after the apply above. An edit on the snapshot
+from before the apply, touching the file the apply changed:
+
+```json title="Request: change.propose on an old snapshot"
+{"protocol": "axiom-agent-semantic/v1", "operation": "change.propose", "workspace": "<workspace>",
+ "base_snapshot": "<first-snapshot>", "request_id": "rename-add-2",
+ "params": {"operations": [{"kind": "set_property", "node": "element:Home/view/0/1", "property": "label",
+   "old_value": "Add", "new_value": "Add item"}]}}
+```
+
+```json title="Response (excerpt)"
+{
+  "error": {
+    "code": "stale_snapshot",
+    "reason": "base_not_head",
+    "message": "base_snapshot snap-3c995aab4e94… is not the current snapshot of the workspace (snap-c3f91ac2416b…) and the files this request changes differ there",
+    "target": {
+      "snapshot": "snap-3c995aab4e94…"
+    },
+    "diagnostics": [],
+    "retryable": "after_refresh",
+    "next_actions": [
+      {
+        "operation": "node.get",
+        "reason": "Re-read the nodes on the current snapshot (snapshot.id of this response) and rebuild the request"
+      }
+    ]
+  },
+  …
+}
+```
+
+An id that does not exist:
+
+```json title="Request: node.get of an unknown id"
+{"protocol": "axiom-agent-semantic/v1", "operation": "node.get", "workspace": "<workspace>",
+ "snapshot": "latest", "params": {"nodes": ["element:Home/view/9"]}}
+```
+
+```json title="Response (excerpt)"
+{
+  "error": {
+    "code": "not_found",
+    "message": "element:Home/view/9 is not a node of snap-c3f91ac2416b…",
+    "target": {
+      "node": "element:Home/view/9"
+    },
+    "diagnostics": [],
+    "retryable": "none",
+    "next_actions": [
+      {
+        "operation": "node.find",
+        "reason": "Re-find the node on this snapshot"
+      }
+    ]
+  },
+  …
+}
+```
+
+A protocol version the service does not speak:
+
+```json title="Request: an unsupported protocol"
+{"protocol": "axiom-agent-semantic/v2", "operation": "capabilities", "params": {}}
+```
+
+```json title="Response (excerpt)"
+{
+  "error": {
+    "code": "unsupported_operation",
+    "reason": "protocol_unsupported",
+    "message": "protocol axiom-agent-semantic/v2 is not supported; this service speaks axiom-agent-semantic/v1…",
+    "diagnostics": [],
+    "retryable": "none",
+    "next_actions": [
+      {
+        "operation": "capabilities",
+        "reason": "Read the supported protocol and operations",
+        "params": {}
+      }
+    ]
+  },
+  …
+}
+```
+
+## Limits
+
+Request limits bound one response; omitted limits take the default, and
+values above the maximum are lowered (the response's `truncation.limits`
+shows what was applied). Service bounds are fixed. Generated from the
+manifest:
+
+{/* BEGIN GENERATED limits */}
+
+| Request limit | Default | Maximum |
+| --- | --- | --- |
+| `max_bytes` | 65536 | 4194304 |
+| `max_depth` | 2 | 16 |
+| `max_items` | 50 | 200 |
+| `max_nodes` | 100 | 1000 |
+
+| Service bound | Value |
+| --- | --- |
+| `request_max_bytes` | 4194304 |
+| `timeout_ms` | 30000 |
+| `group_compile_budget_ms` | 20000 |
+| `brackets_max` | 8192 |
+| `brackets_total_max` | 16384 |
+| `check_content_max_bytes` | 2097152 |
+| `check_files_max` | 64 |
+| `import_depth_max` | 16 |
+| `json_depth_max` | 64 |
+| `nesting_max` | 256 |
+| `operations_max` | 50 |
+| `snapshot_bytes_max` | 67108864 |
+| `source_file_bytes_max` | 2097152 |
+| `source_files_max` | 64 |
+| `sources_bytes_max` | 4194304 |
+
+{/* END GENERATED limits */}
+
+Each bound has one error: `resource_limit` with a specific `reason`:
+
+| Reason | Bound |
+| --- | --- |
+| `request_too_large` | Request over `request_max_bytes` |
+| `json_depth_limit` | Request nested deeper than `json_depth_max` |
+| `too_many_operations` | More than `operations_max` operations in `change.propose` or `edit.plan` |
+| `content_too_large` | `check.run` file contents over `check_content_max_bytes` |
+| `nesting_limit`, `bracket_limit`, `brackets_total_limit` | Bracket nesting or count in a source file, an overlay or a candidate |
+| `file_too_large`, `sources_too_large`, `too_many_modules`, `import_depth_limit` | Project source size, file count or import depth |
+| `snapshot_too_large` | Captured inputs over `snapshot_bytes_max` |
+| `budget_exhausted` | A batch's intermediate compiles past `group_compile_budget_ms` |
+| `timeout` | A request running past `timeout_ms` |
+| `queue_full` | The service is busy; retry the same request |
+
+A limit violation is never `compile_failed` or a failed check: the check
+could not run. Bounds on single arguments stated in the schemas (for example a
+string `new_value` over 4096 characters) are `invalid_arguments` with reason
+`schema`.
+
+## Apply, receipts and recovery
+
+`change.apply` publishes a candidate to the local filesystem:
+
+1. It checks the candidate version, that the required checks passed on that
+   version, and that every file it writes still has the base content (a file
+   the candidate creates must not exist). If not, it writes nothing:
+   `precondition_failed` (`external_write`) for a file edited since, `conflict`
+   (`concurrent_candidate`) for a file another candidate on the same base wrote.
+2. It writes a journal and backups, then replaces the files one at a time
+   (write, sync, rename). Each file is replaced atomically; the set of files is
+   not atomic for other readers.
+3. It returns a **receipt**: `receipt_id`, `request_id`, `input_fingerprint`,
+   `outcome`, the candidate and its version, `base_snapshot`, `result_snapshot`
+   (when applied), each file's SHA-256 before and after, the `id_map`, the
+   journal entry and the time.
+
+`outcome` is `applied`, `not_applied` or `unknown`. `unknown` means the
+service could not tell whether writing finished, for example after an
+interrupted rename; its journal stays `pending_reconcile`. The next
+`change.apply` with the same `request_id` reconciles first: it returns the
+recorded receipt if the files match the candidate, applies the candidate if
+they match the base, and otherwise answers `conflict` (`recovery_required`)
+without writing.
+
+Inputs of the base that the candidate does not write are checked too: one
+deleted or renamed since is `precondition_failed` (`external_write`), and one
+edited since is accepted and listed in the result's `base_changes`.
+
+### After an apply timeout
+
+The time limit answers the client; it cannot undo or finish what the apply
+was doing. A `change.apply` past `timeout_ms` is answered with:
+
+- `code: resource_limit`, `reason: timeout`, `retryable: same_request`;
+- `target`: the `candidate` and the `request_id`;
+- `next_actions`: `change.apply` with the same params;
+- `details`: `outcome`, `timeout_ms`, and `receipt` when one exists.
+
+`details.outcome` is about this attempt:
+
+- `not_applied`: this attempt stopped before it started writing and can no
+  longer start. An earlier attempt with the same `request_id` may still have
+  applied the change.
+- `unknown`: this attempt had started writing, or reconciling an earlier
+  attempt, and the service cannot tell how far it got. The files may already
+  hold the candidate. `details.receipt` is the `unknown` receipt when the
+  journal was written.
+
+In both cases, send the same `change.apply` again with the same
+`request_id`. The server process exits after a timed-out request, so start
+it again first (for an MCP client, reconnect the server if its tools are gone). The answer is the recorded
+receipt with `replayed: true`, or the interrupted apply is reconciled from its
+journal and the candidate is applied once. A resend with the same
+`request_id` is never `request_id_reused` and never applies twice. Do not
+propose again, use a new `request_id`, or edit the files by hand to retry an
+apply: after the change was applied, a new `request_id` for the same candidate
+is `precondition_failed` (`candidate_applied`).
+
+### Guarantees and their limits
+
+Publication is proven against process kills at every step: after a kill the
+apply ends applied, rolled back, or reported as needing attention, with no
+half-written file. It is not proven against power loss or operating system
+crashes, and there is no remote publication. The full list of guarantees is in
+the [Support matrix](/semantic-service/support-matrix#publication).
+
+## Compatibility
+
+Within v1, changes are additive: new operations, new optional fields, and new
+values of open strings (node kinds, edge kinds, property types, check ids,
+`reason`, risk kinds). Closed enums such as error `code`, `retryable`,
+statuses and outcomes do not gain values within v1. A client sends an optional
+field only when `capabilities` lists the operation as implemented. A planned
+operation or edit kind answers `unsupported_operation` (`not_implemented`).
+
+## Related pages
+
+- [Quick start](/semantic-service/quickstart): the same flow as shell commands.
+- [Support matrix](/semantic-service/support-matrix): status and limits per operation and edit family.
+- [Agent skill](/semantic-service/agent-skill): the workflow for coding agents.

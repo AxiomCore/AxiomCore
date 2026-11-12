@@ -1,0 +1,5 @@
+{
+  "component": "cli",
+  "type": "fix",
+  "summary": "Hosted database containers retry transient data gateway failures during startup instead of exiting, and storage scoped by the sub claim scopes rows by the signed-in user."
+}

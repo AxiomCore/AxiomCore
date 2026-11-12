@@ -1,0 +1,98 @@
+---
+title: Axiom Cloud platform changes
+description: What the October and November 2026 Axiom Cloud platform release added for managed databases, authentication, data tools, recovery and operations, with the status of each change.
+pageType: reference
+---
+
+This page lists platform changes to Axiom Cloud's managed database and
+authentication services, newest first. CLI release notes cover the CLI on
+its own. Status labels follow the
+[support matrix](/introduction/support-matrix#status-definitions).
+
+## November 2026
+
+### Operations
+
+- Monitoring and alerts for pool capacity, storage, authentication errors and
+  latency, email delivery and budget, signing-key rotation, repair queues and
+  backups, all routed to the Axiom operator.
+- Daily orphan inventory and usage reconciliation against provider
+  measurements, and a weekly restore drill on a canary database.
+- Published [limits](/cloud/limits), [pricing](/cloud/pricing),
+  [regions](/cloud/regions), the [security model](/cloud/security-model) and
+  [operations and status](/cloud/operations).
+- The OAuth and OpenID Connect issuer was run through the OpenID Foundation
+  conformance suite against production. AxiomCore is not OpenID Certified.
+
+### Advanced authentication (Coming soon)
+
+- OAuth applications and an OIDC issuer per environment (authorization code
+  with PKCE).
+- Authenticator apps, recovery codes, passkeys, step-up and assurance guards.
+- Event webhooks and claim hooks.
+- Phone verification with your own Twilio account (real SMS delivery not
+  qualified).
+- Microsoft sign-in and Supabase Auth, Auth0 and Clerk presets (built, not
+  yet enabled). Sign in with Apple is not available.
+- Signed authentication policy releases with impact checks, and local auth
+  emulation.
+
+### Database placement and branches (Coming soon)
+
+- Preview branches from a schema or a sanitized copy, with their own
+  authentication and captured mail.
+- SQLite to PostgreSQL conversion for Pro projects.
+- Moves between pools and regions with Owner consent and signed receipts.
+- Connecting your own Turso database for application data.
+
+## October 2026
+
+### Recovery (Coming soon for all projects)
+
+Recovery is built and checked in production, and is turned on for selected
+projects only. It will be on for every project at general availability.
+
+- Daily encrypted backups kept 7 days, stored in the database's
+  jurisdiction.
+- Point-in-time restore into a new copy (SQLite 24 hours, PostgreSQL 6
+  hours) that fences old writers and replays revocations, bans and role
+  changes from a tamper-evident security ledger.
+- Archive and resume, and Owner retirement of the previous copy.
+
+### Data tools (Alpha)
+
+- Dashboard table editor and SQL editor with role-based access.
+- CSV export of a table or view.
+- Changes made in the Dashboard captured as signed migrations that
+  `axiom database pull` merges.
+
+### Managed authentication (Alpha)
+
+- Signup, password sign-in, sessions, token exchange, roles and permissions
+  on managed SQLite and PostgreSQL (checked October 25, 2026).
+- Email verification, password reset, email codes and magic links, Google
+  and GitHub sign-in, and `@axiomcore/auth-web`.
+- Per-environment authentication reserve so sign-ins never use application
+  allowances.
+
+### Runtime connections (Alpha)
+
+- Servers on Cloud Run lease short-lived, scoped credentials to managed
+  SQLite and PostgreSQL through the credential gateway (checked October 24
+  and 25, 2026).
+- Usage measured from the provider, with stops at the monthly limit.
+
+### Hosted migrations (Alpha)
+
+- Apply, inspect and roll back migrations against a hosted environment, with
+  releases signed by project signers (checked October 20, 2026).
+
+### Accounts and capacity
+
+- Cloud signup is invite-only while the platform is in Alpha. New databases
+  are limited to admitted projects.
+
+## Next steps
+
+- [Upgrade to the November 2026 release](/cloud/upgrade-guide)
+- [Check the support matrix](/introduction/support-matrix)

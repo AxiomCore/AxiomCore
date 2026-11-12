@@ -1,0 +1,5 @@
+{
+  "component": "cli",
+  "type": "security",
+  "summary": "Errors for invalid evaluated configuration no longer echo the rendered configuration, which could contain secret values."
+}

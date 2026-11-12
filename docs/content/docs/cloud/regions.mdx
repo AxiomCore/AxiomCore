@@ -1,0 +1,76 @@
+---
+title: Axiom Cloud regions
+description: Where managed databases, their backups and the services that process them run, which regions are offered today and what a region change means for your data.
+pageType: reference
+---
+
+<StatusNote status="alpha" title="Managed database regions">
+  The regions below serve invited accounts and are **Alpha**. Other regions
+  are not offered. A candidate region is listed for transparency only.
+</StatusNote>
+
+A managed database lives with a database provider in one region. The
+services that issue its credentials, run its migrations and take its backups
+run in Google Cloud. This page lists both.
+
+## Database regions
+
+| Engine | Provider | Provider region | Location | Status |
+| --- | --- | --- | --- | --- |
+| SQLite (libSQL) | Turso | `aws-ap-south-1` | Mumbai, India | Offered |
+| PostgreSQL | Neon | `aws-ap-southeast-1` | Singapore | Offered |
+| PostgreSQL | Neon | `aws-ap-southeast-2` | Sydney, Australia | Candidate, not offered |
+
+Free projects get SQLite in Mumbai. Pro projects get PostgreSQL in Singapore,
+or keep SQLite in Mumbai. You cannot choose another region yet.
+
+## Where Axiom services run
+
+| Service | Region |
+| --- | --- |
+| Database credential gateway and issuer, resource worker, data editor, application authentication (`auth.axiomcore.dev`) | Google Cloud `asia-southeast1` (Singapore) |
+| Cloud management API and Dashboard backend | Google Cloud `us-central1` (Iowa, United States) |
+| Encryption keys for credentials and signing keys | Google Cloud KMS in `asia-southeast1` |
+
+Your application's rows travel between your servers and the database
+provider directly. No Axiom service carries customer rows on the runtime path;
+the data editor reads rows only when a project member uses it.
+
+## Where backups are stored
+
+Backups and archives stay in the jurisdiction of the database:
+
+| Database region | Backup storage |
+| --- | --- |
+| Turso Mumbai | Google Cloud Storage `asia-south1` (Mumbai) |
+| Neon Singapore | Google Cloud Storage `asia-southeast1` (Singapore) |
+| Neon Sydney (candidate) | Google Cloud Storage `australia-southeast1` (Sydney) |
+
+Each jurisdiction has its own bucket and encryption key ring.
+
+## Region changes
+
+Axiom does not move a database to another region without the Owner's
+consent. Before you consent, the dialog shows the destination's data
+residency, backup destination, processing region, egress and monthly cost.
+After a move:
+
+- the database keeps its ID, issuer URL and callbacks;
+- new backups use the destination's bucket and keys;
+- backups taken before the move stay in the source jurisdiction until their
+  retention ends (daily backups 8 days), then are deleted.
+
+Moves to another region are **Coming soon** for customers. See
+[Where your database lives and how it moves](/cloud/database-placement).
+
+## Adding regions
+
+A new region is offered only after its provider quotas, engine version,
+backup bucket and key ring, residency review and operator coverage are in
+place, and its restore and move checks pass. Candidate regions serve only
+databases moved there in a controlled test.
+
+## Next steps
+
+- [Compare Free and Pro limits](/cloud/limits)
+- [Read the security model](/cloud/security-model)

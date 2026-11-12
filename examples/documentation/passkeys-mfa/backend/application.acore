@@ -1,0 +1,52 @@
+project(id: "docs.passkeys-mfa", version: "1.0.0")
+variant default(include: ["*"])
+
+// The signed-in user as this backend sees it. Every value comes from the
+// verified access token (Principal.*), never from the request.
+model Viewer {
+  id: String
+  subject: String
+} also entity
+model Problem { message: String }
+failure unavailable(payload: Models.Problem, status: 503)
+
+guard signedIn(kind: GuardKind.authenticated)
+// auth-advanced/v1 7.5: a second factor or passkey verified within 10 minutes.
+guard recentMfa(kind: GuardKind.authenticated, assurance: Assurance.aal2, maxAge: 10m)
+cors(origins: ["http://localhost:5177"],
+  methods: [GET], headers: ["authorization", "traceparent", "x-axiom-cache-mode"],
+  credentials: false, maxAge: 1m)
+
+action whoami(kind: ActionKind.query, output: Models.Viewer) {
+  require(guard: Guards.signedIn)
+  errors(Failures.unavailable)
+  managed {
+    result(value: {id: Principal.sid, subject: Principal.subject})
+  }
+}
+
+projection viewerPublic(entity: Entities.viewer, fields: [.id, .subject], audience: Audience.web)
+
+// The Acore web client attaches the managed access token to this endpoint.
+endpoint me(method: GET, path: "/me") {
+  auth(required: true, methods: [AuthMethodDef(type: "bearer", name: "Authorization", scheme: "Bearer", location: "header")])
+  handle(action: Actions.whoami)
+  response(type: Models.Viewer, projection: Projections.viewerPublic)
+  errors(Failures.unavailable)
+  cacheIdentity("viewer:me")
+}
+
+action adminView(kind: ActionKind.query, output: Models.Viewer) {
+  require(guard: Guards.recentMfa)
+  errors(Failures.unavailable)
+  managed {
+    result(value: {id: Principal.sid, subject: Principal.subject})
+  }
+}
+
+endpoint admin(method: GET, path: "/admin") {
+  auth(required: true, methods: [AuthMethodDef(type: "bearer", name: "Authorization", scheme: "Bearer", location: "header")])
+  handle(action: Actions.adminView)
+  response(type: Models.Viewer, projection: Projections.viewerPublic)
+  errors(Failures.unavailable)
+}

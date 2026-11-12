@@ -1,0 +1,19 @@
+type = "frontend"
+targets = ["web"]
+
+[contracts.api]
+artifact = "../backend/.axiom/contracts/backend.axiom"
+baseUrl = "http://127.0.0.1:8080"
+audience = "web"
+operations = ["me"]
+
+# Managed sign-in. Replace the placeholder issuer with your environment's:
+# axiom auth config pull --environment development --write
+[auth]
+provider = "axiom"
+contracts = ["api"]
+callbackPath = "/auth/callback"
+
+[auth.environments.development]
+issuer = "https://auth.axiomcore.dev/00000000-0000-0000-0000-000000000000/00000000-0000-0000-0000-000000000000"
+redirectOrigin = "http://127.0.0.1:5173"

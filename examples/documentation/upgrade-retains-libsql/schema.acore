@@ -1,0 +1,15 @@
+project(id: "w8x.upgrade", version: "1.0.0")
+module w8x.upgrade
+
+// Synthetic table, no customer data.
+database notes(engine: DatabaseEngine.sqlite) {
+  manage(schemas: [Schemas.main], mode: ManagementMode.ownedObjects)
+  schema main {
+    table notes(strict: true) {
+      id: Sqlite.Integer()
+      owner: Sqlite.Text()
+      body: Sqlite.Text()
+      primaryKey(columns: [.id])
+    }
+  }
+}

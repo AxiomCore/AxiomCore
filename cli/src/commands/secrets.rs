@@ -197,7 +197,11 @@ pub async fn runtime(
 ) -> Result<RuntimeSecrets> {
     ensure!(cfg!(all(target_os="macos",target_arch="aarch64")),"AXSECRET_UNSUPPORTED_TARGET: select a separately qualified protected runtime before authenticating a secret source");
     let selected = RuntimeSecrets::inspect(root, environment)?;
-    let cloud = if let Some(config) = &selected.cloud {
+    use axiom_lib::secrets::SecretSource;
+    // Cloud secrets open a secret session; managed databases lease through the gateway.
+    let has_cloud_secrets = selected.secrets.values().any(|s| matches!(s, SecretSource::AxiomCloud { .. }));
+    let database = axiom_server::database_lease::Gateway::for_profile(&selected, &plan.sha256()?)?;
+    let cloud = if let Some(config) = selected.cloud.as_ref().filter(|_| has_cloud_secrets) {
         let requirements = LeaseRequirements {
             project_id: config.project_id.clone(),
             environment_id: config.environment_id.clone(),
@@ -241,12 +245,13 @@ pub async fn runtime(
     } else {
         None
     };
-    Ok(RuntimeSecrets::from_bindings(
+    Ok(RuntimeSecrets::from_bindings_with(
         root,
         &selected,
         cloud
             .as_ref()
             .map(|c| c as &dyn axiom_server::secret_runtime::CloudSecretSource),
+        database.as_ref(),
     )?)
 }
 fn development_identity() -> axiom_server::Result<Zeroizing<String>> {
@@ -506,16 +511,17 @@ pub async fn handle(action: &Action) -> Result<()> {
         } => {
             let selected = RuntimeSecrets::inspect(root, environment)?;
             if *resolve {
-                ensure!(selected.cloud.is_none(),"Cloud material validation requires the exact executable private plan; use serve --environment");
+                ensure!(selected.cloud.is_none(),"Cloud material and managed database validation require the exact executable private plan; use serve --environment");
                 let source = RuntimeSecrets::from_bindings(root, &selected, None)?;
                 println!(
                     "{}",
                     serde_json::json!({"valid":true,"resolved":true,"bindings":source.binding_names().collect::<Vec<_>>()})
                 );
             } else {
+                let databases = selected.secrets.values().filter(|s| matches!(s, axiom_lib::secrets::SecretSource::AxiomCloudDatabase { .. })).count();
                 println!(
                     "{}",
-                    serde_json::json!({"valid":true,"resolved":false,"secretRequirements":selected.secrets.len()})
+                    serde_json::json!({"valid":true,"resolved":false,"secretRequirements":selected.secrets.len(),"managedDatabases":databases})
                 );
             }
         }

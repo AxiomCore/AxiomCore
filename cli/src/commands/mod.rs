@@ -1,12 +1,18 @@
 pub mod app;
+pub mod auth;
+pub mod branch;
 pub mod backend;
 pub mod benchmark;
 pub mod cache;
 pub mod contract;
 pub mod contract_build;
 pub mod database;
+pub mod database_capture;
+pub mod database_convert;
 pub mod database_dev;
 pub mod database_fleet;
+pub mod database_impact;
+pub mod database_remote;
 pub mod database_runtime;
 pub mod database_sqlite;
 pub mod dependencies;
@@ -55,3 +61,9 @@ mod editor_schema_parity;
 pub mod secret_development;
 
 pub mod resources;
+pub mod resources_placement;
+pub mod resources_recovery;
+#[cfg(test)]
+pub(crate) mod cloud_mock;
+pub mod step_up;
+pub mod signers;

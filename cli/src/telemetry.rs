@@ -45,7 +45,10 @@ impl Telemetry {
                 if e.to_string().contains("ACCESS_REVOKED") {
                     let _ = AccessConfig::wipe().await;
                     eprintln!("\n\n❌ \x1b[1;31mYOUR ACCESS HAS BEEN REVOKED BY THE ADMINISTRATOR.\x1b[0m");
-                    eprintln!("Referral code: {}", config.referral_code);
+                    // Account registrations (W7 J1) have no referral code.
+                    if !config.referral_code.is_empty() {
+                        eprintln!("Referral code: {}", config.referral_code);
+                    }
                     eprintln!("If you believe this is an error, contact support.\n");
                     std::process::exit(1);
                 }

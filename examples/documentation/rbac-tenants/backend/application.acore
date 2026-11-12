@@ -1,0 +1,70 @@
+project(id: "docs.rbac-tenants", version: "1.0.0")
+variant default(include: ["*"])
+
+// The signed-in user as this backend sees it. Every value comes from the
+// verified access token (Principal.*), never from the request.
+model Viewer {
+  id: String
+  subject: String
+} also entity
+model Problem { message: String }
+failure unavailable(payload: Models.Problem, status: 503)
+
+guard signedIn(kind: GuardKind.authenticated)
+permission readOrders(claim: "orders.read")
+guard orderReader(permission: Permissions.readOrders)
+guard admin(role: "admin")
+cors(origins: ["http://127.0.0.1:5173", "http://localhost:5173"],
+  methods: [GET], headers: ["authorization", "traceparent", "x-axiom-cache-mode"],
+  credentials: false, maxAge: 1m)
+
+action whoami(kind: ActionKind.query, output: Models.Viewer) {
+  require(guard: Guards.signedIn)
+  errors(Failures.unavailable)
+  managed {
+    result(value: {id: Principal.sid, subject: Principal.subject})
+  }
+}
+
+projection viewerPublic(entity: Entities.viewer, fields: [.id, .subject], audience: Audience.web)
+
+// The Acore web client attaches the managed access token to this endpoint.
+endpoint me(method: GET, path: "/me") {
+  auth(required: true, methods: [AuthMethodDef(type: "bearer", name: "Authorization", scheme: "Bearer", location: "header")])
+  handle(action: Actions.whoami)
+  response(type: Models.Viewer, projection: Projections.viewerPublic)
+  errors(Failures.unavailable)
+  cacheIdentity("viewer:me")
+}
+
+// Permission guard: needs orders.read (role member or admin).
+action listOrders(kind: ActionKind.query, output: Models.Viewer) {
+  require(guard: Guards.orderReader)
+  errors(Failures.unavailable)
+  managed {
+    result(value: {id: Principal.sid, subject: Principal.subject})
+  }
+}
+
+// Role guard: admin only.
+action audit(kind: ActionKind.query, output: Models.Viewer) {
+  require(guard: Guards.admin)
+  errors(Failures.unavailable)
+  managed {
+    result(value: {id: Principal.sid, subject: Principal.subject})
+  }
+}
+
+endpoint orders(method: GET, path: "/orders") {
+  auth(required: true, methods: [AuthMethodDef(type: "bearer", name: "Authorization", scheme: "Bearer", location: "header")])
+  handle(action: Actions.listOrders)
+  response(type: Models.Viewer, projection: Projections.viewerPublic)
+  errors(Failures.unavailable)
+}
+
+endpoint audit(method: GET, path: "/audit") {
+  auth(required: true, methods: [AuthMethodDef(type: "bearer", name: "Authorization", scheme: "Bearer", location: "header")])
+  handle(action: Actions.audit)
+  response(type: Models.Viewer, projection: Projections.viewerPublic)
+  errors(Failures.unavailable)
+}

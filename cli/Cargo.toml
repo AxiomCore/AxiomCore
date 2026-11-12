@@ -1,11 +1,12 @@
 [package]
 name = "axiom-cli"
-version = "0.149.1"
+version = "0.151.0"
 edition = "2021"
 
 [dependencies]
 axiom-lib = { path = "../../axiom-lib" }
-axiom-database = { path = "../../axiom-database" }
+# `local-auth`: `axiom auth emulate` installs the axiom-auth stream locally (embeds system/axiom-auth).
+axiom-database = { path = "../../axiom-database", features = ["local-auth"] }
 axiom-server = { path = "../../axiom-runtime/server" }
 axiom-cloud = { path = "../../axiom-cloud" }
 axiom-extractor = { path = "../../axiom-extractor" }
@@ -69,6 +70,10 @@ zip = "0.6"
 tempfile = "3.8"
 dotenvy = "0.15"
 zeroize = "1.8"
+# Local auth emulation (`axiom auth emulate`): synthetic password hashes and form bodies.
+pbkdf2 = { version = "0.11", default-features = false }
+hmac = "0.12"
+url = "2.5"
 
 # The large derived command tree otherwise retains oversized temporary builder
 # frames in unoptimized test code. Exercise the parser with release-like frames.

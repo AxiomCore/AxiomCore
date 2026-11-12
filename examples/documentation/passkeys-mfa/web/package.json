@@ -1,0 +1,7 @@
+{
+  "name": "passkeys-mfa-web",
+  "private": true,
+  "type": "module",
+  "scripts": { "build": "node --disable-warning=ExperimentalWarning build.mjs" },
+  "dependencies": { "@axiomcore/auth-web": "^0.2.0" }
+}

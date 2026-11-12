@@ -1,0 +1,82 @@
+module docs.managedauth.ui
+use contract Api from "api" audience "web"
+use auth Auth from "axiom"
+
+app ManagedAuth {
+  route Login "/login" => Login
+  route Home "/" => Home {
+    guard session.status == "authenticated"
+    denied "/login"
+  }
+  signed_out "/login"
+}
+
+page Login {
+  state email: String = ""
+  sensitive state password: String = ""
+  sensitive state code: String = ""
+  state challenge: String = ""
+
+  mutation byPassword = Auth.signInWithPassword(email: email, password: password)
+  mutation askCode = Auth.requestEmailCode(email: email)
+  mutation byCode = Auth.verifyEmailCode(challenge: challenge, code: code)
+  mutation google = Auth.signInWithProvider(provider: "google", return_to: "/")
+  mutation hosted = Auth.signInHosted(return_to: "/")
+  mutation logout = Auth.signOut()
+
+  session_actions(sign_in: [byPassword, byCode], sign_out: logout)
+
+  action withPassword() { session sign_in(byPassword); go Home() }
+  action sendCode() { let sent = await askCode.run(); challenge = sent.challenge }
+  action withCode() { session sign_in(byCode); go Home() }
+  action withGoogle() { await google.run() }
+  action withHostedPage() { await hosted.run() }
+
+  view {
+    SafeArea {
+      View(class: "panel") {
+        Text("Sign in", class: "heading")
+        Input(value: email, input_type: "email", autofill: "email", accessibility_label: "Email", class: "input")
+        Input(value: password, input_type: "password", autofill: "current-password", accessibility_label: "Password", class: "input")
+        Button(label: "Sign in with password", disabled: session_ux.pending, on_press: withPassword, class: "primary")
+        Button(label: "Email me a code", disabled: email.length == 0, on_press: sendCode, class: "secondary")
+        if challenge.length > 0 {
+          Input(value: code, input_type: "digit", autofill: "one-time-code", accessibility_label: "Code", class: "input")
+          Button(label: "Verify code", on_press: withCode, class: "primary")
+        }
+        Button(label: "Continue with Google", on_press: withGoogle, class: "secondary")
+        Button(label: "Use the hosted page", on_press: withHostedPage, class: "secondary")
+        Text(session_ux.error ?? "", class: "error")
+      }
+    }
+  }
+}
+
+page Home {
+  query viewer = Api.me()
+  mutation logout = Auth.signOut()
+  session_actions(sign_out: logout)
+  action out() { session sign_out() }
+
+  view {
+    SafeArea {
+      View(class: "panel") {
+        Text("Signed in", class: "heading")
+        if viewer.pending { Text("Loading", class: "description") }
+        else if viewer.error { Text("Could not reach the backend.", class: "error") }
+        else { Text(viewer.data?.subject ?? "", class: "description") }
+        Button(label: "Sign out", on_press: out, class: "secondary")
+      }
+    }
+  }
+}
+
+styles {
+  .panel { padding: 40px; gap: 12px; background-color: #080809 }
+  .heading { font-size: 28px; color: #ffffff; font-weight: 600 }
+  .description { font-size: 14px; color: #a1a1aa }
+  .input { padding: 12px; background-color: #18181b; color: #ffffff; border-radius: 8px }
+  .primary { padding: 12px; background-color: #f97316; color: #080809; border-radius: 8px }
+  .secondary { padding: 12px; background-color: #27272a; color: #ffffff; border-radius: 8px }
+  .error { font-size: 13px; color: #f87171 }
+}

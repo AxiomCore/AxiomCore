@@ -1,0 +1,5 @@
+{
+  "component": "cli",
+  "type": "feature",
+  "summary": "Managed authentication: new axiom auth commands configure project sign-in providers and settings, --auth-environment selects the runtime auth configuration, server deployment scaffolds axiomAuth with the environment issuer, and axiom auth check reports guarded endpoints."
+}

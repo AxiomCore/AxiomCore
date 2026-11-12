@@ -8,8 +8,12 @@ from zipfile import ZipFile, ZipInfo, ZIP_DEFLATED
 DOCS = Path(__file__).resolve().parents[1]
 SOURCE = DOCS.parent / 'examples' / 'documentation'
 OUTPUT = DOCS / 'public' / 'examples'
-NAMES = ('task-app', 'exam-app', 'hello-api', 'managed-title', 'fastapi-web', 'go-web')
-SUFFIXES = {'.acore', '.toml', '.md', '.py', '.txt', '.go', '.mod', '.sum', '.json', '.ts', '.mjs', '.html'}
+NAMES = ('task-app', 'exam-app', 'hello-api', 'managed-title', 'fastapi-web', 'go-web',
+         # W8.7 examples matrix rows (E1 to E16)
+         'managed-auth-app', 'hosted-persistence', 'rbac-tenants', 'external-issuer', 'byo-turso',
+         'upgrade-retains-libsql', 'convert-to-postgres', 'passkeys-mfa', 'oauth-client', 'local-auth',
+         'fastapi-auth', 'linux-backend', 'sandbox-refusal', 'preview-branch')
+SUFFIXES = {'.acore', '.toml', '.md', '.py', '.txt', '.go', '.mod', '.sum', '.json', '.ts', '.mjs', '.html', '.sh'}
 FORBIDDEN = {'node_modules', '.axiom', '.venv', 'generated', 'public', 'dist', '__pycache__', '.git'}
 
 

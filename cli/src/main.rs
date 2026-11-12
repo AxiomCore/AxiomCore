@@ -1,5 +1,6 @@
 // src/main.rs
 pub mod access_config;
+pub mod access_gate;
 pub mod auth_store;
 pub mod commands;
 pub mod components;
@@ -14,11 +15,9 @@ use crate::components::inspect::endpoint_list::render_endpoint_list;
 use crate::components::inspect::model_browser::render_model_browser;
 use crate::state::InspectTab;
 use crate::telemetry::Telemetry;
-use axiom_cloud::{uses_local_cloud, CliApi, CloudClient};
+use axiom_cloud::{uses_local_cloud, CloudClient};
 use clap::{Parser, Subcommand};
-use console::style;
 use crossterm::event::KeyCode;
-use dialoguer::{theme::ColorfulTheme, Input};
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph};
 use std::path::{Path, PathBuf};
@@ -101,7 +100,14 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
-    Login,
+    /// Sign in to AxiomCore through the device flow
+    Login {
+        /// Get a short step-up token (scope `resources:recovery`, 15 minutes, no refresh) for
+        /// restore, archive and retire_previous. Approve it in a browser where you signed in
+        /// within the last 15 minutes. Your normal session is kept.
+        #[arg(long)]
+        step_up: bool,
+    },
     /// Join the waitlist if you don't have a referral code
     Join {
         email: String,
@@ -246,6 +252,10 @@ enum Commands {
         /// suggest the next available version on a collision.
         #[arg(long, requires = "release")]
         version: Option<String>,
+
+        /// Frontend [auth.environments.<name>] baked into the runtime configuration (default development)
+        #[arg(long, value_name = "NAME")]
+        auth_environment: Option<String>,
     },
     /// Inspect an application workspace, contract snapshot, or packaged application
     Inspect {
@@ -301,6 +311,10 @@ enum Commands {
         #[command(subcommand)]
         action: ProjectAction,
     },
+    /// Administer project authentication: settings, providers, users, keys
+    Auth(commands::auth::AuthArgs),
+    /// Short-lived branch environments of a hosted database: create, review, delete
+    Branch(commands::branch::BranchArgs),
     Deploy {
         #[command(subcommand)]
         target: DeployTarget,
@@ -332,6 +346,7 @@ enum Commands {
         action: PackagesAction,
     },
     /// Run and migrate versioned PostgreSQL and SQLite database contracts
+    #[command(alias = "db")]
     Database {
         #[command(subcommand)]
         action: DatabaseAction,
@@ -410,6 +425,9 @@ enum Commands {
         /// Open the browser or native simulator after starting the UI session
         #[arg(long, conflicts_with = "once")]
         launch: bool,
+        /// Frontend [auth.environments.<name>] baked into the runtime configuration (default development)
+        #[arg(long, value_name = "NAME")]
+        auth_environment: Option<String>,
     },
     /// Validate or bootstrap the optional Domain Model v1 layer
     Domain {
@@ -490,12 +508,52 @@ enum ContractAction {
 
 #[derive(Subcommand)]
 enum DatabaseAction {
-    /// Apply pending versioned migrations using a URL or connection fields
+    /// Apply pending versioned migrations using a URL or connection fields, or a hosted environment
+    ///
+    /// With --project and --environment, the release is built and signed locally
+    /// exactly as for a local database, written to the catalog, uploaded to the
+    /// project, and applied by the hosted executor. The command waits for the
+    /// operation and prints its outcome and the new hosted head. With --dry-run it
+    /// uploads the release and runs a hosted check that changes nothing; the
+    /// catalog and source are not written.
     Migrate(commands::database_dev::MigrateArgs),
     /// Restore a recorded schema through a new versioned compensating migration
+    ///
+    /// With --project and --environment, the compensating release is prepared and
+    /// signed locally from the hosted history, written to the catalog, uploaded,
+    /// and applied by the hosted executor; the command waits and prints the
+    /// outcome and the new hosted head. With --dry-run it runs a hosted check.
     Rollback(commands::database_dev::RollbackArgs),
     /// Inspect applied version, pending changes and drift without migrating
+    ///
+    /// With --project and --environment, runs a hosted status, then compares the
+    /// hosted head with the local catalog and working contract. Drift then means
+    /// the hosted history diverges from the local catalog; the hosted executor
+    /// checks database drift itself before every apply.
     Status(commands::database_dev::ReadArgs),
+    /// Download the applied hosted history into the local catalog
+    ///
+    /// Runs a hosted status for the head, downloads every applied release,
+    /// verifies each signature, digest and parent link and that each signer is in
+    /// the project signer registry, and refuses a history that diverges from
+    /// local releases. Existing local releases are never rewritten. Nothing is
+    /// executed against the database.
+    Pull(commands::database_remote::PullArgs),
+    /// Convert a hosted libSQL database to PostgreSQL: draft, plan and submit
+    ///
+    /// `draft` proposes a PostgreSQL contract from the hosted libSQL head; `plan` signs
+    /// the PostgreSQL baseline release and the transition receipt after a local
+    /// compatibility report; `submit` uploads them for the server check. The conversion
+    /// runs with `axiom project resources request --action convert`.
+    Convert {
+        #[command(subcommand)]
+        action: commands::database_convert::Action,
+    },
+    /// Release impact gates for CI (branches-v1 "CI policy")
+    Impact {
+        #[command(subcommand)]
+        action: commands::database_impact::ImpactAction,
+    },
     /// Schema-derived private backend operations and database-to-API impact
     #[command(hide = true)]
     Runtime {
@@ -525,14 +583,26 @@ enum DatabaseAction {
     /// Inspect a source contract or schema package without connecting
     Inspect { source: PathBuf },
     /// Compare two source contracts or typed schema packages
+    ///
+    /// With --project and --environment, compares the hosted head release with
+    /// the working contract.
     Diff {
         #[arg(value_name = "CONTRACT")]
         before: PathBuf,
         after: Option<PathBuf>,
+        /// Catalog version to compare from
         #[arg(long)]
         from: Option<String>,
+        /// Catalog version to compare to; defaults to `working`
         #[arg(long)]
         to: Option<String>,
+        /// AxiomCore Cloud project slug. With --environment, compare the hosted head release with the working contract. Cannot be combined with a second contract, --from or --to.
+        #[arg(long, requires = "environment", conflicts_with_all = ["after", "from", "to"])]
+        project: Option<String>,
+        /// Hosted environment slug, for example `development`. Requires --project.
+        #[arg(long, requires = "project")]
+        environment: Option<String>,
+        /// Print machine-readable JSON instead of text
         #[arg(long)]
         json: bool,
     },
@@ -639,15 +709,23 @@ enum DatabaseAction {
         checkpoint: Option<PathBuf>,
     },
     /// Display version history; advanced legacy subcommands remain available
+    ///
+    /// With --project and --environment, lists the hosted applied releases and the
+    /// environment's operations, newest first, marking which releases are in the
+    /// local catalog. It only reads; nothing runs and nothing is written.
     History {
         #[command(subcommand)]
         action: Option<DatabaseHistoryAction>,
         source: Option<PathBuf>,
         #[command(flatten)]
         connection: commands::database_dev::ConnectionArgs,
+        #[command(flatten)]
+        remote: commands::database_remote::RemoteArgs,
+        /// Print machine-readable JSON instead of text
         #[arg(long)]
         json: bool,
-        #[arg(long)]
+        /// Refresh every two seconds until interrupted; local connections only
+        #[arg(long, conflicts_with = "project")]
         watch: bool,
     },
     /// Sign or verify an exact private candidate prefix offline
@@ -669,6 +747,22 @@ enum DatabaseAction {
         #[arg(long)]
         deployment: PathBuf,
     },
+}
+
+impl DatabaseAction {
+    /// Hosted database commands use the control plane like `project resources`.
+    fn hosted(&self) -> bool {
+        match self {
+            DatabaseAction::Migrate(args) => args.remote.target().is_some(),
+            DatabaseAction::Rollback(args) => args.remote.target().is_some(),
+            DatabaseAction::Status(args) => args.remote.target().is_some(),
+            DatabaseAction::History { remote, .. } => remote.target().is_some(),
+            DatabaseAction::Diff { project, .. } => project.is_some(),
+            DatabaseAction::Pull(_) => true,
+            DatabaseAction::Convert { .. } => true,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -1447,6 +1541,11 @@ enum ProjectAction {
         #[command(subcommand)]
         action: Option<commands::resources::Action>,
     },
+    /// Manage the keys allowed to sign hosted database releases
+    Signers {
+        #[command(subcommand)]
+        action: commands::signers::Action,
+    },
     Create {
         #[arg(long)]
         name: Option<String>,
@@ -1576,7 +1675,8 @@ async fn main() -> anyhow::Result<()> {
     } else {
         uses_local_cloud()?
     };
-    let active_config = if local_cloud
+    let is_first_login = matches!(&*cli.command, Commands::Login { step_up: false });
+    let mut active_config = if local_cloud
         || local_application_command
         || matches!(
             &*cli.command,
@@ -1597,74 +1697,21 @@ async fn main() -> anyhow::Result<()> {
         // registration or telemetry state.
         None
     } else {
-        // Load Access Config
-        let mut access_config = AccessConfig::load().await?;
-
-        // If no config exists, force registration
-        if access_config.is_none() {
-            println!(
-                "{}",
-                style("🔒 Axiom CLI is currently in Private Alpha.")
-                    .bold()
-                    .yellow()
-            );
-            println!("To proceed, you need a valid referral code.\n");
-            let referral_from_env = std::env::var("AXIOM_REFERRAL_CODE").ok();
-
-            let code = if let Some(env_code) = referral_from_env {
-                println!("Using referral code from environment variable.");
-                env_code
-            } else {
-                // If running in CI and no referral provided, fail cleanly
-                if std::env::var("CI").is_ok() {
-                    eprintln!("❌ No AXIOM_REFERRAL_CODE provided in CI environment.");
-                    std::process::exit(1);
-                }
-
-                println!(
-                    "If you don't have one, run: {}",
-                    style("axiom join <EMAIL>").cyan()
-                );
-                println!("");
-
-                Input::with_theme(&ColorfulTheme::default())
-                    .with_prompt("Enter Referral Code")
-                    .interact_text()?
-            };
-
-            // Create temp config to generate machine ID
-            let temp_config = AccessConfig::save(&code).await?;
-
-            println!("{}", style("Verifying code...").dim());
-
-            // Register with Server
-            match CliApi::register(&temp_config.referral_code, &temp_config.machine_id).await {
-                Ok(_) => {
-                    println!(
-                        "✅ {}",
-                        style("Access Granted. Welcome to Axiom.").green().bold()
-                    );
-                    println!("");
-                    access_config = Some(temp_config);
-                }
-                Err(e) => {
-                    // Registration failed, wipe local config so they try again next time
-                    let _ = AccessConfig::wipe().await;
-                    println!(
-                        "\n❌ {}",
-                        style(format!("Authorization Failed: {}", e)).red()
-                    );
-                    std::process::exit(1);
-                }
-            }
+        // Load Access Config. A machine without one registers through the
+        // gate: a signed-in Cloud account needs no referral code (W7 J1).
+        match AccessConfig::load().await? {
+            Some(config) => Some(config),
+            None => access_gate::admit(is_first_login).await?,
         }
-
-        access_config
     };
+    let register_after_login = is_first_login && !local_cloud && active_config.is_none();
 
     // 3. EXECUTE COMMAND
     // -------------------------------------------------------------------------
     let result = execute_command(&cli.command).await;
+    if register_after_login && result.is_ok() {
+        active_config = access_gate::after_login().await;
+    }
 
     // 4. TELEMETRY
     // -------------------------------------------------------------------------
@@ -1682,7 +1729,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Doctor { .. } => "doctor",
         Commands::Onboard { .. } => "onboard",
         Commands::Benchmark { .. } => "benchmark",
-        Commands::Login => "login",
+        Commands::Login { .. } => "login",
         Commands::Join { .. } => "join",
         Commands::Cache { .. } => "cache",
         Commands::Install { .. } => "install",
@@ -1693,6 +1740,8 @@ async fn main() -> anyhow::Result<()> {
         Commands::Pull { .. } => "pull",
         Commands::Watch { .. } => "watch",
         Commands::Project { .. } => "project",
+        Commands::Auth(..) => "auth",
+        Commands::Branch(..) => "branch",
         Commands::Diff { .. } => "diff",
         Commands::Contract { .. } => "contract",
         Commands::Packages { .. } => "packages",
@@ -1746,7 +1795,6 @@ fn is_local_command(command: &Commands) -> bool {
         Commands::Scenario { .. } => true,
         Commands::Package { .. }
         | Commands::Packages { .. }
-        | Commands::Database { .. }
         | Commands::Inspect { .. }
         | Commands::Eval { .. }
         | Commands::Check { .. }
@@ -1766,6 +1814,7 @@ fn is_local_command(command: &Commands) -> bool {
         | Commands::Build { release: false, .. }
         | Commands::Serve(..)
         | Commands::Watch { build: true, .. } => true,
+        Commands::Database { action } => !action.hosted(),
         Commands::Mock(input) => !input.cloud,
         Commands::Pull {
             source,
@@ -2282,12 +2331,24 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             },
         },
         Commands::Database { action } => match action {
+            DatabaseAction::Migrate(args) if args.remote.target().is_some() => {
+                commands::database_remote::migrate(args).await
+            }
             DatabaseAction::Migrate(args) => {
                 commands::database_dev::migrate(args, false, None).await
             }
+            DatabaseAction::Rollback(args) if args.remote.target().is_some() => {
+                commands::database_remote::rollback(args).await
+            }
             DatabaseAction::Rollback(args) => commands::database_dev::rollback(args).await,
+            DatabaseAction::Status(args) if args.remote.target().is_some() => {
+                commands::database_remote::status(args).await
+            }
             DatabaseAction::Status(args) => commands::database_dev::read(args, false).await,
+            DatabaseAction::Pull(args) => commands::database_remote::pull(args).await,
+            DatabaseAction::Convert { action } => commands::database_convert::run(action).await,
             DatabaseAction::Runtime { command } => commands::database_runtime::run(command),
+            DatabaseAction::Impact { action } => commands::database_impact::run_check(action),
             DatabaseAction::Sqlite { command } => commands::database_sqlite::run(command),
             DatabaseAction::Fleet { command } => commands::database_fleet::run(command).await,
             DatabaseAction::Check { source } => commands::database::check(source),
@@ -2300,9 +2361,13 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                 after,
                 from,
                 to,
+                project,
+                environment,
                 json,
             } => {
-                if let Some(after) = after {
+                if let (Some(project), Some(environment)) = (project, environment) {
+                    commands::database_remote::diff(before, project, environment, *json).await
+                } else if let Some(after) = after {
                     commands::database::diff(before, after)
                 } else {
                     commands::database_dev::diff(
@@ -2398,9 +2463,23 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                 action,
                 source,
                 connection,
+                remote,
                 json,
                 watch,
             } => match action {
+                _ if remote.target().is_some() && action.is_some() => {
+                    anyhow::bail!("--project and --environment apply to `database history CONTRACT`, not to its subcommands")
+                }
+                None if remote.target().is_some() => {
+                    commands::database_remote::history(
+                        source.as_deref().ok_or_else(|| {
+                            anyhow::anyhow!("provide a database contract path")
+                        })?,
+                        remote,
+                        *json,
+                    )
+                    .await
+                }
                 None => {
                     commands::database_dev::read(
                         &commands::database_dev::ReadArgs {
@@ -2408,6 +2487,7 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                                 anyhow::anyhow!("provide a database contract path")
                             })?,
                             connection: connection.clone(),
+                            remote: Default::default(),
                             json: *json,
                             watch: *watch,
                             check: false,
@@ -2716,7 +2796,9 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             fixtures,
             identities,
             watch,
+            auth_environment,
         } => {
+            commands::ui::set_auth_environment(auth_environment.clone())?;
             if commands::app::is_axiom_application(source) {
                 if environment.is_some()
                     || mode.is_some()
@@ -2944,7 +3026,9 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             release,
             project,
             version,
+            auth_environment,
         } => {
+            commands::ui::set_auth_environment(auth_environment.clone())?;
             let output = commands::contract_build::build(
                 Path::new(file),
                 out.as_deref(),
@@ -3013,11 +3097,14 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             }
             handle_inspect(&path).await
         }
+        Commands::Auth(args) => commands::auth::handle(args).await,
+        Commands::Branch(args) => commands::branch::handle(args).await,
         Commands::Project { action } => match action {
             ProjectAction::List => commands::project::handle_project_list().await,
             ProjectAction::Resources { project, action } => {
                 commands::resources::handle(&project, action.as_ref()).await
             }
+            ProjectAction::Signers { action } => commands::signers::handle(action).await,
             ProjectAction::Create {
                 name,
                 slug,
@@ -3100,7 +3187,8 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
         Commands::Init { entrypoint, module } => {
             crate::commands::init::handle_init(entrypoint.clone(), module.clone()).await
         }
-        Commands::Login => handle_login_tui().await,
+        Commands::Login { step_up: true } => commands::step_up::handle_login_step_up().await,
+        Commands::Login { step_up: false } => handle_login_tui().await,
         Commands::Join { email } => crate::commands::join::handle_join(email.clone()).await,
         Commands::Cache { action } => {
             let mut cache_dir = crate::auth_store::get_config_dir()?;
@@ -3161,6 +3249,7 @@ async fn handle_login_tui() -> anyhow::Result<()> {
                             val["refresh_token"].as_str().unwrap_or_default(),
                             val["expires_in"].as_u64().unwrap_or_default(),
                         )?;
+                        commands::step_up::StepUpStore::forget_for_profile();
                         state.login_context.status = crate::state::LoginStatus::Success;
                     }
                     Err(e) => {
@@ -3334,6 +3423,55 @@ mod launch_tests {
     use super::*;
 
     #[test]
+    fn hosted_database_flags_pair_and_refuse_local_connections_while_parsing() {
+        use clap::error::ErrorKind;
+        let kind = |args: &[&str]| Cli::try_parse_from(args).err().map(|e| e.kind());
+        let hosted = ["--project", "acme", "--environment", "development"];
+        for command in ["migrate", "status", "rollback", "history"] {
+            let base = ["axiom", "database", command, "schema.acore"];
+            let cli = Cli::try_parse_from(base.iter().chain(&hosted)).unwrap();
+            assert!(!is_local_command(&cli.command), "{command} is hosted");
+            assert!(is_local_command(&Cli::try_parse_from(base).unwrap().command));
+            for half in [&hosted[..2], &hosted[2..]] {
+                let args = base.iter().chain(half).copied().collect::<Vec<_>>();
+                assert_eq!(kind(&args), Some(ErrorKind::MissingRequiredArgument), "{args:?}");
+            }
+            for local in [
+                ["--database-url", "postgres://localhost/db"],
+                ["--host", "localhost"],
+                ["--port", "5432"],
+                ["--database", "db"],
+                ["--username", "user"],
+                ["--password", "secret"],
+                ["--database-file", "db.sqlite"],
+                ["--ssl-mode", "require"],
+                ["--tls-ca", "ca.pem"],
+            ] {
+                let args = base.iter().chain(&hosted).chain(&local).copied().collect::<Vec<_>>();
+                assert_eq!(kind(&args), Some(ErrorKind::ArgumentConflict), "{args:?}");
+            }
+        }
+        for command in ["status", "history"] {
+            let args = ["axiom", "database", command, "schema.acore", "--watch"];
+            let args = args.iter().chain(&hosted).copied().collect::<Vec<_>>();
+            assert_eq!(kind(&args), Some(ErrorKind::ArgumentConflict));
+        }
+        let diff = ["axiom", "database", "diff", "schema.acore"];
+        let cli = Cli::try_parse_from(diff.iter().chain(&hosted)).unwrap();
+        assert!(!is_local_command(&cli.command));
+        for extra in [&["other.acore"][..], &["--from", "1.0.0"], &["--to", "1.0.0"]] {
+            let args = diff.iter().chain(&hosted).chain(extra).copied().collect::<Vec<_>>();
+            assert_eq!(kind(&args), Some(ErrorKind::ArgumentConflict), "{args:?}");
+        }
+        let pull = ["axiom", "database", "pull", "schema.acore"];
+        assert!(!is_local_command(&Cli::try_parse_from(pull.iter().chain(&hosted)).unwrap().command));
+        assert_eq!(kind(&pull), Some(ErrorKind::MissingRequiredArgument));
+        assert!(Cli::try_parse_from(["axiom", "project", "signers", "list", "--project", "acme"]).is_ok());
+        assert!(Cli::try_parse_from(["axiom", "project", "signers", "add", "--project", "acme", "--label", "ci", "--schema", "schema.acore"]).is_ok());
+        assert!(Cli::try_parse_from(["axiom", "project", "signers", "revoke", "--project", "acme"]).is_err());
+    }
+
+    #[test]
     fn database_controlled_execution_requires_a_bundle_and_explicit_binding() {
         for action in ["register", "status", "verify", "reconcile"] {
             assert!(Cli::try_parse_from([
@@ -3365,6 +3503,12 @@ mod launch_tests {
         ])
         .is_ok());
         assert!(Cli::try_parse_from(["axiom", "database", "apply", "private-release"]).is_err());
+        // placement/v1 10.3: `axiom db convert draft|plan|submit`.
+        let convert = Cli::try_parse_from(["axiom", "db", "convert", "plan", "pg/schema.acore", "--project", "p", "--environment", "development", "--encoding", "users.created=unix_ms", "--assume-utc", "logs.at", "--acknowledge-semantics"]).unwrap();
+        assert!(matches!(*convert.command, Commands::Database { action: DatabaseAction::Convert { .. } }));
+        assert!(Cli::try_parse_from(["axiom", "db", "convert", "draft", "--project", "p", "--environment", "development", "--stream", "app.data", "--out", "pg"]).is_ok());
+        assert!(Cli::try_parse_from(["axiom", "database", "convert", "submit", "--project", "p", "--wait"]).is_ok());
+        assert!(Cli::try_parse_from(["axiom", "db", "convert", "draft", "--project", "p", "--environment", "development"]).is_err());
         assert!(Cli::try_parse_from([
             "axiom",
             "database",

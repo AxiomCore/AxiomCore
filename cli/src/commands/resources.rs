@@ -26,26 +26,220 @@ pub enum Action {
         environment: String,
     },
     /// Request a lifecycle operation. The ID can be reused after a network failure.
+    ///
+    /// Recovery actions: `restore` (with --at or --backup), `archive`, `unarchive` (resume an
+    /// archived database) and `retire_previous`. Restore, archive and retire_previous need a
+    /// recent sign-in; the CLI runs `axiom login --step-up` when the server asks for it.
     Request {
         #[arg(long)]
         resource: String,
-        #[arg(long,value_parser=["provision","retry","suspend","resume","delete","rotate"])]
+        #[arg(long,value_parser=["provision","retry","suspend","resume","delete","rotate","restore","archive","unarchive","retire_previous","convert"])]
         action: String,
         #[arg(long)]
         generation: u64,
         #[arg(long)]
         operation_id: Option<String>,
-        /// Required phrase for deletion: "delete database"
+        /// Typed confirmation: "delete database", "restore <database name> to <at or backup id>",
+        /// "archive <database name>", or the retire_previous phrase
         #[arg(long)]
         confirm: Option<String>,
-        /// Poll operation metadata for up to five minutes
+        /// Restore: the point in time to return application data to (RFC 3339)
+        #[arg(long, conflicts_with = "backup")]
+        at: Option<String>,
+        /// Restore: a daily backup id from `recovery`
+        #[arg(long)]
+        backup: Option<String>,
+        /// Poll the operation until it finishes (five minutes; 40 for restore, archive and resume)
         #[arg(long)]
         wait: bool,
+        /// Recovery actions: print the JSON response instead of plain text
+        #[arg(long)]
+        json: bool,
+        /// Convert: the validated conversion ID from `axiom database convert submit`
+        #[arg(long)]
+        conversion: Option<String>,
+        /// Convert: every signed-in session ends
+        #[arg(long)]
+        acknowledge_sessions_end: bool,
+        /// Convert: the runtime must be redeployed before it serves again
+        #[arg(long)]
+        acknowledge_redeploy: bool,
+        /// Convert: the report's semantic differences are accepted
+        #[arg(long)]
+        acknowledge_semantics: bool,
+        /// Convert: the copy acknowledgement text the dashboard shows
+        #[arg(long)]
+        acknowledge_copy: Option<String>,
+        /// Convert: the external-writers acknowledgement text the dashboard shows
+        #[arg(long)]
+        acknowledge_external_writers: Option<String>,
+    },
+    /// Connect your own Turso database (bring your own; placement/v1 4). The platform API
+    /// token is read from stdin with --token-stdin (or a masked prompt), never from arguments
+    Connect {
+        #[arg(value_parser = ["turso"])]
+        provider: String,
+        #[command(flatten)]
+        select: crate::commands::resources_placement::Select,
+        #[arg(long)]
+        organization: String,
+        #[arg(long)]
+        group: String,
+        #[arg(long)]
+        database: String,
+        /// Read the Turso platform API token from standard input
+        #[arg(long)]
+        token_stdin: bool,
+        /// `expiry` (default) or `rotate` (needs the db:rotate-creds scope)
+        #[arg(long, default_value = "expiry", value_parser = ["expiry", "rotate"])]
+        fence_mode: String,
+        /// Application data stays in your Turso database, authentication with AxiomCore; not atomic
+        #[arg(long)]
+        acknowledge_split_store: bool,
+        /// With --fence-mode rotate: rotation invalidates database tokens you minted yourself
+        #[arg(long)]
+        acknowledge_rotate: bool,
+        /// "reclaim <database>": take over a database another resource claimed
+        #[arg(long)]
+        reclaim: Option<String>,
+        #[arg(long)]
+        operation_id: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show the customer database connection (token shown only as set and its expiry)
+    Connection {
+        #[command(flatten)]
+        select: crate::commands::resources_placement::Select,
+        #[arg(long)]
+        json: bool,
+        #[command(subcommand)]
+        action: Option<crate::commands::resources_placement::ConnectionAction>,
+    },
+    /// Disconnect your own Turso database (Owner, recent sign-in)
+    Disconnect {
+        #[command(flatten)]
+        select: crate::commands::resources_placement::Select,
+        /// Typed confirmation: "disconnect <database>"
+        #[arg(long)]
+        confirm: Option<String>,
+        #[arg(long)]
+        operation_id: Option<String>,
+        #[arg(long)]
+        wait: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show where the database lives, its placement history, move receipts and consents
+    Placement {
+        #[command(flatten)]
+        select: crate::commands::resources_placement::Select,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Consent to one operator move to a dedicated pool or another region (Owner, recent sign-in; 7 days, used once)
+    RelocationConsent {
+        #[command(flatten)]
+        select: crate::commands::resources_placement::Select,
+        #[arg(long, value_parser = ["dedicated", "region"])]
+        kind: String,
+        #[arg(long)]
+        to_region: Option<String>,
+        #[arg(long)]
+        acknowledge_costs: bool,
+        /// "move <database> to <region id>" or "move <database> to dedicated"
+        #[arg(long)]
+        confirm: Option<String>,
+        #[arg(long)]
+        operation_id: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Move receipts
+    Receipt {
+        #[command(subcommand)]
+        action: crate::commands::resources_placement::ReceiptAction,
+    },
+    /// Show restore options: the point-in-time window, daily backups, the kept previous
+    /// generation, archive state, inactivity and recent moves
+    Recovery {
+        #[arg(long)]
+        resource: String,
+        #[arg(long)]
+        json: bool,
     },
     /// Show currently configured databases and location admission
     Catalog,
 }
 pub async fn handle(project: &str, action: Option<&Action>) -> Result<()> {
+    use crate::commands::resources_placement as placement;
+    use crate::commands::resources_recovery as recovery;
+    match action {
+        Some(Action::Connect { provider, select, organization, group, database, token_stdin, fence_mode, acknowledge_split_store, acknowledge_rotate, reclaim, operation_id, json }) => {
+            let input = placement::ConnectInput {
+                provider: provider.clone(),
+                organization: organization.clone(),
+                group: group.clone(),
+                database: database.clone(),
+                fence_mode: fence_mode.clone(),
+                acknowledge_split_store: *acknowledge_split_store,
+                acknowledge_rotate: *acknowledge_rotate,
+                reclaim: reclaim.clone(),
+            };
+            return placement::handle_connect(project, select, &input, *token_stdin, operation_id.as_deref(), *json).await;
+        }
+        Some(Action::Connection { select, json, action }) => return placement::handle_connection(project, select, action.as_ref(), *json).await,
+        Some(Action::Disconnect { select, confirm, operation_id, wait, json }) => {
+            return placement::handle_disconnect(project, select, confirm.as_deref(), operation_id.as_deref(), *wait, *json).await;
+        }
+        Some(Action::Placement { select, json }) => return placement::handle_placement(project, select, *json).await,
+        Some(Action::RelocationConsent { select, kind, to_region, acknowledge_costs, confirm, operation_id, json }) => {
+            return placement::handle_consent(project, select, kind, to_region.as_deref(), *acknowledge_costs, confirm.as_deref(), operation_id.as_deref(), *json).await;
+        }
+        Some(Action::Receipt { action }) => return placement::handle_receipt(project, action).await,
+        Some(Action::Request { resource, action, generation, operation_id, confirm, wait, json, conversion, acknowledge_sessions_end, acknowledge_redeploy, acknowledge_semantics, acknowledge_copy, acknowledge_external_writers, .. }) if action == "convert" => {
+            let acknowledge = placement::ConvertAcknowledge {
+                sessions_end: *acknowledge_sessions_end,
+                redeploy: *acknowledge_redeploy,
+                semantics: *acknowledge_semantics,
+                copy: acknowledge_copy.clone(),
+                external_writers: acknowledge_external_writers.clone(),
+            };
+            let conversion = conversion.as_deref().ok_or_else(|| anyhow::anyhow!("--action convert needs --conversion <ID>"))?;
+            return placement::handle_convert(project, resource, *generation, conversion, confirm.as_deref(), &acknowledge, operation_id.as_deref(), *wait, *json).await;
+        }
+        Some(Action::Recovery { resource, json }) => {
+            return recovery::handle_view(project, resource, *json).await;
+        }
+        Some(Action::Request {
+            resource,
+            action,
+            generation,
+            operation_id,
+            confirm,
+            at,
+            backup,
+            wait,
+            json,
+            ..
+        }) if recovery::is_recovery_action(action) => {
+            let input = recovery::ActionInput {
+                resource,
+                action,
+                generation: *generation,
+                at: at.as_deref(),
+                backup: backup.as_deref(),
+                confirm: confirm.as_deref(),
+            };
+            return recovery::handle_action(project, &input, operation_id.as_deref(), *wait, *json)
+                .await;
+        }
+        Some(Action::Request { at, backup, .. }) if at.is_some() || backup.is_some() => {
+            bail!("--at and --backup are only used with --action restore");
+        }
+        Some(Action::Request { conversion: Some(_), .. }) => bail!("--conversion is only used with --action convert"),
+        _ => {}
+    }
     let client = crate::auth_store::authenticated_cloud_client()?;
     let base = ["projects", project, "resources"];
     let value = match action {
@@ -79,6 +273,7 @@ pub async fn handle(project: &str, action: Option<&Action>) -> Result<()> {
                 )
                 .await?
         }
+        Some(Action::Recovery { .. } | Action::Connect { .. } | Action::Connection { .. } | Action::Disconnect { .. } | Action::Placement { .. } | Action::RelocationConsent { .. } | Action::Receipt { .. }) => unreachable!("handled above"),
         Some(Action::Catalog) => {
             client
                 .resource_request(Method::GET, &["resource-catalog"], None, None)
@@ -108,6 +303,7 @@ pub async fn handle(project: &str, action: Option<&Action>) -> Result<()> {
             operation_id,
             confirm,
             wait,
+            ..
         }) => {
             if *generation == 0 {
                 bail!("--generation must be positive");

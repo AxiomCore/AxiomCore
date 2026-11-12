@@ -4,7 +4,7 @@ const LYNX_ENGINE_COMMIT: &str = "73bf89185547d0caf725bab4f3a46fa1e1f9616d";
 const LYNX_UI_VERSION: &str = "3.138.0";
 const LYNX_UI_SOURCE_COMMIT: &str = "b9b3fd7a34d7cde6ef4dddfb2fb95de4f5457d73";
 const LYNX_UI_NPM_INTEGRITY: &str = "sha512-7j1au6sOIHY+lHnM1iR5UcevSPxOzwGM7mbB1H8s3cZeTgWcrnbPgCoPToetjc2vJ6jymk/+hlduXcOlrDHL/A==";
-const FRONTEND_TOOLCHAIN_ID: &str = "sha256:816016d95c99ef1b90593e553655dfa6c2628af105d56a8294bc365ebf4be12d";
+const FRONTEND_TOOLCHAIN_ID: &str = "sha256:1b8b67de6cfb7bfb9b8c58659bbb20af209c624d61d7fdc28cbf849d20919fd2";
 const LYNX_BUNDLE_ENGINE_VERSION: &str = "3.2";
 const FRONTEND_PACKAGES: &[(&str, &str, &str)] = &[
     ("@lynx-js/lynx-ui", "3.138.0", "sha512-7j1au6sOIHY+lHnM1iR5UcevSPxOzwGM7mbB1H8s3cZeTgWcrnbPgCoPToetjc2vJ6jymk/+hlduXcOlrDHL/A=="),

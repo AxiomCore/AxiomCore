@@ -1,0 +1,5 @@
+{
+  "component": "cli",
+  "type": "feature",
+  "summary": "Recovery: axiom project resources recovery shows the restore window, backups and archive state; project resources request adds restore, archive, unarchive and retire_previous actions; axiom login --step-up obtains a short-lived recovery authorization without a refresh token."
+}

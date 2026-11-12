@@ -1,0 +1,19 @@
+{
+  "format": "axiom-auth-config/v1",
+  "source": {"kind": "local"},
+  "settings": {
+    "app_name": "Local auth example",
+    "enabled_methods": ["password", "email_code", "google"],
+    "require_verified_email": true,
+    "password_min_length": 10,
+    "access_ttl_seconds": 900,
+    "redirect_urls": ["http://127.0.0.1:5173/auth/callback", "https://app.example.com/auth/callback"],
+    "allowed_origins": ["http://127.0.0.1:5173", "https://app.example.com"]
+  },
+  "providers": [
+    {"slug": "google", "kind": "google", "client_id": "replace-with-your-google-client-id.apps.googleusercontent.com", "scopes": ["openid", "email"], "secret": {"ref": "AUTH_PROVIDER_GOOGLE_CLIENT_SECRET"}}
+  ],
+  "trusted_issuers": [],
+  "policy": {"format": "axiom-auth-policy/v1", "permissions": [], "roles": []},
+  "outbound": {"webhooks": [], "hooks": []}
+}

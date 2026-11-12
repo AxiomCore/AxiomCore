@@ -1,0 +1,18 @@
+amends "application.acore"
+
+secret notesDb(purpose: SecretPurpose.connectDatabase)
+resource notes(lifetime: ProviderLifetime.application, transactionProfile: TransactionProfile.hostedLibsql, secrets: [Secrets.notesDb]) {
+  operation list(input: Models.Empty, output: List<Models.Note>, effect: EffectKind.read)
+  operation create(input: Models.NewNote, output: Models.Note, effect: EffectKind.write,
+    errors: [Failures.duplicate])
+}
+
+// Rows belong to the signed-in user: `owner` is written and filtered from the verified
+// token's subject (`sub`), never from the request. Ids are per user (key (owner, id)), so
+// another user's ids are never revealed by a duplicate refusal.
+storage notes(schema: "../schema.acore", resource: Resources.notes, tenantClaim: "sub", tenantColumn: "owner") {
+  select list(table: "main.owned_notes", fields: {id: "id", body: "body"}, limit: 100)
+  insert create(table: "main.owned_notes", values: {id: Input.id, body: Input.body},
+    fields: {id: "id", body: "body"}, constraint: "owned_notes_pkey",
+    failure: Failures.duplicate, message: "That note already exists")
+}

@@ -1057,6 +1057,7 @@ fn extract_web_host(host: &UiHostInstallation) -> Result<HashMap<String, Vec<u8>
                 | "acore-observation.js"
                 | "acore-reactive.js"
                 | "acore-application.js"
+                | "acore-auth.js"
                 | "frontend-contract-delegation.js"
                 | "acore-components.js"
                 | "acore-contracts.js"
@@ -1442,6 +1443,7 @@ fn development_web_host_files(
             "acore-presentation.js",
             "acore-environment.js",
             "acore-application.js",
+            "acore-auth.js",
             "frontend-contract-delegation.js",
             "acore-selection.js",
             "acore-range.js",
@@ -2196,6 +2198,10 @@ pub async fn handle_test_options(
                     include_str!("../../../../axiom-ui-host/web/acore-application.js"),
                 ),
                 (
+                    "web/acore-auth.js",
+                    include_str!("../../../../axiom-ui-host/web/acore-auth.js"),
+                ),
+                (
                     "web/frontend-contract-delegation.js",
                     include_str!("../../../../axiom-ui-host/web/frontend-contract-delegation.js"),
                 ),
@@ -2512,7 +2518,9 @@ fn assemble_application_artifact(
     )?;
     let capabilities = serde_json::json!({
         "format": "axiom-app-capabilities/v1",
-        "networkOrigins": contracts.iter().filter_map(|value| value["baseUrl"].as_str()).collect::<Vec<_>>(),
+        "networkOrigins": contracts.iter().filter_map(|value| value["baseUrl"].as_str()).map(str::to_string)
+            .chain(runtime_config["auth"]["issuer"].as_str().and_then(|issuer| reqwest::Url::parse(issuer).ok()).map(|url| url.origin().ascii_serialization()))
+            .collect::<Vec<_>>(),
         "contracts": contracts.iter().map(|value| serde_json::json!({
             "name": value["localName"], "verified": value["verified"], "operations": value["operations"]
         })).collect::<Vec<_>>(),
@@ -3368,6 +3376,96 @@ fn ui_cache_root() -> Result<PathBuf> {
     Ok(axiom_ui_cache_base()?.join("ui"))
 }
 
+/// The `[auth.environments.<name>]` that `axiom run` and `axiom build` bake into
+/// the runtime configuration (`--auth-environment`, default `development`).
+static AUTH_ENVIRONMENT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+pub fn set_auth_environment(name: Option<String>) -> Result<()> {
+    if let Some(name) = name {
+        AUTH_ENVIRONMENT
+            .set(name)
+            .map_err(|_| anyhow::anyhow!("--auth-environment is selected once per command"))?;
+    }
+    Ok(())
+}
+
+fn auth_environment() -> &'static str {
+    AUTH_ENVIRONMENT
+        .get()
+        .map(String::as_str)
+        .unwrap_or(axiom_lib::deps_manifest::DEFAULT_AUTH_ENVIRONMENT)
+}
+
+/// The `[auth]` block governing a frontend whose lock is `lock_path`: the
+/// nearest `AxiomDeps.toml` above the lock (development locks live under
+/// `.axiom/dev`).
+fn auth_manifest(lock_path: &Path) -> Result<(PathBuf, axiom_lib::deps_manifest::AuthDeclaration)> {
+    let start = if lock_path.is_absolute() {
+        lock_path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(lock_path)
+    };
+    for directory in start.ancestors().skip(1).take(4) {
+        let candidate = directory.join("AxiomDeps.toml");
+        if !candidate.is_file() {
+            continue;
+        }
+        let source = std::fs::read_to_string(&candidate)
+            .with_context(|| format!("read {}", candidate.display()))?;
+        let manifest = axiom_lib::deps_manifest::parse_axiom_deps_v2(&source)
+            .with_context(|| format!("AXIOM_UI_AUTH: {}", candidate.display()))?;
+        if let Some(auth) = manifest.auth {
+            return Ok((candidate, auth));
+        }
+    }
+    bail!("AXIOM_UI_AUTH: `use auth` requires an [auth] block in the frontend AxiomDeps.toml")
+}
+
+/// The managed-auth runtime configuration of one environment. Public values
+/// only: issuer, audience, redirect and logout URIs, storage mode and the
+/// contract namespaces whose endpoints receive the access token.
+fn auth_runtime_config(
+    import: &axiom_ui::UiContractImport,
+    lock_path: &Path,
+    environment: &str,
+) -> Result<serde_json::Value> {
+    let (manifest, auth) = auth_manifest(lock_path)?;
+    let selected = auth.environments.get(environment).with_context(|| {
+        format!(
+            "AXIOM_UI_AUTH: {} has no [auth.environments.{environment}]; choose one with --auth-environment",
+            manifest.display()
+        )
+    })?;
+    // The host refuses a configuration whose contract key or identity differs
+    // from the program's import, so both follow the version the program selected.
+    let (contract_key, identity) = if axiom_ui::auth_contract::is_v2(import) {
+        (axiom_ui::auth_contract::CONTRACT_KEY_V2, axiom_ui::auth_contract::identity_v2())
+    } else {
+        (axiom_ui::auth_contract::CONTRACT_KEY, axiom_ui::auth_contract::identity())
+    };
+    if import.alias != contract_key || import.artifact_sha256 != identity {
+        bail!(
+            "AXIOM_UI_AUTH: the program imports `{}` with an identity this CLI does not embed; rebuild it with this CLI",
+            import.alias
+        );
+    }
+    Ok(serde_json::json!({
+        "format": "acore-auth-config/v1",
+        "provider": auth.provider,
+        "localName": import.local_name,
+        "contractKey": contract_key,
+        "identity": identity,
+        "environment": environment,
+        "issuer": selected.issuer,
+        "audience": selected.effective_audience(),
+        "redirectUri": auth.redirect_uri(environment),
+        "callbackPath": auth.callback_path,
+        "logoutUri": selected.logout_uri,
+        "storage": auth.storage.as_str(),
+        "contracts": auth.contracts,
+    }))
+}
+
 /// Turn selected lock entries into compiler-owned runtime configuration.
 /// Every local artifact is pinned by hash. Cloud-released artifacts additionally
 /// carry and verify their signature/public key; unsigned local artifacts remain
@@ -3380,10 +3478,19 @@ fn build_verified_runtime_config_value(
         anyhow::anyhow!("AXIOM_UI_RUNTIME_IR: valid native delivery requires compiled UI IR")
     })?;
     let mut contracts = Vec::new();
-    if !ir.imports.is_empty() {
+    if ir.target != UiTarget::Web && ir.imports.iter().any(axiom_ui::auth_contract::is_builtin) {
+        bail!("ACORE_AUTH_HOST_UNSUPPORTED: managed auth (axiom.auth/v1 and v2) runs only on the web host; native Lynx, Flutter and Swift hosts refuse it");
+    }
+    let auth = ir
+        .imports
+        .iter()
+        .find(|import| axiom_ui::auth_contract::is_builtin(import))
+        .map(|import| auth_runtime_config(import, lock_path, auth_environment()))
+        .transpose()?;
+    if ir.imports.iter().any(|import| !axiom_ui::auth_contract::is_builtin(import)) {
         let lock = read_lock(lock_path)?;
         let root = lock_path.parent().unwrap_or_else(|| Path::new("."));
-        for import in &ir.imports {
+        for import in ir.imports.iter().filter(|import| !axiom_ui::auth_contract::is_builtin(import)) {
             let locked = lock.contracts.get(&import.alias).with_context(|| {
                 format!(
                     "AXIOM_UI_RUNTIME_LOCK: imported contract `{}` is not present in {}",
@@ -3456,6 +3563,18 @@ fn build_verified_runtime_config_value(
     // Application assembly replaces this empty list with verified, embedded
     // extension facts. Keeping the source-only default empty means a direct
     // virtual graph can never accidentally grant a sandbox invocation.
+    if let Some(auth) = &auth {
+        let known = contracts
+            .iter()
+            .filter_map(|contract| contract["namespace"].as_str())
+            .collect::<BTreeSet<_>>();
+        for alias in auth["contracts"].as_array().into_iter().flatten().filter_map(|a| a.as_str()) {
+            if !known.contains(alias) {
+                bail!("AXIOM_UI_AUTH: [auth].contracts names `{alias}`, which this program does not import");
+            }
+        }
+        return Ok(serde_json::json!({ "contracts": contracts, "extensions": [], "auth": auth }));
+    }
     Ok(serde_json::json!({ "contracts": contracts, "extensions": [] }))
 }
 
@@ -6212,6 +6331,73 @@ mod tests {
         assert!(!android_signature_conflict(
             "Failure [INSTALL_FAILED_INSUFFICIENT_STORAGE]"
         ));
+    }
+
+    #[test]
+    fn managed_auth_runtime_config_selects_one_environment_and_refuses_native_targets() {
+        const ISSUER: &str = "https://auth.axiomcore.dev/0b5e2c1a-9f3d-4c7e-8a21-5d6f7e8a9b0c/1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f";
+        const PROD: &str = "https://auth.axiomcore.dev/0b5e2c1a-9f3d-4c7e-8a21-5d6f7e8a9b0c/2d3e4f5a-6b7c-4d8e-9f0a-1b2c3d4e5f6a";
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(
+            root.path().join("AxiomDeps.toml"),
+            format!("type = \"frontend\"\ntargets = [\"web\"]\n\n[auth]\nprovider = \"axiom\"\ncallbackPath = \"/auth/callback\"\nstorage = \"session\"\n\n[auth.environments.development]\nissuer = \"{ISSUER}\"\nredirectOrigin = \"http://127.0.0.1:5173\"\nlogoutUri = \"http://127.0.0.1:5173/signed-out\"\n\n[auth.environments.production]\nissuer = \"{PROD}\"\nredirectOrigin = \"https://shop.example.com\"\n"),
+        )
+        .unwrap();
+        let lock_path = root.path().join(".axiom/dev/axiom.ui.lock.json");
+        let source = "module shop.ui\nuse auth Auth from \"axiom\"\napp Shop { route \"/\" => Home }\npage Home {\n mutation logout = Auth.signOut()\n session_actions(sign_out: logout)\n action out() { session sign_out() }\n view { Text(session.status) Button(label: \"Sign out\", on_press: out) }\n}\n";
+        let compile = |target| compile_ui_source(source, &UiCompileOptions { target, lock_path: lock_path.clone(), asset_root: None });
+        let web = compile(UiTarget::Web);
+        assert!(web.is_valid(), "{:?}", web.diagnostics);
+        let config = build_verified_runtime_config_value(&web, &lock_path).unwrap();
+        assert_eq!(config["contracts"], serde_json::json!([]), "the built-in contract is never a WASM contract");
+        let auth = &config["auth"];
+        assert_eq!(auth["issuer"], ISSUER);
+        assert_eq!(auth["audience"], format!("{ISSUER}/api"));
+        assert_eq!(auth["redirectUri"], "http://127.0.0.1:5173/auth/callback");
+        assert_eq!(auth["storage"], "session");
+        assert_eq!(auth["environment"], "development");
+        assert_eq!(auth["identity"], axiom_ui::auth_contract::identity());
+        assert!(!serde_json::to_string(&config).unwrap().contains(PROD));
+        assert_eq!(auth_runtime_config(&web.ir.as_ref().unwrap().imports[0], &lock_path, "production").unwrap()["issuer"], PROD);
+        assert!(auth_runtime_config(&web.ir.as_ref().unwrap().imports[0], &lock_path, "staging").is_err());
+        let ios = compile(UiTarget::Ios);
+        assert!(!ios.is_valid(), "native targets refuse managed auth at compile time");
+        assert!(ios.diagnostics.iter().any(|d| d.code == "AUI468" && d.message.contains("ACORE_AUTH_HOST_UNSUPPORTED")));
+        if let Some(ir) = ios.ir.as_ref() {
+            assert_eq!(ir.target, UiTarget::Ios);
+            let error = build_verified_runtime_config_value(&ios, &lock_path).unwrap_err().to_string();
+            assert!(error.contains("ACORE_AUTH_HOST_UNSUPPORTED"), "{error}");
+        }
+    }
+
+    #[test]
+    fn managed_auth_runtime_config_follows_the_imported_contract_version() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(
+            root.path().join("AxiomDeps.toml"),
+            "type = \"frontend\"\ntargets = [\"web\"]\n\n[auth]\nprovider = \"axiom\"\ncallbackPath = \"/auth/callback\"\nstorage = \"session\"\n\n[auth.environments.development]\nissuer = \"https://auth.axiomcore.dev/0b5e2c1a-9f3d-4c7e-8a21-5d6f7e8a9b0c/1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f\"\nredirectOrigin = \"http://127.0.0.1:5173\"\n",
+        )
+        .unwrap();
+        let lock_path = root.path().join(".axiom/dev/axiom.ui.lock.json");
+        let compile = |source: &str| compile_ui_source(source, &UiCompileOptions { target: UiTarget::Web, lock_path: lock_path.clone(), asset_root: None });
+        let v1 = compile("module shop.ui\nuse auth Auth from \"axiom\"\napp Shop { route \"/\" => Home }\npage Home {\n mutation logout = Auth.signOut()\n session_actions(sign_out: logout)\n action out() { session sign_out() }\n view { Text(session.status) Button(label: \"Sign out\", on_press: out) }\n}\n");
+        assert!(v1.is_valid(), "{:?}", v1.diagnostics);
+        let auth = &build_verified_runtime_config_value(&v1, &lock_path).unwrap()["auth"];
+        assert_eq!(auth["contractKey"], axiom_ui::auth_contract::CONTRACT_KEY);
+        assert_eq!(auth["identity"], axiom_ui::auth_contract::identity());
+        let v2 = compile("module shop.ui\nuse auth Auth from \"axiom\"\napp Shop { route \"/\" => Home }\npage Home {\n query factors = Auth.listFactors()\n view { Text(factors.error?.message ?? \"\") Text(factors.pending ? \"Loading\" : \"Ready\") }\n}\n");
+        assert!(v2.is_valid(), "{:?}", v2.diagnostics);
+        let ir = v2.ir.as_ref().unwrap();
+        assert_eq!(ir.imports[0].alias, axiom_ui::auth_contract::CONTRACT_KEY_V2);
+        let auth = &build_verified_runtime_config_value(&v2, &lock_path).unwrap()["auth"];
+        assert_eq!(auth["contractKey"], axiom_ui::auth_contract::CONTRACT_KEY_V2);
+        assert_eq!(auth["identity"], axiom_ui::auth_contract::identity_v2());
+        assert_eq!(auth["identity"], ir.imports[0].artifact_sha256);
+        assert_eq!(auth["localName"], "Auth");
+        let mut forged = ir.imports[0].clone();
+        forged.artifact_sha256 = axiom_ui::auth_contract::identity();
+        let error = auth_runtime_config(&forged, &lock_path, "development").unwrap_err().to_string();
+        assert!(error.contains("AXIOM_UI_AUTH"), "{error}");
     }
 
     #[test]

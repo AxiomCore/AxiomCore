@@ -1,0 +1,62 @@
+---
+title: Axiom Cloud pricing
+description: What Free and Pro cost, what a Pro subscription covers, how billing state affects a project and what happens to your data when a payment fails.
+pageType: reference
+---
+
+<StatusNote status="coming-soon" title="Paid checkout">
+  Public paid checkout is **Coming soon**. Invited projects can use a
+  controlled test checkout, labeled **Test billing**, that makes no real
+  charge. Released allowances and tax treatment will be shown before checkout.
+</StatusNote>
+
+Axiom Cloud is priced per project. A subscription funds the included
+resources of one project; upgrading one project never upgrades the other
+projects in the workspace.
+
+## Plans
+
+| Plan | Price | What it includes |
+| --- | --- | --- |
+| Free | No charge | One hosted environment with a managed SQLite (libSQL) database and the [Free allowances](/cloud/limits#monthly-allowances-per-project) |
+| Pro | $20 USD per project per month (launch price) | One hosted environment with managed PostgreSQL, or SQLite if you keep it, and the [Pro allowances](/cloud/limits#monthly-allowances-per-project) |
+
+Taxes, overage pricing and annual billing are not published yet (TODO: add
+them when the paid release defines them). No allowance on this page is sold
+as an overage today: at a limit, the service refuses or narrows the work as
+described in [Limits](/cloud/limits).
+
+The following need separately funded allowances and are not part of either
+plan: additional environments, SMS delivery, AI inference and dedicated
+database capacity. Phone verification, when offered, uses your own Twilio
+account and Twilio bills you directly.
+
+## How a subscription works
+
+- Selecting Pro saves a preference. Payment details are collected by
+  Stripe-hosted Checkout.
+- A browser success redirect alone never activates paid access. The verified
+  subscription state must synchronize first.
+- A Pro preference alone does not authorize hosting. Provisioning and resuming
+  a Pro database need an active Pro subscription.
+
+## When a payment fails or a subscription ends
+
+A failed payment or a cancelled subscription never deletes data.
+
+| Subscription state | Effect |
+| --- | --- |
+| Active | Normal service |
+| Past due, unpaid, incomplete or paused | New database provisioning, retries and resumes are refused. Runtime database credentials for your servers are refused with a payment code. Authentication for your users keeps working. Nothing is deleted. |
+| Cancelled | As past due. The data stays in place. |
+
+Deletion of a hosted database only happens when a project Owner asks for it.
+A Free project that stays inactive may be archived in the future; an archive
+keeps the data and resumes on use. Automatic inactivity archiving is not
+turned on for customers yet.
+
+## Next steps
+
+- [Compare Free and Pro limits](/cloud/limits)
+- [Choose a region](/cloud/regions)
+- [Manage resources and billing](/cloud/project-resources#plans-and-billing)

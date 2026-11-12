@@ -1,0 +1,23 @@
+project(id: "w8x.hosted", version: "1.1.0")
+module w8x.hosted
+
+// Synthetic tables, no customer data. 1.1.0 adds owned_notes keyed on (owner, id): ids are per
+// user, so another user's id is never refused (no cross-user existence oracle). The 1.0.0
+// table `notes` (id alone) stays; the backend no longer uses it.
+database notes(engine: DatabaseEngine.sqlite) {
+  manage(schemas: [Schemas.main], mode: ManagementMode.ownedObjects)
+  schema main {
+    table notes(strict: true) {
+      id: Sqlite.Integer()
+      owner: Sqlite.Text()
+      body: Sqlite.Text()
+      primaryKey(columns: [.id])
+    }
+    table owned_notes(strict: true) {
+      id: Sqlite.Integer()
+      owner: Sqlite.Text()
+      body: Sqlite.Text()
+      primaryKey(columns: [.owner, .id])
+    }
+  }
+}

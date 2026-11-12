@@ -1,0 +1,16 @@
+amends "application.acore"
+
+secret notesDb(purpose: SecretPurpose.connectDatabase)
+resource notes(lifetime: ProviderLifetime.application, transactionProfile: TransactionProfile.postgres17_11, secrets: [Secrets.notesDb]) {
+  operation list(input: Models.Empty, output: List<Models.Note>, effect: EffectKind.read)
+  operation create(input: Models.NewNote, output: Models.Note, effect: EffectKind.write,
+    errors: [Failures.duplicate])
+}
+
+// PostgreSQL (E4): the same notes, scoped by the verified token's subject (`sub`).
+storage notes(schema: "../schema.postgres.acore", resource: Resources.notes, tenantClaim: "sub", tenantColumn: "owner") {
+  select list(table: "app.owned_notes", fields: {id: "id", body: "body"}, limit: 100)
+  insert create(table: "app.owned_notes", values: {id: Input.id, body: Input.body},
+    fields: {id: "id", body: "body"}, constraint: "owned_notes_pkey",
+    failure: Failures.duplicate, message: "That note already exists")
+}

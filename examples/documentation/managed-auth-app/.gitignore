@@ -1,0 +1,4 @@
+.axiom/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal

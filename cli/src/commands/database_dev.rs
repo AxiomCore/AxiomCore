@@ -47,23 +47,31 @@ impl std::fmt::Debug for ConnectionArgs {
 }
 #[derive(Args, Clone, Debug, Default)]
 pub struct Policy {
+    /// When the contract version was already used, write the suggested next version into the source instead of prompting
     #[arg(long)]
     pub auto_version: bool,
+    /// Never prompt; fail where a prompt would be needed
     #[arg(long)]
     pub non_interactive: bool,
+    /// Preview without changing the database, the catalog or the source. With --project, also sign and upload the release and run a hosted check that changes nothing
     #[arg(long)]
     pub dry_run: bool,
+    /// Approve changes that may delete data or remove invariants
     #[arg(long)]
     pub allow_destructive: bool,
+    /// Approve changes that depend on existing data or rebuild existing invariants
     #[arg(long)]
     pub allow_data_dependent: bool,
+    /// Approve changes to database permissions or security policy
     #[arg(long)]
     pub allow_security_changes: bool,
     /// Enroll an existing scope only when it exactly matches the validated source
     #[arg(long)]
     pub adopt: bool,
+    /// Print machine-readable JSON instead of text
     #[arg(long)]
     pub json: bool,
+    /// After success, write the applied history as a verified bundle to this new file
     #[arg(long)]
     pub export: Option<PathBuf>,
 }
@@ -74,11 +82,17 @@ pub struct MigrateArgs {
     #[command(flatten)]
     pub connection: ConnectionArgs,
     #[command(flatten)]
+    pub remote: super::database_remote::RemoteArgs,
+    #[command(flatten)]
     pub policy: Policy,
+    /// Apply only a release already in the catalog or bundle; never prepare one from source
     #[arg(long)]
     pub frozen: bool,
+    /// Migrate to this catalog version instead of the working contract
     #[arg(long)]
     pub to: Option<String>,
+    #[command(flatten)]
+    pub impact: super::database_impact::Options,
 }
 #[derive(Args, Clone, Debug)]
 pub struct RollbackArgs {
@@ -87,9 +101,13 @@ pub struct RollbackArgs {
     #[command(flatten)]
     pub connection: ConnectionArgs,
     #[command(flatten)]
+    pub remote: super::database_remote::RemoteArgs,
+    #[command(flatten)]
     pub policy: Policy,
+    /// Number of applied versions to undo; defaults to 1
     #[arg(long, conflicts_with = "to")]
     pub steps: Option<usize>,
+    /// Restore the schema state of this applied version, or `empty`
     #[arg(long)]
     pub to: Option<String>,
 }
@@ -99,20 +117,25 @@ pub struct ReadArgs {
     pub source: PathBuf,
     #[command(flatten)]
     pub connection: ConnectionArgs,
+    #[command(flatten)]
+    pub remote: super::database_remote::RemoteArgs,
+    /// Print machine-readable JSON instead of text
     #[arg(long)]
     pub json: bool,
-    #[arg(long)]
+    /// Refresh every two seconds until interrupted; local connections only
+    #[arg(long, conflicts_with = "project")]
     pub watch: bool,
+    /// Exit with ADB1105 when the database has drift or pending changes
     #[arg(long)]
     pub check: bool,
 }
-struct Loaded {
-    root: PathBuf,
-    compiled: acore::database::Compilation,
-    input: acore::database::ProjectInput,
-    immutable: bool,
-    release: Option<Release>,
-    bundle: Vec<Release>,
+pub(crate) struct Loaded {
+    pub(crate) root: PathBuf,
+    pub(crate) compiled: acore::database::Compilation,
+    pub(crate) input: acore::database::ProjectInput,
+    pub(crate) immutable: bool,
+    pub(crate) release: Option<Release>,
+    pub(crate) bundle: Vec<Release>,
 }
 fn owning_root(path: &Path) -> PathBuf {
     let directory = path.parent().unwrap_or(Path::new("."));
@@ -122,7 +145,7 @@ fn owning_root(path: &Path) -> PathBuf {
         .unwrap_or(directory)
         .to_path_buf()
 }
-fn load(path: &Path) -> Result<Loaded> {
+pub(crate) fn load(path: &Path) -> Result<Loaded> {
     let source = path
         .canonicalize()
         .with_context(|| format!("read contract {}", path.display()))?;
@@ -198,7 +221,7 @@ fn load(path: &Path) -> Result<Loaded> {
     }
     bail!("ADB1101: this schema-only artifact has no source capsule; rebuild with the current CLI or run the Acore source");
 }
-fn load_existing(path: &Path) -> Result<(Loaded, Option<String>)> {
+pub(crate) fn load_existing(path: &Path) -> Result<(Loaded, Option<String>)> {
     match load(path) {
         Ok(loaded) => Ok((loaded, None)),
         Err(error) => {
@@ -363,7 +386,7 @@ async fn open(connection: &mut Connection, writable: bool, policy: &Policy) -> R
         Err(error) => Err(error.into()),
     }
 }
-fn show_preview(version: &str, preview: &axiom_lib::database::migration::Preview) {
+pub(crate) fn show_preview(version: &str, preview: &axiom_lib::database::migration::Preview) {
     println!(
         "Migration {version}{}",
         if preview.destructive {
@@ -388,7 +411,7 @@ fn show_preview(version: &str, preview: &axiom_lib::database::migration::Preview
         println!("  Metadata only; no schema changes.");
     }
 }
-fn approve(policy: &Policy, preview: &axiom_lib::database::migration::Preview) -> Result<()> {
+pub(crate) fn approve(policy: &Policy, preview: &axiom_lib::database::migration::Preview) -> Result<()> {
     for (needed,allowed,flag,message) in [(preview.destructive,policy.allow_destructive,"--allow-destructive","This change may delete data or remove invariants; lost values are not restored by a schema rollback."),(preview.data_dependent,policy.allow_data_dependent,"--allow-data-dependent","This change depends on populated data or rebuilds existing invariants."),(preview.security,policy.allow_security_changes,"--allow-security-changes","This change alters database permissions or security policy.")] {
         if !needed||allowed {continue;}
         if !interactive(policy) { bail!("ADB1111: {message} Authorize this exact migration with {flag} in noninteractive mode."); }
@@ -396,7 +419,7 @@ fn approve(policy: &Policy, preview: &axiom_lib::database::migration::Preview) -
     }
     Ok(())
 }
-fn updated_input(
+pub(crate) fn updated_input(
     input: &acore::database::ProjectInput,
     version: &str,
 ) -> Result<acore::database::ProjectInput> {
@@ -414,7 +437,7 @@ fn updated_input(
     }
     Ok(input)
 }
-fn save_input(
+pub(crate) fn save_input(
     root: &Path,
     before: &acore::database::ProjectInput,
     after: &acore::database::ProjectInput,
@@ -477,7 +500,7 @@ fn strip_migration(input: &mut acore::database::ProjectInput) -> Result<()> {
     input.files.insert(input.entry.clone(), source);
     Ok(())
 }
-fn recover_source_edit(root: &Path) -> Result<()> {
+pub(crate) fn recover_source_edit(root: &Path) -> Result<()> {
     let journal = root.join(".axiom/database/source-edit.json");
     if !journal.exists() {
         return Ok(());
@@ -515,7 +538,7 @@ fn recover_source_edit(root: &Path) -> Result<()> {
     std::fs::remove_file(journal)?;
     Ok(())
 }
-fn known(root: &Path, history: &[Release]) -> Result<Vec<Release>> {
+pub(crate) fn known(root: &Path, history: &[Release]) -> Result<Vec<Release>> {
     let mut all = db::archive_versions(root)?;
     for release in history {
         if all
@@ -531,7 +554,7 @@ fn known(root: &Path, history: &[Release]) -> Result<Vec<Release>> {
     }
     Ok(all)
 }
-fn prefix(head: &Release, catalog: &[Release], applied: Option<&str>) -> Result<Vec<Release>> {
+pub(crate) fn prefix(head: &Release, catalog: &[Release], applied: Option<&str>) -> Result<Vec<Release>> {
     let mut pending = vec![];
     let mut current = head.clone();
     let mut visited = std::collections::BTreeSet::new();
@@ -555,7 +578,7 @@ fn prefix(head: &Release, catalog: &[Release], applied: Option<&str>) -> Result<
     pending.reverse();
     Ok(pending)
 }
-fn published_parent<'a>(
+pub(crate) fn published_parent<'a>(
     catalog: &'a [Release],
     applied: Option<&'a Release>,
     project: &str,
@@ -579,6 +602,169 @@ fn published_parent<'a>(
     Ok(Some(tips[0]))
 }
 
+/// The local catalog plus the target history and any opened bundle, as
+/// `migrate` sees it. Target history missing locally is archived.
+pub(crate) fn migration_catalog(loaded: &Loaded, history: &[Release]) -> Result<Vec<Release>> {
+    let mut catalog = known(&loaded.root, history)?;
+    for release in &loaded.bundle {
+        if !catalog.iter().any(|r| r.sha256 == release.sha256) {
+            catalog.push(release.clone());
+        }
+    }
+    if catalog
+        .iter()
+        .any(|r| r.revision.identity.name != loaded.compiled.identity.name)
+    {
+        bail!("ADB1101: this hidden catalog belongs to another contract ID; keep the ID stable or use a separate database project");
+    }
+    Ok(catalog)
+}
+/// Selects the release to apply or prepares and signs a new one, as local
+/// `migrate` does. `None` means a local dry run already printed its preview.
+/// `hosted` keeps the dry run going to a signed release for a hosted check,
+/// and leaves signer trust to the project signer registry.
+pub(crate) fn select_release(
+    args: &MigrateArgs,
+    loaded: &mut Loaded,
+    catalog: &[Release],
+    applied: Option<&Release>,
+    pending: &axiom_lib::database::migration::Preview,
+    hosted: bool,
+) -> Result<Option<Release>> {
+    let mut selected = loaded.release.clone();
+    if let Some(version) = &args.to {
+        selected = Some(
+            catalog
+                .iter()
+                .find(|r| r.revision.identity.version == *version)
+                .cloned()
+                .with_context(|| {
+                    format!("ADB1102: version {version} is not in the migration catalog")
+                })?,
+        );
+    }
+    let desired_hash = db::content_digest(
+        &loaded.compiled.contract,
+        &loaded.compiled.definitions,
+        loaded.compiled.migration_source.as_deref(),
+    )?;
+    if selected.is_none() {
+        if let Some(existing) = catalog.iter().find(|r| {
+            r.revision.identity.version == loaded.compiled.identity.version
+                && r.revision.semantic_digest().ok().as_deref() == Some(&desired_hash)
+        }) {
+            if prefix(existing, catalog, applied.map(|r| r.sha256.as_str())).is_ok() {
+                selected = Some(existing.clone());
+            }
+        }
+    }
+    if selected.is_none() {
+        if args.frozen {
+            bail!("ADB1103: frozen mode requires an existing immutable migration release; prepare it from source first");
+        }
+        if !loaded.immutable {
+            acore::database::identity::project(&loaded.input.files[&loaded.input.entry])
+                .map_err(anyhow::Error::msg)?;
+        }
+        let collision = catalog.iter().any(|r| {
+            loaded.compiled.identity.version.parse::<Version>().unwrap()
+                <= r.revision.identity.version.parse::<Version>().unwrap()
+        });
+        if collision {
+            let version = suggest(
+                &loaded.compiled.identity.version,
+                catalog.iter().map(|r| r.revision.identity.version.as_str()),
+                pending.destructive,
+            )?;
+            if args.policy.dry_run && !hosted {
+                if args.policy.json {
+                    println!(
+                        "{}",
+                        serde_json::json!({"suggestedVersion":version,"preview":pending})
+                    );
+                } else {
+                    println!(
+                        "Contract version {} was already used; suggested version: {version}",
+                        loaded.compiled.identity.version
+                    );
+                    show_preview(&version, pending);
+                }
+                return Ok(None);
+            }
+            if loaded.immutable {
+                bail!("ADB1103: version already used; prepare version {version} from Acore source, then rebuild the immutable artifact");
+            }
+            let version = if args.policy.auto_version {
+                version
+            } else if args.policy.dry_run {
+                // A hosted check prepares the suggested version in memory only.
+                if !args.policy.json {
+                    println!(
+                        "Contract version {} was already used; checking suggested version {version} without changing the source.",
+                        loaded.compiled.identity.version
+                    );
+                }
+                version
+            } else if interactive(&args.policy) {
+                dialoguer::Input::<String>::new()
+                    .with_prompt(format!(
+                        "Contract version {} was already used. Use next version",
+                        loaded.compiled.identity.version
+                    ))
+                    .default(version)
+                    .interact_text()?
+            } else {
+                bail!("ADB1103: version {} was already used. Suggested version: {version}. Update project(version: …) or use --auto-version.",loaded.compiled.identity.version);
+            };
+            loaded.input = updated_input(&loaded.input, &version)?;
+            loaded.compiled = acore::database::compile(&loaded.input).map_err(|e| {
+                anyhow::anyhow!(serde_json::to_string_pretty(&e).unwrap_or_default())
+            })?;
+            if catalog
+                .iter()
+                .any(|r| r.revision.identity.version == version)
+            {
+                bail!("ADB1103: selected version {version} is already published");
+            }
+        }
+        let parent = published_parent(catalog, applied, &loaded.compiled.identity.name)?;
+        let revision = db::revision(
+            &loaded.compiled,
+            loaded.input.clone(),
+            parent,
+            if args.policy.adopt {
+                "adoption"
+            } else {
+                "migration"
+            },
+            None,
+        )?;
+        if args.policy.dry_run && !hosted {
+            if args.policy.json {
+                println!("{}", serde_json::to_string(&revision.preview)?);
+            } else {
+                show_preview(&revision.identity.version, &revision.preview);
+            }
+            return Ok(None);
+        }
+        let signed = db::sign(revision)?;
+        // Hosted trust is the project signer registry, which may list several keys.
+        if !hosted && parent.is_some_and(|p| p.public_key != signed.public_key) {
+            bail!("ADB1109: signing provider differs from the published history; restore its key before preparing another version");
+        }
+        selected = Some(signed);
+    }
+    let release = selected.unwrap();
+    if hosted {
+        return Ok(Some(release));
+    }
+    if let Ok(trusted) = std::env::var("AXIOM_DATABASE_TRUSTED_KEY") {
+        if trusted != release.public_key {
+            bail!("ADB1109: release signer differs from the configured trusted key");
+        }
+    }
+    Ok(Some(release))
+}
 pub async fn migrate(args: &MigrateArgs, shell: bool, execute: Option<&str>) -> Result<()> {
     let mut loaded = load(&args.source)?;
     let mut connection = resolve(
@@ -672,148 +858,19 @@ pub async fn migrate(args: &MigrateArgs, shell: bool, execute: Option<&str>) -> 
     if status.drift {
         bail!("ADB1105: database drift detected; inspect status before applying another migration");
     }
-    let mut catalog = known(&loaded.root, &status.releases)?;
-    for release in &loaded.bundle {
-        if !catalog.iter().any(|r| r.sha256 == release.sha256) {
-            catalog.push(release.clone());
-        }
-    }
-    if catalog
-        .iter()
-        .any(|r| r.revision.identity.name != loaded.compiled.identity.name)
-    {
-        bail!("ADB1101: this hidden catalog belongs to another contract ID; keep the ID stable or use a separate database project");
-    }
+    let catalog = migration_catalog(&loaded, &status.releases)?;
     let original = loaded.input.clone();
-    let mut selected = loaded.release.clone();
-    if let Some(version) = &args.to {
-        selected = Some(
-            catalog
-                .iter()
-                .find(|r| r.revision.identity.version == *version)
-                .cloned()
-                .with_context(|| {
-                    format!("ADB1102: version {version} is not in the migration catalog")
-                })?,
-        );
-    }
-    let desired_hash = db::content_digest(
-        &loaded.compiled.contract,
-        &loaded.compiled.definitions,
-        loaded.compiled.migration_source.as_deref(),
-    )?;
-    if selected.is_none() {
-        if let Some(existing) = catalog.iter().find(|r| {
-            r.revision.identity.version == loaded.compiled.identity.version
-                && r.revision.semantic_digest().ok().as_deref() == Some(&desired_hash)
-        }) {
-            if prefix(
-                existing,
-                &catalog,
-                status.releases.last().map(|r| r.sha256.as_str()),
-            )
-            .is_ok()
-            {
-                selected = Some(existing.clone());
-            }
-        }
-    }
-    if selected.is_none() {
-        if args.frozen {
-            bail!("ADB1103: frozen mode requires an existing immutable migration release; prepare it from source first");
-        }
-        if !loaded.immutable {
-            acore::database::identity::project(&loaded.input.files[&loaded.input.entry])
-                .map_err(anyhow::Error::msg)?;
-        }
-        let collision = catalog.iter().any(|r| {
-            loaded.compiled.identity.version.parse::<Version>().unwrap()
-                <= r.revision.identity.version.parse::<Version>().unwrap()
-        });
-        if collision {
-            let version = suggest(
-                &loaded.compiled.identity.version,
-                catalog.iter().map(|r| r.revision.identity.version.as_str()),
-                status.preview.destructive,
-            )?;
-            if args.policy.dry_run {
-                if args.policy.json {
-                    println!(
-                        "{}",
-                        serde_json::json!({"suggestedVersion":version,"preview":status.preview})
-                    );
-                } else {
-                    println!(
-                        "Contract version {} was already used; suggested version: {version}",
-                        loaded.compiled.identity.version
-                    );
-                    show_preview(&version, &status.preview);
-                }
-                return Ok(());
-            }
-            if loaded.immutable {
-                bail!("ADB1103: version already used; prepare version {version} from Acore source, then rebuild the immutable artifact");
-            }
-            let version = if args.policy.auto_version {
-                version
-            } else if interactive(&args.policy) {
-                dialoguer::Input::<String>::new()
-                    .with_prompt(format!(
-                        "Contract version {} was already used. Use next version",
-                        loaded.compiled.identity.version
-                    ))
-                    .default(version)
-                    .interact_text()?
-            } else {
-                bail!("ADB1103: version {} was already used. Suggested version: {version}. Update project(version: …) or use --auto-version.",loaded.compiled.identity.version);
-            };
-            loaded.input = updated_input(&loaded.input, &version)?;
-            loaded.compiled = acore::database::compile(&loaded.input).map_err(|e| {
-                anyhow::anyhow!(serde_json::to_string_pretty(&e).unwrap_or_default())
-            })?;
-            if catalog
-                .iter()
-                .any(|r| r.revision.identity.version == version)
-            {
-                bail!("ADB1103: selected version {version} is already published");
-            }
-        }
-        let parent = published_parent(
-            &catalog,
-            status.releases.last(),
-            &loaded.compiled.identity.name,
-        )?;
-        let revision = db::revision(
-            &loaded.compiled,
-            loaded.input.clone(),
-            parent,
-            if args.policy.adopt {
-                "adoption"
-            } else {
-                "migration"
-            },
-            None,
-        )?;
-        if args.policy.dry_run {
-            if args.policy.json {
-                println!("{}", serde_json::to_string(&revision.preview)?);
-            } else {
-                show_preview(&revision.identity.version, &revision.preview);
-            }
-            return Ok(());
-        }
-        let signed = db::sign(revision)?;
-        if parent.is_some_and(|p| p.public_key != signed.public_key) {
-            bail!("ADB1109: signing provider differs from the published history; restore its key before preparing another version");
-        }
-        selected = Some(signed);
-    }
-    let release = selected.unwrap();
-    if let Ok(trusted) = std::env::var("AXIOM_DATABASE_TRUSTED_KEY") {
-        if trusted != release.public_key {
-            bail!("ADB1109: release signer differs from the configured trusted key");
-        }
-    }
+    let Some(release) = select_release(
+        args,
+        &mut loaded,
+        &catalog,
+        status.releases.last(),
+        &status.preview,
+        false,
+    )?
+    else {
+        return Ok(());
+    };
     if status
         .releases
         .last()
@@ -870,7 +927,11 @@ pub async fn migrate(args: &MigrateArgs, shell: bool, execute: Option<&str>) -> 
                     return Err(error.into());
                 }
             };
+            let fresh = super::database_impact::fresh(&loaded.root, candidate);
             let path = db::archive(&loaded.root, candidate)?;
+            if fresh {
+                super::database_impact::write_quietly(&loaded.root, &args.source, &args.impact, candidate, args.policy.json);
+            }
             if index + 1 == pending.len()
                 && loaded.input.files != original.files
                 && !loaded.immutable
@@ -909,23 +970,14 @@ pub async fn migrate(args: &MigrateArgs, shell: bool, execute: Option<&str>) -> 
     Ok(())
 }
 
-pub async fn rollback(args: &RollbackArgs) -> Result<()> {
-    let (loaded, diagnostic) = load_existing(&args.source)?;
-    if let Some(diagnostic) = diagnostic {
-        eprintln!("{diagnostic}");
-    }
-    let mut connection = resolve(
-        &args.connection,
-        &loaded.compiled.contract.engine,
-        &loaded.root,
-    )?;
-    let session = open(&mut connection, !args.policy.dry_run, &args.policy).await?;
-    let _lock = db::CatalogLock::acquire(&loaded.root)?;
-    let status = session.status_compilation(&loaded.compiled).await?;
-    if status.drift {
-        bail!("ADB1105: rollback refused because the database has drift");
-    }
-    let history = &status.releases;
+/// The compensating rollback revision for `history`, as local `rollback`
+/// prepares it, with its new version. Prints the preview. `None` means the
+/// target is already at the requested state (also printed).
+pub(crate) fn rollback_revision(
+    args: &RollbackArgs,
+    loaded: &Loaded,
+    history: &[Release],
+) -> Result<Option<(db::Revision, String)>> {
     let current = history
         .last()
         .context("ADB1102: database has no applied migrations")?;
@@ -964,7 +1016,7 @@ pub async fn rollback(args: &RollbackArgs) -> Result<()> {
         } else {
             println!("Database is already at the requested schema state.");
         }
-        return Ok(());
+        return Ok(None);
     }
     let restored_index = restored.and_then(|r| history.iter().position(|h| h.sha256 == r.sha256));
     for release in &history[restored_index.map_or(0, |i| i + 1)..] {
@@ -1060,6 +1112,29 @@ pub async fn rollback(args: &RollbackArgs) -> Result<()> {
         show_preview(&version, &revision.preview);
         println!("Restores schema state of {restored_version}; working source is preserved.");
     }
+    Ok(Some((revision, version)))
+}
+pub async fn rollback(args: &RollbackArgs) -> Result<()> {
+    let (loaded, diagnostic) = load_existing(&args.source)?;
+    if let Some(diagnostic) = diagnostic {
+        eprintln!("{diagnostic}");
+    }
+    let mut connection = resolve(
+        &args.connection,
+        &loaded.compiled.contract.engine,
+        &loaded.root,
+    )?;
+    let session = open(&mut connection, !args.policy.dry_run, &args.policy).await?;
+    let _lock = db::CatalogLock::acquire(&loaded.root)?;
+    let status = session.status_compilation(&loaded.compiled).await?;
+    if status.drift {
+        bail!("ADB1105: rollback refused because the database has drift");
+    }
+    let history = &status.releases;
+    let Some((revision, version)) = rollback_revision(args, &loaded, history)? else {
+        return Ok(());
+    };
+    let current = history.last().context("ADB1102: database has no applied migrations")?;
     if args.policy.dry_run {
         if args.policy.json {
             println!("{}", serde_json::to_string(&revision.preview)?);
@@ -1223,9 +1298,11 @@ pub async fn run(
         &MigrateArgs {
             source: source.into(),
             connection: connection.clone(),
+            remote: Default::default(),
             policy: policy.clone(),
             frozen,
             to: None,
+            impact: Default::default(),
         },
         !no_shell,
         execute,
@@ -1287,9 +1364,11 @@ pub async fn run_backend(
             &MigrateArgs {
                 source: schema_path.clone(),
                 connection: endpoint_args.clone(),
+                remote: Default::default(),
                 policy: policy.clone(),
                 frozen: false,
                 to: None,
+                impact: Default::default(),
             },
             false,
             None,

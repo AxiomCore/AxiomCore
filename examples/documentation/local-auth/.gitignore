@@ -1,0 +1,5 @@
+.axiom/
+backend/.axiom/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal

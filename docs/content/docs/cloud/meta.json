@@ -6,6 +6,13 @@
     "releases-and-environments",
     "secrets",
     "project-resources",
+    "limits",
+    "pricing",
+    "regions",
+    "security-model",
+    "operations",
+    "upgrade-guide",
+    "changelog",
     "deploying-mocks",
     "telemetry-and-observability"
   ]

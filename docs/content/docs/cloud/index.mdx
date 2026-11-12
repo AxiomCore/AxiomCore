@@ -65,14 +65,16 @@ for each engine.
 | Runtime observability | **Alpha** | Scoped OTLP sources, traces, traffic, logs, retention, alerts and security posture. |
 | Project secrets | **Alpha** management; **Experimental** protected consumption | Write-only values, versions, bindings, grants and activity. Application use has separate [runtime limits](/backend/runtime-secrets). |
 | Managed databases | **Alpha** | Database preferences, provisioning in available locations, suspend, resume, access rotation and deletion. |
-| Hosted migrations | **Alpha** | Signed schema migrations for a managed SQLite or PostgreSQL database. A released CLI with these commands is **Coming soon**. See [Hosted migrations](/cloud/hosted-migrations). |
-| Hosted database connections | **Alpha** | Cloud Run servers with a registered Google identity and a database grant read and write managed SQLite and PostgreSQL. A released CLI with these commands is **Coming soon**. See [Connect a server on Google Cloud](/cloud/connect-a-server). |
+| Hosted migrations | **Alpha** | Signed schema migrations for a managed SQLite or PostgreSQL database. Needs CLI 0.151.0 or later. See [Hosted migrations](/cloud/hosted-migrations). |
+| Hosted database connections | **Alpha** | Cloud Run servers with a registered Google identity and a database grant read and write managed SQLite and PostgreSQL. Needs CLI 0.151.0 or later. See [Connect a server on Google Cloud](/cloud/connect-a-server). |
 | Managed application authentication | **Alpha** | Signup, password sign-in, sessions, token exchange with a trusted issuer, and roles and permissions in tokens, on managed SQLite and PostgreSQL. See [Managed and external authentication](/authentication). |
-| Token verification in Axiom servers (`axiomAuth`) | **Coming soon** | Needs a CLI and runtime release. A released CLI with these commands is **Coming soon**. Other backends can verify tokens with a JWT library. See [Verify access tokens](/authentication/verify-tokens). |
-| Authentication administration in the dashboard | **Coming soon** | Pages for enabling authentication and managing users, roles, trusted issuers and keys. |
+| Token verification in Axiom servers (`axiomAuth`) | **Coming soon** | Needs a runtime release; the CLI scaffold needs CLI 0.151.0 or later. Other backends can verify tokens with a JWT library. See [Verify access tokens](/authentication/verify-tokens). |
+| Authentication administration in the dashboard | **Alpha** | The **Authentication** page enables authentication and manages users, roles, trusted issuers and keys. |
 | Dashboard table and SQL editor | **Alpha** | Browse and edit a managed database's tables, run SQL and export CSV, with role-based access. |
 | Backups, restore and archive | **Coming soon** for all projects | Turned on for selected projects only. No hosted recovery SLA is announced. See [Limits](/cloud/limits). |
-| Advanced authentication, preview branches, SQLite to PostgreSQL conversion, database moves and your own Turso database | **Coming soon** | Built and checked in production, but switched off for customers. See [Advanced authentication and database placement](/introduction/support-matrix#advanced-authentication-and-placement). |
+| OAuth applications, MFA, passkeys, webhooks, claim hooks and policy releases | **Alpha** | Invited accounts; an Owner turns each on per environment. Needs CLI 0.151.0 or later. See [Advanced authentication and database placement](/introduction/support-matrix#advanced-authentication-and-placement). |
+| Preview branches, SQLite to PostgreSQL conversion and database moves | **Alpha** for selected projects | Available to selected projects during the Alpha. Needs CLI 0.151.0 or later. |
+| Phone verification, Microsoft sign-in, issuer presets, Sign in with Apple and your own Turso database | **Coming soon** | Built, but switched off for customers. |
 | Public paid checkout | **Coming soon** | Pro can be selected as a preference. Only controlled test checkout runs today. |
 | Hosted CI/CD for every repository | **Coming soon** | Release pipelines process Axiom artifacts. They do not replace general repository CI. |
 | Axiom Studio, Acode and Axiom Marketplace | **Coming soon** | Planned products. They are not hidden parts of the Cloud Dashboard. |

@@ -4,10 +4,10 @@ description: Move from Axiom CLI 0.149 to 0.151, understand the automatic authen
 pageType: guide
 ---
 
-<StatusNote status="coming-soon" title="CLI 0.151 and the November 2026 release">
-  Axiom CLI 0.151.0, `@axiomcore/auth-web` 0.2.0 and web UI Host 0.8.0 are
-  prepared and **Coming soon**. Until they are published, the latest released
-  CLI is 0.149.1 and nothing on this page needs action.
+<StatusNote status="alpha" title="CLI 0.151 and the November 2026 release">
+  Axiom CLI 0.151.0 and web UI Host 0.8.0 are published.
+  `@axiomcore/auth-web` 0.2.0 is **Coming soon**. The Cloud features on this
+  page are **Alpha** for invited accounts (Axiom Cloud signup is invite-only).
 </StatusNote>
 
 This guide is for projects that already use Axiom Cloud with CLI 0.149.x. It
@@ -88,14 +88,14 @@ some need an Owner and a Pro project.
 
 | Feature | How to turn it on | Status |
 | --- | --- | --- |
-| [OAuth applications and the OIDC issuer](/authentication/oidc) | Per environment, Owner | Coming soon |
-| [Authenticator apps, recovery codes and passkeys](/authentication/mfa) | Per environment, Owner | Coming soon |
-| [Webhooks and claim hooks](/authentication/hooks) | Per environment, Owner | Coming soon |
+| [OAuth applications and the OIDC issuer](/authentication/oidc) | Per environment, Owner | Alpha |
+| [Authenticator apps, recovery codes and passkeys](/authentication/mfa) | Per environment, Owner | Alpha |
+| [Webhooks and claim hooks](/authentication/hooks) | Per environment, Owner | Alpha |
 | [Phone verification](/authentication/phone) | Per environment, Owner, Pro, your own Twilio account | Coming soon |
 | [Microsoft sign-in and third-party presets](/authentication/third-party) | Per environment, Owner | Coming soon |
-| [Preview branches](/cloud/branches) | Per project, after admission | Coming soon |
-| [SQLite to PostgreSQL conversion](/database/project-upgrades) | Per database, Owner, Pro | Coming soon |
-| [Moves between pools and regions](/cloud/database-placement) | Owner consent for each move | Coming soon |
+| [Preview branches](/cloud/branches) | Per project, after admission | Alpha, selected projects |
+| [SQLite to PostgreSQL conversion](/database/project-upgrades) | Per database, Owner, Pro | Alpha, selected projects |
+| [Moves between pools and regions](/cloud/database-placement) | Owner consent for each move | Alpha, selected projects |
 | [Your own Turso database](/cloud/turso-connections) | Per environment, Owner | Coming soon |
 
 Turn features on in one environment first, such as a staging environment,

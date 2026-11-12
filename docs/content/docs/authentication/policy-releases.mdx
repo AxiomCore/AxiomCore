@@ -4,11 +4,12 @@ description: Keep an environment's roles and permissions in a signed policy file
 pageType: guide
 ---
 
-<StatusNote status="coming-soon" title="Policy releases and impact checks">
-  Auth policy releases, the impact report, reviewed policy mode and fast
-  authorization invalidation are **Coming soon**. They are built and checked in
-  production but switched off for customers. A released CLI with `axiom auth policy` and `axiom
-  database impact check` is **Coming soon**.
+<StatusNote status="alpha" title="Policy releases and impact checks">
+  Auth policy releases, the impact report and reviewed policy mode are
+  **Alpha** for invited accounts (Axiom Cloud signup is invite-only).
+  `axiom auth policy` and `axiom database impact check` need CLI 0.151.0 or
+  later. Fast authorization invalidation needs Axiom servers or
+  `@axiomcore/auth-web` 0.2.0 that support it, which are **Coming soon**.
 </StatusNote>
 
 By default an environment's roles and permissions change one item at a time

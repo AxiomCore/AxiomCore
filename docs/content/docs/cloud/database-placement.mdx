@@ -4,13 +4,13 @@ description: See an environment's database placement and history, give consent f
 pageType: concept
 ---
 
-<StatusNote status="coming-soon" title="Database moves and receipts">
-  Placement history, move consent and move receipts are **Coming soon**. Moves
-  between pools and regions are built and checked in production for managed
-  PostgreSQL, and switched off for customers. Moves of managed SQLite (libSQL) databases to another
+<StatusNote status="alpha" title="Database moves and receipts">
+  Moves between pools and regions, move consent and move receipts are
+  **Alpha** for managed PostgreSQL and available to selected projects during
+  the Alpha. Moves of managed SQLite (libSQL) databases to another
   Turso group are built but not qualified, and no region outside the current
-  ones is offered. Dedicated pools are not for sale. A released CLI with the
-  `placement`, `relocation-consent` and `receipt` commands is **Coming soon**.
+  ones is offered. Dedicated pools are not for sale. The `placement`,
+  `relocation-consent` and `receipt` commands need CLI 0.151.0 or later.
 </StatusNote>
 
 A managed database lives in a **pool**: a provider account or project in one

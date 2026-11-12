@@ -4,11 +4,11 @@ description: Receive signed authentication events at your own endpoint, verify t
 pageType: reference
 ---
 
-<StatusNote status="coming-soon" title="Webhooks and claim hooks">
-  Event webhooks and claim hooks are **Coming soon**. They are built and
-  checked in production but switched off: you cannot turn them on for an
-  environment yet. A released CLI with the `axiom auth webhooks` and `axiom auth
-  hooks` commands is **Coming soon**.
+<StatusNote status="alpha" title="Webhooks and claim hooks">
+  Event webhooks and claim hooks are **Alpha** for invited accounts (Axiom
+  Cloud signup is invite-only). An Owner turns them on per environment. The
+  `axiom auth webhooks` and `axiom auth hooks` commands need CLI 0.151.0 or
+  later.
 </StatusNote>
 
 An environment can call your HTTPS endpoints in two ways:

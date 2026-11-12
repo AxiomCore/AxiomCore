@@ -4,12 +4,11 @@ description: Register OAuth applications with an environment's issuer, use its O
 pageType: reference
 ---
 
-<StatusNote status="coming-soon" title="OAuth applications">
-  OAuth applications and the OpenID Connect endpoints on this page are **Coming
-  soon**. They are built and checked in production but switched off: you cannot
-  turn them on for an environment yet. A released CLI
-  with the `axiom auth oauth-apps` and `axiom auth oidc` commands is **Coming
-  soon**. The issuer is not OpenID Certified.
+<StatusNote status="alpha" title="OAuth applications">
+  OAuth applications and the OpenID Connect endpoints on this page are
+  **Alpha** for invited accounts (Axiom Cloud signup is invite-only). An Owner
+  turns them on per environment. The `axiom auth oauth-apps` and `axiom auth
+  oidc` commands need CLI 0.151.0 or later. The issuer is not OpenID Certified.
 </StatusNote>
 
 Every environment's issuer can act as an OpenID Connect provider for

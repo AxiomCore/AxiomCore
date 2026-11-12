@@ -133,19 +133,19 @@ on October 20, 2026. Customers select SQLite or PostgreSQL; allocation depends
 on location, capacity and entitlement.
 [Hosted migrations](/cloud/hosted-migrations) for managed SQLite and
 PostgreSQL are **Alpha**, checked on October 20, 2026 with a source build of
-the CLI; a released CLI with those commands is **Coming soon**.
+the CLI; the commands need CLI 0.151.0 or later.
 [Hosted runtime connections](/cloud/connect-a-server) from Cloud Run servers
 to managed SQLite and PostgreSQL are **Alpha**, checked on October 24 and 25,
-2026 with source builds of the CLI and runtime; a released CLI with those
-commands is **Coming soon**.
+2026 with source builds of the CLI and runtime; the commands need CLI
+0.151.0 or later.
 [Managed application authentication](/authentication) (signup, password
 sign-in, sessions, token exchange, roles and permissions) is **Alpha**,
 checked on October 25, 2026 on managed SQLite and PostgreSQL. Verifying its
-tokens in a deployed Axiom server (`axiomAuth`) needs a CLI and runtime
-release; a released CLI with these commands is **Coming soon**. Dashboard
-pages for administering authentication are **Coming soon**.
+tokens in a deployed Axiom server (`axiomAuth`) needs a runtime release and
+is **Coming soon**. The Dashboard **Authentication** page administers
+authentication.
 Public paid checkout is **Coming soon**. New
-resource-management CLI commands are source-only. See
+resource-management CLI commands need CLI 0.151.0 or later. See
 [Managed resources](/cloud/project-resources) and the local
 [database workflow](/database).
 
@@ -171,10 +171,10 @@ column says what you can use.
 | Managed authentication | Admitted | Admitted | Candidate (authentication stays in an Axiom store) | Alpha, invited accounts |
 | Dashboard table and SQL editor | Admitted | Admitted | Candidate | Alpha, invited accounts |
 | Backups, restore and archive | Admitted | Admitted | Not offered | Coming soon for all projects; on for selected projects |
-| Advanced authentication (OAuth apps, MFA, passkeys, hooks) | Admitted | Admitted | Candidate | Coming soon |
-| Preview branches | Admitted | Admitted | Not offered | Coming soon |
-| Conversion to PostgreSQL | Admitted (as the source) | Not applicable | Candidate | Coming soon |
-| Moves between pools and regions | Candidate | Admitted | Candidate | Coming soon |
+| Advanced authentication (OAuth apps, MFA, passkeys, hooks) | Admitted | Admitted | Candidate | Alpha, invited accounts |
+| Preview branches | Admitted | Admitted | Not offered | Alpha, selected projects |
+| Conversion to PostgreSQL | Admitted (as the source) | Not applicable | Candidate | Alpha, selected projects |
+| Moves between pools and regions | Candidate | Admitted | Candidate | Alpha, selected projects |
 
 Unsupported: native SQLite files in Axiom Cloud, PostgreSQL row-level
 security in managed schemas, browser or device database sync, and a
@@ -193,7 +193,7 @@ the hosted PostgreSQL transaction profile target PostgreSQL 17.
 | --- | --- |
 | Web browsers (the Acore web host and `@axiomcore/auth-web`) | Qualified |
 | Linux backends on Cloud Run (native and container `axiomAuth` targets) | Qualified |
-| Axiom CLI on macOS arm64 and Linux | Qualified with source builds; a released CLI with the Cloud commands is Coming soon |
+| Axiom CLI on macOS arm64 and Linux | Qualified with source builds; the Cloud commands need CLI 0.151.0 or later |
 | iOS and Android (passkeys, native OAuth redirects, the Acore UI hosts) | Not qualified |
 | Cloudflare Workers backends | Refuse `axiomAuth` |
 
@@ -204,28 +204,29 @@ conformance suite. AxiomCore is not OpenID Certified.
 
 ## Advanced authentication and database placement
 
-These capabilities are built and checked in production and are **Coming
-soon** for customers. Each stays off for every environment until it is turned
-on. The CLI commands (CLI 0.151.0) and `@axiomcore/auth-web` 0.2.0 that use
-them are not yet published. See the
+These capabilities are built and checked in production. Each stays off for
+every environment until it is turned on. **Alpha** capabilities are available
+to invited accounts; those marked for selected projects are turned on for
+selected projects only during the Alpha. The CLI commands that use them need
+CLI 0.151.0 or later; `@axiomcore/auth-web` 0.2.0 is not yet published. See the
 [upgrade guide](/cloud/upgrade-guide#opt-in-to-the-new-features).
 
 | Capability | Status | Boundary |
 | --- | --- | --- |
-| [OAuth applications and the OIDC issuer](/authentication/oidc) | Coming soon | Authorization code with PKCE only; not OpenID Certified |
-| [Authenticator apps, recovery codes, step-up and assurance guards](/authentication/mfa) | Coming soon | Assurance guards need an `axiomAuth` provider on native or Linux container targets; not on Workers |
-| [Passkeys](/authentication/mfa#passkeys) | Coming soon | On the application's own web origin only |
+| [OAuth applications and the OIDC issuer](/authentication/oidc) | Alpha | Authorization code with PKCE only; not OpenID Certified |
+| [Authenticator apps, recovery codes, step-up and assurance guards](/authentication/mfa) | Alpha; assurance guards Coming soon | Assurance guards need an `axiomAuth` provider on native or Linux container targets; not on Workers |
+| [Passkeys](/authentication/mfa#passkeys) | Alpha | On the application's own web origin only |
 | [Phone verification and SMS codes](/authentication/phone) | Coming soon | Pro only, your own Twilio account; tested against a simulated Twilio API, real SMS delivery not qualified |
-| [Event webhooks and claim hooks](/authentication/hooks) | Coming soon | HTTPS endpoints you host; no code runs in Axiom |
+| [Event webhooks and claim hooks](/authentication/hooks) | Alpha | HTTPS endpoints you host; no code runs in Axiom |
 | [Microsoft sign-in](/authentication/social) | Coming soon | Microsoft Entra ID work and personal accounts |
 | [Sign in with Apple](/authentication/social#sign-in-with-apple) | Coming soon, not available yet | Tested only against a simulated Apple service; cannot be turned on |
 | [Supabase Auth, Auth0 and Clerk presets](/authentication/third-party) | Coming soon | Token exchange; hosted sign-in through Auth0 or Clerk OIDC; no Supabase hosted sign-in |
-| [Local auth emulation and settings promotion](/authentication/local-emulation) | Coming soon | Password, email code, mock OIDC, refresh and logout only |
-| [Auth policy releases and impact checks](/authentication/policy-releases) | Coming soon | Impact is per role |
+| [Local auth emulation and settings promotion](/authentication/local-emulation) | Alpha | Password, email code, mock OIDC, refresh and logout only |
+| [Auth policy releases and impact checks](/authentication/policy-releases) | Alpha | Impact is per role |
 | [Your own Turso database](/cloud/turso-connections) | Coming soon | Application data only; authentication stays in an Axiom store; no transaction spans both |
-| [SQLite to PostgreSQL conversion](/database/project-upgrades) | Coming soon | Pro only; application unavailable until you redeploy; every user signs in again; no rollback after activation |
-| [Pool, dedicated and region moves](/cloud/database-placement) | Coming soon | Managed PostgreSQL; libSQL moves not qualified; dedicated pools not sold |
-| [Preview branches](/cloud/branches) | Coming soon | Lifetime at most 7 days; parents up to 100 MB for sanitized and libSQL branches |
+| [SQLite to PostgreSQL conversion](/database/project-upgrades) | Alpha, selected projects | Pro only; application unavailable until you redeploy; every user signs in again; no rollback after activation |
+| [Pool, dedicated and region moves](/cloud/database-placement) | Alpha, selected projects | Managed PostgreSQL; libSQL moves not qualified; dedicated pools not sold |
+| [Preview branches](/cloud/branches) | Alpha, selected projects | Lifetime at most 7 days; parents up to 100 MB for sanitized and libSQL branches |
 
 Qualified targets for these capabilities are listed in
 [Qualified targets for Axiom Cloud](#cloud-qualified-targets).

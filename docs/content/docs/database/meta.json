@@ -5,6 +5,7 @@
     "contracts",
     "persistence",
     "browser-preview",
-    "fleets"
+    "fleets",
+    "project-upgrades"
   ]
 }

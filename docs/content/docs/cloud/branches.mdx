@@ -1,0 +1,183 @@
+---
+title: Preview branches
+description: Create short-lived preview environments from a production database's schema or a sanitized copy, with their own authentication, captured mail and test users, and promote reviewed releases back to the parent.
+pageType: guide
+---
+
+<StatusNote status="coming-soon" title="Preview branches">
+  Preview branches are **Coming soon**. They are built and checked in
+  production but switched off: no project can create a branch yet. A released
+  CLI with `axiom branch` is **Coming soon**.
+</StatusNote>
+
+A preview branch is a temporary environment whose database starts from a copy
+of a parent environment (for example `production`), so you can try a
+migration, a role policy change or new sign-in settings on realistic data
+before the parent gets them. A branch never merges back. The parent changes
+only when it applies a release that you tested, and optionally reviewed, on a
+branch.
+
+## Branch modes
+
+| Mode | Application rows | Needs |
+| --- | --- | --- |
+| `schema` (default) | None. Tables, migration history and the applied head are copied; every application table is empty. | Nothing |
+| `sanitized` | Rows transformed by the parent environment's sanitization policy | A policy that classifies every table and column; an Owner with a recent sign-in |
+
+In both modes, no user, credential, session, factor, key, secret, provider
+setting or trusted issuer of the parent reaches the branch. The branch gets an
+empty authentication store with fresh keys. Only the parent's role and
+permission names and descriptions may be copied.
+
+Production data is first copied into a staging database that no customer
+credential can reach, sanitized and verified there, then sealed. The branch
+database is rebuilt from that sealed copy, so it never held unsanitized data.
+
+## Create a branch
+
+```bash title="Terminal"
+axiom branch create checkout-v2 --project my-project --parent production \
+  --mode schema --ttl-hours 24 \
+  --allowed-origin http://localhost:5173 --redirect-url http://localhost:5173/auth/callback \
+  --confirm "branch production as checkout-v2" --wait
+```
+
+| Option | Meaning |
+| --- | --- |
+| `--mode` | `schema` or `sanitized` |
+| `--at` | Copy the parent as it was at this time (RFC 3339), within its point-in-time window |
+| `--backup` | Copy from a daily backup |
+| `--source` | Reuse a sealed sanitized source (`axiom branch sources`) |
+| `--ttl-hours` | Lifetime; the server caps it |
+| `--no-auth` | Create the branch without authentication |
+| `--auth-policy` | `copy` (default) the parent's roles and permissions, or `none` |
+| `--redirect-url`, `--allowed-origin` | Extra loopback or preview URLs for the branch's issuer |
+
+The branch is an environment named `br-<name>` with its own issuer URL. Use
+the normal deployment path to run a backend against it.
+
+## Sanitization policy
+
+A `sanitized` branch needs a policy for the parent environment that names
+every application table and column. Anything unclassified refuses the build
+(`AXRESOURCE_BRANCH_POLICY_INCOMPLETE`).
+
+```json title="sanitization.json"
+{
+  "format": "axiom-branch-sanitization/v1",
+  "tables": [
+    {
+      "schema": "app", "table": "customers", "rows": "keep",
+      "columns": {
+        "id": "keep",
+        "email": { "synthetic": "email" },
+        "display_name": { "synthetic": "text" },
+        "plan": "keep",
+        "notes": "null",
+        "country": { "constant": { "t": "text", "v": "XX" } }
+      }
+    },
+    { "schema": "app", "table": "audit_log", "rows": "empty" }
+  ]
+}
+```
+
+```bash title="Terminal"
+axiom branch policy set --project my-project --environment production --file sanitization.json
+```
+
+| Rule | Result | Allowed on |
+| --- | --- | --- |
+| `keep` | Value copied | Any column; required for primary keys of kept tables |
+| `null` | `NULL` | Nullable columns outside primary keys and unique constraints |
+| `constant` | A typed constant | Columns outside primary keys, unique constraints and foreign keys |
+| `synthetic` `email` / `text` | `<table>-<key>@example.invalid` / `<column>-<key>` | Tables with a single-column primary key; columns outside foreign keys |
+| `generated` | Recomputed | Generated columns only |
+| Table `rows: empty` | All rows deleted | Any table; a kept table's foreign key into it must be `null` |
+
+libSQL tables use schema `main`. The policy is checked again against the live
+copy, and the build verifies every rule with counts and digests only: kept
+values must be byte-identical before and after, and every other rule must
+hold for every row. A sanitized branch is only as safe as your policy: `keep`
+is your decision.
+
+On PostgreSQL, `sanitized` mode refuses tables whose constraints, index
+expressions, generated columns or reachable defaults call functions outside
+PostgreSQL's built-in catalog. Mark such a table `empty` (when no kept table
+depends on it) or use `schema` mode.
+
+Sanitized sources can be reused by several branches for 7 days
+(`axiom branch sources --environment production` lists them with counts and
+checks, never values).
+
+## Authentication in a branch
+
+| Item | In the branch |
+| --- | --- |
+| Users and sessions | None. Create test users. |
+| Roles and permissions | Copied from the parent unless `--auth-policy none` |
+| Sign-in settings | Copied, except: all mail and SMS captured, captcha off, no SMTP, redirect URLs and origins limited to loopback entries plus the ones you add |
+| MFA | Policy copied; SMS removed from the factors. Passkeys work only when the parent's relying party is `localhost` or you set one for the branch origin. |
+| Providers, trusted issuers, OAuth clients | Not copied. You may add them with test credentials. |
+| Webhooks, claim hooks, SMS settings, single sign-on | Refused (`AXAUTH_BRANCH_OUTBOUND_DISABLED`) |
+
+Nothing a branch does is sent outside Axiom. Read captured mail and SMS codes,
+and create password test users:
+
+```bash title="Terminal"
+axiom branch mail list BRANCH_ID --project my-project
+axiom branch test-users BRANCH_ID --project my-project --count 3 --role editor --output ./test-users.txt
+```
+
+Test users have verified addresses ending in `.branch.invalid`. Their
+passwords are written only to the new `0600` file, never to standard output.
+At most 10 per call and 50 per branch; a branch keeps the latest 500 captured
+messages.
+
+## Review and promote
+
+Branches never merge. To promote a change:
+
+1. Apply the migration release or [auth policy release](/authentication/policy-releases)
+   on the branch.
+2. An Owner records a review of that release for the parent:
+
+   ```bash title="Terminal"
+   axiom branch review create BRANCH_ID --project my-project \
+     --kind migration_release --sha256 RELEASE_SHA256 \
+     --confirm "approve RELEASE_SHA_FIRST_12 for production"
+   ```
+
+3. Apply the same release to the parent through its normal path.
+
+A review is accepted only when the release succeeded on the branch. It lasts
+30 days, can be revoked and survives the branch's deletion. With
+`axiom branch settings set --environment production --require-review true`, the
+parent refuses a migration or policy apply without a matching review
+(`AXRESOURCE_REVIEW_REQUIRED`). Checks and status are never gated.
+
+## Limits and lifetime
+
+| Limit | Free | Pro |
+| --- | --- | --- |
+| Lifetime default / maximum | 24 h / 72 h | 72 h / 168 h |
+| Minimum lifetime | 1 h | 1 h |
+| Live branches per project | 1 | 3 |
+| Branch creations per day | 3 | 10 |
+| Source builds per parent per day | 3 | 3 |
+| Branch storage | 100 MB | 100 MB |
+
+Branches share the project's monthly allowances and are metered as their own
+resources. A parent larger than 100 MB cannot get a `sanitized` branch, or any
+libSQL branch. `extend` moves the expiry up to the maximum. At expiry, or on
+`axiom branch delete BRANCH_ID --confirm "delete branch <name>"`, the
+environment is disabled and the database deleted.
+
+Branch databases cannot be restored, archived, backed up, suspended, moved or
+converted, and a branch cannot be the source of another branch. A
+[database you connected yourself](/cloud/turso-connections) cannot be branched.
+
+## Next steps
+
+- [Auth policy releases and impact](/authentication/policy-releases)
+- [Develop sign-in locally](/authentication/local-emulation)

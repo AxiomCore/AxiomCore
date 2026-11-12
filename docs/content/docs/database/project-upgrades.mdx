@@ -1,0 +1,186 @@
+---
+title: Upgrade a project and convert SQLite to PostgreSQL
+description: Keep your managed SQLite (libSQL) database when you upgrade to Pro, or explicitly convert it to PostgreSQL with a compatibility report, a signed receipt, a planned interruption and a redeploy.
+pageType: guide
+---
+
+<StatusNote status="coming-soon" title="SQLite to PostgreSQL conversion">
+  Engine conversion is **Coming soon**. It is built and checked in
+  production but switched off: no project can convert yet. A released
+  CLI with `axiom database convert` and the `convert` resource action is
+  **Coming soon**. Upgrading from Free to Pro without changing the engine is a
+  billing change only.
+</StatusNote>
+
+Upgrading a project from Free to Pro never moves your data. A managed SQLite
+(libSQL) database stays libSQL, with the same tables, users and sessions.
+Convert it to PostgreSQL only when you need PostgreSQL, and only as an
+explicit, planned step: your application is unavailable from the start of the
+conversion until you deploy a PostgreSQL build of your backend, and every user
+signs in again afterwards.
+
+## Before you start
+
+| Requirement | Detail |
+| --- | --- |
+| Tier | Pro with an active subscription (`AXRESOURCE_PAYMENT_REQUIRED` otherwise) |
+| Database | `ready`, not a preview branch, no running operation or move, and no previous generation still retained from an earlier move (retire it first: `AXRESOURCE_PREVIOUS_RETAINED`) |
+| Migrations | The environment's applied migration head is known (`AXRESOURCE_HEAD_UNKNOWN` otherwise) |
+| Authentication | Ready or not configured; not repairing or initializing |
+| Signing key | An enrolled migration signer key, as for [hosted migrations](/cloud/hosted-migrations) |
+| Backend | A PostgreSQL version of your contract, and a backend built and tested from it before you start |
+
+Acore storage types are specific to each engine, so you write a PostgreSQL
+version of your contract. `axiom database convert draft` writes a starting
+point from the hosted head.
+
+## 1. Draft the PostgreSQL contract
+
+```bash title="Terminal"
+axiom database convert draft --project my-project --environment production \
+  --stream my-app --out ./postgres-contract
+```
+
+The draft uses only exact storage pairs (`INTEGER` to `Int64`, `REAL` to
+`Float64`, `TEXT` to `Text`, `BLOB` to `Bytea`) and lists views, triggers and
+anything without an automatic form for you to rewrite. Review and edit it,
+then build and test your backend against it.
+
+## 2. Plan: report and receipt
+
+```bash title="Terminal"
+axiom database convert plan ./postgres-contract/schema.acore \
+  --project my-project --environment production \
+  --encoding events.created_at=unix_ms \
+  --assume-utc posts.published_at
+```
+
+`plan` downloads and verifies the hosted libSQL head, builds and signs the
+PostgreSQL baseline release (a new migration history with the same contract
+ID), computes the compatibility report, and, when nothing is refused, signs a
+transition receipt with your enrolled key. Files go to `.axiom/conversion`.
+Nothing is uploaded.
+
+### Compatibility rules
+
+Every source table and column must map to the PostgreSQL contract by SQL name.
+The target may add nullable or defaulted columns. Primary keys must be
+identical.
+
+| SQLite storage | PostgreSQL storage | Class | Checked per value |
+| --- | --- | --- | --- |
+| `Integer`, `Int` | `Int64` | Exact | Integer type |
+| `Integer`, `Int` | `Int32`, `Int16`, `Numeric(p,s)` | Checked | Range or precision |
+| `Integer`, `Int` | `Bool` | Checked | 0 or 1 |
+| `Integer`, `Int` | `Timestamp`, `TimestampTz` | Checked | Needs `--encoding table.column=unix_ms` or `=unix_s`; range |
+| `Real` | `Float64` | Exact | Real or integer |
+| `Real` | `Float32`, `Numeric` | Checked | Round trip equal |
+| `Text` | `Text` | Exact | Valid UTF-8, no NUL |
+| `Text` | `VarChar(n)` | Checked | Length |
+| `Text` | `Uuid` | Checked | Canonical form |
+| `Text` | `Json`, `Jsonb` | Checked | Valid JSON |
+| `Text` | `Date`, `Time`, `Timestamp`, `TimestampTz` | Checked | ISO 8601 parse; zone-less text into `TimestampTz` needs `--assume-utc` |
+| `Blob` | `Bytea` | Exact | Blob type |
+| `Blob` | `Uuid` | Checked | 16 bytes |
+
+**Refused in this version:** `Any`, `Native` and other SQLite storage; target
+`Array` and `TimeTz` columns; dropped tables or columns; changed primary keys;
+and foreign keys that form a cycle, including a table that refers to itself.
+
+- Auto-increment keys become identity columns that continue after the highest
+  existing value.
+- Generated columns are recomputed by PostgreSQL, not copied.
+- `NOCASE` or `RTRIM` collations on a unique column or one used in a view are
+  semantic warnings: PostgreSQL compares differently. Accept them with
+  `--acknowledge-semantics` after checking your data.
+- Views and indexes come from the PostgreSQL contract.
+- SQLite does not enforce declared types, so even exact pairs are checked value
+  by value during the rehearsal.
+
+The report contains table and column names and counts only, never values.
+
+## 3. Submit
+
+```bash title="Terminal"
+axiom database convert submit --project my-project --wait
+```
+
+`submit` uploads the baseline release and the receipt. Axiom recomputes the
+report and marks the conversion `validated`, or `refused` with
+`AXRESOURCE_CONVERSION_INCOMPATIBLE` (a refused construct) or
+`AXRESOURCE_RECEIPT_INVALID` (a different report). The validated conversion
+shows its summary, cost estimate and interruption estimate.
+
+## 4. Convert
+
+```bash title="Terminal"
+axiom project resources --project my-project request \
+  --resource RESOURCE_ID --action convert --generation 3 \
+  --conversion CONVERSION_ID \
+  --confirm "convert my-app-db to postgresql" \
+  --acknowledge-sessions-end --acknowledge-redeploy --wait
+```
+
+Only an Owner with a recent sign-in can start it. At most 2 conversions per
+project per day, one at a time. The conversion then runs these steps:
+
+| Step | What happens | Your application |
+| --- | --- | --- |
+| Prepare and rehearse | Creates the PostgreSQL database, applies the baseline, installs authentication, copies every row from the live database with the value checks and measures the time, then empties the copy | Serving |
+| Validate | Checks both migration histories and estimates the stop. Refused with `AXRESOURCE_FENCE_TOO_LONG` when the estimated stop is too long, or `AXRESOURCE_CONVERSION_DATA` with per-column counts when a value fails a check | Serving |
+| Stop writes | Stops every writer to the SQLite database and refuses sign-in, sign-up and refresh | **Unavailable** |
+| Copy | Copies application and authentication rows in foreign-key order and records counts and digests | Unavailable |
+| Verify | Reads back and compares digests and counts, validates every constraint and sequence | Unavailable |
+| Activate | Switches the environment to PostgreSQL in one step and writes a signed receipt | Authentication serves again; the application waits for your redeploy |
+
+Any failure before activation leaves the SQLite database serving exactly as
+before; it was only read.
+
+## 5. Redeploy
+
+Your deployed backend was built from the SQLite contract. From activation, its
+next database lease is refused with `409 AXRESOURCE_REDEPLOY_REQUIRED`, at most
+15 minutes after activation. Deploy the backend built from the PostgreSQL
+contract and grant it the database. A build granted before activation is
+refused too. Authentication, the data editor and migrations need no redeploy.
+
+## What users see
+
+- Every session ends at activation: access tokens, refresh tokens, OAuth
+  refresh tokens and hosted sessions. Everyone signs in again, within about 65
+  seconds of activation for servers that check the epoch.
+- User IDs, passwords, roles, organizations and enrolled factors are kept.
+  Pending codes, links and invitations are discarded.
+- The issuer URL and its signing keys do not change.
+
+## Rollback limits
+
+After activation there is no rollback. The SQLite database is kept, stopped,
+for 7 days and is never made writable again; converting back is not offered.
+An encrypted copy of it is kept for 30 days. If the conversion fails before
+activation, nothing changes.
+
+## Costs
+
+The validated conversion shows the PostgreSQL monthly cost for your tier, a
+one-time copy estimate, 7 days of overlap storage and 30 days of copy storage,
+and the amount Axiom bills, which is 0 while the conversion fits within the
+included provider allowances.
+
+## Converting your own Turso database
+
+A [database you connected yourself](/cloud/turso-connections) can be
+converted too. Its data is copied into Axiom's PostgreSQL, so the request also
+needs `--acknowledge-copy` with the copy statement shown in the dashboard and
+`--acknowledge-external-writers`, because you must stop every client that
+writes with your own Turso tokens. Axiom checks digests before the copy, during
+it and just before activation, and aborts with `AXRESOURCE_EXTERNAL_WRITERS` if
+anything changed. Writes to your database after the conversion completes are
+not carried. Turso bills you for the reads: up to five full reads of every row.
+Afterwards the connection is closed and its token destroyed; your database is
+not deleted.
+
+## Next steps
+
+- [Where your database lives and how it moves](/cloud/database-placement)
+- [Hosted migrations](/cloud/hosted-migrations)

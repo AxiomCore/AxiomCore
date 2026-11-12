@@ -1,0 +1,262 @@
+---
+title: Multi-factor authentication and passkeys
+description: Turn on two-step verification with authenticator apps, passkeys, SMS and recovery codes, require a recent or stronger sign-in for sensitive actions, and guard Acore endpoints by assurance level.
+pageType: guide
+---
+
+<StatusNote status="coming-soon" title="Factors, passkeys and step-up">
+  Authenticator apps (TOTP), passkeys, recovery codes, reauthentication and
+  assurance guards are **Coming soon**. They are built and checked in
+  production but switched off: you cannot turn them on for an environment yet.
+  `@axiomcore/auth-web` 0.2.0, which adds the methods below, is not yet
+  published. Passkeys are checked only in web browsers; iOS and Android are not
+  qualified.
+</StatusNote>
+
+A second factor stops a stolen password from opening an account. An
+environment's issuer supports three second factors (an authenticator app, an
+SMS code and a one-time recovery code) and passkeys, which work as a sign-in
+method or as a second factor. Every session records how the user signed in, as
+signed claims in the access token, so your backend can require a stronger or
+more recent sign-in for sensitive actions.
+
+## Assurance levels
+
+Each access token carries `acr` (the level), `amr` (the methods) and
+`auth_time` (when that level was last reached). The levels are ordered
+**`aal1` < `aal2` < `phr`**.
+
+| Session | `amr` example | `acr` |
+| --- | --- | --- |
+| Password, email code, magic link or invitation, or an external provider | `["pwd"]`, `["otp"]`, `["ext"]` | `aal1` |
+| First factor plus an authenticator app, SMS or recovery code | `["mfa","pwd","totp"]` | `aal2` |
+| External identity whose upstream MFA you mapped ([Third-party identity](/authentication/third-party#upstream-mfa)) | `["ext","mfa"]` | `aal2` |
+| Passkey, alone or after another factor | `["passkey"]`, `["mfa","passkey","pwd"]` | `phr` (phishing resistant) |
+
+Passkeys always require user verification, so a passkey alone is
+multi-factor and phishing resistant. SMS never reaches `phr`. `amr` lists at
+most 4 sorted values. A session's level never goes down: a later password
+reauthentication cannot refresh the freshness of an `aal2` session.
+
+## Configure the environment
+
+An Owner sets these in the dashboard's **Multi-factor** page or with
+`axiom auth settings set`:
+
+| Setting | Values | Effect |
+| --- | --- | --- |
+| `mfa_policy` | `off` (default), `optional`, `required` | `optional`: users may enroll; a user with a factor must use it at every sign-in. `required`: also asks users without a factor to enroll before any session. |
+| `mfa_factors` | Any of `totp`, `passkey`, `sms` | Factor types users may enroll |
+| `step_up_seconds` | Seconds | How recent a sign-in must be for the security actions below |
+| `enabled_methods` | Add `passkey` | Passkeys as a first-factor sign-in method |
+| `webauthn_rp_id`, `webauthn_rp_name`, `webauthn_origins` | Your registrable domain (or `localhost`), a display name, exact origins | Passkey relying party. Every origin must also be an allowed origin. |
+
+```bash title="Terminal"
+axiom auth mfa status --environment production
+```
+
+`mfa status` shows the policy, the allowed factors and how many users have
+factors (counts only).
+
+<Callout type="warn">
+Upgrade your application to `@axiomcore/auth-web` 0.2.0 before you set
+`mfa_policy` to anything other than `off`. Older clients cannot complete a
+second factor, so users with factors cannot sign in through them.
+</Callout>
+
+How the policy and the available factors combine:
+
+| Situation | User without a factor | User with a factor |
+| --- | --- | --- |
+| `off` | Signs in with one factor | Must use a usable factor |
+| `optional` | Signs in with one factor and may enroll | Must use a usable factor |
+| `required`, a factor type can be enrolled | Must enroll before a session | Must use a usable factor |
+| `required`, nothing can be enrolled | Signs in with one factor; the dashboard warns. Saving `required` is refused in this state (`AXAUTH_FEATURE_DISABLED`). | Must use a usable factor |
+
+Turning MFA off never lets a user who has a factor sign in without it. A user
+whose factors all became unusable completes the second step with a recovery
+code, or not at all.
+
+Limits per user: 5 authenticator apps, 10 passkeys and 1 SMS factor
+(`AXAUTH_FACTOR_LIMIT` beyond). Exchanged sessions from trusted external
+tokens are exempt from the policy: the external system owns their MFA.
+
+## Sign in with a second factor
+
+After a correct first factor, a user who needs a second factor gets no
+session yet. With `@axiomcore/auth-web`:
+
+```ts title="sign-in.ts (partial)"
+import { AxiomAuthError } from '@axiomcore/auth-web';
+
+try {
+  await auth.signInWithPassword(email, password);
+} catch (error) {
+  if (error instanceof AxiomAuthError && error.code === 'mfa_required') {
+    const challenge = auth.mfaChallenge();
+    // challenge.factors: [{ id, type: 'totp' | 'passkey' | 'sms', label }]
+    // challenge.recoveryCodes: true when the user has recovery codes left
+    await auth.verifyMfa(factorId, codeFromUser);
+    // or: await auth.verifyRecoveryCode(code)
+    // or: await auth.sendSmsCode(factorId), then verifyMfa(factorId, code)
+    // or: await auth.verifyMfaWithPasskey()
+  } else {
+    throw error;
+  }
+}
+```
+
+The challenge expires after 300 seconds and is single use. Its ticket stays
+inside the client: it is never in an error, the session, storage or JSON
+output. Redirect sign-ins (providers and hosted pages) return to your app with
+`error=mfa_required`; `handleRedirect()` removes the ticket from the URL
+before your code runs and binds it to the flow's PKCE verifier. The URL
+carries no factor list, so offer a passkey and a recovery code there.
+
+Under `required`, a user without a factor gets `mfa_enrollment_required`
+instead. `enrollTotp(label)` then `confirmTotp(factorId, code)`, or
+`registerPasskey(label)`, enroll the factor and finish the sign-in.
+
+The JSON endpoints, for clients that do not use the SDK:
+
+| Method and path | Body | Success |
+| --- | --- | --- |
+| Any first-factor sign-in | As before | `401 AXAUTH_MFA_REQUIRED` with `mfa`: `ticket`, `expires_in` 300, `factors`, `recovery_codes` |
+| `POST /v1/mfa/verify` | `{"ticket","code_verifier"?,"factor_id","code"}` or `{"ticket","code_verifier"?,"recovery_code"}` | `200` tokens |
+| `POST /v1/mfa/sms/send` | `{"ticket","factor_id"}` | `202 {"challenge_id","expires_in":300,"resend_after":60}` |
+| `POST /v1/mfa/webauthn/options`, then `POST /v1/mfa/webauthn/verify` | `{"ticket"}`, then `{"ticket","code_verifier"?,"challenge","credential"}` | `200` tokens |
+
+## Authenticator apps
+
+Authenticator apps use RFC 6238: 6 digits, 30-second steps, HMAC-SHA-1, and
+the current step plus one before and after. A code is accepted once, and never
+an older step after a newer one.
+
+```ts title="enroll-totp.ts (partial)"
+const { factorId, otpauthUri } = await auth.enrollTotp('Phone');
+// Show otpauthUri as a QR code; never store or log it.
+const { recoveryCodes } = await auth.confirmTotp(factorId, codeFromApp);
+// recoveryCodes is present when this is the user's first factor: show them once.
+```
+
+The secret and the `otpauth://` URI are returned once. Enrolling needs a recent
+sign-in (`step_up_seconds`).
+
+## Recovery codes
+
+A user's first factor generates **10** recovery codes, shown as
+`xxxxx-xxxxx`. Each works once and signs in at `aal2`. `regenerateRecoveryCodes()`
+replaces all of them and needs a recent `aal2` sign-in. The SDK suggests
+regenerating when two or fewer remain. Users without a factor have no codes.
+
+## Passkeys
+
+Passkey ceremonies run on your **application's origin** through
+`@axiomcore/auth-web`, never on the shared `auth.axiomcore.dev` pages. The
+issuer accepts a credential only when its origin is in `webauthn_origins` and
+its relying party ID hash matches `webauthn_rp_id`.
+
+```ts title="passkeys.ts (partial)"
+await auth.registerPasskey('Laptop');          // needs a recent sign-in
+await auth.signInWithPasskey();                 // when passkey is an enabled method
+```
+
+- Sign-in uses discoverable credentials and sends no account hint, so it reveals
+  nothing about which accounts exist. A failure is `webauthn`.
+- Registration requires a resident key and user verification and accepts ES256,
+  EdDSA and RS256 credentials. Attestation is not verified and no authenticator
+  metadata service is used; authenticator AAGUIDs are shown raw.
+- Clone detection uses signature counters, which synced passkeys report as 0,
+  so it covers device-bound keys only.
+- Passkeys are checked in web browsers with Chrome's virtual authenticator.
+  iOS and Android are not qualified.
+
+## Require a recent or stronger sign-in
+
+These actions need a sign-in within `step_up_seconds` and, for a user with a
+factor, at least `aal2`: password change, email change, linking or unlinking a
+provider, enrolling or removing a factor, regenerating recovery codes, adding or
+removing a phone, and revoking an OAuth consent. A stale session gets `401
+AXAUTH_REAUTH_REQUIRED`; a session below the level gets `401
+AXAUTH_STEP_UP_REQUIRED` with an RFC 9470 `WWW-Authenticate` challenge.
+
+```ts title="step-up.ts (partial)"
+await auth.stepUp({ method: 'totp', factorId, code, acr: 'aal2' });
+// methods: 'password', 'totp', 'sms', 'recovery', 'passkey'
+```
+
+`stepUp` calls `POST /v1/reauthenticate` and rotates the session's tokens. A
+method below the session's current level is refused and changes nothing.
+
+### Guard an Acore endpoint by assurance
+
+Declare a guard with `assurance` and an optional `maxAge`:
+
+```acore title="application.acore (excerpt)"
+guard recentMfa(kind: GuardKind.authenticated, assurance: Assurance.aal2, maxAge: 10m)
+
+action adminView(kind: ActionKind.query, output: Models.Viewer) {
+  require(guard: Guards.recentMfa)
+  // ...
+}
+```
+
+The server allows the request when the token's `acr` is at least `aal2` and
+`auth_time` is within 10 minutes. `maxAge` is 60 seconds to 24 hours. A token
+without `acr` counts as `aal1`. Otherwise it answers `401` with
+`WWW-Authenticate: Bearer error="insufficient_user_authentication",
+error_description="step-up required", acr_values="aal2", max_age=600` and the
+body error `step_up_required`. In the browser, `parseStepUpChallenge(response)`
+reads the challenge; call `stepUp` and retry.
+
+Assurance guards need an `axiomAuth` provider, which runs on native and Linux
+container targets. Worker targets refuse `axiomAuth`, so these guards are not
+available there. Servers released before this feature refuse a contract that
+uses them. `Principal.acr` is readable in managed logic; assurance never
+decides ownership.
+
+## Manage factors and recover accounts
+
+| Situation | What to do |
+| --- | --- |
+| Lost one device, has another factor | Sign in with the other factor, then `removeFactor(id)` (needs a recent `aal2` sign-in) |
+| Lost every factor, has recovery codes | Sign in with a recovery code, enroll a new factor, regenerate codes |
+| Lost everything | After you verify the person outside Axiom, a Maintainer runs `axiom auth users reset-factors USER_ID --reason "..." --yes`. Every factor, recovery code and phone is removed and all of the user's sessions end at next refresh. |
+| Password reset by email | Resets the password only. Factors stay and are required at the next sign-in. |
+
+Password reset, email change, magic links, provider linking and invitations
+never remove or bypass a factor. `listFactors()` returns each factor's type,
+label, status and dates, passkey metadata, the remaining recovery codes and a
+masked phone. Admins see the same with `axiom auth users factors USER_ID`.
+
+## Rate limits and errors
+
+| Limit | Value |
+| --- | --- |
+| Attempts per MFA ticket | 5 |
+| Failed second factors per user | 10 per 15 minutes, then 3 per 15 minutes per user and IP address; 30 per day, then 5 per day per user and IP address |
+| Passkey options / passkey sign-in | 60 per minute / 30 per 5 minutes per IP address |
+| Reauthentication | 10 per session per 15 minutes |
+| Factor enrollment | 10 per user per hour |
+
+| Code | HTTP | Meaning |
+| --- | --- | --- |
+| `AXAUTH_MFA_REQUIRED` | 401 | A second factor is needed |
+| `AXAUTH_MFA_ENROLLMENT_REQUIRED` | 401 | The policy requires a factor and the user has none |
+| `AXAUTH_STEP_UP_REQUIRED` | 401 | The session's level is too low for this action |
+| `AXAUTH_REAUTH_REQUIRED` | 401 | The sign-in is not recent enough |
+| `AXAUTH_INVALID_CODE` | 400 | Wrong or expired code, or a used ticket |
+| `AXAUTH_WEBAUTHN` | 400 | A passkey ceremony failed |
+| `AXAUTH_FACTOR_LIMIT` | 409 | Per-user factor limit reached |
+| `AXAUTH_FACTOR_REQUIRED` | 409 | Removing the last factor under `required` |
+| `AXAUTH_FEATURE_DISABLED` | 403 | The tier, platform or environment does not allow this |
+
+Removing a factor does not shorten access tokens already issued (at most 15
+minutes). A reset ends sessions at their next refresh; see
+[Revocation bounds](/authentication/sessions#revocation-bounds).
+
+## Next steps
+
+- [Add SMS codes with Twilio](/authentication/phone)
+- [OAuth applications and the OIDC issuer](/authentication/oidc)
+- [Verify tokens in your backend](/authentication/verify-tokens)

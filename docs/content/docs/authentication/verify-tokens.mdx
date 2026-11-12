@@ -1,0 +1,145 @@
+---
+title: Verify access tokens
+description: Verify managed authentication access tokens in an Axiom server with the axiomAuth provider, or in any backend with a JWT library, including issuer, audience, algorithm, key and epoch rules.
+pageType: guide
+---
+
+<StatusNote status="coming-soon" title="axiomAuth in Axiom servers">
+  Verifying managed authentication tokens in a deployed Axiom server
+  (deployment kind `axiomAuth`) and the `axiom server deployment` options that
+  scaffold it are **Coming soon**: they need a CLI and runtime release, and a
+  released CLI with these commands is **Coming soon**. The tokens themselves
+  and their public keys are **Alpha** for invited accounts (Axiom Cloud signup
+  is invite-only), so any backend can verify them today
+  with a JWT library.
+</StatusNote>
+
+Your backend accepts a request when its `Authorization: Bearer` access token
+verifies against your environment's issuer. There are two ways to check it:
+the Axiom server's `axiomAuth` provider, or your own code with any JWT library
+that supports EdDSA (Ed25519).
+
+## In an Axiom server
+
+### Configure the provider
+
+The deployment's `authentication` names the environment's issuer and the
+audience your tokens are issued for. It holds no key reference: keys come only
+from the issuer.
+
+```json title="deployment.json (authentication)"
+{
+  "kind": "axiomAuth",
+  "issuer": "https://auth.axiomcore.dev/PROJECT_ID/ENVIRONMENT_ID",
+  "audience": "https://auth.axiomcore.dev/PROJECT_ID/ENVIRONMENT_ID/api"
+}
+```
+
+- `issuer` must be exactly `https://auth.axiomcore.dev/<project_id>/<environment_id>`
+  with two lowercase UUIDs. Anything else fails validation with
+  `AXSERVER_AUTHENTICATION`.
+- `audience` is 1 to 256 bytes. The environment's default audience is the
+  issuer followed by `/api`.
+- When the contract signs an authentication profile, the provider's issuer and
+  audience must equal it.
+
+The scaffold writes this block for you:
+
+```bash title="Terminal"
+axiom server deployment backend.axiom backend.server.json --output deployment.json \
+  --project-id PROJECT_ID --environment-id ENVIRONMENT_ID
+```
+
+It uses the audience `<issuer>/api`, or the signed profile's issuer and
+audience when the contract signs an Axiom issuer. `--static-key` scaffolds a
+static-key JWT provider instead and cannot be combined with the two IDs.
+
+### What the server checks
+
+Every check failure answers `401 unauthenticated`. In order:
+
+1. The bearer token is at most 16 KiB with no whitespace.
+2. The header is exactly `alg` `EdDSA`, `typ` `at+jwt` and a `kid` of 1 to 64
+   bytes, so `jku`, `x5u`, `jwk`, `x5c` and `crit` are refused.
+3. The `kid` is in the issuer's JWKS and the Ed25519 signature verifies.
+4. The payload is strict JSON without duplicate keys.
+5. `iss` equals the issuer; `aud` equals the configured audience (an array
+   containing it is also accepted); `token_use` is `access`.
+6. `exp` is in the future with no leeway; `nbf` and `iat` are at most 30
+   seconds ahead; `exp` minus `iat` is at most 900 seconds.
+7. `sub` and `sid` are lowercase UUIDs; `epoch` and `authz_ver` are integers;
+   `scope` is absent.
+8. The token's `epoch` is not below the issuer's current epoch.
+
+Identity never comes from the request body, query or other headers. Only the
+verified token sets the principal:
+
+| Principal field | From |
+| --- | --- |
+| `subject` | `sub` |
+| `tenant` | `tenant` |
+| `roles`, `permissions` | `roles`, `permissions` |
+| Claims | `sid`, `amr` (space-separated), `auth_time`, `authz_ver`, `epoch`, `idp`, as strings |
+
+### Key and epoch caching
+
+The server fetches only `<issuer>/.well-known/jwks.json` and `<issuer>/epoch`,
+over HTTPS with TLS verified, no redirects, a 3-second timeout and bodies of
+at most 64 KiB. It needs outbound HTTPS access to `auth.axiomcore.dev`.
+
+| Document | Fresh for | Then |
+| --- | --- | --- |
+| JWKS | 5 minutes | Refreshed in the background while the cached keys keep serving. Past **15 minutes** a request refreshes it synchronously (at most 3 seconds) and is refused with `503 authentication_unavailable` if that fails. |
+| Epoch | 30 seconds | Refreshed in the background. Past 60 seconds a request refreshes it synchronously (at most 3 seconds). With the issuer's 5-second snapshot this gives the **65-second epoch bound**. |
+
+- **Before the first fetch.** Until the server has fetched both the JWKS and
+  the epoch once, every authenticated request is refused with `503` after one
+  synchronous attempt.
+- **Issuer unreachable after a first fetch.** The server keeps the last epoch
+  and logs `authentication.epoch_stale` at most once a minute. Tokens then
+  work until their `exp` (fail open to expiry); the JWKS staleness cap still
+  applies.
+- **Key changes.** When the epoch reports a newer key set than the cached
+  JWKS, the server refetches the JWKS in the background. If the change came
+  from retiring a key for cause, it refetches synchronously and refuses
+  requests with `503` only while that refetch fails.
+- **Unknown `kid`.** Triggers a refetch at most once per 30 seconds, only while
+  the epoch says the JWKS is behind.
+
+Caches are shared by every request of the process, with at most one fetch in
+flight per document.
+
+### Targets
+
+`axiomAuth` runs on native and Linux container targets. The Worker target
+supports HS256 JWT only and refuses `axiomAuth`. See
+[Deployment targets](/backend/deployment).
+
+## In any backend
+
+Any JWT library that supports EdDSA with Ed25519 keys can verify the tokens.
+Fetch the keys from the issuer and check:
+
+| Check | Required value |
+| --- | --- |
+| Algorithm | Header `alg` is `EdDSA`; refuse every other algorithm, including `none`. |
+| Type | Header `typ` is `at+jwt`. |
+| Key | The JWKS key whose `kid` equals the header's, from `<issuer>/.well-known/jwks.json` (`kty` `OKP`, `crv` `Ed25519`). Never take a key or key URL from the token. |
+| Issuer | `iss` equals your environment's issuer, byte for byte. |
+| Audience | `aud` equals the audience your backend serves. |
+| Token use | `token_use` is `access`. |
+| Time | `exp` in the future; `nbf` and `iat` not in the future beyond a small clock skew. |
+| Subject | `sub` is the user ID; `sid` the session ID. |
+
+Cache the JWKS as its `Cache-Control` header allows (5 minutes) and refetch
+when a token names an unknown `kid`, because a new key is published before it
+signs. Your verifier can also fetch `<issuer>/epoch` and refuse tokens whose
+`epoch` claim is below the current epoch. Without that check, an already
+issued token works until `exp` after logout, a ban or ending every session;
+see [Revocation bounds](/authentication/sessions#revocation-bounds).
+
+## Next steps
+
+- [Sessions and tokens reference](/authentication/sessions)
+- [Declare permission and role guards](/authentication/roles-permissions#use-them-in-acore)
+- [Verify identity with other providers](/backend/policies#verified-identity)

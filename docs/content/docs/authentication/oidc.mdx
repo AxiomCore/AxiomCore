@@ -1,0 +1,322 @@
+---
+title: OAuth applications and the OIDC issuer
+description: Register OAuth applications with an environment's issuer, use its OpenID Connect discovery, JWKS, authorization, token, userinfo, revocation, introspection and logout endpoints, and understand the scopes, tokens and limits.
+pageType: reference
+---
+
+<StatusNote status="coming-soon" title="OAuth applications">
+  OAuth applications and the OpenID Connect endpoints on this page are **Coming
+  soon**. They are built and checked in production but switched off: you cannot
+  turn them on for an environment yet. A released CLI
+  with the `axiom auth oauth-apps` and `axiom auth oidc` commands is **Coming
+  soon**. The issuer is not OpenID Certified.
+</StatusNote>
+
+Every environment's issuer can act as an OpenID Connect provider for
+applications you register. A registered application, called an OAuth client,
+sends users to the issuer's sign-in and consent pages and receives an
+authorization code, then exchanges the code for tokens. Use it when another
+application (yours or a partner's) needs to sign users in with your
+environment's accounts. Your own first-party app keeps using the issuer's JSON
+endpoints; see [Sessions and tokens](/authentication/sessions).
+
+The only supported flow is the authorization code flow, with PKCE for public
+clients and, by default, for confidential clients. Implicit, hybrid and
+resource-owner password grants are not offered.
+
+## Endpoints
+
+Every path is relative to the environment's issuer,
+`https://auth.axiomcore.dev/<project_id>/<environment_id>`. The OAuth
+endpoints answer `404` until OAuth applications are turned on for the
+environment and at least one client is enabled.
+
+| Method and path | Purpose |
+| --- | --- |
+| `GET /.well-known/openid-configuration` | Discovery document |
+| `GET /.well-known/jwks.json` | Public keys: EdDSA keys first, then RS256 keys, at most 3 of each |
+| `GET` or `POST /oauth2/authorize` | Authorization request (query or form) |
+| `POST /oauth2/token` | Code and refresh token exchange, form encoded |
+| `GET` or `POST /oauth2/userinfo` | Claims of the signed-in user for consented scopes |
+| `POST /oauth2/revoke` | Token revocation (RFC 7009) |
+| `POST /oauth2/introspect` | Token introspection (RFC 7662), confidential clients allowed to introspect |
+| `GET /oauth2/logout` | RP-initiated logout (`end_session_endpoint`) |
+
+`/oauth2/*` errors use the OAuth and OpenID Connect format, for example
+`{"error":"invalid_grant"}`, never `AXAUTH_*` codes. Token, userinfo and
+introspection responses carry `Cache-Control: no-store`.
+
+### Discovery
+
+When OAuth is on, discovery adds these values to the issuer's existing
+document. `jwks_uri` does not change.
+
+| Field | Value |
+| --- | --- |
+| `response_types_supported` | `code` |
+| `response_modes_supported` | `query` |
+| `grant_types_supported` | `authorization_code`, `refresh_token` |
+| `scopes_supported` | `openid`, `profile`, `email`, `offline_access` |
+| `code_challenge_methods_supported` | `S256` |
+| `token_endpoint_auth_methods_supported` | `client_secret_basic`, `client_secret_post`, `none` |
+| `id_token_signing_alg_values_supported` | `RS256`, `EdDSA` |
+| `subject_types_supported` | `public` |
+| `acr_values_supported` | `aal1`, `aal2`, `phr` (see [Multi-factor authentication](/authentication/mfa#assurance-levels)) |
+| `claims_supported` | `sub`, `iss`, `aud`, `exp`, `iat`, `auth_time`, `nonce`, `acr`, `amr`, `azp`, `email`, `email_verified`, `name` |
+| `authorization_response_iss_parameter_supported` | `true` |
+| `request_parameter_supported`, `request_uri_parameter_supported`, `claims_parameter_supported` | `false` |
+
+The discovery document is cached for 30 seconds. Check an issuer from the
+command line, without signing in:
+
+```bash title="Terminal"
+axiom auth oidc check --issuer "https://auth.axiomcore.dev/PROJECT_ID/ENVIRONMENT_ID"
+```
+
+It validates the discovery document, the key types in the JWKS and the key
+revision, and names each failed check.
+
+## Register a client
+
+Only an **Owner** of the Cloud project can create, change, rotate or delete
+OAuth clients. Maintainers and Readers can list them.
+
+```bash title="Terminal: a public browser client"
+axiom auth oauth-apps create \
+  --environment production \
+  --name "Partner portal" \
+  --type public \
+  --redirect-uri https://portal.example.com/callback \
+  --web-origin https://portal.example.com \
+  --scope openid --scope email --scope offline_access
+```
+
+```bash title="Terminal: a confidential server client"
+axiom auth oauth-apps create \
+  --environment production \
+  --name "Reporting service" \
+  --type confidential \
+  --auth-method client_secret_basic \
+  --redirect-uri https://reports.example.com/oauth/callback \
+  --scope openid --scope profile \
+  --output-secret ./reporting-client-secret.txt
+```
+
+The client ID has the form `axcl_` followed by 22 characters and is public. A
+confidential client's secret is returned once: `--output-secret` writes it to a
+new file with mode `0600`; without it the CLI shows it once on a terminal. It
+never appears in `--json` output. If the create request fails on the network,
+rerun it with the same `--idempotency-key`; a replay returns the client ID
+without a secret, and you rotate to get one.
+
+| Setting | Rule |
+| --- | --- |
+| Type | `public` (no secret, `token_endpoint_auth_method` `none`) or `confidential` (`client_secret_basic` or `client_secret_post`) |
+| Redirect URIs | 1 to 16, compared exactly. `https`, or `http` only on `127.0.0.1` or `[::1]` with any port for public clients. Reverse-domain private schemes such as `com.example.app:/callback` are accepted for public clients but are not qualified. No fragment, user info, or `code`, `state`, `iss` or `error` parameter. |
+| Post-logout redirect URIs | 0 to 8, same rules |
+| Web origins | 0 to 8 exact origins that may call the token and userinfo endpoints from a browser |
+| Scopes | A subset of `openid`, `profile`, `email`, `offline_access` |
+| Audiences | 0 to 4 of the environment's audiences. Empty by default: access tokens are then only for userinfo. See [Call your API with OAuth tokens](#call-your-api-with-oauth-tokens). |
+| Permission and role ceilings | 0 to 128 permission names and 0 to 32 role names, empty by default |
+| First party | Skips the consent page. Use only for your own applications. |
+| PKCE | Required by default. Only a confidential client can turn it off, and then every request must ask for `openid` and send a `nonce`. |
+| Introspection | Off by default; confidential clients only |
+| ID token algorithm | `RS256` (default) or `EdDSA` |
+| Refresh lifetime | The environment's absolute session lifetime, or a lower value of at least 1 hour |
+
+An environment holds at most **2** clients on Free and **16** on Pro.
+Disabling a client or changing its redirect URIs, audiences, ceilings, type or
+authentication method ends its users' sessions at their next refresh. A client
+must be disabled before it can be deleted. `axiom auth oauth-apps list` shows
+each client's row ID, which the commands below take.
+
+```bash title="Terminal"
+axiom auth oauth-apps rotate-secret CLIENT_ROW_ID --previous-valid 24h --output-secret ./new-secret.txt
+axiom auth oauth-apps disable CLIENT_ROW_ID
+axiom auth oauth-apps delete CLIENT_ROW_ID --confirm "delete client CLIENT_ROW_ID"
+```
+
+Rotation keeps the previous secret valid for `--previous-valid`, from `0` to
+`7d` (default `24h`).
+
+## Authorization request
+
+Send the user's browser to `/oauth2/authorize`. The issuer checks, in order:
+
+1. `client_id` names an enabled client and `redirect_uri` is one of its
+   registered URIs, sent even when only one is registered. Failures here show
+   an error page instead of redirecting.
+2. `response_type` is exactly `code`.
+3. `request` and `request_uri` are absent (`request_not_supported`).
+4. Every `scope` is allowed for the client. `openid` is optional unless PKCE is
+   off.
+5. With PKCE: `code_challenge_method=S256` and a 43-character
+   `code_challenge`. `plain` is refused.
+6. Without PKCE (confidential clients that turned it off): `openid` and a
+   `nonce` of at most 512 characters.
+7. `resource`, when sent, is one of the client's audiences and selects the
+   access token audience.
+8. `prompt` is `none`, `login`, `consent` or `select_account` (treated as
+   `login`); `max_age` and `acr_values` are honored; `login_hint` pre-fills
+   the email field. `state` (at most 512 characters) is returned unchanged.
+
+The user signs in on the hosted page (with a second factor when needed), then
+sees the consent page unless the client is first party or the user already
+consented to every requested scope and audience. The issuer redirects to
+`<redirect_uri>?code=axc1_...&state=...&iss=<issuer>`. Always compare `iss`
+with the issuer you started with (RFC 9207).
+
+```text title="Authorization request (public client, partial)"
+https://auth.axiomcore.dev/PROJECT_ID/ENVIRONMENT_ID/oauth2/authorize
+  ?response_type=code
+  &client_id=axcl_EXAMPLEEXAMPLEEXAMPLE
+  &redirect_uri=https%3A%2F%2Fportal.example.com%2Fcallback
+  &scope=openid%20email%20offline_access
+  &state=RANDOM_STATE
+  &nonce=RANDOM_NONCE
+  &code_challenge=BASE64URL_SHA256_OF_VERIFIER
+  &code_challenge_method=S256
+```
+
+## Token endpoint
+
+The token endpoint accepts `application/x-www-form-urlencoded` bodies only.
+
+```bash title="Terminal: exchange a code as a confidential client"
+curl -s "$ISSUER/oauth2/token" \
+  -u "axcl_EXAMPLEEXAMPLEEXAMPLE:$CLIENT_SECRET" \
+  -d grant_type=authorization_code \
+  -d code="$CODE" \
+  -d redirect_uri=https://reports.example.com/oauth/callback \
+  -d code_verifier="$CODE_VERIFIER"
+```
+
+A public client sends `client_id` in the body and no secret. A secret sent by a
+public client, a wrong or missing secret, or the wrong method answers `401
+invalid_client`.
+
+| Grant | Rules |
+| --- | --- |
+| `authorization_code` | Codes are single use and bound to the client, the redirect URI (byte equal) and the PKCE verifier. Presenting a used code again ends the session it created and answers `invalid_grant`. |
+| `refresh_token` | Only for refresh tokens this client received. The client must still be enabled with the same security settings, and the user's consent must still cover the scopes and audience. An optional `scope` must be a subset of the original grant. |
+
+The response is
+`{"access_token","token_type":"Bearer","expires_in","scope","id_token"?,"refresh_token"?}`.
+Errors are `invalid_request`, `invalid_client`, `invalid_grant`,
+`unauthorized_client`, `unsupported_grant_type`, `invalid_scope`, and
+`temporarily_unavailable` (`503` with `Retry-After`).
+
+## Scopes and tokens
+
+| Scope | Effect |
+| --- | --- |
+| `openid` | An ID token is returned |
+| `profile` | `name` in the ID token and userinfo |
+| `email` | `email` and `email_verified` |
+| `offline_access` | A refresh token is returned |
+
+| Token | Shape |
+| --- | --- |
+| Access token | `typ` `at+jwt`, signed with the environment's EdDSA key. `aud` is the `resource` the client asked for, else `<issuer>/oauth2/userinfo`. Carries `client_id`, `acr`, `amr` and `auth_time`. `roles` and `permissions` are the user's own intersected with the client's ceilings (empty by default). No `tenant` and no `scope` claim. Lifetime as the environment's access tokens. |
+| ID token | `typ` `JWT`, `RS256` or `EdDSA`. `aud` and `azp` are the client ID; `exp` is `iat` plus 600 seconds; `nonce` when sent; `acr`, `amr`, `auth_time`; `email`, `email_verified` and `name` per consented scope. No `at_hash`. |
+| Refresh token | `axr1_...`, one-time use as for first-party sessions. Only with `offline_access`. |
+
+The first client of an environment creates its first RS256 key. RS256 and
+EdDSA keys follow the same rotation schedule as the environment's signing
+keys: published 10 minutes before use.
+
+An OAuth client never manages a user's account. Every first-party `/v1/*`
+route refuses an access token that carries `client_id`, and OAuth codes and
+refresh tokens are refused by first-party refresh, logout and code routes.
+
+## Call your API with OAuth tokens
+
+An OAuth access token is meant for userinfo unless the client has an API
+audience. To let a client call your backend as the user:
+
+1. Add the backend's audience to the client (`--audience`). The dashboard and
+   CLI ask the Owner to confirm the audience by name, and the consent page
+   tells the user that the client will be able to act as them.
+2. Let the backend accept OAuth tokens. An Axiom server refuses every token
+   that carries `client_id` unless its `axiomAuth` provider allows them:
+
+```json title="deployment.json (excerpt)"
+{
+  "kind": "axiomAuth",
+  "issuer": "https://auth.axiomcore.dev/PROJECT_ID/ENVIRONMENT_ID",
+  "audience": "https://auth.axiomcore.dev/PROJECT_ID/ENVIRONMENT_ID/api",
+  "oauthClients": "allow"
+}
+```
+
+The default is `"deny"`. A server built before this release rejects a
+deployment that sets the field. Servers released before this feature cannot
+tell an OAuth token from the user's own token: a client given such a server's
+audience acts as the user there for `authenticated` and ownership guards.
+Role and permission guards still see only the client's ceilings.
+
+## Consent and single sign-on
+
+The consent page shows your app name, the client's name, the requested scopes
+in plain words and any API audience, with **Allow** and **Deny**. Deny returns
+`error=access_denied`. Consent is stored per user and client; a request for a
+new scope or audience shows the page again.
+
+Users list and revoke their consents through `@axiomcore/auth-web`
+(`listConsents()`, `revokeConsent(clientId)`); revoking needs a recent sign-in
+and ends that client's sessions for the user at once. Admins use
+`axiom auth users consents USER_ID` and `axiom auth users revoke-consent`.
+
+Single sign-on across clients is off by default. With the environment setting
+`hosted_sessions` on, a sign-in during an authorization request also creates a
+hosted session in a `__Host-` cookie, so later requests can skip the sign-in
+page and `prompt=none` can succeed. Without it, every authorization request
+signs the user in and `prompt=none` answers `login_required`. Hosted sessions
+are limited to 5 per user; OAuth sessions to 10 per user and client, and they
+do not end first-party sessions.
+
+## Revocation, introspection and logout
+
+| Route | Behavior |
+| --- | --- |
+| `/oauth2/revoke` | Revokes the session behind a refresh or access token issued to the calling client. Always answers `200`. |
+| `/oauth2/introspect` | Confidential clients with introspection allowed. Returns `{"active":true,...}` with `sub`, `aud`, `client_id`, `exp`, `iat`, `auth_time`, `acr`, `amr`, `sid` for a valid access token whose session is active, else `{"active":false}`. Refresh and ID tokens are always inactive. |
+| `/oauth2/logout` | Takes `id_token_hint`, `client_id`, `post_logout_redirect_uri` and `state`. Ends the hosted session and redirects to a registered post-logout URI. Without a valid hint the page asks the user to confirm. Client sessions are not ended: each client revokes its own refresh token. |
+
+| Event | Effect on existing tokens |
+| --- | --- |
+| Client disabled or security setting changed | Its sessions end at next refresh; access tokens work until `exp`; introspection reports inactive at once |
+| Client secret rotated | The previous secret works until its chosen expiry |
+| Consent revoked | That client's sessions for the user end at once; access tokens work until `exp` |
+| Hosted session logout | Hosted session ends at once; client sessions continue |
+
+## Rate limits
+
+| Endpoint | Limit |
+| --- | --- |
+| Authorize | 60 per minute per IP address |
+| Token | 600 per minute per client and 120 per minute per IP address |
+| Userinfo | 600 per minute per IP address |
+| Introspection | 1,200 per minute per client |
+
+## Limits
+
+- Not offered: client credentials and machine clients, dynamic client
+  registration, implicit and hybrid flows, form-post responses, request
+  objects, pushed authorization requests, DPoP, mutual TLS, front-channel and
+  back-channel logout, SAML and directory provisioning, and tenant selection
+  for OAuth tokens.
+- Passkeys cannot be used on the hosted sign-in page. They work only on your
+  own application's origin.
+- Under a `required` MFA policy, a user without a factor cannot finish an
+  authorization request until they set one up in your application. The client
+  receives `error=access_denied` with `error_description=mfa_enrollment_required`.
+- Native app redirects (private-use schemes and loopback) are accepted but not
+  qualified on iOS or Android.
+- OAuth access tokens carry no `scope` claim.
+
+## Next steps
+
+- [Require a second factor or a recent sign-in](/authentication/mfa)
+- [Verify tokens in your backend](/authentication/verify-tokens)
+- [Sessions and tokens reference](/authentication/sessions)

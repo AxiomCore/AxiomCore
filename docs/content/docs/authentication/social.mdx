@@ -1,0 +1,100 @@
+---
+title: Sign in with Microsoft and Apple
+description: Configure Microsoft Entra ID sign-in for an environment, with tenant restrictions and the exact callback URL, and see why Sign in with Apple is not available yet.
+pageType: guide
+---
+
+<StatusNote status="coming-soon" title="Microsoft and Apple sign-in">
+  Microsoft sign-in is **Coming soon**: it is built but switched off, and you
+  cannot turn it on for an environment yet. Sign in with Apple is
+  **Coming soon** and **not available yet**: it is built and tested only
+  against a simulated Apple service, and you cannot turn it on for an
+  environment. A released CLI with these provider options is **Coming soon**.
+</StatusNote>
+
+Microsoft and Apple join the environment's other sign-in providers. Each is a
+separate provider with its own setting, so you can turn one on without the
+other. Provider sign-in uses the issuer's redirect flow with a sealed,
+single-use state, and an enrolled second factor is still required afterwards
+([Multi-factor authentication](/authentication/mfa)).
+
+## Microsoft Entra ID
+
+### Before you start
+
+Register an application in the Microsoft Entra admin center:
+
+1. Add a **Web** redirect URI equal to the environment's callback URL, exactly:
+
+   ```text title="Microsoft callback URL"
+   https://auth.axiomcore.dev/<project_id>/<environment_id>/v1/providers/microsoft/callback
+   ```
+
+2. Create a client secret and note its expiry.
+3. Note the application (client) ID and choose who may sign in.
+
+### Configure the provider
+
+Only an Owner or Maintainer can change sign-in methods. The secret is read
+from standard input or a masked prompt, never from an argument.
+
+```bash title="Terminal"
+axiom auth providers set microsoft --environment production \
+  --client-id 00000000-0000-0000-0000-000000000000 \
+  --tenant organizations \
+  --allowed-tenant 11111111-1111-1111-1111-111111111111 \
+  --client-secret-stdin --enable < microsoft-client-secret.txt
+axiom auth providers test microsoft --environment production
+```
+
+`providers test` checks the credentials with Microsoft without signing anyone
+in and reports `ok` or `invalid_client`.
+
+| Option | Values |
+| --- | --- |
+| `--tenant` | `common` (work and personal accounts), `organizations` (work accounts), `consumers` (personal accounts) or one tenant ID |
+| `--allowed-tenant` | Up to 16 tenant IDs allowed with `common` or `organizations`. With none, any tenant may sign in, and the dashboard warns. |
+| `--scopes` | `openid` (always), `email`, `profile`. `offline_access` is never requested. |
+
+### How Microsoft identities are checked
+
+- The flow sends PKCE (S256) and a nonce.
+- The ID token's issuer must be
+  `https://login.microsoftonline.com/<tid>/v2.0` for the token's tenant `tid`,
+  and that tenant must match `--tenant` (and `--allowed-tenant` when set).
+  `consumers` accepts only Microsoft's personal-account tenant.
+- The user is identified by the issuer and `sub`. Microsoft's `sub` is
+  specific to your application, so changing the client ID creates new
+  accounts for returning users.
+- Microsoft does not guarantee that the `email` claim is verified or stable.
+  Axiom stores it as unverified and never uses it to link or refuse an account.
+
+## Sign in with Apple
+
+Sign in with Apple is **not available yet**. The integration is built: Apple
+Services ID, Team ID, Key ID and a `.p8` key, a fresh ES256 client secret
+signed for each token request and never stored, Apple's `form_post` response,
+private relay addresses and the name Apple sends only on the first
+authorization. It has been tested only against a simulated Apple service.
+Until real Apple sign-in is qualified:
+
+- The dashboard shows Apple as **Not available yet**.
+- Turning it on for an environment is refused with `AXAUTH_FEATURE_DISABLED`.
+
+When it becomes available, configuration will use
+`axiom auth providers set apple` with `--client-id`, `--team-id`, `--key-id`
+and `--private-key-file` (the key is read from the file, never an argument),
+and the callback URL
+`https://auth.axiomcore.dev/<project_id>/<environment_id>/v1/providers/apple/callback`.
+Apple's server-to-server notifications (consent revoked, account deleted)
+will not be processed.
+
+## Turning a provider off
+
+Turning Microsoft off refuses new sign-ins with it (`method_disabled`).
+Existing sessions follow the environment's rules for disabled methods.
+
+## Next steps
+
+- [Third-party identity: Supabase, Auth0, Clerk and custom issuers](/authentication/third-party)
+- [Multi-factor authentication and passkeys](/authentication/mfa)

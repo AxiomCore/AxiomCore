@@ -1,0 +1,138 @@
+---
+title: Phone verification and SMS codes
+description: Connect your own Twilio account to verify phone numbers and send SMS second-factor codes, set spend caps and country allowlists, and understand who pays and what SMS does not protect against.
+pageType: guide
+---
+
+<StatusNote status="coming-soon" title="Phone verification and SMS">
+  Phone verification and SMS codes are **Coming soon**, for **Pro** environments
+  only. They are switched off: you cannot turn them on for an environment
+  yet. The Twilio integration is built and tested against a simulated Twilio
+  API. Sending real SMS through Twilio has not been qualified yet, so do not
+  rely on delivery until this note changes. A released CLI with the `axiom auth
+  sms` commands is **Coming soon**.
+</StatusNote>
+
+Users of a Pro environment can verify a phone number and use an SMS code as a
+second factor. Messages go out through **your own Twilio account**: Axiom
+never sends SMS from its own account. Phone numbers are used only for
+verification and the SMS factor; there is no sign-in by phone number.
+
+SMS is the weakest second factor. A code can be intercepted or redirected
+through SIM swapping, so SMS never counts as phishing resistant: a guard that
+requires `phr` refuses an SMS session. Prefer an authenticator app or a
+passkey and offer SMS as a fallback. See
+[Multi-factor authentication](/authentication/mfa).
+
+## Costs
+
+| Cost | Who pays |
+| --- | --- |
+| Each SMS and phone number | Twilio bills your Twilio account at its own prices |
+| Axiom | No per-message charge. Sends count against the hard caps you set below. |
+
+Set the monthly cap from your Twilio budget. When a cap is reached, sends are
+refused, never queued.
+
+## Set up Twilio
+
+You need a Twilio account, either a Messaging Service or a sender phone
+number, and one of:
+
+- the account's **Auth Token**, which also lets Axiom verify Twilio's delivery
+  status callbacks, or
+- an **API key** SID and secret. Twilio signs status callbacks only with the
+  Auth Token, so with an API key the delivery status is shown as "not
+  tracked".
+
+Only an **Owner** can configure SMS. The secret is read from standard input
+or a masked prompt, never from a command-line argument, and is never shown
+again.
+
+```bash title="Terminal"
+axiom auth sms set --environment production \
+  --account-sid ACXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX \
+  --auth-token-stdin \
+  --messaging-service MGXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX \
+  --country US --country GB \
+  --monthly-cap 500 \
+  --enable < twilio-auth-token.txt
+```
+
+Use `--api-key-sid SK... --api-key-secret-stdin` instead of
+`--auth-token-stdin` for API key credentials, and `--from-number` instead of
+`--messaging-service` for a single sender number. Then send one test message
+to an allowlisted number (5 per day):
+
+```bash title="Terminal"
+axiom auth sms test --environment production --to +15555550123
+```
+
+The result is `ok`, `auth_failed`, `refused_number` or `unreachable`. Then add
+`sms` to the environment's `mfa_factors` setting.
+
+## Spend limits
+
+| Limit | Value |
+| --- | --- |
+| Monthly per environment | `--monthly-cap`, required, 1 to 10,000. Axiom records a project notice at 80% and at 100%. |
+| Daily per environment | `--daily-cap`, default 100 |
+| Hourly per environment | `--hourly-cap`, default 30, at most 60 |
+| Per phone number | 3 per hour, 5 per day |
+| Per user | 10 per day |
+| Per IP address | 5 per hour for phone verification |
+| Per MFA ticket | 3 sends |
+| Platform | A breaker across all environments stops every send if the platform as a whole sends 500 an hour |
+
+When `captcha` is on and a Turnstile site key is set, phone verification sends
+need a captcha token.
+
+## Codes and flows
+
+Codes are 6 digits, valid for 300 seconds, with 5 attempts and a 60-second
+resend cooldown. The message body is
+`<code> is your <app name> verification code.` and contains no link.
+
+```ts title="phone.ts (partial)"
+const { challengeId } = await auth.addPhone('+15555550123');   // recent sign-in needed
+await auth.verifyPhone(challengeId, codeFromSms);
+await auth.enableSmsFactor();                                  // adds the SMS factor
+```
+
+| Method and path | Body | Success |
+| --- | --- | --- |
+| `POST /v1/phone` | `{"phone","captcha_token"?}` | `202 {"challenge_id","expires_in":300,"resend_after":60}` |
+| `POST /v1/phone/verify` | `{"challenge_id","code"}` | `200 {"phone":{"masked","verified_at"}}` |
+| `DELETE /v1/phone` | None | `200 {"removed":true}`; also removes the SMS factor |
+| `POST /v1/factors/sms` | `{}` | `201` with the factor |
+| `POST /v1/mfa/sms/send` | `{"ticket","factor_id"}` | `202`, during a second-factor sign-in |
+
+Numbers must be valid E.164 numbers in an allowed country, not premium-rate
+or shared-cost, and not another user's (`AXAUTH_PHONE_NOT_ALLOWED`). Adding or
+removing a phone needs a recent sign-in, and `aal2` when the user has a
+factor. Free environments get `AXAUTH_FEATURE_DISABLED` on every phone route.
+
+## Delivery status
+
+With Auth Token credentials, Twilio posts delivery status to the issuer, which
+verifies the `X-Twilio-Signature` header and stores only the message ID,
+status and error code. No number or message body is stored. The dashboard shows
+delivery counts. A Twilio `4xx` marks the code failed; `5xx` and timeouts
+answer `temporarily_unavailable` without a retry.
+
+## In preview branches
+
+[Preview branches](/cloud/branches) never send SMS. Phone verification codes
+are captured in the branch and readable with `axiom branch mail`. The SMS
+factor cannot be enrolled in a branch, and Twilio settings are refused there.
+
+## If SMS is turned off
+
+Turning SMS off stops new phone verifications and new SMS factors. Users who
+already have an SMS factor must use another factor or a recovery code; they
+never skip the second step.
+
+## Next steps
+
+- [Multi-factor authentication and passkeys](/authentication/mfa)
+- [Webhooks and claim hooks](/authentication/hooks)

@@ -1,0 +1,200 @@
+---
+title: Managed and external authentication
+description: What managed authentication is, the issuer each project environment gets, when to use it or keep your own identity provider, and the token lifetimes and monthly auth allowances of Free and Pro.
+pageType: concept
+---
+
+<StatusNote status="alpha" title="Managed authentication">
+  Managed authentication (signup, password sign-in, sessions, token exchange,
+  roles and permissions) is **Alpha**, checked on October 25, 2026 on managed
+  SQLite and managed PostgreSQL, for invited accounts: Axiom Cloud signup is
+  invite-only. Verifying its tokens in a deployed Axiom
+  server and the CLI scaffold for that are **Coming soon**: a released CLI with
+  these commands is **Coming soon**. Dashboard pages for enabling and
+  administering authentication are **Coming soon**.
+</StatusNote>
+
+Managed authentication lets the users of your application sign up, sign in
+and stay signed in without you running an identity service. Axiom Cloud keeps
+their accounts and sessions in your environment's managed database, signs
+short-lived access tokens, and publishes the keys that verify them. Your
+backend accepts a request when its access token verifies.
+
+This identity is separate from Axiom Cloud membership. The people who own and
+maintain a project sign in to Axiom Cloud; the people who use your application
+sign in to your environment's issuer.
+
+## One issuer per environment
+
+Each [project environment](/cloud/releases-and-environments) has its own
+issuer:
+
+```text title="Issuer URL"
+https://auth.axiomcore.dev/<project_id>/<environment_id>
+```
+
+Both IDs are lowercase UUIDs. The issuer has no trailing slash and is
+compared byte for byte. Users, sessions, roles and signing keys of one
+environment never apply to another, so a token from `staging` is refused by a
+server that trusts `production`.
+
+| Part | Where it lives |
+| --- | --- |
+| Users, password hashes, sessions, roles, permissions and organizations | Protected tables of the environment's [managed database](/cloud/project-resources): schema `auth` on PostgreSQL, `__axiom_auth_*` tables on SQLite. Application credentials cannot read or change them. |
+| Signing keys | Axiom Cloud. Keys never enter your database, your server or the client. |
+| Access tokens | Your client, which sends them to your backend as `Authorization: Bearer <token>`. |
+
+Authentication needs a `ready` managed database in the environment. The
+**Resources** page shows the database's auth status under its state, for
+example **Auth: not_configured**. `ready` means the authentication tables are
+installed and verified.
+
+## How a request is authenticated
+
+```mermaid title="A client signing in and calling its backend with an Axiom access token"
+sequenceDiagram
+  participant C as Client
+  participant I as Environment issuer
+  participant B as Your backend
+  C->>I: Sign in with email and password
+  I-->>C: Access token and refresh token
+  C->>B: Request with the access token
+  B->>I: Fetch the published keys and epoch, cached
+  B-->>C: Response when the token verifies
+  C->>I: Refresh before the access token expires
+  I-->>C: New access token
+```
+
+1. The client signs in, or exchanges a token from your own identity provider,
+   at the environment's issuer.
+2. The issuer returns an access token (at most 15 minutes) and a one-time
+   refresh token.
+3. Your backend verifies the access token against the issuer's published keys.
+   It never calls the issuer per request.
+4. Before the access token expires, the client trades its refresh token for a
+   new pair. See [Sessions and tokens](/authentication/sessions).
+
+## Managed or your own identity provider
+
+| You want | Use | What you get |
+| --- | --- | --- |
+| Email and password accounts without running a service | Managed authentication with password sign-in | Signup, sign-in, refresh, logout, password change, roles and permissions in the token. |
+| To keep your identity provider (for example Google) and add Axiom sessions and roles | Managed authentication with a **trusted issuer** and token exchange | The client sends your provider's token to `/v1/token/exchange` and receives an Axiom session. Roles and permissions come from Axiom, never from the external token. |
+| To keep your identity provider and its tokens end to end | No managed authentication. Configure the server's `jwt` provider | Your backend verifies your provider's tokens directly. See [Verify identity](/backend/policies#verified-identity). |
+
+An Axiom server never accepts a token from another issuer as an Axiom
+identity: external tokens are exchanged first. Exchange was checked with
+Google as the trusted issuer.
+
+### Trusted issuers and exchange
+
+A trusted issuer is an external OpenID-style token issuer that an environment
+accepts for exchange. An environment can trust at most 8. For each one the
+project owner sets the issuer, its JWKS URL, 1 to 4 accepted audiences, the
+allowed algorithms (`RS256`, `ES256` or `EdDSA`), the claim that identifies
+the user and whether unknown users are created.
+
+- Only the subject claim (default `sub`) identifies the user. `email`,
+  `preferred_username` and `upn` cannot be the subject claim.
+- Email never links accounts. A password user and an exchanged user with the
+  same address stay two users.
+- Exchanged users are created only when the trusted issuer allows it; this is
+  off by default. Otherwise an unknown identity gets `AXAUTH_SIGNUP_DISABLED`.
+- External tokens must carry `iat` and be at most 1 hour old by default (at
+  most 24 hours when configured).
+- An exchanged session lasts 24 hours by default (1 hour to 7 days, never
+  longer than the environment's session lifetime). Editing or disabling the
+  trusted issuer ends its exchanged sessions at their next refresh.
+- Revocation at your provider is not seen before the exchanged session ends,
+  unless you also ban the user in Axiom.
+
+Issuers under `https://auth.axiomcore.dev/` are never trusted for exchange.
+
+## Signup policy
+
+Signup is `closed` by default. A project owner opens it for an environment.
+Signup is rate limited, but it is not enumeration-safe: signing up with a
+taken address returns `AXAUTH_ACCOUNT_EXISTS`. Unless the environment requires
+a verified email address, addresses are not verified, so anyone can register
+an address they do not own. Email verification, password reset, email codes
+and magic links, and Google and GitHub sign-in are part of the managed
+authentication Alpha; see the
+[platform changes](/cloud/changelog#managed-authentication-alpha). Sign-in
+does not reveal whether an account exists.
+
+## Token and session lifetimes
+
+| Setting | Free | Pro | Takes effect |
+| --- | --- | --- | --- |
+| Access token lifetime | 15 minutes by default; 10 to 15 minutes allowed | 5 minutes by default; 5 to 15 minutes allowed | Next token |
+| Session lifetime | 30 days by default; 1 to 90 days | Same | New sessions; a shorter value applies to existing sessions at their next refresh |
+| Idle lifetime | 7 days by default; 1 hour to 30 days, at most the session lifetime | Same | Each refresh |
+| Active sessions per user | 10; the oldest ends when an 11th starts | Same | Sign-in and exchange |
+
+No access token lives longer than 15 minutes. The plan is read at every
+issuance, so an upgrade to Pro applies to the next token.
+
+## Monthly auth allowance
+
+Authentication writes are metered separately from your application's database
+work. Each environment has a monthly **auth row reserve** (calendar month,
+UTC). Auth rows never count toward the application's rows-written allowance,
+and authentication is never refused because a database usage stop is in
+effect.
+
+| Allowance per environment per month | Free | Pro with SQLite | Pro with PostgreSQL |
+| --- | --- | --- | --- |
+| Auth rows written (the reserve) | 25,000 | 25,000 | 250,000 |
+| Rows per user (sign-ins and refreshes only) | 6,000 | 20,000 | 60,000 |
+| New users per day (signup and exchanged users) | 100 | 100 | 1,000 |
+
+Approximate rows written per operation: a refresh that issues a new refresh
+token 1, an early refresh 0, a password sign-in 2, a signup 4, a logout 1,
+logout everywhere 2, a password change 4. The meter uses what the database
+reports, which can be higher.
+
+| Level | Who is refused | Code |
+| --- | --- | --- |
+| A user reaches the per-user cap | That user's sign-ins, exchanges and refreshes for the rest of the month. Early refreshes keep working until the current access token expires. | `AXAUTH_QUOTA` |
+| New users per day reached, or user creation reaches 40% of the reserve | Signup and creation of exchanged users | `AXAUTH_QUOTA` |
+| 100% of the reserve | Creation of new users for the month. Existing users are unaffected. | `AXAUTH_QUOTA` |
+| 200% of the reserve | Heavy users (more than 10% of the reserve this month: 2,500 rows on Free and Pro with SQLite, 25,000 on Pro with PostgreSQL) cannot sign in, exchange or refresh. Signups and new exchanged users are refused. Other users keep signing in and refreshing. | `AXAUTH_RESERVE_EXHAUSTED` |
+| 300% of the reserve | Every operation outside the never-refused set, until the next month | `AXAUTH_RESERVE_EXHAUSTED` |
+
+The **never-refused set** is served at every level, during database usage
+stops and at the 300% ceiling: logout, logout everywhere, session revocation,
+ban, unban, password change, and role and assignment changes made by project
+maintainers.
+
+## Boundaries
+
+- No cookies in this version. Tokens are returned in JSON, so the client
+  stores the refresh token itself.
+- Browser requests that send an `Origin` header are answered only for the
+  environment's allowed origins. The list is empty by default.
+- Client SDK helpers for sign-in and refresh (`@axiomcore/auth-web`) are not
+  published yet and are **Coming soon**. Call the
+  HTTP endpoints and pass the access token to your SDK's auth token methods.
+- Do not replicate authentication tables into browsers or mobile devices.
+
+## More sign-in and integration features
+
+These features are built but switched off, and are **Coming soon** for
+customers. Each page states its limits.
+
+| Feature | Page |
+| --- | --- |
+| Authenticator apps, recovery codes, passkeys, step-up and assurance guards | [Multi-factor authentication and passkeys](/authentication/mfa) |
+| Phone verification and SMS codes through your own Twilio account (Pro) | [Phone verification and SMS codes](/authentication/phone) |
+| Microsoft sign-in; Sign in with Apple (not available yet) | [Sign in with Microsoft and Apple](/authentication/social) |
+| Supabase Auth, Auth0 and Clerk presets, upstream MFA mapping, token diagnostics | [Third-party identity](/authentication/third-party) |
+| OAuth applications and OpenID Connect endpoints | [OAuth applications and the OIDC issuer](/authentication/oidc) |
+| Signed event webhooks and claim hooks | [Webhooks and claim hooks](/authentication/hooks) |
+| Roles and permissions as signed, reviewed policy releases | [Auth policy releases and impact](/authentication/policy-releases) |
+| A local issuer for development, and settings promotion | [Develop sign-in locally](/authentication/local-emulation) |
+
+## Next steps
+
+- [Sign in, refresh and log out](/authentication/sessions)
+- [Put roles and permissions in tokens](/authentication/roles-permissions)
+- [Verify access tokens in your backend](/authentication/verify-tokens)

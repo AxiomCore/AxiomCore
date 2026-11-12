@@ -1,0 +1,218 @@
+---
+title: Webhooks and claim hooks
+description: Receive signed authentication events at your own endpoint, verify their Standard Webhooks signatures, and use bounded HTTP hooks to approve new users, grant roles and add claims to tokens.
+pageType: reference
+---
+
+<StatusNote status="coming-soon" title="Webhooks and claim hooks">
+  Event webhooks and claim hooks are **Coming soon**. They are built and
+  checked in production but switched off: you cannot turn them on for an
+  environment yet. A released CLI with the `axiom auth webhooks` and `axiom auth
+  hooks` commands is **Coming soon**.
+</StatusNote>
+
+An environment can call your HTTPS endpoints in two ways:
+
+| Kind | Direction | Use it to |
+| --- | --- | --- |
+| **Event webhook** | After a change commits, Axiom posts a signed event | Keep your own systems in step: audit, analytics, provisioning |
+| **Claim hook** | During signup or sign-in, Axiom asks your endpoint and waits for the answer | Approve or refuse new users, grant them roles, add claims to their tokens |
+
+No customer code runs inside Axiom. Both kinds call a URL you host, with a
+fixed request that never contains passwords, codes, refresh tokens, provider
+tokens, signing keys or any secret. Only an **Owner** can configure them.
+
+## Endpoint rules
+
+Every URL must use `https` on port 443 and resolve to a public address when
+Axiom connects. Redirects are not followed, and response bodies are read up to
+a small bound. Requests come from Axiom's `asia-southeast1` region without a
+fixed IP address, so you cannot allowlist Axiom by address: verify the
+signature instead.
+
+## Event webhooks
+
+```bash title="Terminal"
+axiom auth webhooks create --environment production \
+  --url https://hooks.example.com/axiom \
+  --event user.created --event user.deleted --event factor.reset \
+  --output-secret ./webhook-secret.txt --enable
+```
+
+The signing secret is returned once, in the Standard Webhooks format
+`whsec_` followed by base64. An environment holds at most **4** endpoints
+(**1** on Free).
+
+| Event types |
+| --- |
+| `user.created`, `user.deleted`, `user.banned`, `user.unbanned` |
+| `session.created`, `session.revoked` |
+| `password.changed`, `password.reset`, `email.changed` |
+| `identity.linked`, `identity.unlinked` |
+| `factor.enrolled`, `factor.removed`, `factor.reset` |
+| `oauth.consent_granted`, `oauth.consent_revoked` |
+
+Failed attempts, such as a wrong password, are never events.
+
+```json title="Webhook payload"
+{
+  "id": "0192f3c4-0000-7000-8000-000000000000",
+  "type": "factor.enrolled",
+  "occurred_at": "2026-11-01T10:00:00Z",
+  "project_id": "PROJECT_ID",
+  "environment_id": "ENVIRONMENT_ID",
+  "data": { "user_id": "<uuid>", "factor_type": "totp" }
+}
+```
+
+`data` holds `user_id` and, when they apply, `session_id`, `method`,
+`provider`, `factor_type` and `client_id`. Payloads never contain an email,
+name, phone number, IP address or token, and are at most 2 KiB. Look up
+anything else through your own records.
+
+### Verify the signature
+
+Each request carries Standard Webhooks headers:
+
+| Header | Value |
+| --- | --- |
+| `webhook-id` | The event ID; use it to deduplicate |
+| `webhook-timestamp` | Unix seconds |
+| `webhook-signature` | `v1,<base64 HMAC-SHA-256>` over `<webhook-id>.<webhook-timestamp>.<raw body>`, keyed by the base64-decoded part of the secret |
+
+Any Standard Webhooks or Svix library verifies these as they are. Without a
+library:
+
+```ts title="verify-webhook.ts"
+import { createHmac, timingSafeEqual } from 'node:crypto';
+
+export function verifyAxiomWebhook(secret: string, headers: Headers, rawBody: string): boolean {
+  const id = headers.get('webhook-id');
+  const timestamp = headers.get('webhook-timestamp');
+  const signatures = headers.get('webhook-signature');
+  if (!id || !timestamp || !signatures) return false;
+  if (Math.abs(Date.now() / 1000 - Number(timestamp)) > 300) return false; // 5-minute window
+  const key = Buffer.from(secret.replace(/^whsec_/, ''), 'base64');
+  const expected = createHmac('sha256', key).update(`${id}.${timestamp}.${rawBody}`).digest();
+  return signatures.split(' ').some((entry) => {
+    const [version, value] = entry.split(',');
+    if (version !== 'v1' || !value) return false;
+    const given = Buffer.from(value, 'base64');
+    return given.length === expected.length && timingSafeEqual(given, expected);
+  });
+}
+```
+
+Verify against the raw request body, before parsing it. During a secret
+rotation both the new and the previous secret sign each request for 24
+hours, so the header holds two `v1,` entries.
+
+### Delivery
+
+| Rule | Behavior |
+| --- | --- |
+| Guarantee | At least once, unordered. An event is sent if and only if its change committed. Deduplicate on `webhook-id`. |
+| Success | Any `2xx` within 5 seconds |
+| Retries | After 1 min, 5 min, 30 min, 2 h, 6 h, 12 h and 24 h: 8 attempts over about 45 hours, then `failed` |
+| `410 Gone` | No retry; the endpoint is disabled (attempts already scheduled may still arrive for up to 5 minutes) |
+| Repeated failures | 20 consecutive failed attempts disable the endpoint and notify the Owners |
+
+```bash title="Terminal"
+axiom auth webhooks test WEBHOOK_ID                 # sends a ping event; 10 per hour
+axiom auth webhooks deliveries WEBHOOK_ID --state failed
+axiom auth webhooks replay WEBHOOK_ID DELIVERY_ID   # while the event is kept (72 hours after it settles)
+axiom auth webhooks rotate-secret WEBHOOK_ID --output-secret ./new-webhook-secret.txt
+```
+
+## Claim hooks
+
+There are two hook kinds, one URL each per environment:
+
+| Kind | Called | Your answer |
+| --- | --- | --- |
+| `before_user_create` | Before every new user is created: signup, first email-code, magic-link or provider sign-in, invitation acceptance, and a new user at token exchange | `{"decision":"allow"\|"deny","roles":[...]}` with 0 to 8 role names |
+| `token_claims` | When a session is created: sign-in, second-factor completion, exchange, OAuth authorization. Never on refresh. | `{"claims":{...}}` |
+
+```bash title="Terminal"
+axiom auth hooks set before_user_create --environment production \
+  --url https://hooks.example.com/axiom/new-user \
+  --policy deny --timeout-ms 2000 \
+  --grantable-role member --grantable-role beta \
+  --output-secret ./hook-secret.txt --enable
+axiom auth hooks test before_user_create --sample new_user
+```
+
+`hooks test` calls your endpoint with a synthetic user, never real data, and
+reports the result, the latency and whether the answer is valid.
+
+### Request
+
+Hook requests are `POST` JSON signed exactly like webhooks, with the hook's
+own secret:
+
+```json title="Hook request"
+{
+  "type": "before_user_create",
+  "id": "<invocation id>",
+  "environment_id": "ENVIRONMENT_ID",
+  "occurred_at": "2026-11-01T10:00:00Z",
+  "user": { "id": "<planned user id>", "kind": "password", "email_verified": true, "providers": [] },
+  "method": "password",
+  "amr": ["pwd"],
+  "acr": "aal1"
+}
+```
+
+`user.email` is included only when the Owner turns on `--include-email`,
+which the dashboard marks as a disclosure of personal data. `client_id` is
+present for OAuth authorizations.
+
+### Response rules
+
+Answer `200` with strict JSON of at most 4 KiB within the timeout (100 to
+10,000 ms). Every role must exist and be one of the hook's grantable roles.
+Claims are an object of at most 1 KiB with at most 16 keys matching
+`^[a-z][a-z0-9_]{0,31}$`; values are strings of at most 256 bytes, numbers,
+booleans, or arrays of at most 16 strings.
+
+### Failure policy
+
+Any timeout, non-`200` status, invalid answer or network error is a **hook
+failure**. You choose what happens:
+
+| Policy | On failure |
+| --- | --- |
+| `deny` | Signup or sign-in is refused with `503 AXAUTH_HOOK_FAILED` (`Retry-After: 5`) and nothing is written |
+| `continue` | The user is created with **no** hook roles and tokens carry no hook claims; the failure is recorded in the audit log |
+
+A `deny` decision from your hook answers `403 AXAUTH_SIGNUP_DISABLED`, the same
+as closed signup. Roles from a hook are granted in the same transaction that
+creates the user, so a user is never created with only some of them. Hooks
+are not retried inside a sign-in, and a sign-in can still fail after your hook
+answered: make your endpoint free of side effects, or idempotent on the
+invocation `id`.
+
+After 20 failures in 5 minutes with no success, Axiom notifies the Owners
+that the hook is degraded. The policy keeps applying.
+
+### Where claims appear
+
+Claims from `token_claims` are stored with the session and copied into every
+refreshed token as `axiom_claims`. They reach OAuth clients' userinfo and
+anyone who verifies the access token. Acore guards cannot read
+`axiom_claims`.
+
+## When webhooks or hooks are turned off
+
+| Off | Effect |
+| --- | --- |
+| Webhooks | No new events are queued; queued deliveries keep draining |
+| Hooks | Hooks are not called. `before_user_create` with `deny` refuses new users; with `continue` users are created without hook roles. `token_claims` adds no claims. |
+
+[Preview branches](/cloud/branches) never call webhooks or hooks, and refuse
+their configuration.
+
+## Next steps
+
+- [Multi-factor authentication and passkeys](/authentication/mfa)
+- [Roles and permissions](/authentication/roles-permissions)

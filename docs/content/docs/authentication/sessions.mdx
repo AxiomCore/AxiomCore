@@ -1,0 +1,265 @@
+---
+title: Sessions and tokens
+description: Sign users up and in, refresh and rotate tokens, log out, and read the access-token claims, discovery, JWKS and epoch documents, revocation bounds and AXAUTH error codes of managed authentication.
+pageType: reference
+---
+
+<StatusNote status="alpha" title="Managed authentication endpoints">
+  The endpoints on this page are **Alpha**, checked on October 25, 2026 on
+  managed SQLite and managed PostgreSQL, for invited accounts (Axiom Cloud
+  signup is invite-only). Client SDK helpers for them are **Coming soon**.
+</StatusNote>
+
+Every endpoint is relative to the environment's issuer,
+`https://auth.axiomcore.dev/<project_id>/<environment_id>`. The examples set
+it once:
+
+```bash title="Terminal"
+ISSUER="https://auth.axiomcore.dev/PROJECT_ID/ENVIRONMENT_ID"
+```
+
+Replace `PROJECT_ID` and `ENVIRONMENT_ID` with the lowercase UUIDs of your
+project and environment.
+
+## Request rules
+
+- Bodies are strict JSON: unknown fields and duplicate keys are refused with
+  `AXAUTH_INVALID_REQUEST`. Bodies are at most 16 KiB (32 KiB for exchange).
+- Token responses carry `Cache-Control: no-store`.
+- Errors are `{"error":{"code":"AXAUTH_..."}}`. `429` and `503` responses carry
+  `Retry-After`.
+- A request with an `Origin` header is answered only when the origin is in the
+  environment's allowed origins; otherwise `403 AXAUTH_ORIGIN`. Requests
+  without `Origin` are accepted. No cookies are set.
+- An unknown project or environment, or an environment where authentication
+  is not enabled or not ready, answers `404 AXAUTH_NOT_FOUND`.
+
+## Endpoints
+
+| Method and path | Authorization | Body | Success |
+| --- | --- | --- | --- |
+| `POST /v1/signup` | None | `{"email","password","audience"?}` | `201` with tokens |
+| `POST /v1/sign-in/password` | None | `{"email","password","tenant"?,"audience"?}` | `200` with tokens |
+| `POST /v1/token/refresh` | None | `{"refresh_token","tenant"?,"audience"?}` | `200` with tokens |
+| `POST /v1/token/exchange` | None | `{"subject_token","subject_token_type":"urn:ietf:params:oauth:token-type:jwt","tenant"?,"audience"?}` | `200` with tokens |
+| `POST /v1/logout` | None | `{"refresh_token"}` | `200 {"ended":true}` for any token |
+| `POST /v1/logout-all` | None | `{"refresh_token"}` (the current one) | `200 {"ended":true}` |
+| `POST /v1/password` | `Bearer <access token>` | `{"current_password","new_password"}` | `200 {"changed":true}` |
+| `GET /.well-known/openid-configuration` | None | None | `200` discovery |
+| `GET /.well-known/jwks.json` | None | None | `200` public keys |
+| `GET /epoch` | None | None | `200` epoch |
+
+`?` marks an optional field. `audience` selects one of the environment's
+configured audiences (default the first, which is `<issuer>/api` unless the
+owner changed it). `tenant` selects an organization the user is an active
+member of; see [Roles and permissions](/authentication/roles-permissions).
+
+### Token response
+
+```json title="Token response shape"
+{
+  "access_token": "<compact JWS>",
+  "token_type": "Bearer",
+  "expires_in": 900,
+  "refresh_token": "axr1_...",
+  "refresh_expires_at": "2026-11-01T10:00:00Z",
+  "session": { "id": "<uuid>", "absolute_expires_at": "2026-11-24T10:00:00Z", "tenant": null },
+  "user": { "id": "<uuid>", "kind": "password", "email": "user@example.com" }
+}
+```
+
+`expires_in` is in seconds. `refresh_expires_at` is the time after which the
+refresh token can no longer be used: the earlier of the idle and absolute
+session expiry. `user.kind` is `password` or `external`; `email` is present
+for password users only.
+
+## Sign up and sign in
+
+```bash title="Terminal"
+curl -sS -X POST "$ISSUER/v1/signup" \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"user@example.com","password":"a long passphrase"}'
+```
+
+Signup answers `201` with tokens, `409 AXAUTH_ACCOUNT_EXISTS` for a taken
+address, and `403 AXAUTH_SIGNUP_DISABLED` while signup is closed (the
+default). Sign-in uses the same body at `/v1/sign-in/password` and answers
+`200`.
+
+Passwords are 8 to 128 characters after Unicode normalization, at most 512
+bytes of UTF-8, with no control characters, and must differ from the email
+address. There are no composition rules. Other passwords get
+`400 AXAUTH_WEAK_PASSWORD`. Passwords are stored as Argon2id hashes.
+
+Sign-in is enumeration-safe: an unknown email, a wrong password and an
+external user without a password all get the same `401
+AXAUTH_INVALID_CREDENTIALS` and the same work. `403 AXAUTH_USER_DISABLED`
+(a banned user) is returned only after a correct password.
+
+## Refresh
+
+```bash title="Terminal"
+curl -sS -X POST "$ISSUER/v1/token/refresh" \
+  -H 'Content-Type: application/json' \
+  -d '{"refresh_token":"axr1_..."}'
+```
+
+Refresh tokens are one-time. A refresh does one of three things:
+
+| Situation | Result |
+| --- | --- |
+| The session's last rotation (or its sign-in) is older than the access token lifetime minus 120 seconds (13 minutes with 15-minute tokens, 3 minutes with 5-minute tokens) | **Rotation:** a new access token and a new refresh token. The old refresh token is spent. |
+| Earlier than that | **Early refresh:** the current access token's lifetime is not extended. The response carries an access token that expires no later than the last one and the **same** refresh token. Nothing is written. More than 10 early refreshes in one interval get `429 AXAUTH_REFRESH_TOO_SOON`, and so does an early refresh that asks for a different `tenant`. |
+| The refresh token was already spent | **Reuse:** the whole session ends. That token and its successor are refused with `401 AXAUTH_INVALID_REFRESH`. |
+
+Two concurrent refreshes with one token commit at most one rotation; the
+loser counts as reuse and ends the session. Make one refresh at a time per
+session, and store the new refresh token before using it. There is no grace
+window, so a rotation response lost in transit also ends the session: sign
+in again.
+
+`503 AXAUTH_UNAVAILABLE` means nothing changed: retry later with the same
+refresh token. In the rare case where Axiom cannot tell whether a rotation
+committed, the retry counts as reuse and the user signs in again.
+
+## Log out
+
+| Request | Effect |
+| --- | --- |
+| `POST /v1/logout` with a refresh token | Ends that session. Always answers `{"ended":true}`, so it reveals nothing about the token. |
+| `POST /v1/logout-all` with the current refresh token | Ends every session of the user, including this one, at their next refresh. |
+| `POST /v1/password` with an access token | Changes the password. The user's other sessions end at their next refresh. |
+
+Logout never ends an access token that was already issued; it expires on its
+own (see [Revocation bounds](#revocation-bounds)). Logout and logout
+everywhere are never refused for quota.
+
+## Access tokens
+
+An access token is a compact JWS of at most 8 KiB, signed with Ed25519. Its
+header is exactly:
+
+```json title="Access token header"
+{"alg":"EdDSA","typ":"at+jwt","kid":"<kid>"}
+```
+
+| Claim | Value |
+| --- | --- |
+| `iss` | The environment's issuer. |
+| `aud` | One string: the audience the request selected. |
+| `sub` | The user ID, a lowercase UUID. |
+| `sid` | The session ID, a lowercase UUID. |
+| `iat`, `nbf` | Issuance time in seconds; `nbf` equals `iat`. |
+| `exp` | At most the access token lifetime after `iat`, and never after the session's absolute expiry or the earliest end of a role assignment that contributed. |
+| `jti` | 16 random bytes, base64url. |
+| `token_use` | `"access"`. |
+| `amr` | `["pwd"]` for password sessions, `["ext"]` for exchanged sessions. |
+| `auth_time` | When the sign-in or exchange that created the session happened. |
+| `roles` | Sorted effective role names, at most 32. |
+| `permissions` | Sorted effective permission names, at most 128. |
+| `tenant` | The selected organization ID; absent when none is selected. |
+| `authz_ver` | A number that increases whenever the user's authorization changes. |
+| `epoch` | The environment's epoch at issuance. |
+| `idp` | Exchanged sessions only: the trusted issuer. |
+
+Tokens carry no `scope`, `email`, `name` or custom claims. To verify them, see
+[Verify access tokens](/authentication/verify-tokens).
+
+## Discovery, JWKS and epoch
+
+These documents are public, are not rate limited and never wake your
+database. They are served while the environment has signing keys, even when
+its database is suspended, and answer `404` only when it has none.
+
+| Path | Body | Caching |
+| --- | --- | --- |
+| `/.well-known/openid-configuration` | `{"issuer","jwks_uri","axiom_epoch_uri","axiom_access_token_alg":"EdDSA"}` | `public, max-age=300` |
+| `/.well-known/jwks.json` | `{"keys":[{"kty":"OKP","crv":"Ed25519","x","kid","alg":"EdDSA","use":"sig"}],"axiom_keys_rev":<int>}` | `public, max-age=300`, strong `ETag` |
+| `/epoch` | `{"epoch":<int>,"keys_rev":<int>,"emergency":<bool>}` | `public, max-age=15` |
+
+The discovery document is not an OpenID provider configuration: it names only
+the keys, the epoch and the algorithm.
+
+- **Keys.** The JWKS holds at most 3 keys, the signing key first. A new key is
+  published at least 10 minutes before it signs. A replaced key stays
+  published until the tokens it signed have expired. Keys are replaced
+  automatically before they are 180 days old. `axiom_keys_rev` increases
+  whenever the published set changes.
+- **Epoch.** The epoch increases when a project owner ends every session of
+  the environment or retires a key for cause. Tokens carry the epoch they were
+  issued in. `keys_rev` in the epoch response says which key set is current;
+  `emergency` is true when that key set came from retiring a key for cause.
+
+## Revocation bounds
+
+How long an access token that was already issued keeps working. "TTL" is the
+configured access token lifetime (Free default 15 minutes, Pro default 5
+minutes, maximum 15 minutes). The **epoch bound** is 65 seconds (the issuer's
+5-second snapshot plus 60 seconds) while the issuer is reachable after the
+server's first successful fetch; otherwise until `exp`; requests are refused
+before the first fetch. The Axiom server column applies to the `axiomAuth`
+verifier, which is **Coming soon**.
+
+| Event | Sessions and refresh | Access tokens already issued, Axiom server | Other verifiers |
+| --- | --- | --- | --- |
+| Logout | That session refused at once | Until `exp` | Until `exp` |
+| Logout everywhere, password change | Other sessions refused at next refresh | Until `exp` | Until `exp` |
+| Ban | Sign-in, exchange and refresh refused once committed | Until `exp` | Until `exp` |
+| Role, permission, assignment, membership or organization change | The next token reflects it | Until `exp` (an assignment's end date caps `exp`) | Until `exp` |
+| Trusted issuer edited or disabled | Exchanged sessions refused at next refresh | Until `exp` | Until `exp` |
+| Idle or absolute session expiry | Refused | Until `exp` (never after the absolute expiry) | Until `exp` |
+| Signing key replaced normally | None | None (it retires after its tokens expire) | None |
+| Signing key retired for cause | The issuer stops signing with it at once; epoch and key set advance | Epoch bound (the server sees the new epoch and refetches the keys until they match) | Until their cached JWKS refreshes |
+| Every session ended (epoch advance) | All sessions refused at next refresh | Epoch bound | Until `exp` |
+| Authentication disabled | Signup, sign-in, exchange and refresh refused; logout allowed | Until `exp` | Until `exp` |
+| Database usage stop | None | None | None |
+| Database suspend, delete or access rotation | Refused while the database is not `ready` | Until `exp` | Until `exp` |
+| Per-user cap | That user's new sessions and rotations refused | Until `exp` | Until `exp` |
+| Auth reserve at 200% | Heavy users' sign-ins and rotations, signups and new exchanged users refused (`AXAUTH_RESERVE_EXHAUSTED`); other users unaffected | Until `exp` | Until `exp` |
+| Auth reserve at 300% | Everything outside the never-refused set refused | Until `exp` | Until `exp` |
+| Never-refused set (logout, logout everywhere, session revocation, ban, unban, password change, role and assignment changes) | Served at every level, during database usage stops and at the ceiling | Their own bounds above | Their own bounds above |
+| Signing failure during refresh, sign-in or exchange | Nothing committed; the same refresh token stays valid | None issued | None issued |
+| Revocation at an external identity provider | Not seen before the exchanged session ends, unless the user is banned in Axiom | Until `exp` | Until `exp` |
+
+## Rate limits
+
+| Operation | Limit |
+| --- | --- |
+| Sign-in per IP address | 30 per 5 minutes |
+| Failed sign-ins per account | 10 per 15 minutes, then 3 per 15 minutes for each account and IP address, so other addresses cannot lock the owner out |
+| Successful sign-ins per account | 10 per hour |
+| Signup per IP address / per environment | 5 per hour / 100 per hour |
+| Refresh per IP address | 120 per minute |
+| Exchange per IP address / per external user | 60 per minute / 10 per minute |
+| Password change per user | 5 per hour |
+| Logout and logout everywhere per IP address | 60 per minute |
+| Discovery, JWKS and epoch | Not rate limited |
+
+IPv4 addresses count individually; IPv6 addresses count per `/64`. Limits
+answer `429 AXAUTH_RATE_LIMITED` with `Retry-After`.
+
+## Error codes
+
+| Code | HTTP | Meaning |
+| --- | --- | --- |
+| `AXAUTH_INVALID_REQUEST` | 400 | Malformed body, field, email or audience. |
+| `AXAUTH_WEAK_PASSWORD` | 400 | The password breaks the password rules. |
+| `AXAUTH_INVALID_CREDENTIALS` | 401 | Unknown email, wrong password, or an external user. |
+| `AXAUTH_INVALID_REFRESH` | 401 | The refresh token is malformed, unknown, spent, or its session ended or expired. |
+| `AXAUTH_INVALID_TOKEN` | 401 | The bearer token or the external token is invalid. |
+| `AXAUTH_USER_DISABLED` | 403 | The user is banned (after a correct password or a valid external token). |
+| `AXAUTH_SIGNUP_DISABLED` | 403 | Signup is closed, or the trusted issuer does not create users. |
+| `AXAUTH_TENANT_DENIED` | 403 | The requested `tenant` is not an active membership. |
+| `AXAUTH_ORIGIN` | 403 | The `Origin` is not allowed. |
+| `AXAUTH_NOT_FOUND` | 404 | Unknown issuer path, or authentication not enabled or not ready. |
+| `AXAUTH_ACCOUNT_EXISTS` | 409 | Signup for a taken address. |
+| `AXAUTH_REFRESH_TOO_SOON` | 429 | More than 10 early refreshes in one interval, or an early refresh for a different tenant. |
+| `AXAUTH_RATE_LIMITED` | 429 | A rate limit. |
+| `AXAUTH_QUOTA` | 429 | A per-user, new-user or monthly reserve cap. See [Monthly auth allowance](/authentication#monthly-auth-allowance). |
+| `AXAUTH_RESERVE_EXHAUSTED` | 429 | The environment is at 200% of its auth reserve (heavy users and new users) or 300% (everything outside the never-refused set). |
+| `AXAUTH_UNAVAILABLE` | 503 | Temporarily unavailable. Nothing changed; retry with the same refresh token. |
+
+## Next steps
+
+- [Put roles and permissions in tokens](/authentication/roles-permissions)
+- [Verify access tokens in your backend](/authentication/verify-tokens)

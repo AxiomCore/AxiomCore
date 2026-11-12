@@ -1,0 +1,127 @@
+---
+title: Third-party identity with Supabase, Auth0 and Clerk
+description: Exchange tokens from Supabase Auth, Auth0, Clerk or another OIDC issuer for environment sessions using presets, map upstream MFA, test a token safely, and know which system owns logout, refresh, deletion and MFA.
+pageType: guide
+---
+
+<StatusNote status="coming-soon" title="Issuer presets and diagnostics">
+  The Supabase Auth, Auth0 and Clerk presets, the diagnostic token test and
+  upstream MFA mapping are **Coming soon**: they are built but switched off. Token exchange with a custom
+  trusted issuer is part of [managed authentication](/authentication) today.
+  A released CLI with the `axiom auth trusted-issuers` commands is **Coming
+  soon**.
+</StatusNote>
+
+If your users already sign in with Supabase Auth, Auth0 or Clerk, your client
+can trade their token for an environment session at
+`POST /v1/token/exchange`. The environment then issues its own access and
+refresh tokens, with roles and permissions from its own
+[roles and permissions](/authentication/roles-permissions). The external
+system keeps the passwords. See
+[Managed and external authentication](/authentication#managed-or-your-own-identity-provider)
+for the exchange rules that apply to every trusted issuer.
+
+A **preset** fills in the expected settings for one provider and adds checks
+that stop its known pitfalls. It never relaxes a core rule, and you can see
+and edit every field before you save. A row that drops a preset's checks must
+be saved as `custom`.
+
+## Presets
+
+| Preset | Issuer | Defaults and checks |
+| --- | --- | --- |
+| `supabase` | `https://<project ref>.supabase.co/auth/v1` | JWKS `<issuer>/.well-known/jwks.json`; `ES256` or `RS256` (your Supabase project must use asymmetric JWT signing keys; legacy HS256 secrets are refused); audience `authenticated`; required claims `role` = `authenticated` and `is_anonymous` = `false`, so anonymous users are refused; email claim `email` (informational); maximum token age 3,600 seconds |
+| `auth0` | `https://<tenant>.<region>.auth0.com/` or your custom domain, with the trailing slash | JWKS `<issuer>.well-known/jwks.json`; `RS256`; audience: your Auth0 API identifier; tokens with `gty` = `client-credentials` are refused, because machine tokens are not users; maximum token age 86,400 seconds |
+| `clerk` | `https://<instance>.clerk.accounts.dev` or `https://clerk.<your domain>` | JWKS `<issuer>/.well-known/jwks.json`; `RS256`; at least one authorized party (your frontend origin), checked against `azp`; maximum token age 3,600 seconds. Clerk session tokens have no `aud`: create a Clerk JWT template that sets `aud` to the environment's audience and request tokens with `getToken({ template })`. |
+
+Only an **Owner** can add trusted issuers.
+
+```bash title="Terminal: Supabase"
+axiom auth trusted-issuers add --environment production \
+  --preset supabase \
+  --issuer https://abcdefghijklmnopqrst.supabase.co/auth/v1 \
+  --audience authenticated
+```
+
+```bash title="Terminal: Clerk"
+axiom auth trusted-issuers add --environment production \
+  --preset clerk \
+  --issuer https://example-app.clerk.accounts.dev \
+  --audience "https://auth.axiomcore.dev/PROJECT_ID/ENVIRONMENT_ID/api" \
+  --authorized-party https://app.example.com
+```
+
+The issuer is saved disabled unless you pass `--enable`. Test it with a real
+token first.
+
+## Test a token
+
+The diagnostic test runs the full validation on a token you paste and creates
+nothing: no user, no session.
+
+```bash title="Terminal"
+axiom auth trusted-issuers test ISSUER_ID --token-file ./upstream-token.txt
+```
+
+It reports a decision for each step: issuer selected, key found, signature,
+audience, required claims, forbidden claims, authorized party, subject and
+assurance. It never prints the token or any claim value, only claim names.
+The token is read from the file and never logged. The test is rate limited.
+
+## Hosted sign-in through Auth0 or Clerk
+
+To send users to Auth0 or Clerk from the issuer's hosted sign-in page instead
+of exchanging tokens, add an OpenID Connect provider for the tenant:
+
+```bash title="Terminal"
+axiom auth providers set oidc-auth0 --environment production \
+  --issuer https://example.us.auth0.com/ \
+  --client-id YOUR_AUTH0_CLIENT_ID --scopes openid,email,profile \
+  --client-secret-stdin --enable < auth0-client-secret.txt
+```
+
+Clerk works the same way when your Clerk instance exposes OpenID Connect
+discovery (Clerk OAuth applications). Hosted sign-in through Supabase is not
+offered.
+
+## Upstream MFA
+
+By default an exchanged session is `aal1` (`amr` `["ext"]`), even if the user
+completed MFA upstream. To let [assurance guards](/authentication/mfa#guard-an-acore-endpoint-by-assurance)
+trust the upstream MFA, an Owner saves an **assurance mapping** on the trusted
+issuer or OIDC provider: at most 2 rules, each
+`{"claim":"<name>","equals":<json value>}` or
+`{"claim":"<name>","contains":"<string>"}`. When every rule matches, the
+session gets `amr` `["ext","mfa"]` and `acr` `aal2`. It never reaches `phr`.
+
+| Provider | Typical rule |
+| --- | --- |
+| Supabase | `{"claim":"aal","equals":"aal2"}` |
+| Auth0 | `{"claim":"amr","contains":"mfa"}`, which works only when an Auth0 Action adds `amr` to access tokens |
+| Clerk | None: Clerk tokens carry no standard MFA claim |
+
+The mapping is off until an Owner saves it. Changing it ends that issuer's
+exchanged sessions at their next refresh.
+
+## Who owns what
+
+| Concern | Owner |
+| --- | --- |
+| Credentials, password reset, upstream MFA | The external system |
+| Refreshing upstream tokens | The external SDK. Exchanged sessions refresh with environment refresh tokens within the exchanged session lifetime (24 hours by default). |
+| Logout | Both. Signing out upstream does not end the environment session; your app signs out of both. |
+| Deletion | Deleting a user upstream stops new exchanges once their last upstream token expires. The environment's user stays until an admin deletes it. |
+| Ban | A ban in the environment refuses refresh and exchange at once |
+| Roles and permissions | The environment only. No upstream claim maps to roles. |
+
+Upstream revocation is not observed: an exchanged session ends at its
+lifetime, at a local ban, or when the upstream token can no longer be
+exchanged. If the upstream JWKS cannot be fetched, cached keys are used for up
+to 24 hours, then exchanges are refused. Users created by exchange are shown
+in the dashboard's Users table with the preset's name.
+
+## Next steps
+
+- [Sign in with Microsoft and Apple](/authentication/social)
+- [Multi-factor authentication and passkeys](/authentication/mfa)
+- [Sessions and tokens](/authentication/sessions)

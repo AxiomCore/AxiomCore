@@ -1,0 +1,123 @@
+---
+title: Acore backend databases on Free and Pro
+description: Which managed database engine an Acore backend gets on Free and Pro, how measured usage appears on the Resources page, and what happens at 80% and at the monthly limit.
+pageType: concept
+---
+
+<StatusNote status="alpha" title="Hosted runtime connections">
+  Acore backends on Cloud Run that read and write managed SQLite and
+  PostgreSQL, with the measured usage and stop states described here, are
+  **Alpha**, checked on October 24 and 25, 2026 with source builds, for invited accounts:
+  Axiom Cloud signup is invite-only. A released
+  CLI with these commands is **Coming soon**. Managed storage provisioning and
+  lifecycle controls are **Alpha**; see
+  [managed resources](/cloud/project-resources).
+</StatusNote>
+
+A project's plan decides which managed database engine its Acore backend
+uses. Usage of that database is measured from the database provider's own
+totals and enforced per database. This page explains what each plan gives a
+backend and how to read usage and stops on the **Resources** page. To connect
+a server, follow [connect a server on Google Cloud](/cloud/connect-a-server).
+
+## Engine by plan
+
+| Plan | Engine | Location | Backend resource |
+| --- | --- | --- | --- |
+| Free | SQLite (libSQL) | Mumbai | `TransactionProfile.hostedLibsql`, deployment provider `libsql` |
+| Pro | PostgreSQL 17 | Singapore | `TransactionProfile.postgres17_11`, deployment provider `postgres` with no configuration |
+| Pro | SQLite (libSQL), when chosen | Mumbai | As on Free |
+
+The engine is chosen with the database preferences and never changes with a
+subscription. Upgrading a SQLite project to Pro keeps SQLite and its displayed
+database allowances. A Pro database needs an active subscription: without one,
+credential requests are refused with `AXDATA_PAYMENT_REQUIRED`.
+
+### What each engine supports
+
+| Behavior | SQLite | PostgreSQL |
+| --- | --- | --- |
+| Reads and writes | Select, insert, update and delete through typed storage declarations | Typed storage declarations. Tenant isolation comes from the runtime's tenant filter; row-level security policies are not supported in managed schemas yet |
+| Idempotency receipts, including `InsertBatch` and transaction blocks with a receipt | Refused (`AXDATA_UNSUPPORTED`) | Not refused |
+| `AUTOINCREMENT` tables | Refused | Not applicable |
+| Tables and views the credential covers | At most 64 | At most 64 |
+| Transactions | A write transaction commits within 4 seconds of starting | The [PostgreSQL transaction profile](/acore-language/managed-language#owned-calls-and-database-transactions) |
+| Connections | Not applicable | At most 2 per server process; idle ones close within 5 minutes and every one within 20 minutes |
+| Storage limit | The database refuses growth past the allowance | Measured and shown, not enforced |
+
+Servers connect from the Linux container targets running on Google Cloud Run.
+Browsers, frontend contracts and sandboxed extensions never receive database
+credentials.
+
+## Measured usage
+
+Each database on the **Resources** page has a **Measured usage** table:
+
+| Column | Meaning |
+| --- | --- |
+| **Metric** | **Rows read**, **Rows written** or **Storage**. |
+| **Used** | The measured total for the current period, or **Not measured yet**. |
+| **Allowance** | Your project's allowance for that metric. |
+| **Share of allowance** | The used share. A nonzero share below 1% shows as `<1%`. |
+| **Last measured** | When the figure was taken. |
+
+**Not measured yet** means no measurement exists. It is never a reading of
+zero. The period starts on the first day of each calendar month (UTC), and the
+table names the current period's start.
+
+- **Source.** Totals come from the database provider. For PostgreSQL, rows read
+  include catalog and administrative reads, so they run higher than your
+  queries alone.
+- **Freshness.** Rows are refreshed when a server gets or renews a credential
+  and the last figure is older than 5 minutes. Storage is measured about every
+  10 minutes; a PostgreSQL database is measured only while its compute is
+  running, so an idle database keeps its last figure.
+- **Separate from work totals.** The **Usage and limits** table further down
+  the page shows the project's reserved work budget. It is not this
+  measurement and not an invoice.
+
+## At 80% of an allowance
+
+When any metric of a database reaches 80% of its allowance, the page shows a
+warning naming the metric and its share. While any metric stays at or above
+80%, new credentials for that database last at most 5 minutes instead of 15,
+so servers renew them more often.
+
+## When a limit is reached
+
+| Limit | New credentials | What already runs |
+| --- | --- | --- |
+| Rows read or rows written allowance | Refused with `AXDATA_QUOTA` | The database is stopped for every server that uses it. |
+| Storage allowance | Still issued, so you can delete data | SQLite refuses growth past the allowance. PostgreSQL is not stopped. |
+| Shared SQLite capacity near its limit | Refused for SQLite databases with `AXDATA_QUOTA` | The largest consumers can be stopped until shared usage falls. |
+| Suspend, delete or access rotation | Refused | The database is stopped while the operation runs. A suspend keeps it stopped until you resume. |
+
+A stop appears above the usage table:
+
+- **Stopped: monthly usage limit reached** for a rows allowance.
+- **Stopped: shared provider limit reached** for shared SQLite capacity.
+- **Stopped while an operation runs** for suspend, delete or rotation.
+
+A usage stop takes effect within one measurement sweep (about 10 minutes)
+of the usage crossing the allowance. The stop shows **Applying** until it is
+applied at the database. Until then,
+credentials already issued can keep working. **Applied** means they no longer
+work; for SQLite, even an open session is refused at once. A stop affects only that database; other databases keep working.
+
+Measurement is periodic, so work done between the last measurement and the
+stop can take usage past the allowance. That gap is up to about 10 minutes
+plus the provider's reporting delay.
+
+A monthly usage stop clears by itself at the start of the next period, or at
+the next sweep after the allowance increases. Servers recover without a
+restart. The 80% warning is hidden while a stop is shown.
+Exceeded quotas and failed payments never delete data.
+
+If servers receive `AXDATA_QUOTA` and the page shows no stop, shared SQLite
+capacity is refusing new credentials. They resume when shared usage falls.
+
+## Next steps
+
+- [Connect a server on Google Cloud](/cloud/connect-a-server)
+- [Apply the schema with hosted migrations](/cloud/hosted-migrations)
+- [Compare plans, locations and billing](/cloud/project-resources)

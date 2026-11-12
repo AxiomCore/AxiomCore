@@ -35,6 +35,7 @@ flowchart TD
   P --> E[Project environments]
   E --> SE[Secrets]
   E --> DB[Managed database]
+  E --> AU[Application authentication]
   P --> O[Observability]
 ```
 
@@ -42,10 +43,17 @@ A **workspace** groups members and projects. A **project** owns everything
 else: immutable contract releases, the `latest` channel that consumers pull
 from, contract pull requests, a managed sandbox for tests, and observability
 data. A project **environment** (such as `development`, `staging` or
-`production`) is a separate configuration scope. Secrets and a managed database
-attach to one environment.
+`production`) is a separate configuration scope. Secrets, a managed database
+and its [application authentication](/authentication) issuer attach to one
+environment.
 
 ## What Cloud does today
+
+Axiom Cloud signup is invite-only. Managed database and authentication
+features marked **Alpha** below are available to invited accounts, and new
+managed databases are limited to admitted projects. See the
+[support matrix](/introduction/support-matrix#cloud-engines-and-capabilities)
+for each engine.
 
 | Capability | Status | Scope |
 | --- | --- | --- |
@@ -57,8 +65,14 @@ attach to one environment.
 | Runtime observability | **Alpha** | Scoped OTLP sources, traces, traffic, logs, retention, alerts and security posture. |
 | Project secrets | **Alpha** management; **Experimental** protected consumption | Write-only values, versions, bindings, grants and activity. Application use has separate [runtime limits](/backend/runtime-secrets). |
 | Managed databases | **Alpha** | Database preferences, provisioning in available locations, suspend, resume, access rotation and deletion. |
-| Hosted database connections, hosted migrations and managed application authentication | **Coming soon** | Storage can be provisioned, but applications cannot connect to it through Cloud yet. |
-| Database archive, restore and customer-owned connections | **Coming soon** | No hosted recovery SLA is announced. |
+| Hosted migrations | **Alpha** | Signed schema migrations for a managed SQLite or PostgreSQL database. A released CLI with these commands is **Coming soon**. See [Hosted migrations](/cloud/hosted-migrations). |
+| Hosted database connections | **Alpha** | Cloud Run servers with a registered Google identity and a database grant read and write managed SQLite and PostgreSQL. A released CLI with these commands is **Coming soon**. See [Connect a server on Google Cloud](/cloud/connect-a-server). |
+| Managed application authentication | **Alpha** | Signup, password sign-in, sessions, token exchange with a trusted issuer, and roles and permissions in tokens, on managed SQLite and PostgreSQL. See [Managed and external authentication](/authentication). |
+| Token verification in Axiom servers (`axiomAuth`) | **Coming soon** | Needs a CLI and runtime release. A released CLI with these commands is **Coming soon**. Other backends can verify tokens with a JWT library. See [Verify access tokens](/authentication/verify-tokens). |
+| Authentication administration in the dashboard | **Coming soon** | Pages for enabling authentication and managing users, roles, trusted issuers and keys. |
+| Dashboard table and SQL editor | **Alpha** | Browse and edit a managed database's tables, run SQL and export CSV, with role-based access. |
+| Backups, restore and archive | **Coming soon** for all projects | Turned on for selected projects only. No hosted recovery SLA is announced. See [Limits](/cloud/limits). |
+| Advanced authentication, preview branches, SQLite to PostgreSQL conversion, database moves and your own Turso database | **Coming soon** | Built and checked in production, but switched off for customers. See [Advanced authentication and database placement](/introduction/support-matrix#advanced-authentication-and-placement). |
 | Public paid checkout | **Coming soon** | Pro can be selected as a preference. Only controlled test checkout runs today. |
 | Hosted CI/CD for every repository | **Coming soon** | Release pipelines process Axiom artifacts. They do not replace general repository CI. |
 | Axiom Studio, Acode and Axiom Marketplace | **Coming soon** | Planned products. They are not hidden parts of the Cloud Dashboard. |
@@ -106,3 +120,4 @@ project and version with your deployment evidence.
 - [Follow a release through the Cloud pipeline](/cloud/releases-and-environments)
 - [Store project secrets](/cloud/secrets)
 - [Provision a managed database](/cloud/project-resources)
+- [Sign in your application's users](/authentication)

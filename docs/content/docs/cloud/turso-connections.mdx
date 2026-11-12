@@ -1,0 +1,160 @@
+---
+title: Connect your own Turso database
+description: Keep an environment's application data in a Turso database you own while Axiom keeps authentication in its own store, with token guidance, who pays for what, split-store limits and how to disconnect.
+pageType: guide
+---
+
+<StatusNote status="coming-soon" title="Bring your own Turso database">
+  Connecting your own Turso database is **Coming soon**. It is built but
+  switched off: no project can connect its own Turso database yet. A released CLI with the `connect`, `connection` and `disconnect`
+  commands is **Coming soon**.
+</StatusNote>
+
+By default Axiom creates and runs an environment's SQLite (libSQL) database in
+its own Turso organization. You can instead point the environment at a
+database in **your own** Turso organization. Your application tables, and the
+migration history for them, then live in your database; Axiom never deletes,
+copies, backs up or reconfigures it.
+
+Authentication data does not move with it. Users, password hashes, sessions,
+roles and keys stay in a separate Axiom-managed store, so your Turso
+credentials never give access to them.
+
+| Store | Where | Holds |
+| --- | --- | --- |
+| Application | Your Turso database (your organization, group and database) | Application tables, the application migration history, an identity marker |
+| Authentication | An Axiom-managed libSQL database in the environment's region | Users, credentials, sessions, roles and permissions, the auth migration history |
+
+**No transaction, foreign key or trigger spans the two stores.** Write your
+application so that a user row in the auth store and your own rows that refer
+to the user ID can be briefly out of step, and repair them idempotently.
+
+## Who pays
+
+| Cost | Billed by |
+| --- | --- |
+| Rows read and written and storage of your database | Turso, on your Turso plan |
+| Requests, execution, email and authentication | Axiom, on your project's plan (Free or Pro) |
+
+Axiom shows your database's usage from Turso's usage API as "billed to you by
+Turso". It never charges for that usage and never stops your database because
+of it. Axiom's own limits and stops still apply to your application's requests.
+An environment with your own database counts as the project's hosted
+environment, on Free and Pro.
+
+## Create a token
+
+Axiom needs a Turso **platform API token** to check your database and to mint
+short-lived database tokens. Create one limited to the database's group:
+
+```bash title="Terminal"
+turso auth api-tokens mint axiom-my-project --org my-org --group my-group --scopes read,db:mint-token
+```
+
+Add `db:rotate-creds` only if you choose the `rotate` fence mode below.
+
+<Callout type="warn">
+Axiom cannot see a token's scope. An unrestricted organization token would
+give Axiom's credential service and worker authority over your whole Turso
+organization. Always mint a group token with `read` and `db:mint-token`.
+</Callout>
+
+Axiom limits its own use of the token: it calls only Turso's validate, group,
+database, usage and token endpoints (and credential rotation in `rotate`
+mode), and every database token it mints is limited to the tables it needs and
+expires within **5 minutes**. It never mints a full-access database token. A
+token that expires within 7 days is refused; a token without expiry is
+accepted, and Owners get notices 7 days and 1 day before a token expires.
+
+## Connect
+
+Only an **Owner** with a recent sign-in can connect. The token is read from
+standard input or a masked prompt, never from an argument, and is never shown
+or returned again.
+
+```bash title="Terminal"
+axiom project resources --project my-project connect turso --environment production \
+  --organization my-org --group my-group --database my-app-db \
+  --token-stdin --acknowledge-split-store < turso-token.txt
+```
+
+Before anything is sent, the CLI states what connecting means. Axiom then
+checks, in order: the token is valid; the group exists and is not archived; the
+database exists in that group with the expected Turso host name; Axiom can
+mint a scoped token; fine-grained permissions are enforced on your plan; and no
+other resource has claimed the database. Then it creates the migration history
+tables and identity marker in your database and the auth store in Axiom's
+account.
+
+A database that already has application tables needs an adoption baseline as
+its first migration release. A database can belong to one environment at a
+time; to use a different database, delete the resource and create a new one.
+
+```bash title="Terminal"
+axiom project resources --project my-project connection --environment production
+axiom project resources --project my-project connection check --environment production
+```
+
+`connection` shows the database, its location, status, fence mode, whether a
+token is set and its expiry, the last check and the usage Turso reports.
+`connection check` re-verifies it (6 per hour).
+
+### Fence mode
+
+Some operations, such as [converting to PostgreSQL](/database/project-upgrades),
+must stop writes to your database for a short time. Choose how at connect time:
+
+| `--fence-mode` | How Axiom stops its own writers | Needs |
+| --- | --- | --- |
+| `expiry` (default) | Stops minting tokens and waits until every token it minted has expired (at most 5 minutes 30 seconds) | Nothing extra |
+| `rotate` | Rotates the database's credentials, which takes effect within 30 seconds | `db:rotate-creds` and `--acknowledge-rotate`: rotation also invalidates database tokens **you** minted yourself |
+
+Clients holding your own Turso tokens are outside both fences.
+
+## What is not available
+
+- Daily backups, archives, inactivity archiving, restore and point-in-time
+  recovery cover the auth store only. Restore and archive on this resource
+  answer `AXRESOURCE_BYO_UNSUPPORTED`. Back up your database with Turso.
+- Axiom never wakes an archived Turso group in your organization.
+- Preview branches cannot use your own database.
+
+## Disconnect
+
+```bash title="Terminal"
+axiom project resources --project my-project disconnect --environment production \
+  --confirm "disconnect my-app-db"
+```
+
+Disconnecting needs an Owner with a recent sign-in. From that moment:
+
+- Application requests, the data editor and migrations answer
+  `409 AXRESOURCE_DISCONNECTED`. Database tokens Axiom already minted keep
+  working until they expire, within 5 minutes.
+- Authentication keeps working from the Axiom store, which is Axiom's data.
+- The token is destroyed. Axiom cannot revoke your platform API token:
+  revoke it in Turso with `turso auth api-tokens revoke`.
+- Nothing is copied or deleted. Reconnecting to the same database checks it
+  again and restores service.
+
+Deleting the resource deletes the Axiom auth store and its records and leaves
+your database, its migration history tables and its identity marker in place.
+
+## Errors
+
+| Code | Meaning |
+| --- | --- |
+| `AXRESOURCE_BYO_TOKEN_INVALID` | Turso refused the token |
+| `AXRESOURCE_BYO_TOKEN_EXPIRING` | The token expires within 7 days |
+| `AXRESOURCE_BYO_NOT_FOUND` | No such database in that organization and group |
+| `AXRESOURCE_BYO_SCOPE` | The token cannot mint database tokens (`db:mint-token` missing) |
+| `AXRESOURCE_BYO_PERMISSIONS` | Fine-grained permissions are not enforced for this database |
+| `AXRESOURCE_BYO_CLAIMED` | Another resource uses this database. A deleted resource's claim can be taken over with `--reclaim "reclaim <database>"`. |
+| `AXRESOURCE_BYO_UNREACHABLE` | Turso is rate limiting, unavailable or the group is archived; retried |
+| `AXRESOURCE_BYO_PROVIDER_REFUSED` | Turso refused for a plan or quota reason; fix it in Turso |
+| `AXRESOURCE_DISCONNECTED` | The database is disconnected |
+
+## Next steps
+
+- [Convert SQLite to PostgreSQL](/database/project-upgrades)
+- [Managed resources](/cloud/project-resources)

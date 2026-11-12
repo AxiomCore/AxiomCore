@@ -1,0 +1,17 @@
+{
+  "title": "Authentication",
+  "pages": [
+    "index",
+    "sessions",
+    "roles-permissions",
+    "verify-tokens",
+    "mfa",
+    "phone",
+    "social",
+    "third-party",
+    "oidc",
+    "hooks",
+    "policy-releases",
+    "local-emulation"
+  ]
+}

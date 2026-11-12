@@ -292,14 +292,36 @@ use the named PostgreSQL application profile.
 | Axiom Cloud Dashboard | **Alpha** | Implemented control-plane views; the broader collaborative vision is not all shipped |
 | Project secrets | **Alpha** management; **Experimental** protected consumption | [Details below](#project-secrets) |
 | Managed project databases | **Alpha** (checked October 20, 2026) | Dashboard database preferences, managed storage provisioning, and resource lifecycle controls, including qualified access rotation. See [Managed resources](/cloud/project-resources) |
+| Managed application authentication | **Alpha** (checked October 25, 2026) | Signup, password sign-in, sessions, token exchange, roles and permissions per project environment, on managed SQLite and PostgreSQL. See [Authentication](/authentication) |
+| `axiomAuth` token verification in Axiom servers | **Coming soon** | Needs a CLI and runtime release. See [Verify access tokens](/authentication/verify-tokens) |
 | Axiom Studio | **Coming soon** | Planned visual and collaborative software workspace; not installable today |
 | Acode | **Coming soon** | Planned contract-aware IDE; the existing language-server and editor foundations are not the product |
 | Axiom Marketplace | **Coming soon** | The package format exists, but catalog browsing and supported installation do not |
 
 For managed project databases, you select SQLite or PostgreSQL; allocation
-depends on location, capacity, and entitlement. Hosted runtime connections,
-migrations, managed application authentication, and public paid checkout are
-**Coming soon**. The new resource-management CLI commands are source-only.
+depends on location, capacity, and entitlement.
+[Hosted migrations](/cloud/hosted-migrations) for managed SQLite and
+PostgreSQL are **Alpha**, checked on October 20, 2026 with a source build of
+the CLI; a released CLI with those commands is **Coming soon**. On managed
+SQLite, a change to an existing table's columns or constraints is refused
+(`ADB1132`). [Hosted runtime connections](/cloud/connect-a-server) from Cloud Run servers
+to managed SQLite and PostgreSQL are **Alpha**, checked on October 24 and 25,
+2026 with source builds of the CLI and runtime; a released CLI with those
+commands is **Coming soon**. Managed PostgreSQL schemas support no row-level
+security policy yet; tenant isolation comes from the runtime's tenant filter.
+[Managed application authentication](/authentication) (signup, password
+sign-in, sessions, token exchange, roles and permissions) is **Alpha**,
+checked on October 25, 2026 on managed SQLite and PostgreSQL. Verifying its
+tokens in a deployed Axiom server (`axiomAuth`) needs a CLI and runtime
+release; a released CLI with these commands is **Coming soon**. Dashboard
+pages for administering authentication are **Coming soon**.
+Axiom Cloud signup is invite-only, so these **Alpha** capabilities are
+available to invited accounts. Advanced authentication, preview branches,
+SQLite to PostgreSQL conversion, database moves and your own Turso database are
+**Coming soon**; see the
+[support matrix](/introduction/support-matrix#advanced-authentication-and-placement).
+Public paid checkout is **Coming soon**. The
+new resource-management CLI commands are source-only.
 
 ### Project secrets
 

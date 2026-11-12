@@ -1,0 +1,138 @@
+---
+title: Develop sign-in locally
+description: Run a local auth issuer with axiom auth emulate, read captured sign-in codes, sign in through a mock OIDC provider, verify local tokens in a local Axiom server, and promote the settings to a Cloud environment.
+pageType: guide
+---
+
+<StatusNote status="coming-soon" title="Local auth emulation">
+  `axiom auth emulate` and `axiom auth config` are **Coming soon**: they ship
+  with Axiom CLI 0.151.0, which is not published yet. Emulation runs
+  on your machine only and needs no Cloud account.
+</StatusNote>
+
+`axiom auth emulate` runs a local issuer for your project directory so you can
+build sign-up and sign-in screens without a Cloud account, a hosted database
+or network access. It speaks the same JSON endpoints as an environment's
+issuer for the methods it emulates, captures every email instead of sending
+it, and offers a mock OpenID Connect provider with synthetic identities.
+
+| Emulated | Not emulated (answers `404 AXAUTH_NOT_FOUND`) |
+| --- | --- |
+| Sign-up with email verification, password sign-in, email codes, provider sign-in through the mock issuer, refresh, logout, logout everywhere, `GET /v1/user`, discovery and JWKS | Magic links, password reset, invitations, multi-factor authentication, passkeys, hosted pages and OAuth applications |
+
+Use a [preview branch](/cloud/branches) with captured mail to test the
+features that are not emulated.
+
+## Start the emulator
+
+From your project directory:
+
+```bash title="Terminal"
+axiom auth emulate --identity jo@example.com
+```
+
+It prints the local issuer, the mail viewer and the mock provider, and keeps
+running:
+
+| Item | Value |
+| --- | --- |
+| Issuer | `http://127.0.0.1:<port>/local/<project>` |
+| Mail viewer | `http://127.0.0.1:<port>/local/mail` (JSON at `/local/mail.json`) |
+| Mock OIDC issuer | `http://127.0.0.1:<port>/local/oidc` |
+| State | `.axiom/auth-local/` (files with mode `0600`) |
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `--dir` | `.` | Project directory |
+| `--port` | `0` (a free port) | Loopback port |
+| `--identity` | `user@example.com` | A synthetic email the mock provider offers; repeatable |
+| `--audience` | `api` | Access token audience |
+| `--config` | `auth/config.local.json` when present | Local settings in the `axiom-auth-config/v1` format |
+
+The emulator listens on `127.0.0.1` only and opens no outbound connection.
+Storage is a disposable SQLite file holding the same authentication tables as
+a hosted environment. Signing keys are generated on every start. Without a
+settings file, the emulator enables password and email-code sign-in, open
+signup with email verification, and redirect URLs and allowed origins for
+`http://127.0.0.1:5173` and `http://localhost:5173`.
+
+## Read sign-in codes
+
+Verification and sign-in codes are written to the local mail store and shown
+at `/local/mail`. Nothing is sent. Point your frontend's issuer setting at the
+local issuer and complete sign-up with the code from the mail viewer.
+
+## Sign in with a provider
+
+Every provider in your local settings (for example `google`) signs in through
+the mock OIDC issuer, which signs one of the `--identity` addresses. It never
+contacts the real provider and never signs a real identity.
+
+## Verify local tokens in a local server
+
+Local tokens carry the local issuer, so every Axiom Cloud issuer and server
+refuses them. A local Axiom server can verify them with a `jwt` EdDSA
+provider that points at the emulator:
+
+```bash title="Terminal"
+axiom auth emulate deployment work/deployment.json
+AXIOM_AUTH_LOCAL_PUBLIC_KEY="$(cat .axiom/auth-local/public.pem)" \
+  axiom server run backend/.axiom/contracts/backend.axiom \
+  backend/.axiom/contracts/backend.server.json \
+  --deployment work/deployment.json --listen 127.0.0.1:8080
+```
+
+`emulate deployment` rewrites the deployment's authentication to the running
+emulator's issuer, with the public key read from
+`AXIOM_AUTH_LOCAL_PUBLIC_KEY`. Create `work/deployment.json` first with
+`axiom server deployment`; see [Verify tokens](/authentication/verify-tokens).
+
+## Promote the settings to Cloud
+
+Export the local settings, compare them with an environment, then push:
+
+```bash title="Terminal"
+axiom auth config export --from local --output work/config.json
+axiom auth config diff --from local --to env:development
+axiom auth config push --from local --to env:development --approvals auth/config.approvals.json
+```
+
+The export contains public settings and secret references only, in the form
+`{"ref":"SECRET_NAME"}`. Loopback redirect URLs, loopback origins, the mock
+provider, users, sessions, keys and captured mail never leave the directory.
+
+`diff` names the environment and its issuer and classifies every change:
+
+| Impact | Examples |
+| --- | --- |
+| `widening` | A sign-in method, provider, trusted issuer, redirect URL or origin added; captcha turned off; MFA policy lowered; a lifetime raised; a permission granted |
+| `narrowing` | The reverse of those changes |
+| `credential` | A secret reference changed |
+| `neutral` | Names, descriptions, app name, ordering |
+
+`push` applies changes in a fixed order (settings, providers, trusted issuers,
+role policy, outbound) and refuses unless every `widening` and `credential`
+item is listed in the approvals file for the current base revision. Exit codes:
+`0` applied, `6` an unapproved widening or credential item, `8` stale
+approvals, `2` usage error. Each change still needs the role it needs in the
+dashboard, for example Owner for providers.
+
+<Callout type="warn">
+`push` does not yet apply a changed secret reference or a new provider or
+outbound endpoint that needs a secret. It stops and names the item: set it
+with the matching command (for example `axiom auth providers set`, secret on
+standard input), then push again.
+</Callout>
+
+## Clean up
+
+Stop the emulator, then delete its store, keys, captured mail and settings:
+
+```bash title="Terminal"
+axiom auth emulate reset
+```
+
+## Next steps
+
+- [Preview branches](/cloud/branches) for MFA, passkeys, magic links and OAuth
+- [Auth policy releases and impact](/authentication/policy-releases)

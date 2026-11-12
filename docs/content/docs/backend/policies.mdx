@@ -169,6 +169,7 @@ The deployment's `authentication` selects one provider.
 | `jwt` | `issuer`, `audience`, `algorithm`, `keyEnv` | `HS256`, `RS256`, `ES256` or `EdDSA`, fixed by the deployment. Signature, issuer, audience, subject and expiry are required; future `nbf` or `iat` and ambiguous claim documents fail. HS256 keys need at least 32 bytes. Keys load at startup; a key change needs a new process. |
 | `apiKey` | `header`, `registryFileEnv` | Dedicated header. The registry file maps lowercase SHA-256 token digests to `principal` and `expiresUnixSeconds`. |
 | `session` | `cookie`, `registryFileEnv`, `csrfHeader`, `origins` | Verifies externally issued opaque cookies. Records also hold a `csrfSha256` digest. Unsafe methods need the correct CSRF proof and an allowed exact Origin. Duplicate session cookies fail. |
+| `axiomAuth` (**Coming soon**) | `issuer`, `audience` | Verifies [managed authentication](/authentication) access tokens (EdDSA) against the environment issuer's published keys and epoch. No key reference. Native and Linux container targets only. See [Verify access tokens](/authentication/verify-tokens). |
 
 ```json title="deployment.json (API key)"
 {"kind":"apiKey","header":"x-api-key","registryFileEnv":"AXIOM_KEYS_FILE"}

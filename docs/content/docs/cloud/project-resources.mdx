@@ -13,10 +13,16 @@ pageType: guide
 <StatusNote status="alpha" title="Managed databases">
   Saving database preferences, provisioning managed storage in available
   locations, retry, suspend, resume, access rotation and deletion are **Alpha**,
-  checked on October 20, 2026. Hosted runtime connections, hosted migrations,
-  managed application authentication, archive, restore, customer-owned
-  database connections and public paid checkout are **Coming soon**. No hosted
-  database recovery SLA or automatic archive policy is announced.
+  checked on October 20, 2026. [Hosted migrations](/cloud/hosted-migrations)
+  are **Alpha**; a released CLI with these commands is **Coming soon**.
+  [Hosted runtime connections](/cloud/connect-a-server) from Cloud Run
+  servers are **Alpha**, checked on October 24 and 25, 2026.
+  [Managed application authentication](/authentication) is **Alpha**,
+  checked on October 25, 2026. These are available to invited accounts: Axiom
+  Cloud signup is invite-only. Backups, restore and archive are **Coming soon**
+  and turned on for selected projects only. Your own Turso database
+  connections and public paid checkout are **Coming soon**. No hosted database
+  recovery SLA or automatic archive policy is announced.
 </StatusNote>
 
 A managed resource is persistent hosted storage for one
@@ -72,7 +78,9 @@ free capacity and the right project entitlement.
 3. Select **Provision**, review the environment and database, then confirm.
 4. Follow the operation under recent operations until it completes. `ready`
    means storage was initialized and verified. **Auth: not_configured** means
-   application authentication is not available for that database.
+   [application authentication](/authentication) is not enabled for that
+   database; **Auth: ready** means its authentication tables are installed and
+   verified.
 
 Allocation runs in the background and can take several minutes. Refreshing
 the page never creates another database. If capacity is unavailable, nothing
@@ -148,17 +156,26 @@ destination before you confirm.
 Rotation replaces the database access credentials. PostgreSQL connections
 close, and Axiom pauses database access until the operation finishes. Your
 application's users and their passwords do not change. Credentials are never
-displayed.
+displayed. While a suspend, deletion or access rotation runs, and while the
+database is suspended, sign-in and refresh for that environment's
+[application authentication](/authentication) are refused; access tokens
+already issued work until they expire.
 
-Storage readiness alone does not enable runtime connections, hosted
-migrations or application authentication. Those remain **Coming soon**.
+Storage readiness alone does not enable runtime connections or application
+authentication. [Runtime connections](/cloud/connect-a-server) also need an
+applied migration, a registered workload and a database grant, and are
+**Alpha**. [Managed application authentication](/authentication) is enabled
+per environment and is **Alpha**.
+[Hosted migrations](/cloud/hosted-migrations) are **Alpha**.
 
 ## Usage
 
 Work totals show the budget reserved this month. Storage measurements appear
 beside each database (**Not measured** until the first measurement).
 **Not reported** means no total exists for that metric, not zero usage. These
-totals are not an invoice.
+totals are not an invoice. Measured rows and storage per database, and what
+happens at a database's monthly limit, are described in
+[Acore backend databases on Free and Pro](/cloud/backend-databases).
 
 ## Plans and billing
 
@@ -211,6 +228,7 @@ preview and are not in CLI 0.149.1. Use the dashboard for this workflow.
 
 ## Next steps
 
+- [Apply schema changes with hosted migrations](/cloud/hosted-migrations)
 - [Keep project environments isolated](/cloud/releases-and-environments)
 - [Store secrets for the same environment](/cloud/secrets)
 - [Use the local database workflow](/getting-started/quickstart-database)

@@ -10,6 +10,7 @@
     "backend",
     "frontend",
     "database",
+    "authentication",
     "examples",
     "---Use your own stack---",
     "guides",

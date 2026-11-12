@@ -1,0 +1,162 @@
+---
+title: Auth policy releases and impact
+description: Keep an environment's roles and permissions in a signed policy file, check which endpoints a change opens or closes in CI, apply it with acknowledgements, and refuse stale tokens quickly after a narrowing change.
+pageType: guide
+---
+
+<StatusNote status="coming-soon" title="Policy releases and impact checks">
+  Auth policy releases, the impact report, reviewed policy mode and fast
+  authorization invalidation are **Coming soon**. They are built and checked in
+  production but switched off for customers. A released CLI with `axiom auth policy` and `axiom
+  database impact check` is **Coming soon**.
+</StatusNote>
+
+By default an environment's roles and permissions change one item at a time
+in the dashboard or with the CLI. A **policy release** lets you treat them like
+code instead: keep the policy in a file, review its effect on your endpoints in
+a pull request, sign it, try it on a [preview branch](/cloud/branches), and
+apply it to the environment in one step.
+
+## The policy file
+
+`auth/policy.json` is an `axiom-auth-policy/v1` document: permissions, and roles
+with the permissions they grant. Organizations, memberships and role
+assignments are user data and never appear in it.
+
+```json title="auth/policy.json"
+{
+  "format": "axiom-auth-policy/v1",
+  "permissions": [
+    { "name": "posts.read", "description": "Read posts" },
+    { "name": "posts.write", "description": "" }
+  ],
+  "roles": [
+    { "name": "editor", "description": "", "permissions": ["posts.read", "posts.write"] }
+  ]
+}
+```
+
+The limits and name rules are those of
+[roles and permissions](/authentication/roles-permissions). Get the current
+policy of an environment with:
+
+```bash title="Terminal"
+axiom auth policy pull --environment production --write auth/policy.json
+axiom auth policy diff --base env:production --policy auth/policy.json
+```
+
+Each change is an item with a stable ID:
+
+| Item ID | Direction |
+| --- | --- |
+| `grant:+:<role>:<permission>` | Widening |
+| `grant:-:<role>:<permission>`, `role:-:<role>`, `permission:-:<permission>` | Narrowing |
+| `role:+:<role>`, `permission:+:<permission>`, `description:<kind>:<name>` | Neutral |
+
+## Check the impact in CI
+
+`axiom auth policy check` writes an `axiom-auth-impact/v1` report: for each
+role, which endpoints change from allowed to denied or back. It reads your
+backend's server plan to know which guards protect which endpoints.
+
+```bash title="Terminal"
+axiom auth policy check --base env:production \
+  --policy auth/policy.json \
+  --plan backend/.axiom/contracts/backend.server.json \
+  --approvals auth/policy.approvals.json \
+  --require-complete --report work/auth-impact.json
+```
+
+| Exit code | Meaning |
+| --- | --- |
+| `0` | Every change is approved |
+| `6` | An unapproved widening change |
+| `7` | An unapproved narrowing change |
+| `8` | The approvals file is for a different policy or plan |
+| `9` | Coverage is partial and `--require-complete` was given |
+| `2` | Usage error |
+
+The report lists policy changes, changed access rows (`allowed`, `denied`,
+`conditional` for ownership and assurance guards, or `unknown`), permissions
+that guards require but no role grants after the change, and an `unknown`
+list for anything it could not evaluate, such as a missing plan or a guard it
+does not recognize. Coverage is `complete` only when that list is empty. The
+report holds no users, assignments, SQL, source text or secrets, and it is per
+role: a user with several roles gets the union.
+
+Approvals live next to the policy, so the human review is the code review of
+that file:
+
+```json title="auth/policy.approvals.json"
+{
+  "format": "axiom-auth-policy-approvals/v1",
+  "policy_after_sha256": "<sha256 of the canonical policy>",
+  "plan_after_sha256": null,
+  "approved": [
+    { "id": "grant:+:editor:posts.write", "reason": "Editors publish posts" }
+  ]
+}
+```
+
+An approval for another policy or plan digest is stale, so every change set is
+approved again. Protect the file with CODEOWNERS.
+
+For database changes, `axiom database impact check` does the same for a
+migration release: it exits `10` when a breaking change reaches endpoints or
+frontend consumers without an approval in `db/impact.approvals.json`, and `9`
+for partial coverage with `--require-complete`.
+
+## Release and apply
+
+```bash title="Terminal"
+axiom auth policy release --policy auth/policy.json --schema db/schema.acore
+axiom auth policy plan --environment production --release RELEASE_SHA256
+axiom auth policy apply --environment production --release RELEASE_SHA256 \
+  --acknowledge-from auth/policy.approvals.json
+```
+
+`release` signs the policy with your enrolled migration signer key (the same
+key that signs [hosted migrations](/cloud/hosted-migrations)), uploads it and
+attaches the signed impact report. `plan` asks the environment for the items
+and how many users hold each affected role (counts only). `apply`:
+
+- re-checks the signature and that the signer is still enrolled
+  (`AXAUTH_POLICY_SIGNER_REVOKED`);
+- refuses when the environment's policy changed since the plan
+  (`AXAUTH_POLICY_STALE`);
+- needs every widening and narrowing item acknowledged
+  (`AXAUTH_POLICY_UNACKNOWLEDGED`), and an **Owner** for widening items
+  (`AXAUTH_POLICY_FORBIDDEN_WIDENING`; Maintainers may apply narrowing);
+- refuses to delete a role that is still assigned or a permission a remaining
+  role still grants, and any change that would push a user over the token
+  limits;
+- applies at most 256 items as one change.
+
+### Reviewed mode
+
+With the environment setting `policy_mode` set to `reviewed`, the single-item
+routes for roles and permissions answer `AXAUTH_POLICY_REVIEWED`: only a policy
+release changes the policy. Assignments, memberships and organizations still
+change one at a time. If the environment also requires branch reviews, `apply`
+needs a review of the same release from a branch; see
+[Preview branches](/cloud/branches#review-and-promote).
+
+## Refuse stale tokens after a narrowing change
+
+An access token keeps the roles and permissions it was issued with until it
+expires (at most 15 minutes). With the environment setting
+`authz_invalidation` set to `on`, a narrowing change (a permission or role
+removed, a grant removed, an organization suspended) advances an environment
+counter, `authz_gen`, published by `<issuer>/epoch`. Axiom servers that
+support it refuse older tokens within about 65 seconds with `401`
+`authorization_changed`; `@axiomcore/auth-web` 0.2.0 refreshes once and
+retries the request. Changes to one user (assignment, membership, ban) keep the
+normal bound of the token's expiry.
+
+The setting is off by default because clients released before it treat
+`authorization_changed` as an ordinary `401` until their next refresh.
+
+## Next steps
+
+- [Preview branches](/cloud/branches)
+- [Roles and permissions](/authentication/roles-permissions)

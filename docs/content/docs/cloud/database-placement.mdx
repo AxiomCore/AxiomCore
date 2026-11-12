@@ -1,0 +1,121 @@
+---
+title: Where your database lives and how it moves
+description: See an environment's database placement and history, give consent for a move to a dedicated pool or another region, and verify the signed receipt of every move.
+pageType: concept
+---
+
+<StatusNote status="coming-soon" title="Database moves and receipts">
+  Placement history, move consent and move receipts are **Coming soon**. Moves
+  between pools and regions are built and checked in production for managed
+  PostgreSQL, and switched off for customers. Moves of managed SQLite (libSQL) databases to another
+  Turso group are built but not qualified, and no region outside the current
+  ones is offered. Dedicated pools are not for sale. A released CLI with the
+  `placement`, `relocation-consent` and `receipt` commands is **Coming soon**.
+</StatusNote>
+
+A managed database lives in a **pool**: a provider account or project in one
+region that holds many customers' databases. Axiom sometimes moves a database
+to another pool, for example to empty a pool for maintenance. Some moves need
+your consent first. Every move is recorded with a receipt signed by Axiom
+that you can verify yourself.
+
+## See where a database lives
+
+```bash title="Terminal"
+axiom project resources --project my-project placement --environment production
+```
+
+`placement` shows the current generation, profile, pool kind (`shared` or
+`dedicated`), region, jurisdiction and location, the stores (two for a
+[database you connected yourself](/cloud/turso-connections)), earlier
+placements, move receipts, conversions and consents.
+
+## Who starts a move
+
+Moves are started by Axiom operators, never by an API request that names a
+host or provider account. You decide whether the moves that change what you
+signed up for can happen.
+
+| Move | Started by | Your consent |
+| --- | --- | --- |
+| Pool drain in the same jurisdiction | Operator | Not needed; Owners get a notice at least 24 hours ahead |
+| Shared pool to dedicated pool, or back | Operator | Required: a `dedicated` consent |
+| To another region (the jurisdiction may change) | Operator | Required: a `region` consent naming the destination region |
+| Auth store of a database you connected yourself | Operator | Required when the region changes |
+
+Billing events (upgrade, downgrade, payment failure) never start a move. At
+most 20 drain moves run per pool per day.
+
+## Give consent
+
+Only an Owner with a recent sign-in can consent:
+
+```bash title="Terminal"
+axiom project resources --project my-project relocation-consent --environment production \
+  --kind region --to-region REGION_ID --acknowledge-costs \
+  --confirm "move my-app-db to REGION_ID"
+```
+
+For a dedicated pool, use `--kind dedicated` and
+`--confirm "move my-app-db to dedicated"`. A consent is valid for 7 days and
+for one move. An aborted move does not return it.
+
+Before you consent to a region move, the dashboard shows the destination's
+jurisdiction, where its backups are stored, the region that processes
+requests, egress notes, the monthly cost of one environment and the expected
+interruption. Callback URLs and email links do not change, because the issuer
+URL belongs to the environment. Backups taken before the move stay in the
+source jurisdiction until they expire (up to 8 days for daily backups); new
+backups use the destination's.
+
+## What happens during a move
+
+A move builds a new copy (the next **generation**) and never changes the
+running database in place.
+
+| Phase | What happens | Your application |
+| --- | --- | --- |
+| Prepare and validate | Creates the empty destination, estimates the copy time and refuses the move when the stop would be too long | Serving |
+| Stop | Stops writers to the current database | Briefly unavailable |
+| Copy and verify | Copies everything and compares row counts and digests, including the authentication tables | Unavailable |
+| Activate | Switches the environment to the new copy in one step and writes the receipt | Serving from the new copy |
+| Retire | Deletes the old copy 24 hours later | Serving |
+
+A failure before activation leaves the old database serving. Stops are bounded
+(300 seconds for managed databases); a move whose estimated stop is too long is
+refused before anything stops. The old copy is never made writable again;
+moving back is a new move.
+
+Sessions continue across a move: users stay signed in. Your server's next
+database lease receives the new endpoint automatically, because compiled
+contracts never contain a database host. A point-in-time restore after a move
+cannot reach back before the move.
+
+## Verify a receipt
+
+Each relocation and conversion writes a receipt: before and after placement,
+per-table row counts and digests, the authentication digest, the migration
+heads, the stop duration and, for conversions, the signed transition receipt.
+Axiom signs it with an Ed25519 key whose public versions are published.
+
+```bash title="Terminal"
+axiom project resources --project my-project receipt verify MOVE_ID --environment production
+```
+
+`receipt verify` checks that the receipt body hashes to its recorded digest and
+that Axiom's signature over it is valid for the stated key version. With
+`--file` and `--keys` it verifies saved copies offline.
+
+## Limits
+
+- Moves of managed SQLite databases to another Turso group, and region moves
+  for them, are not qualified yet.
+- Dedicated pools are not sold; a dedicated move needs your consent and is not
+  charged.
+- Preview branches are never moved.
+- There is no online replication: every move stops writes for its copy.
+
+## Next steps
+
+- [Upgrade a project and convert SQLite to PostgreSQL](/database/project-upgrades)
+- [Managed resources](/cloud/project-resources)

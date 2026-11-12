@@ -1,0 +1,128 @@
+---
+title: Roles and permissions
+description: Model application authorization with named permissions, roles, assignments and organizations in managed authentication, read them from access-token claims, and match them to Acore permission guards.
+pageType: concept
+---
+
+<StatusNote status="alpha" title="Roles and permissions">
+  Roles, permissions and assignments in managed authentication tokens are
+  **Alpha**, checked on October 25, 2026 on managed SQLite and managed
+  PostgreSQL, for invited accounts (Axiom Cloud signup is invite-only).
+  Dashboard pages for managing them are **Coming soon**. Checking
+  these claims in a deployed Axiom server is **Coming soon**: a released CLI
+  with these commands is **Coming soon**.
+</StatusNote>
+
+Managed authentication puts each user's effective roles and permissions in
+the access token. Your backend authorizes a request from the verified token
+alone, with no extra lookup. These roles belong to your application's users.
+They are separate from the Owner, Maintainer and Reader roles of Axiom Cloud
+members.
+
+## The model
+
+| Object | What it is | Rules |
+| --- | --- | --- |
+| Permission | A named capability, such as `tasks.read` | Name matches `^[a-z][a-z0-9_.:-]{0,63}$`. No wildcards. |
+| Role | A named set of permissions, such as `reader` | Name matches `^[a-z][a-z0-9_-]{0,63}$`. No inheritance between roles. |
+| Assignment | Gives one user one role, for the whole environment or within one organization | Optional end date; the assignment stops counting after it. |
+| Organization | A tenant inside your application, with a slug, a name and a status (`active` or `suspended`) | Users join through memberships (`active` or `suspended`). |
+
+A user's **effective permissions** are the permissions of every role
+assigned to them now, either for the whole environment or for the selected
+organization, where the user's membership and the organization are both
+active.
+
+## Claims in the token
+
+| Claim | Meaning |
+| --- | --- |
+| `roles` | Sorted effective role names, at most 32. |
+| `permissions` | Sorted effective permission names, at most 128. |
+| `tenant` | The organization the session selected; absent when none. |
+| `authz_ver` | Increases whenever the user's assignments, memberships or ban state change, or any role, permission or organization status changes. |
+
+For example, after a maintainer created the permission `tasks.read`, put it in
+the role `reader` and assigned `reader` to a user, the user's next sign-in
+returned a token with these claims:
+
+```json title="Access token claims (excerpt)"
+{
+  "roles": ["reader"],
+  "permissions": ["tasks.read"],
+  "authz_ver": 6
+}
+```
+
+The values come only from Axiom's records. Claims in an exchanged external
+token never map to roles, permissions, tenant or ban state.
+
+### Select a tenant
+
+Send `tenant` (an organization ID) with sign-in, refresh or exchange. Axiom
+accepts it only when the user has an active membership in an active
+organization; otherwise `403 AXAUTH_TENANT_DENIED`. The choice is stored on
+the session and appears as the `tenant` claim. Your backend takes the tenant
+only from the verified token, never from the request.
+
+## When changes take effect
+
+A change reaches the user's **next** token. Tokens already issued keep their
+roles and permissions until they expire, at most 15 minutes. Ending every
+session of the environment shortens that to the epoch bound in an Axiom
+server. An assignment's end date also caps the `exp` of tokens it contributed
+to. The full table is in
+[Revocation bounds](/authentication/sessions#revocation-bounds).
+
+Role and assignment changes are never refused for quota, at any level of the
+[monthly auth allowance](/authentication#monthly-auth-allowance).
+
+## Limits per environment
+
+| Item | Limit |
+| --- | --- |
+| Permissions | 256 |
+| Roles | 64 |
+| Permissions per role | 64 |
+| Assignments per user | 32 |
+| Memberships per user | 64 |
+| Organizations | 10,000 |
+| Roles and permissions in one token | 32 roles, 128 permissions |
+
+An assignment that would give a user more than 32 roles or 128 permissions in
+some tenant is refused.
+
+## Who manages them
+
+Project maintainers and owners manage users (including ban and unban),
+roles, permissions, assignments, organizations and memberships. Only owners
+change authentication settings, trusted issuers and signing keys. The
+dashboard pages for these tasks are **Coming soon**.
+
+## Use them in Acore
+
+Acore permission declarations name a claim. With managed authentication that
+claim must be the auth permission name, character for character:
+
+```acore title="service.acore (excerpt)"
+permission readTask(claim: "tasks.read")
+guard reader(permission: Permissions.readTask)
+guard editor(role: "editor")
+```
+
+When the deployment uses the `axiomAuth` provider (**Coming soon**), plan
+validation refuses a permission guard whose claim is not a valid auth
+permission name and a role guard whose role is not a valid auth role name,
+with `AXSERVER_AUTHENTICATION`.
+
+Roles and permissions never establish who owns a row. Use an
+[ownership guard](/backend/policies#guards-and-ownership) for that: it
+compares a resource field with `Principal.subject` or `Principal.tenant`.
+Comparing with the session ID (`Principal.sid`) needs the same unreleased
+Acore and runtime and is **Coming soon**.
+
+## Next steps
+
+- [Verify access tokens in your backend](/authentication/verify-tokens)
+- [Declare guards and policies](/backend/policies)
+- [Sessions and tokens reference](/authentication/sessions)

@@ -66,6 +66,23 @@ class ComparisonTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'uses it in Workspace'):
             checker.compare([self.SESSION, elsewhere], [], {('GET', '/api/v1/auth/session'): self.exemption()})
 
+    def test_exemption_called_from_another_dashboard_operation_fails_the_checker(self):
+        # The dashboard groups by path, so a main flow reaching an allowlisted route shows up
+        # as another action (and source) on the same route, not as another group.
+        for other in [{**self.SESSION, 'action': 'loadWorkspaceMembers', 'source': 'static/js/pages/workspace.js'},
+                      {**self.SESSION, 'action': 'request', 'source': 'static/js/api-client.js', 'line': 900},
+                      {**self.SESSION, 'action': None}]:
+            with self.subTest(other=other), self.assertRaisesRegex(ValueError, 'not a browser-session operation'):
+                checker.compare([self.SESSION, other], [], {('GET', '/api/v1/auth/session'): self.exemption()})
+        wrong_route = {**self.SESSION, 'method': 'DELETE', 'action': 'GetSession'}
+        with self.assertRaisesRegex(ValueError, 'calls it from GetSession'):
+            checker.compare([wrong_route], [], {('DELETE', '/api/v1/auth/session'): self.exemption()})
+
+    def test_malformed_exemption_key_fails_the_checker(self):
+        for key in [('GET',), ('GET', '/api/v1/auth/session', 'x'), (None, '/api/v1/auth/session'), 'GET /api/v1/auth/session']:
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, r'key must be \(METHOD, path\)'):
+                checker.compare([self.SESSION], [], {key: self.exemption()})
+
     def test_exemption_of_a_mapped_route_fails_the_checker(self):
         exempt = {('GET', '/api/v1/auth/session/'): self.exemption()}
         for cli in [[dict(method='GET', path='/api/v1/auth/session', command='axiom whoami')],
@@ -100,6 +117,12 @@ class ComparisonTests(unittest.TestCase):
         rows = parity_cli.scan_cli(TOOLS.parent)
         valid = checker.validate_exemptions(parity_cli.EXEMPT, [], rows)
         allowed = {checker.route_key(*r) for r in checker.EXEMPTION_CATEGORIES['browser-session']['routes']}
+        # Against the real dashboard source too, when the sibling checkout is there.
+        frontend = TOOLS.parent.parent / 'axiom-frontend'
+        if frontend.is_dir():
+            import parity_dashboard
+            rows = checker.compare(parity_dashboard.scan_dashboard(frontend), rows, parity_cli.EXEMPT)
+            self.assertEqual({checker.route_key(r['method'], r['path']) for r in rows if r['status'] == 'exempt'}, allowed)
         self.assertEqual(set(valid), allowed)
         for entry in valid.values():
             self.assertEqual(entry['category'], 'browser-session')

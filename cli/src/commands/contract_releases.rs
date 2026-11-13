@@ -161,68 +161,85 @@ pub async fn handle(args: &ReleasesArgs) -> Result<()> {
 }
 
 pub async fn run(api: &Api, args: &ReleasesArgs) -> Result<()> {
+    run_to(api, args, &mut std::io::stdout()).await
+}
+
+/// [`run`], printing to `out`. Every reply goes through [`shown`] before it is printed.
+async fn run_to(api: &Api, args: &ReleasesArgs, out: &mut (dyn Write + Send)) -> Result<()> {
     let slug = cloud_cli::project_slug(api, args.project.as_deref()).await?;
     let json = args.json;
-    let output = |value: Value, human: fn(&Value) -> Vec<String>| cloud_cli::print(json, &shown(args.show_source_url, value), human);
-    match &args.action {
+    let (value, human): (Value, fn(&Value) -> Vec<String>) = match &args.action {
         Action::List => {
             let listed = list_releases(api, &slug).await?;
-            output(listed, render_list)
+            (listed, render_list)
         }
         Action::Show { version } => {
             let value = release(api, &slug, version).await?;
-            output(value, render_release)
+            (value, render_release)
         }
         Action::Manifest { version } => {
             let value = cloud_cli::call(api, Method::GET, &["projects", &slug, "contracts", version, "manifest"], &[], None).await.map_err(|e| not_ready(e, version))?;
-            output(value, render_manifest)
+            (value, render_manifest)
         }
         Action::Verification { version } => {
             let value = cloud_cli::call(api, Method::GET, &["projects", &slug, "contracts", version, "verification"], &[], None).await.map_err(|e| not_ready(e, version))?;
-            output(value, render_verification)
+            (value, render_verification)
         }
         Action::Diff { version, against } => {
             let query = comparison_query(against.as_deref(), true);
             let value = cloud_cli::call(api, Method::GET, &["projects", &slug, "contracts", version, "diff"], &query, None).await.map_err(|e| comparison_not_ready(e, version, &query[0].1))?;
-            output(value, render_diff)
+            (value, render_diff)
         }
         Action::Impact { version, against } => {
             let query = comparison_query(against.as_deref(), false);
             let value = cloud_cli::call(api, Method::GET, &["projects", &slug, "contracts", version, "impact"], &query, None).await.map_err(|e| comparison_not_ready(e, version, &query[0].1))?;
-            output(value, render_impact)
+            (value, render_impact)
         }
         Action::SemanticView { version } => {
             let value = cloud_cli::call(api, Method::GET, &["projects", &slug, "contracts", version, "semantic-view"], &[], None).await.map_err(|e| not_ready(e, version))?;
-            output(value, render_semantic_view)
+            (value, render_semantic_view)
         }
         Action::SemanticItems { version, kind, cursor, limit } => {
             let query = items_query(kind, *cursor, *limit);
             let value = cloud_cli::call(api, Method::GET, &["projects", &slug, "contracts", version, "semantic-items"], &query, None).await.map_err(|e| not_ready(e, version))?;
-            output(value, render_semantic_items)
+            (value, render_semantic_items)
         }
         Action::Backfill { version } => {
             let value = cloud_cli::call(api, Method::POST, &["projects", &slug, "contracts", version, "semantic-backfill"], &[], None).await?;
-            output(value, render_backfill)
+            (value, render_backfill)
         }
         Action::Endpoints { version } => {
             let value = cloud_cli::call(api, Method::GET, &["projects", &slug, "contracts", version, "endpoints"], &[], None).await?;
-            output(value, render_endpoints)
+            (value, render_endpoints)
         }
         Action::Entities { version } => {
             let value = cloud_cli::call(api, Method::GET, &["projects", &slug, "contracts", version, "entities"], &[], None).await?;
-            output(value, render_entities)
+            (value, render_entities)
         }
         Action::Import { url, url_stdin, url_file, version, rebuild } => {
             let url = import_url(url.as_deref(), *url_stdin, url_file.as_deref())?;
             let body = import_body(&url, version.as_deref(), *rebuild);
             let value = cloud_cli::call(api, Method::POST, &["projects", &slug, "contracts", "import"], &[], Some(&body)).await.map_err(import_error)?;
-            output(value, render_import)
+            (value, render_import)
         }
         Action::Download { version, output, force, allow_unverified } => {
             let options = DownloadOptions { force: *force, allow_unverified: *allow_unverified, json };
-            download(api, crate::auth_store::authenticated_cloud_client, &slug, version, output.as_deref(), options).await
+            return download(api, crate::auth_store::authenticated_cloud_client, &slug, version, output.as_deref(), options, out).await;
+        }
+    };
+    emit(out, json, &shown(args.show_source_url, value), human)
+}
+
+/// Pretty JSON with `--json`, otherwise the human lines (as [`cloud_cli::print`], into `out`).
+fn emit(out: &mut (dyn Write + Send), json: bool, value: &Value, human: impl FnOnce(&Value) -> Vec<String>) -> Result<()> {
+    if json {
+        writeln!(out, "{}", serde_json::to_string_pretty(value)?)?;
+    } else {
+        for line in human(value) {
+            writeln!(out, "{line}")?;
         }
     }
+    Ok(())
 }
 
 /// `GET /api/v1/projects/{project}/contracts`.
@@ -312,8 +329,9 @@ fn import_url(url: Option<&str>, stdin: bool, file: Option<&Path>) -> Result<Zer
     Ok(Zeroizing::new(trimmed.to_string()))
 }
 
-/// Replaces what can carry a secret in a URL: user name and password, every query value and
-/// the fragment. A value that is not an absolute URL with a host (an opaque `scheme:rest`
+/// Replaces what can carry a secret in a URL: user name and password, every query value (the
+/// whole query when a parameter has no value, which is how a bare token parses) and the
+/// fragment. The path is kept. A value that is not an absolute URL with a host (an opaque `scheme:rest`
 /// value has no separable credentials) is hidden completely.
 fn redact_url(raw: &str) -> String {
     const HIDDEN: &str = "REDACTED";
@@ -326,12 +344,17 @@ fn redact_url(raw: &str) -> String {
         let _ = url.set_password(None);
         let _ = url.set_username(HIDDEN);
     }
-    if url.query().is_some() {
-        let names: Vec<String> = url.query_pairs().map(|(name, _)| name.into_owned()).collect();
-        if names.is_empty() {
-            url.set_query(Some(HIDDEN));
-        } else {
-            url.query_pairs_mut().clear().extend_pairs(names.iter().map(|name| (name.as_str(), HIDDEN)));
+    match url.query() {
+        None => {}
+        Some("") => url.set_query(None),
+        Some(_) => {
+            let pairs: Vec<(String, String)> = url.query_pairs().map(|(name, value)| (name.into_owned(), value.into_owned())).collect();
+            // A bare `?TOKEN` (or `&TOKEN`) parses as a name without a value: hide the whole query.
+            if pairs.is_empty() || pairs.iter().any(|(_, value)| value.is_empty()) {
+                url.set_query(Some(HIDDEN));
+            } else {
+                url.query_pairs_mut().clear().extend_pairs(pairs.iter().map(|(name, _)| (name.as_str(), HIDDEN)));
+            }
         }
     }
     if url.fragment().is_some() {
@@ -398,7 +421,7 @@ fn expected_sha256(record: &Value) -> Option<String> {
 /// Without a valid SHA-256 in the record nothing is downloaded unless `--allow-unverified`.
 /// The client is created only after the record is read, so it starts from the session the
 /// [`Api`] may just have refreshed (refresh tokens are single-use).
-async fn download(api: &Api, client: impl FnOnce() -> Result<CloudClient>, slug: &str, version: &str, output: Option<&Path>, options: DownloadOptions) -> Result<()> {
+async fn download(api: &Api, client: impl FnOnce() -> Result<CloudClient>, slug: &str, version: &str, output: Option<&Path>, options: DownloadOptions, out: &mut (dyn Write + Send)) -> Result<()> {
     let DownloadOptions { force, allow_unverified, json } = options;
     let record = release(api, slug, version).await?;
     let resolved = record.get("version").and_then(Value::as_str).filter(|v| !v.is_empty()).unwrap_or(version);
@@ -420,7 +443,7 @@ async fn download(api: &Api, client: impl FnOnce() -> Result<CloudClient>, slug:
     write_artifact(&path, &bytes, force)?;
     let checked = expected.is_some();
     let summary = json!({"version": resolved, "path": path.display().to_string(), "size_bytes": bytes.len(), "sha256": sha256, "sha256_checked": checked});
-    cloud_cli::print(json, &summary, |_| {
+    emit(out, json, &summary, |_| {
         let mut lines = vec![format!("Downloaded release {resolved} to {} ({} bytes, SHA-256 {sha256}).", path.display(), bytes.len())];
         if !checked {
             lines.push("Unverified (--allow-unverified): the release record has no valid SHA-256, so the file was not checked against it.".into());
@@ -770,16 +793,16 @@ mod tests {
         mock.script("GET /api/v1/projects/demo/contracts/latest", 200, json!({"version": "1.2.0", "sha256": sha}));
         mock.script("GET /api/v1/projects/demo/contracts/1.2.0/pull", 200, artifact);
         let path = dir.path().join("release.axiom");
-        download(&api, loopback(&base), "demo", "latest", Some(&path), STRICT).await.unwrap();
+        download(&api, loopback(&base), "demo", "latest", Some(&path), STRICT, &mut std::io::sink()).await.unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), bytes);
         let pulled = mock.seen("GET /api/v1/projects/demo/contracts/1.2.0/pull");
         assert_eq!(pulled.len(), 1);
         assert_eq!(pulled[0].bearer.as_deref(), Some("access"));
 
         std::fs::write(&path, b"keep").unwrap();
-        assert!(download(&api, loopback(&base), "demo", "latest", Some(&path), STRICT).await.unwrap_err().to_string().contains("--force"));
+        assert!(download(&api, loopback(&base), "demo", "latest", Some(&path), STRICT, &mut std::io::sink()).await.unwrap_err().to_string().contains("--force"));
         assert_eq!(std::fs::read(&path).unwrap(), b"keep");
-        download(&api, loopback(&base), "demo", "latest", Some(&path), DownloadOptions { force: true, json: true, ..STRICT }).await.unwrap();
+        download(&api, loopback(&base), "demo", "latest", Some(&path), DownloadOptions { force: true, json: true, ..STRICT }, &mut std::io::sink()).await.unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), bytes);
         let leftovers: Vec<_> = std::fs::read_dir(dir.path()).unwrap().filter_map(|e| e.ok()).map(|e| e.file_name()).filter(|n| n != "release.axiom" && n != "step-up.json").collect();
         assert!(leftovers.is_empty(), "the temporary file is renamed over the target: {leftovers:?}");
@@ -791,13 +814,13 @@ mod tests {
         mock.script("GET /api/v1/projects/demo/contracts/1.2.0", 200, json!({"version": "1.2.0", "sha256": "00".repeat(32)}));
         mock.script("GET /api/v1/projects/demo/contracts/1.2.0/pull", 200, json!("tampered"));
         let path = dir.path().join("release.axiom");
-        let error = download(&api, loopback(&base), "demo", "1.2.0", Some(&path), STRICT).await.unwrap_err().to_string();
+        let error = download(&api, loopback(&base), "demo", "1.2.0", Some(&path), STRICT, &mut std::io::sink()).await.unwrap_err().to_string();
         assert!(error.contains("nothing was written"), "{error}");
         assert!(!path.exists());
         mock.script("GET /api/v1/projects/demo/contracts/x", 200, json!({"version": "../x", "sha256": ""}));
-        assert!(download(&api, loopback(&base), "demo", "x", Some(&path), STRICT).await.is_err());
+        assert!(download(&api, loopback(&base), "demo", "x", Some(&path), STRICT, &mut std::io::sink()).await.is_err());
         // --allow-unverified never skips a check the record makes possible.
-        let error = download(&api, loopback(&base), "demo", "1.2.0", Some(&path), DownloadOptions { allow_unverified: true, ..STRICT }).await.unwrap_err().to_string();
+        let error = download(&api, loopback(&base), "demo", "1.2.0", Some(&path), DownloadOptions { allow_unverified: true, ..STRICT }, &mut std::io::sink()).await.unwrap_err().to_string();
         assert!(error.contains("nothing was written"), "{error}");
         assert!(!path.exists());
     }
@@ -813,19 +836,19 @@ mod tests {
         for (i, sha) in records.iter().enumerate() {
             let record = if sha == "absent" { json!({"version": "1.2.0"}) } else { json!({"version": "1.2.0", "sha256": sha}) };
             mock.script(&format!("GET /api/v1/projects/demo/contracts/r{i}"), 200, record);
-            let error = download(&api, loopback(&base), "demo", &format!("r{i}"), Some(&path), STRICT).await.unwrap_err().to_string();
+            let error = download(&api, loopback(&base), "demo", &format!("r{i}"), Some(&path), STRICT, &mut std::io::sink()).await.unwrap_err().to_string();
             assert!(error.contains("no valid SHA-256") && error.contains("--allow-unverified") && error.contains("nothing was downloaded"), "{sha}: {error}");
             assert!(!path.exists(), "{sha}");
         }
         assert!(mock.seen(pull).is_empty(), "refused before the artifact is requested");
 
-        download(&api, loopback(&base), "demo", "r0", Some(&path), DownloadOptions { allow_unverified: true, ..STRICT }).await.unwrap();
+        download(&api, loopback(&base), "demo", "r0", Some(&path), DownloadOptions { allow_unverified: true, ..STRICT }, &mut std::io::sink()).await.unwrap();
         let bytes = json!("AXIOM-ARTIFACT").to_string().into_bytes();
         assert_eq!(std::fs::read(&path).unwrap(), bytes);
         assert_eq!(mock.seen(pull).len(), 1);
         // An upper-case digest in the record is still a valid one.
         mock.script("GET /api/v1/projects/demo/contracts/upper", 200, json!({"version": "1.2.0", "sha256": hex::encode_upper(Sha256::digest(&bytes))}));
-        download(&api, loopback(&base), "demo", "upper", Some(&path), DownloadOptions { force: true, ..STRICT }).await.unwrap();
+        download(&api, loopback(&base), "demo", "upper", Some(&path), DownloadOptions { force: true, ..STRICT }, &mut std::io::sink()).await.unwrap();
     }
 
     const SECRET_URL: &str = "https://deploy-bot:PASSWORD_CANARY@artifacts.example.com/r/a.axiom?X-Amz-Credential=CRED_CANARY&X-Amz-Signature=SIG_CANARY&token=TOKEN_CANARY#FRAG_CANARY";
@@ -844,7 +867,11 @@ mod tests {
         assert!(redacted.starts_with("https://REDACTED@artifacts.example.com/r/a.axiom?"), "{redacted}");
         assert!(redacted.contains("X-Amz-Signature=REDACTED") && redacted.contains("token=REDACTED"), "{redacted}");
         assert_eq!(redact_url("https://example.com/a.axiom"), "https://example.com/a.axiom", "nothing secret, nothing changed");
-        assert_eq!(redact_url("https://example.com/a.axiom?sig"), "https://example.com/a.axiom?sig=REDACTED");
+        assert_eq!(redact_url("https://example.com/a.axiom?sig"), "https://example.com/a.axiom?REDACTED");
+        assert_eq!(redact_url("https://example.com/a.axiom?"), "https://example.com/a.axiom");
+        assert_no_canary(&redact_url("https://example.com/a.axiom?v=1&TOKEN_CANARY"));
+        assert_no_canary(&redact_url("https://example.com/a.axiom?TOKEN_CANARY"));
+        assert_no_canary(&redact_url("https://deploy%2Dbot:PASSWORD%5FCANARY@[::1]/a?X-Amz-Signature=SIG%5FCANARY"));
         assert_no_canary(&redact_url("deploy-bot:PASSWORD_CANARY@not a url"));
         assert_no_canary(&redact_url("mailto:deploy-bot:PASSWORD_CANARY@example.com"));
         assert_no_canary(&redact_url("https://deploy-bot@example.com/a"));
@@ -861,6 +888,30 @@ mod tests {
         assert!(human.contains("source url  https://REDACTED@artifacts.example.com"), "{human}");
         assert!(render_release(&shown(true, release)).join("\n").contains("PASSWORD_CANARY"));
         assert_eq!(shown(false, json!({"source_url": ""})), json!({"source_url": ""}));
+    }
+
+    #[tokio::test]
+    async fn list_show_and_import_print_redacted_source_urls_unless_shown() {
+        let h = harness().await;
+        projects(&h.mock);
+        let release = json!({"id": "c2", "version": "1.1.0", "status": "signed", "source_type": "url", "source_url": SECRET_URL, "sha256": "ab"});
+        h.mock.script(LIST, 200, json!([release.clone()]));
+        h.mock.script("GET /api/v1/projects/demo/contracts/1.1.0", 200, release.clone());
+        h.mock.script("POST /api/v1/projects/demo/contracts/import", 201, release.clone());
+        let import = || Action::Import { url: Some("https://example.com/a.axiom".into()), url_stdin: false, url_file: None, version: None, rebuild: false };
+        for json in [false, true] {
+            for action in [Action::List, Action::Show { version: "1.1.0".into() }, import()] {
+                let label = format!("{action:?} json={json}");
+                let mut out = Vec::new();
+                run_to(&h.api, &ReleasesArgs { json, ..args(action) }, &mut out).await.unwrap();
+                let printed = String::from_utf8(out).unwrap();
+                assert!(printed.contains("1.1.0"), "{label}: {printed}");
+                assert_no_canary(&printed);
+            }
+        }
+        let mut out = Vec::new();
+        run_to(&h.api, &ReleasesArgs { json: true, show_source_url: true, ..args(Action::Show { version: "1.1.0".into() }) }, &mut out).await.unwrap();
+        assert!(String::from_utf8(out).unwrap().contains("PASSWORD_CANARY"), "--show-source-url prints the URL as returned");
     }
 
     #[tokio::test]

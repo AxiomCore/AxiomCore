@@ -44,8 +44,9 @@ carry credentials (`https://user:password@host/...`) or a signed-URL token in
 its query. The commands therefore redact every `source_url` they print, in
 plain output and in `--json` output: the user name becomes `REDACTED`, the
 password and fragment are removed or replaced, and every query value becomes
-`REDACTED` (the parameter names stay). A value that is not a URL is hidden
-completely. Pass `--show-source-url` to print the URL as the server returns it.
+`REDACTED` (the parameter names stay). When a query parameter has no value, as
+with a bare token after `?`, the whole query becomes `REDACTED`. The path is
+shown as it is. A value that is not a URL is hidden completely. Pass `--show-source-url` to print the URL as the server returns it.
 
 Any project member can run the read commands. `import` and `backfill` need the
 **Owner** or **Maintainer** role; the server checks it.

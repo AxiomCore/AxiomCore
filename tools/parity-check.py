@@ -16,18 +16,19 @@ def route_key(method, path):
 
 
 # The only reasons the CLI may deliberately lack a command for a dashboard route. Each
-# category names the exact routes it may cover and the dashboard groups allowed to use them;
-# anything else stays a gap until a command maps it.
+# category names the exact routes it may cover, the dashboard operations (actions) allowed
+# to call each of them and the dashboard groups they belong to. A route the dashboard reaches
+# through any other action is part of another flow, so it stays a gap until a command maps it.
 EXEMPTION_CATEGORIES = {
     'browser-session': {
         'description': 'dashboard sign-in routes of the browser session (email code, HttpOnly cookie); the CLI uses device login',
         'groups': {'Account authentication'},
         'routes': {
-            ('POST', '/api/v1/auth/send'),
-            ('POST', '/api/v1/auth/verify'),
-            ('GET', '/api/v1/auth/session'),
-            ('POST', '/api/v1/auth/session/refresh'),
-            ('DELETE', '/api/v1/auth/session'),
+            ('POST', '/api/v1/auth/send'): {'SendOTP'},
+            ('POST', '/api/v1/auth/verify'): {'VerifyOTP'},
+            ('GET', '/api/v1/auth/session'): {'GetSession'},
+            ('POST', '/api/v1/auth/session/refresh'): {'RefreshBrowserSession'},
+            ('DELETE', '/api/v1/auth/session'): {'Logout'},
         },
     },
 }
@@ -42,6 +43,9 @@ def validate_exemptions(exempt, dashboard, cli):
     mapped = {route_key(row['method'], row['path']) for row in cli}
     errors, result = [], {}
     for raw_key, entry in (exempt or {}).items():
+        if not (isinstance(raw_key, tuple) and len(raw_key) == 2 and all(isinstance(part, str) for part in raw_key)):
+            errors.append(f'{raw_key!r}: an exemption key must be (METHOD, path)')
+            continue
         key = route_key(*raw_key)
         name = f'{key[0]} {key[1]}'
         if not isinstance(entry, dict):
@@ -53,14 +57,19 @@ def validate_exemptions(exempt, dashboard, cli):
             errors.append(f'{name}: the exemption has no reason')
         if spec is None:
             errors.append(f'{name}: category {category!r} is not an allowed exemption category ({", ".join(sorted(EXEMPTION_CATEGORIES))})')
-        elif key not in {route_key(*route) for route in spec['routes']}:
+        routes = {route_key(*route): actions for route, actions in spec['routes'].items()} if spec is not None else {}
+        if spec is not None and key not in routes:
             errors.append(f'{name}: not a {category} route, so exempting it would hide a real gap')
         if key in mapped:
             errors.append(f'{name}: a CLI command maps this route; remove the exemption')
-        if spec is not None:
-            outside = sorted({row['group'] for row in dashboard if route_key(row['method'], row['path']) == key} - spec['groups'])
+        if key in routes:
+            callers = [row for row in dashboard if route_key(row['method'], row['path']) == key]
+            outside = sorted({row['group'] for row in callers} - spec['groups'])
             if outside:
                 errors.append(f'{name}: the dashboard uses it in {", ".join(outside)}, outside the {category} category, so exempting it would hide a real gap')
+            for row in callers:
+                if row.get('action') not in routes[key]:
+                    errors.append(f"{name}: the dashboard calls it from {row.get('action')} ({row.get('source')}:{row.get('line')}), not a {category} operation, so exempting it would hide a real gap")
         if key in result:
             errors.append(f'{name}: exempted twice')
         result[key] = {'category': category, 'reason': reason.strip() if isinstance(reason, str) else ''}

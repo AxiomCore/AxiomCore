@@ -174,7 +174,7 @@ again with the same details: the retry does not create a second grant.
 Owners can grant from the CLI instead. `--workload` takes the workload ID or
 its Google subject; the plan fills in from the registration:
 
-```bash
+```bash title="Terminal: grant the database from the CLI"
 axiom project resources --project my-project grant --environment production \
   --requirement tasks --workload SERVICE_ACCOUNT_UNIQUE_ID --expires-days 30
 axiom project resources --project my-project grants --environment production

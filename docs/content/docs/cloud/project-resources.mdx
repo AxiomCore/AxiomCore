@@ -176,7 +176,7 @@ the database's environment, its compiled backend plan, and an expiry of 7, 30
 or 90 days. Only owners can list, create and revoke grants. The **Database
 access** section of **Resources** and these CLI commands do the same:
 
-```bash
+```bash title="Terminal: grant and revoke database access"
 axiom project resources --project my-project grants --environment production
 axiom project resources --project my-project grant --environment production \
   --requirement tasks --workload 104200000000000000001 --expires-days 30

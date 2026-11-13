@@ -22,12 +22,13 @@ projects are **Alpha** and require their configured services.
 
 ## Project and output
 
-Two options apply to every command:
+Three options apply to every command:
 
 | Option | Value | Default | Meaning |
 | --- | --- | --- | --- |
 | `--project` | slug, name or id | the project linked to this directory | Cloud project to act on. A name or id is resolved to the slug through `GET /api/v1/projects`. |
 | `--json` | flag | off | Print the server's reply as pretty JSON instead of plain lines. |
+| `--show-source-url` | flag | off | Show release source URLs in full. See [Source URLs](#source-urls). |
 
 `VERSION` is a release version such as `1.4.0`, or `latest` for the release
 currently active on the project's `latest` channel. The server looks releases
@@ -35,6 +36,16 @@ up by version only; a contract id is not accepted in its place.
 
 Plain output shows at most 50 item lines per list and then says how many more
 there are; `--json` always prints the complete reply.
+
+### Source URLs
+
+A release imported from a URL keeps that URL as its source URL, and a URL can
+carry credentials (`https://user:password@host/...`) or a signed-URL token in
+its query. The commands therefore redact every `source_url` they print, in
+plain output and in `--json` output: the user name becomes `REDACTED`, the
+password and fragment are removed or replaced, and every query value becomes
+`REDACTED` (the parameter names stay). A value that is not a URL is hidden
+completely. Pass `--show-source-url` to print the URL as the server returns it.
 
 Any project member can run the read commands. `import` and `backfill` need the
 **Owner** or **Maintainer** role; the server checks it.
@@ -72,14 +83,22 @@ fetches it (port 443, no redirects, at most 20 MB), stores it and signs it with
 the project key.
 
 ```text title="Usage"
-axiom contract releases import --url URL [--version VERSION] [--rebuild] [--project PROJECT] [--json]
+axiom contract releases import [--url URL | --url-stdin | --url-file FILE] [--version VERSION] [--rebuild] [--project PROJECT] [--json]
 ```
 
 | Option | Value | Default | Meaning |
 | --- | --- | --- | --- |
-| `--url` | HTTPS URL | required | Address of the `.axiom` artifact. |
+| `--url` | HTTPS URL | none | Address of the `.axiom` artifact, as an argument. Use it only for a URL without credentials or a token. |
+| `--url-stdin` | flag | off | Read the URL from standard input. On a terminal, the CLI asks for it without echo instead. |
+| `--url-file` | path | none | Read the URL from this file. |
 | `--version` | version | the version inside the artifact | Release version to store. |
 | `--rebuild` | flag | off | When `--version` differs from the artifact's own version, rebuild the artifact with the new version instead of refusing. |
+
+Give at most one of `--url`, `--url-stdin` and `--url-file`. Command arguments
+are visible to other local processes and kept in shell history, so pass a URL
+that carries credentials or a signed token with `--url-stdin` or `--url-file`.
+Without any of the three, the CLI asks for the URL without echo on a terminal
+and fails otherwise.
 
 Calls `POST /api/v1/projects/{project_slug}/contracts/import` with
 `{"url", "version", "rebuild"}`; `version` is empty without `--version`.
@@ -88,20 +107,23 @@ Calls `POST /api/v1/projects/{project_slug}/contracts/import` with
 
 Download a release artifact to a file. The command first reads the release
 record, downloads the artifact and checks its SHA-256 against the record; on a
-mismatch nothing is written. If the record has no SHA-256 (some older uploads),
-the file cannot be checked and the command says so. It never replaces an
-existing file unless you pass `--force`; with `--force` the new file is written
+mismatch nothing is written. If the record has no valid SHA-256 (64 hex digits;
+some older uploads have none), the command refuses before downloading anything,
+unless you pass `--allow-unverified`. With that flag it writes the file and says
+that it was not checked; a SHA-256 that the record does carry is still checked.
+It never replaces an existing file unless you pass `--force`; with `--force` the new file is written
 next to the old one and renamed over it, so a failed download keeps the old
 file. It prints the size and SHA-256 of what it wrote.
 
 ```text title="Usage"
-axiom contract releases download VERSION [--output FILE] [--force] [--project PROJECT] [--json]
+axiom contract releases download VERSION [--output FILE] [--force] [--allow-unverified] [--project PROJECT] [--json]
 ```
 
 | Option | Value | Default | Meaning |
 | --- | --- | --- | --- |
 | `--output`, `-o` | path | `VERSION.axiom` in the current directory | File to write. With `latest`, the default name uses the resolved version. |
 | `--force` | flag | off | Replace the file if it exists. |
+| `--allow-unverified` | flag | off | Write the artifact even when the release record has no valid SHA-256 to check it against. A mismatching SHA-256 is still refused. |
 
 Calls `GET /api/v1/projects/{project_slug}/contracts/{version}` for the record,
 then `GET /api/v1/projects/{project_slug}/contracts/{version}/pull` for the

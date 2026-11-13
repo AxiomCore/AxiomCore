@@ -146,10 +146,55 @@ pub enum TrustedIssuersAction {
     },
 }
 
+/// Second factors an environment can offer (the dashboard's FACTOR_CHOICES).
+pub const FACTOR_CHOICES: [&str; 3] = ["totp", "passkey", "sms"];
+
 #[derive(Subcommand, Debug)]
 pub enum MfaAction {
     /// Policy, enabled factors and how many users have factors (counts only)
     Status,
+    /// Change the policy, factors, reauthentication window or passkey relying party (Owner).
+    /// Flags you omit keep their current value; turning MFA on from off asks for confirmation
+    Set {
+        /// off; optional (users may add a factor); required (users without a factor add one
+        /// before they get a session)
+        #[arg(long, value_parser = ["off", "optional", "required"])]
+        policy: Option<String>,
+        /// A factor users may add: totp, passkey or sms; repeatable, replaces the list
+        #[arg(long = "factor", value_parser = FACTOR_CHOICES)]
+        factors: Vec<String>,
+        /// How recent a sign-in must be for security actions, 2 to 60 minutes
+        #[arg(long)]
+        step_up_minutes: Option<u32>,
+        /// Passkey relying party ID: your app's registrable domain (for example example.com) or
+        /// localhost, never an axiomcore.dev name; "" clears it
+        #[arg(long)]
+        rp_id: Option<String>,
+        /// Passkey relying party name shown by browsers, at most 64 bytes; "" clears it
+        #[arg(long)]
+        rp_name: Option<String>,
+        /// Exact passkey origin (https://host[:port] or http://localhost[:port]) that is also an
+        /// allowed origin of the settings; repeatable (at most 8), replaces the list
+        #[arg(long = "origin", conflicts_with = "clear_origins")]
+        origins: Vec<String>,
+        /// Remove every passkey origin
+        #[arg(long)]
+        clear_origins: bool,
+        /// Confirm turning multi-factor on without a prompt (required without a terminal)
+        #[arg(long)]
+        yes: bool,
+    },
+}
+
+/// The flags of `mfa set`; `None` keeps the current value.
+#[derive(Debug, Default)]
+pub struct MfaChange<'a> {
+    pub policy: Option<&'a str>,
+    pub factors: Option<&'a [String]>,
+    pub step_up_minutes: Option<u32>,
+    pub rp_id: Option<&'a str>,
+    pub rp_name: Option<&'a str>,
+    pub origins: Option<&'a [String]>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -802,8 +847,26 @@ pub async fn trusted_issuers(args: &AuthArgs, action: &TrustedIssuersAction) -> 
 }
 
 pub async fn mfa(args: &AuthArgs, action: &MfaAction) -> Result<()> {
-    let MfaAction::Status = action;
-    let target = target(args).await?;
+    match action {
+        MfaAction::Status => {
+            let target = target(args).await?;
+            print_mfa_status(args, &target).await
+        }
+        MfaAction::Set { policy, factors, step_up_minutes, rp_id, rp_name, origins, clear_origins, yes } => {
+            let change = MfaChange {
+                policy: policy.as_deref(),
+                factors: (!factors.is_empty()).then_some(factors.as_slice()),
+                step_up_minutes: *step_up_minutes,
+                rp_id: rp_id.as_deref(),
+                rp_name: rp_name.as_deref(),
+                origins: if *clear_origins { Some(&[][..]) } else { (!origins.is_empty()).then_some(origins.as_slice()) },
+            };
+            mfa_set(args, &change, *yes).await
+        }
+    }
+}
+
+async fn print_mfa_status(args: &AuthArgs, target: &Target) -> Result<()> {
     let mut status = target.call(Method::GET, "mfa", &[], None).await?;
     sanitize(&mut status, false);
     print(args, &status, |s| {
@@ -813,6 +876,180 @@ pub async fn mfa(args: &AuthArgs, action: &MfaAction) -> Result<()> {
             format!("Users with factors: {}{}", text(s, "users_with_factors"), if s["users_count_capped"] == true { "+" } else { "" }),
         ]
     })
+}
+
+/// The current factor types: settings, else `GET mfa`, else the dialog's default.
+fn current_factors(settings: &Value, mfa: Option<&Value>) -> Vec<String> {
+    let types = |list: &Value| list.as_array().map(|a| a.iter().filter_map(|f| f.as_str().or(f["type"].as_str())).map(str::to_string).collect::<Vec<_>>());
+    types(&settings["mfa_factors"])
+        .or_else(|| mfa.and_then(|m| types(&m["factors"])))
+        .unwrap_or_else(|| vec!["totp".into(), "passkey".into()])
+        .into_iter()
+        .filter(|f| FACTOR_CHOICES.contains(&f.as_str()))
+        .collect()
+}
+
+/// The stored policy: settings, else `GET mfa`, else off.
+pub fn current_policy(settings: &Value, mfa: Option<&Value>) -> String {
+    settings["mfa_policy"].as_str().or_else(|| mfa.and_then(|m| m["policy"].as_str())).unwrap_or("off").to_string()
+}
+
+/// A relying party ID the dashboard accepts: a host name (or localhost), never axiomcore.dev.
+fn rp_id_valid(id: &str) -> bool {
+    static HOST: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let host = HOST.get_or_init(|| regex::Regex::new(r"^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$").expect("host pattern"));
+    let shaped = id == "localhost" || (id.len() <= 253 && host.is_match(id));
+    shaped && id != "axiomcore.dev" && !id.ends_with(".axiomcore.dev")
+}
+
+fn exact_origin(origin: &str) -> bool {
+    static ORIGIN: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    ORIGIN.get_or_init(|| regex::Regex::new(r"^(https://[a-z0-9.-]+(:[0-9]{1,5})?|http://localhost(:[0-9]{1,5})?)$").expect("origin pattern")).is_match(origin)
+}
+
+/// The origin's host is the RP ID or a subdomain of it (the server's WebAuthn rule).
+fn origin_under(origin: &str, rp_id: &str) -> bool {
+    reqwest::Url::parse(origin).ok().and_then(|u| u.host_str().map(str::to_string)).is_some_and(|h| h == rp_id || h.ends_with(&format!(".{rp_id}")))
+}
+
+/// The dashboard's `mfaInput` with omitted flags kept: the six multi-factor settings, or the
+/// problems found (each a sentence).
+pub fn mfa_input(settings: &Value, mfa: Option<&Value>, change: &MfaChange) -> std::result::Result<Value, Vec<String>> {
+    let mut problems = vec![];
+    let policy = change.policy.map(str::to_string).unwrap_or_else(|| current_policy(settings, mfa));
+    if !["off", "optional", "required"].contains(&policy.as_str()) {
+        problems.push("Choose a policy: off, optional or required.".to_string());
+    }
+    let mut factors: Vec<String> = vec![];
+    for f in change.factors.map(<[String]>::to_vec).unwrap_or_else(|| current_factors(settings, mfa)) {
+        if !factors.contains(&f) {
+            factors.push(f);
+        }
+    }
+    if factors.is_empty() {
+        problems.push("Allow at least one factor (--factor totp, passkey or sms).".into());
+    }
+    let step_up_seconds = match change.step_up_minutes {
+        Some(minutes) if !(2..=60).contains(&minutes) => {
+            problems.push("The reauthentication window is 2 to 60 minutes.".into());
+            0
+        }
+        Some(minutes) => i64::from(minutes) * 60,
+        None => settings["step_up_seconds"].as_i64().unwrap_or(600),
+    };
+    let rp_id = change.rp_id.map(str::to_string).or_else(|| settings["webauthn_rp_id"].as_str().map(str::to_string)).map(|v| v.trim().to_ascii_lowercase()).filter(|v| !v.is_empty());
+    if rp_id.as_deref().is_some_and(|id| !rp_id_valid(id)) {
+        problems.push("The relying party ID is your app's registrable domain (for example example.com) or localhost, never an axiomcore.dev name.".into());
+    }
+    let rp_name = change.rp_name.map(str::to_string).or_else(|| settings["webauthn_rp_name"].as_str().map(str::to_string)).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+    if rp_name.as_ref().is_some_and(|n| n.len() > 64) {
+        problems.push("The relying party name is at most 64 bytes.".into());
+    }
+    let origins: Vec<String> = match change.origins {
+        Some(list) => list.iter().map(|o| o.trim().to_string()).filter(|o| !o.is_empty()).collect(),
+        None => settings["webauthn_origins"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect(),
+    };
+    if origins.len() > 8 {
+        problems.push("List at most 8 passkey origins.".into());
+    }
+    let allowed = settings["allowed_origins"].as_array().cloned().unwrap_or_default();
+    for origin in &origins {
+        if !exact_origin(origin) {
+            problems.push(format!("{origin} is not an exact origin (https://host[:port] or http://localhost[:port])."));
+        } else if !allowed.iter().any(|a| a.as_str() == Some(origin.as_str())) {
+            problems.push(format!("{origin} is not an allowed origin of the settings (allowed_origins). Add it there first."));
+        } else if let Some(id) = rp_id.as_deref().filter(|id| rp_id_valid(id)) {
+            if !origin_under(origin, id) {
+                problems.push(format!("{origin} is not {id} or a subdomain of it (the relying party ID)."));
+            }
+        }
+    }
+    if !origins.is_empty() && rp_id.is_none() {
+        problems.push("Passkey origins need a relying party ID (--rp-id).".into());
+    }
+    if factors.iter().any(|f| f == "passkey") && rp_id.is_none() && policy != "off" {
+        problems.push("Passkeys as a second factor need a relying party ID (--rp-id).".into());
+    }
+    if !problems.is_empty() {
+        return Err(problems);
+    }
+    Ok(json!({
+        "mfa_policy": policy,
+        "mfa_factors": factors,
+        "step_up_seconds": step_up_seconds,
+        "webauthn_rp_id": rp_id,
+        "webauthn_rp_name": rp_name,
+        "webauthn_origins": origins,
+    }))
+}
+
+/// The dashboard's `enrollableFrom`: TOTP (the platform switch is assumed on), a passkey with
+/// a relying party ID, SMS with enabled Twilio settings.
+pub fn enrollable(factors: &[String], rp_id: Option<&str>, sms_ready: bool) -> Vec<String> {
+    factors.iter().filter(|f| match f.as_str() {
+        "totp" => true,
+        "passkey" => rp_id.is_some_and(|id| !id.is_empty()),
+        "sms" => sms_ready,
+        _ => false,
+    }).cloned().collect()
+}
+
+const MFA_SDK_WARNING: &str = "Before you continue, upgrade your app's Axiom sign-in SDK (@axiomcore/auth-web 0.2.0 or later). Older SDKs cannot complete a second step, so users with a factor cannot sign in through them.";
+
+/// The dashboard's wording of a refused multi-factor settings write.
+pub fn mfa_refusal(error: axiom_cloud::auth_admin::AuthAdminError) -> anyhow::Error {
+    let code = super::exit_code(&error);
+    let message = if error.status() == Some(400) && ["", "AXAUTH_INVALID_REQUEST"].contains(&error.code()) {
+        format!("{}: the authentication service does not accept these multi-factor settings yet, or a value is out of bounds. Nothing was changed.", error.code())
+    } else if error.code() == "AXAUTH_FEATURE_DISABLED" {
+        "AXAUTH_FEATURE_DISABLED: multi-factor is not available for this environment yet, or required was chosen while no factor can be added. Nothing was changed.".to_string()
+    } else {
+        return admin(error);
+    };
+    Exit { code, message }.into()
+}
+
+async fn mfa_set(args: &AuthArgs, change: &MfaChange<'_>, yes: bool) -> Result<()> {
+    let target = target(args).await?;
+    let settings = target.call(Method::GET, "settings", &[], None).await?;
+    // Settings without the multi-factor fields: the policy and factors come from GET mfa.
+    let mfa = if settings.get("mfa_policy").is_none() { target.call(Method::GET, "mfa", &[], None).await.ok() } else { None };
+    let input = mfa_input(&settings, mfa.as_ref(), change).map_err(|problems| usage(problems.join("\n")))?;
+    let policy = input["mfa_policy"].as_str().unwrap_or("off");
+    if policy == "required" {
+        let factors = input["mfa_factors"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect::<Vec<_>>();
+        let rp_id = input["webauthn_rp_id"].as_str();
+        let mut can = enrollable(&factors, rp_id, false);
+        if can.is_empty() && factors.iter().any(|f| f == "sms") {
+            // Read the SMS settings as the dashboard does: enabled with a stored secret.
+            let sms_ready = target.call(Method::GET, "sms", &[], None).await.ok().is_some_and(|v| {
+                let sms = v.get("sms").unwrap_or(&v);
+                sms["enabled"] == true && sms["secret_set"] == true
+            });
+            can = enrollable(&factors, rp_id, sms_ready);
+        }
+        if can.is_empty() {
+            return Err(usage("Required needs at least one factor that can be added now: TOTP, a passkey with a relying party ID, or SMS with enabled Twilio settings."));
+        }
+    }
+    if current_policy(&settings, mfa.as_ref()) == "off" && policy != "off" {
+        let effect = if policy == "required" { "Users without a factor must add one at their next sign-in." } else { "Users may add a factor; once they do, they need it at every sign-in." };
+        eprintln!("Turning multi-factor {policy} in {}. {MFA_SDK_WARNING} {effect}", args.environment);
+        if !yes {
+            if !std::io::stdin().is_terminal() {
+                return Err(usage("pass --yes to turn multi-factor on without a prompt, after you upgrade your app's Axiom sign-in SDK"));
+            }
+            if !dialoguer::Confirm::new().with_prompt(format!("Turn multi-factor {policy}?")).default(false).interact()? {
+                return Err(usage("cancelled"));
+            }
+        }
+    }
+    let body = super::settings_put_body(&settings, &input);
+    target.call_raw(Method::PUT, "settings", &[], Some(&body)).await.map_err(mfa_refusal)?;
+    if !args.json {
+        println!("Multi-factor settings saved.");
+    }
+    print_mfa_status(args, &target).await
 }
 
 /// `users factors`, `reset-factors`, `consents`, `revoke-consent`.

@@ -267,12 +267,12 @@ mod tests {
         let cli = crate::Cli::try_parse_from(["axiom", "login", "--step-up"]).unwrap();
         assert!(matches!(
             *cli.command,
-            crate::Commands::Login { step_up: true }
+            crate::Commands::Login { step_up: true, .. }
         ));
         let cli = crate::Cli::try_parse_from(["axiom", "login"]).unwrap();
         assert!(matches!(
             *cli.command,
-            crate::Commands::Login { step_up: false }
+            crate::Commands::Login { step_up: false, .. }
         ));
     }
 }

@@ -15,7 +15,7 @@ use crate::components::inspect::endpoint_list::render_endpoint_list;
 use crate::components::inspect::model_browser::render_model_browser;
 use crate::state::InspectTab;
 use crate::telemetry::Telemetry;
-use axiom_cloud::{uses_local_cloud, CloudClient};
+use axiom_cloud::uses_local_cloud;
 use clap::{Parser, Subcommand};
 use crossterm::event::KeyCode;
 use ratatui::prelude::*;
@@ -107,6 +107,11 @@ enum Commands {
         /// within the last 15 minutes. Your normal session is kept.
         #[arg(long)]
         step_up: bool,
+        /// Print the sign-in link and code as plain text instead of the full-screen view.
+        /// This is automatic when output is not a terminal (CI, a pipe) or the terminal
+        /// reports no size.
+        #[arg(long)]
+        no_tui: bool,
     },
     /// Join the waitlist if you don't have a referral code
     Join {
@@ -1675,7 +1680,7 @@ async fn main() -> anyhow::Result<()> {
     } else {
         uses_local_cloud()?
     };
-    let is_first_login = matches!(&*cli.command, Commands::Login { step_up: false });
+    let is_first_login = matches!(&*cli.command, Commands::Login { step_up: false, .. });
     let mut active_config = if local_cloud
         || local_application_command
         || matches!(
@@ -3187,8 +3192,11 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
         Commands::Init { entrypoint, module } => {
             crate::commands::init::handle_init(entrypoint.clone(), module.clone()).await
         }
-        Commands::Login { step_up: true } => commands::step_up::handle_login_step_up().await,
-        Commands::Login { step_up: false } => handle_login_tui().await,
+        Commands::Login { step_up: true, .. } => commands::step_up::handle_login_step_up().await,
+        Commands::Login {
+            step_up: false,
+            no_tui,
+        } => commands::login::handle_login(*no_tui).await,
         Commands::Join { email } => crate::commands::join::handle_join(email.clone()).await,
         Commands::Cache { action } => {
             let mut cache_dir = crate::auth_store::get_config_dir()?;
@@ -3210,88 +3218,6 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
 // =========================================================================================
 //  EXISTING HELPERS (Kept exactly as original to ensure full file correctness)
 // =========================================================================================
-
-async fn handle_login_tui() -> anyhow::Result<()> {
-    // Do not enter raw/alternate-screen mode until the device flow is ready. If the
-    // authentication service rejects or rate-limits the request, the developer gets
-    // a normal shell error and no detached TUI task is left running.
-    let auth_info = CloudClient::start_login().await?;
-
-    let mut state = crate::state::State::new();
-    let mut tui = crate::tui::Tui::new().map_err(|e| anyhow::anyhow!(e))?;
-    tui.enter().map_err(|e| anyhow::anyhow!(e))?;
-
-    // Put the device-flow details into the TUI state.
-    state.login_context.status = crate::state::LoginStatus::WaitingForUser {
-        code: auth_info.user_code.clone(),
-        url: auth_info.verification_uri.clone(),
-    };
-
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-    let d_code = auth_info.device_code.clone();
-    let d_interval = auth_info.interval;
-
-    // STEP 3: Start polling in background
-    let login_task = tokio::spawn(async move {
-        let result = CloudClient::wait_for_login(&d_code, d_interval).await;
-        let _ = tx.send(result);
-    });
-
-    let loop_result = async {
-        loop {
-            if let Ok(res) = rx.try_recv() {
-                match res {
-                    Ok(token_json) => {
-                        // Only update state to Success when we actually have the token
-                        let val: serde_json::Value = serde_json::from_str(&token_json)?;
-                        crate::auth_store::save_tokens(
-                            val["access_token"].as_str().unwrap_or_default(),
-                            val["refresh_token"].as_str().unwrap_or_default(),
-                            val["expires_in"].as_u64().unwrap_or_default(),
-                        )?;
-                        commands::step_up::StepUpStore::forget_for_profile();
-                        state.login_context.status = crate::state::LoginStatus::Success;
-                    }
-                    Err(e) => {
-                        state.login_context.status =
-                            crate::state::LoginStatus::Error(e.to_string());
-                    }
-                }
-            }
-
-            tui.draw(|f| {
-                crate::components::login_screen::render_login_screen(f, f.size(), &state)
-            })?;
-
-            if let Some(crate::tui::Event::Key(key)) = tui.event_rx.recv().await {
-                match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => {
-                        login_task.abort();
-                        if let crate::state::LoginStatus::Error(message) =
-                            &state.login_context.status
-                        {
-                            return Err(anyhow::anyhow!(message.clone()));
-                        }
-                        return Ok(());
-                    }
-                    KeyCode::Enter
-                        if matches!(
-                            state.login_context.status,
-                            crate::state::LoginStatus::Success
-                        ) =>
-                    {
-                        return Ok(());
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-    .await;
-
-    tui.exit().map_err(|e| anyhow::anyhow!(e))?;
-    loop_result
-}
 
 fn normalize_validator_yaml(raw_spec: &str) -> String {
     if let Ok(value) = serde_json::from_str::<serde_json::Value>(raw_spec) {

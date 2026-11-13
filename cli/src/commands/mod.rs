@@ -33,6 +33,8 @@ mod inspector_server;
 pub mod install;
 pub mod join;
 mod legacy_mock;
+pub mod login;
+pub mod login_plain;
 pub mod lsp;
 pub mod mock;
 mod mock_development;

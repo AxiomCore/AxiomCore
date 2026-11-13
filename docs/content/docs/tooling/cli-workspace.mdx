@@ -1,0 +1,328 @@
+---
+title: Workspace commands
+description: Reference for the axiom workspace commands that show and rename a workspace, read billing and usage, manage members and invitations, set notification preferences, and complete onboarding.
+pageType: reference
+---
+
+`axiom workspace` does from the terminal what the dashboard's workspace settings
+do: show and rename the workspace, read its plan and usage, manage members and
+invitations, set your notification preferences, check a workspace ID, and
+complete first-run onboarding. Each command calls the same Axiom Cloud endpoint
+as the dashboard.
+
+All of these commands need network access and a prior `axiom login`. Cloud
+accounts and workspaces are **Alpha** and require their configured services.
+
+## Workspace scope
+
+These commands are scoped to a workspace, not to a project or environment, so
+they take no `--project` or `--environment` option. Two options apply to every
+command:
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--workspace` | slug | your primary workspace | Workspace to act on. Sent as the `workspace_slug` query parameter. |
+| `--json` | flag | off | Print the server's reply as pretty JSON instead of plain lines. |
+
+Without `--workspace`, the server picks your primary workspace: the one where
+you have the highest role (owner, then maintainer, then reader), oldest first.
+`--workspace` has no effect on `invitations accept`, `availability` and
+`onboarding`, which are not tied to an existing workspace.
+
+The server checks roles. Renaming the workspace and changing or removing
+members need the **Owner** role. Sending, resending and cancelling invitations
+need the Owner or Maintainer role. Any member can read the workspace, members,
+invitations and billing, and set their own notification preferences.
+
+## Workspace
+
+### axiom workspace show
+
+Show the workspace's name, slug and id, your role, the plan and its status,
+trial days and team size.
+
+```text title="Usage"
+axiom workspace show [--workspace SLUG] [--json]
+```
+
+Calls `GET /api/v1/workspace`.
+
+### axiom workspace update
+
+Rename the workspace (Owner). The slug does not change.
+
+```text title="Usage"
+axiom workspace update --name NAME [--workspace SLUG] [--json]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--name` | text | required | New display name, 2 to 120 characters after trimming. |
+
+Calls `PATCH /api/v1/workspace` with `{"name"}`.
+
+### axiom workspace billing
+
+Show the plan, its status, trial days and billing provider, and usage: the
+number of projects, releases in the last 30 days and running environments.
+
+```text title="Usage"
+axiom workspace billing [--workspace SLUG] [--json]
+```
+
+Calls `GET /api/v1/workspace/billing`.
+
+### axiom workspace availability
+
+Check whether a workspace ID (slug) is valid and not already in use, before you
+complete onboarding. A valid ID is 3 to 63 lowercase letters, digits or hyphens,
+starting and ending with a letter or digit. The ID is lowercased before the
+check.
+
+```text title="Usage"
+axiom workspace availability SLUG [--json]
+```
+
+Calls `GET /api/v1/onboarding/workspace-availability?slug=SLUG`.
+
+## Members
+
+### axiom workspace members list
+
+List members, owner first: user id, email, name, role and join time.
+
+```text title="Usage"
+axiom workspace members list [--workspace SLUG] [--json]
+```
+
+Calls `GET /api/v1/workspace/members`.
+
+### axiom workspace members update
+
+Change a member's workspace role (Owner). `MEMBER` is a user id or an email; the
+CLI looks it up in the member list. The owner's role cannot be changed.
+
+```text title="Usage"
+axiom workspace members update MEMBER --role ROLE [--workspace SLUG] [--json]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `MEMBER` | user id or email | required | Member to change. |
+| `--role` | `maintainer`, `reader` | required | New workspace role. |
+
+Calls `GET /api/v1/workspace/members` to look up the member, then
+`PATCH /api/v1/workspace/members/{member_id}` with `{"role"}`.
+
+### axiom workspace members remove
+
+Remove a member from the workspace (Owner). Their roles on every project of the
+workspace are removed in the same step, and projects they own pass to the
+workspace owner. Inviting them again restores workspace membership only;
+project roles must be granted again. The owner cannot be removed.
+
+```text title="Usage"
+axiom workspace members remove MEMBER [--yes] [--workspace SLUG] [--json]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `MEMBER` | user id or email | required | Member to remove. |
+| `--yes` | flag | off | Confirm without a prompt. Without it, the command asks on a terminal and refuses otherwise. |
+
+Calls `GET /api/v1/workspace/members` to look up the member, then
+`DELETE /api/v1/workspace/members/{member_id}`. The server sends no body, so
+`--json` prints `{"removed": true, "member_id", "email"}`.
+
+## Invitations
+
+Invitation links are secrets. The server never returns them: they are only
+emailed to the invited address, and the CLI never prints them.
+
+### axiom workspace invitations list
+
+List invitations, newest first: id, email, role, status, expiry and resend count,
+with the last delivery error when there is one.
+
+```text title="Usage"
+axiom workspace invitations list [--workspace SLUG] [--json]
+```
+
+Calls `GET /api/v1/workspace/invitations`.
+
+### axiom workspace invitations create
+
+Invite someone by email (Owner or Maintainer). The invitation link is emailed
+and expires after 7 days. Inviting an address that already has an invitation
+replaces it with a new link.
+
+```text title="Usage"
+axiom workspace invitations create --email EMAIL --role ROLE [--workspace SLUG] [--json]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--email` | email | required | Address to invite. It is lowercased. |
+| `--role` | `maintainer`, `reader` | required | Workspace role on joining. |
+
+An invitation joins the workspace only; it grants no project roles. The reply
+says whether the email was sent, is queued for a retry, or could not be sent
+because workspace email delivery is not configured. The server limits
+invitations to one per address per minute, 50 pending per workspace, and 20 per
+sender and 50 per workspace a day.
+
+Calls `POST /api/v1/workspace/invitations` with `{"email", "role"}`.
+
+### axiom workspace invitations resend
+
+Send a pending invitation again with a new link (Owner or Maintainer). Earlier
+links stop working. `INVITATION` is an invitation id or the invited email.
+
+```text title="Usage"
+axiom workspace invitations resend INVITATION [--workspace SLUG] [--json]
+```
+
+Calls `GET /api/v1/workspace/invitations` to look up the invitation, then
+`POST /api/v1/workspace/invitations/{invitation_id}/resend`.
+
+### axiom workspace invitations cancel
+
+Cancel a pending invitation (Owner or Maintainer). Its link stops working at
+once.
+
+```text title="Usage"
+axiom workspace invitations cancel INVITATION [--yes] [--workspace SLUG] [--json]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `INVITATION` | invitation id or email | required | Invitation to cancel. |
+| `--yes` | flag | off | Confirm without a prompt. Without it, the command asks on a terminal and refuses otherwise. |
+
+Calls `GET /api/v1/workspace/invitations` to look up the invitation, then
+`DELETE /api/v1/workspace/invitations/{invitation_id}`. `--json` prints
+`{"cancelled": true, "invitation_id", "email"}`.
+
+### axiom workspace invitations accept
+
+Accept an invitation sent to the email address of the account you are signed in
+with. Pass either the whole link from the invitation email
+(`https://…/dashboard/invitations/accept?token=…`) or only its token. The token
+is never taken as a command-line argument: it is read from standard input, from
+a file, or from a prompt that does not echo what you type.
+
+```text title="Usage"
+axiom workspace invitations accept [--token-stdin | --token-file PATH] [--json]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--token-stdin` | flag | off | Read the link or token from standard input. |
+| `--token-file` | path | none | Read the link or token from this file. |
+
+With neither option, the command prompts on a terminal and refuses otherwise.
+Once accepted, the link no longer works. The reply names the workspace you
+joined; pass `--workspace SLUG` to work in it.
+
+```bash title="Terminal"
+pbpaste | axiom workspace invitations accept --token-stdin
+```
+
+Calls `POST /api/v1/workspace/invitations/accept` with `{"token"}`.
+
+## Notifications
+
+Notification preferences are yours alone, per workspace. There are four:
+`contract_deployed`, `pipeline_failed`, `invitation_activity` and
+`product_updates`.
+
+### axiom workspace notifications show
+
+```text title="Usage"
+axiom workspace notifications show [--workspace SLUG] [--json]
+```
+
+Calls `GET /api/v1/workspace/notifications`.
+
+### axiom workspace notifications update
+
+Change one or more preferences. The endpoint replaces the whole document, so the
+CLI first reads your current preferences and sends them back with your changes
+applied; preferences you do not name keep their value. If the server does not
+return a current value for a preference you did not name, nothing is changed.
+
+```text title="Usage"
+axiom workspace notifications update [OPTIONS] [--workspace SLUG] [--json]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--contract-deployed` | `true`, `false` | unchanged | Email when a contract release is deployed. |
+| `--pipeline-failed` | `true`, `false` | unchanged | Email when a pipeline fails. |
+| `--invitation-activity` | `true`, `false` | unchanged | Email about invitations you sent: sent, accepted, cancelled. |
+| `--product-updates` | `true`, `false` | unchanged | Product update emails. |
+
+At least one option is required.
+
+Calls `GET /api/v1/workspace/notifications`, then
+`PUT /api/v1/workspace/notifications` with all four preferences.
+
+### axiom workspace notifications test
+
+Queue a test notification to your account email. The server allows one test
+every 10 minutes.
+
+```text title="Usage"
+axiom workspace notifications test [--workspace SLUG] [--json]
+```
+
+Calls `POST /api/v1/workspace/notifications/test`.
+
+## Onboarding
+
+### axiom workspace onboarding status
+
+Show whether you have completed onboarding and, if so, the workspace it
+created: name, slug, id, plan, trial days and the number of invitations queued.
+
+```text title="Usage"
+axiom workspace onboarding status [--json]
+```
+
+Calls `GET /api/v1/onboarding`.
+
+### axiom workspace onboarding complete
+
+Save your profile and create your first workspace, as the dashboard's welcome
+flow does. The CLI checks the options as the server does before it sends
+anything. If you have already completed onboarding, nothing changes and the
+command names your existing workspace.
+
+```text title="Usage"
+axiom workspace onboarding complete --full-name NAME --timezone ZONE --workspace-name NAME --workspace-slug SLUG [OPTIONS] [--json]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--full-name` | text | required | Your full name, at least 2 characters. |
+| `--job-title` | text | none | Your job title. |
+| `--timezone` | IANA zone | required | Your timezone, for example `Europe/Berlin`. |
+| `--product-updates` | flag | off | Receive product update emails. |
+| `--role` | text | none | What you do. The dashboard offers `developer`, `engineering-manager`, `product-manager`, `designer`, `founder-executive` and `operations`. |
+| `--discovery-source` | text | none | How you heard of AxiomCore. The dashboard offers `github`, `search`, `twitter`, `community`, `content`, `friend` and `other`. |
+| `--discovery-source-detail` | text | none | Details, required with `--discovery-source other` (at least 2 characters). |
+| `--workspace-name` | text | required | Workspace display name, at least 2 characters. |
+| `--workspace-slug` | slug | required | Workspace ID: 3 to 63 lowercase letters, digits or hyphens. Check it first with `axiom workspace availability`. |
+| `--team-size` | `just-me`, `2-10`, `11-50`, `51-200`, `201-500`, `501-1000`, `1001-5000`, `5000-plus` | `just-me` | Team size. |
+| `--interest` | text, repeatable | none | What you want to use AxiomCore for. The dashboard offers `enforcement`, `diffing`, `sandbox`, `telemetry` and `sdk`. |
+| `--invite` | `EMAIL` or `EMAIL:ROLE`, repeatable | none | Invite a teammate as `maintainer` (the default) or `reader`. Each address once. |
+| `--plan` | `free`, `cloud` | `free` | Plan. |
+
+```bash title="Terminal"
+axiom workspace onboarding complete \
+  --full-name "Ada Lovelace" --timezone Europe/London \
+  --workspace-name "Acme Labs" --workspace-slug acme-labs \
+  --team-size 2-10 --invite bob@acme.dev:reader
+```
+
+Calls `POST /api/v1/onboarding/complete`.

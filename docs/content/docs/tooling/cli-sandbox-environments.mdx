@@ -1,0 +1,146 @@
+---
+title: Sandbox environment commands
+description: Reference for axiom project environments, the CLI commands that list, create, inspect, connect to, reset and delete the managed sandboxes and hosted mocks of an Axiom Cloud project.
+pageType: reference
+---
+
+`axiom project environments` manages the same managed sandboxes and hosted mocks
+as the dashboard's **Sandbox** page. A sandbox is a provider-backed mock runtime
+built from a verified deployable release of your contract. It gets a URL once
+the provider reports it healthy, keeps its declared state until you reset it,
+and expires on its own.
+
+These are not configuration environments (`axiom secrets`) and not
+authentication environments (`axiom auth`).
+
+Every command needs a prior `axiom login` and calls Axiom Cloud with that
+session. Managed sandboxes are **Alpha**. When the Cloud deployment has
+provisioning turned off, `create` and `reset` fail with HTTP 409 and print the
+server's reason, for example that you can run the contract locally with
+`axiom serve`.
+
+## Shared options
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--project` | slug, name or id | the project linked with `axiom project link` | Cloud project. |
+| `--json` | flag | off | Print the server reply as pretty JSON. |
+| `--environment` | name or id | none | The environment that `show`, `events`, `connection`, `reset` and `delete` act on. An id is used as given. A name is looked up in the list, and live environments are preferred over deleted or expired ones with the same name. |
+
+## Commands
+
+### list
+
+Lists the managed environments of the project, newest first, including ended
+ones. Each line shows the name, kind, status, endpoint, expiry and id.
+
+```text title="Usage"
+axiom project environments list [--project <PROJECT>] [--json]
+```
+
+Calls `GET /api/v1/projects/{project_slug}/environments`.
+
+### create
+
+Asks for a managed sandbox built from a verified deployable release. Only
+project managers can do this. A project has one live environment per kind: if
+one already runs the same release, the server returns it, and if it runs an
+older release, the server moves it to the new one.
+
+```text title="Usage"
+axiom project environments create [--name <NAME>] [--kind <KIND>] [--version <VERSION>] [--access <ACCESS>] [--expires-in-minutes <N>] [--wait]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--name` | name | `sandbox` | Lowercase letters, digits and hyphens, starting with a letter, at most 49 characters. |
+| `--kind` | `sandbox`, `hosted_mock` | `sandbox` | Kind of environment. |
+| `--version` | contract version | the `latest` release channel | Release to run. It must be verified and deployable. |
+| `--access` | `token`, `public` | `token` | `token` means requests need the sandbox access key. |
+| `--expires-in-minutes` | 5 to 10080 | 1440 (one day) | Lifetime. |
+| `--wait` | flag | off | Check the environment until it is ready, for up to 10 minutes. If it fails, expires or is deleted, the command reports an error. |
+
+The CLI checks these values the same way the server does before it sends
+anything. Calls `POST /api/v1/projects/{project_slug}/environments` with
+`{"kind", "name", "access_mode", "expires_in_minutes"}`, plus `"version"` when
+you set `--version`. `--wait` repeats
+`GET /api/v1/projects/{project_slug}/environments/{environment_id}`.
+
+### show
+
+Prints one environment: status, access mode, endpoint, health, reset count,
+times and any failure.
+
+```text title="Usage"
+axiom project environments show --environment <NAME|ID>
+```
+
+Calls `GET /api/v1/projects/{project_slug}/environments/{environment_id}`.
+
+### events
+
+Prints the lifecycle events of an environment, newest first: provisioning,
+health, reset, expiry and teardown.
+
+```text title="Usage"
+axiom project environments events --environment <NAME|ID> [--limit <N>]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--limit` | 1 to 200 | 100 (the server's default) | Most events to return. |
+
+Calls `GET /api/v1/projects/{project_slug}/environments/{environment_id}/events?limit=N`.
+
+### connection
+
+Prints the URL, the access header name and the expiry of a ready sandbox. Only
+project managers can do this. For a `token` sandbox the reply also holds the
+sandbox access key. The CLI hides the key, in `--json` output too, unless you
+pass `--show-secret`. This matches the dashboard's **Reveal connection** button.
+
+```text title="Usage"
+axiom project environments connection --environment <NAME|ID> [--show-secret]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--show-secret` | flag | off | Print the access key. Send it in the `X-Axiom-Sandbox-Key` header. |
+
+Calls `POST /api/v1/projects/{project_slug}/environments/{environment_id}/connection`
+with `{}`. This is a POST so that the key never lands in a cache. Before the
+sandbox is ready, the server answers HTTP 409.
+
+### reset
+
+Resets the stateful mock data of a **ready** sandbox to the initial state that
+the project's current mock configuration declares. The URL and access key do
+not change. While the reset runs, the status is `resetting`.
+
+```text title="Usage"
+axiom project environments reset --environment <NAME|ID> [--yes]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--yes` | flag | off | Skip the confirmation prompt. Without a terminal, `--yes` is required. |
+
+Calls `POST /api/v1/projects/{project_slug}/environments/{environment_id}/reset`
+with `{}`.
+
+### delete
+
+Deletes an environment. Its URL stops serving, the provider runtime is removed,
+and its access key stops working. Only a ready sandbox can be deleted this way;
+the status moves to `deleting` and then `deleted`. A sandbox that failed before
+any provider resource existed is removed at once.
+
+```text title="Usage"
+axiom project environments delete --environment <NAME|ID> [--yes]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--yes` | flag | off | Skip the confirmation prompt. Without a terminal, `--yes` is required. |
+
+Calls `DELETE /api/v1/projects/{project_slug}/environments/{environment_id}`.

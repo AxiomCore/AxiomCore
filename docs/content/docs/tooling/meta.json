@@ -3,12 +3,15 @@
   "pages": [
     "cli-reference",
     "cli-project",
+    "cli-workspace",
+    "cli-sandbox-environments",
     "cli-build-and-run",
     "cli-testing",
     "cli-server",
     "cli-database",
     "cli-ui",
     "cli-contracts",
+    "cli-contract-releases",
     "cli-extensions",
     "cli-inspect",
     "secrets-cli"

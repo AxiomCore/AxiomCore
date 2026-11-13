@@ -10,7 +10,7 @@ fn project_fixture() -> Value {
 
 #[tokio::test]
 async fn all_36_json_commands_send_dashboard_method_path_and_body() {
-    for (argv, method, path, body) in cases() {
+    for (argv, method, path, mut body) in cases() {
         if path == "/api/v1/activity/stream" {
             continue;
         }
@@ -18,6 +18,18 @@ async fn all_36_json_commands_send_dashboard_method_path_and_body() {
         let path = path.replace("{project}", "demo");
         let route = format!("{method} {path}");
         mock.script("GET /api/v1/projects", 200, project_fixture());
+        if path.ends_with("/settings") && method == "PATCH" {
+            mock.script("GET /api/v1/projects/demo", 200, json!({"name":"Demo", "description":"Keep", "default_branch":"main", "visibility":"private"}));
+            body = Some(
+                json!({"name":"example", "description":"Keep", "default_branch":"main", "visibility":"private"}),
+            );
+        }
+        if path.ends_with("/alert-policies/item") && method == "PUT" {
+            mock.script("GET /api/v1/projects/demo/alert-policies", 200, json!([{"kind":"item", "enabled":true, "window_seconds":300, "threshold":1.0, "minimum_samples":10, "severity":"warning"}]));
+            body = Some(
+                json!({"enabled":true, "window_seconds":300, "threshold":5.0, "minimum_samples":10, "severity":"warning"}),
+            );
+        }
         mock.script(&route, 200, json!({"ok":true}));
         let base = mock.start().await;
         let client =
@@ -276,4 +288,79 @@ fn root_cli_registers_intel_and_accepts_global_options_after_verbs() {
         }
         _ => panic!("expected intel command"),
     }
+}
+
+#[test]
+fn otlp_create_snippet_is_redacted() {
+    // OTLPConnection embeds OTLPSource: these fields are flattened by Go JSON.
+    let raw = json!({"id":"s1","name":"worker","endpoint":"https://otlp.example",
+        "dsn":"otlp-secret-value", "acore_snippet":"telemetry { dsn: otlp-secret-value }",
+        "security_notice":"Credentials are shown only once."});
+    let mut value = raw.clone();
+    redact(&mut value);
+    assert!(!serde_json::to_string(&value)
+        .unwrap()
+        .contains("otlp-secret-value"));
+    assert!(!human_value(&value).contains("otlp-secret-value"));
+    assert_eq!(value["name"], "worker");
+    // Explicit --show-secrets keeps the original response for both formats.
+    assert!(serde_json::to_string(&raw)
+        .unwrap()
+        .contains("otlp-secret-value"));
+    assert!(human_value(&raw).contains("otlp-secret-value"));
+}
+
+#[test]
+fn human_main_fields_use_plain_words() {
+    let text = human_value(
+        &json!({"name":"Shop","default_branch":"main","enabled":true,"status":"healthy"}),
+    );
+    assert!(text.contains("Name: Shop"));
+    assert!(text.contains("Default branch: main"));
+    assert!(text.contains("Enabled: yes"));
+    assert!(text.contains("Status: healthy"));
+    assert!(!text.contains('{'));
+}
+
+#[test]
+fn logs_interval_defaults_to_fifteen_seconds_and_accepts_override() {
+    for (argv, seconds) in [
+        (vec!["intel", "logs", "list", "--follow"], 15),
+        (
+            vec!["intel", "logs", "list", "--follow", "--interval", "3"],
+            3,
+        ),
+    ] {
+        assert_eq!(
+            ParserHarness::try_parse_from(argv)
+                .unwrap()
+                .command
+                .poll_interval(),
+            Duration::from_secs(seconds)
+        );
+    }
+    assert!(ParserHarness::try_parse_from(["intel", "logs", "list", "--interval", "0"]).is_err());
+}
+
+#[tokio::test]
+async fn literal_project_placeholder_identifier_is_not_rewritten() {
+    let mock = Mock::default();
+    mock.script("GET /api/v1/projects", 200, project_fixture());
+    let route = "GET /api/v1/projects/demo/traces/%7Bproject%7D";
+    mock.script(route, 200, json!({"id":"{project}"}));
+    let base = mock.start().await;
+    let client = CloudClient::for_loopback(&base, "test".into(), "refresh".into()).unwrap();
+    let args = IntelArgs {
+        project: Some("demo".into()),
+        environment: None,
+        json: true,
+        yes: false,
+        show_secrets: false,
+        query: vec![],
+        command: ParserHarness::try_parse_from(["intel", "traces", "get", "{project}"])
+            .unwrap()
+            .command,
+    };
+    execute(&client, &args).await.unwrap();
+    assert_eq!(mock.seen(route).len(), 1);
 }

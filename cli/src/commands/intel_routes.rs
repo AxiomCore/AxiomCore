@@ -1,6 +1,6 @@
 //! Dashboard intelligence commands and their exact Cloud API routes.
 use anyhow::{bail, Result};
-use clap::Subcommand;
+use clap::{Args, Subcommand};
 use serde_json::Value;
 
 #[derive(Debug)]
@@ -141,9 +141,8 @@ pub enum AlertPoliciesAction {
     /// Update alert policies.
     Update {
         policy_kind: String,
-        /// API request object, as JSON.
-        #[arg(long)]
-        body: String,
+        #[command(flatten)]
+        fields: AlertPolicyFields,
     },
 }
 
@@ -154,6 +153,9 @@ pub enum LogsAction {
         /// Continue receiving events until interrupted.
         #[arg(long)]
         follow: bool,
+        /// Seconds between log snapshots.
+        #[arg(long, default_value_t = 15, value_parser = clap::value_parser!(u64).range(1..))]
+        interval: u64,
     },
 }
 
@@ -269,9 +271,9 @@ pub enum TestRunsAction {
     Results { test_run_id: String },
     /// Queue test runs.
     Queue {
-        /// API request object, as JSON.
+        /// Signed contract version; omit to test the latest version.
         #[arg(long)]
-        body: String,
+        version: Option<String>,
     },
 }
 
@@ -291,12 +293,48 @@ pub enum TrafficAction {
 
 #[derive(Debug, Subcommand)]
 pub enum SettingsAction {
-    /// Update settings.
+    /// Update selected settings, preserving unspecified values.
     Update {
-        /// API request object, as JSON.
-        #[arg(long)]
-        body: String,
+        #[command(flatten)]
+        fields: ProjectSettingsFields,
     },
+}
+
+#[derive(Debug, Args, serde::Serialize)]
+pub struct ProjectSettingsFields {
+    #[arg(long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Set an empty string to clear the description.
+    #[arg(long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[arg(long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_branch: Option<String>,
+    #[arg(long, value_parser = ["private", "public"])]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visibility: Option<String>,
+}
+
+#[derive(Debug, Args, serde::Serialize)]
+pub struct AlertPolicyFields {
+    /// Explicit true/false; omission preserves the existing setting.
+    #[arg(long, action = clap::ArgAction::Set)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[arg(long, value_parser = clap::value_parser!(u64).range(60..=86400))]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub window_seconds: Option<u64>,
+    #[arg(long, value_parser = finite_nonnegative)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub threshold: Option<f64>,
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub minimum_samples: Option<u64>,
+    #[arg(long, value_parser = ["info", "warning", "critical"])]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub severity: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -329,7 +367,117 @@ fn segment(value: &str) -> Result<String> {
     Ok(out)
 }
 
+fn finite_nonnegative(input: &str) -> Result<f64, String> {
+    let value: f64 = input.parse().map_err(|_| "expected a number".to_owned())?;
+    if !value.is_finite() || value < 0.0 {
+        return Err("threshold must be a finite nonnegative number".to_owned());
+    }
+    Ok(value)
+}
+
+fn typed_patch(fields: &impl serde::Serialize) -> Result<Value> {
+    let value = serde_json::to_value(fields)?;
+    if value.as_object().is_none_or(|v| v.is_empty()) {
+        bail!("Pass at least one setting to update");
+    }
+    Ok(value)
+}
+
 impl IntelCommand {
+    pub fn poll_interval(&self) -> std::time::Duration {
+        let seconds = match self {
+            Self::Logs {
+                action: LogsAction::List { interval, .. },
+            } => *interval,
+            _ => 15,
+        };
+        std::time::Duration::from_secs(seconds)
+    }
+
+    /// Read current values before calling the backend's replacement-style writes.
+    pub fn update_read_path(&self, segments: &[&str]) -> Option<Vec<String>> {
+        match self {
+            Self::Settings { .. }
+            | Self::AlertPolicies {
+                action: AlertPoliciesAction::Update { .. },
+            } => Some(
+                segments[..segments.len() - 1]
+                    .iter()
+                    .map(|s| (*s).to_owned())
+                    .collect(),
+            ),
+            _ => None,
+        }
+    }
+
+    pub fn merge_current_body(
+        &self,
+        current: &Value,
+        patch: Option<Value>,
+    ) -> Result<Option<Value>> {
+        let (source, keys): (&Value, &[&str]) = match self {
+            Self::Settings { .. } => (
+                current,
+                &["name", "description", "default_branch", "visibility"],
+            ),
+            Self::AlertPolicies {
+                action: AlertPoliciesAction::Update { policy_kind, .. },
+            } => {
+                let policies = current
+                    .as_array()
+                    .ok_or_else(|| anyhow::anyhow!("Invalid alert policy response"))?;
+                let policy = policies
+                    .iter()
+                    .find(|p| p.get("kind").and_then(Value::as_str) == Some(policy_kind))
+                    .ok_or_else(|| anyhow::anyhow!("Alert policy not found: {policy_kind}"))?;
+                if policy.get("configured").and_then(Value::as_bool) == Some(false) {
+                    let required = [
+                        "enabled",
+                        "window_seconds",
+                        "threshold",
+                        "minimum_samples",
+                        "severity",
+                    ];
+                    let missing: Vec<_> = required
+                        .iter()
+                        .filter(|key| patch.as_ref().and_then(|body| body.get(**key)).is_none())
+                        .map(|key| format!("--{}", key.replace('_', "-")))
+                        .collect();
+                    if !missing.is_empty() {
+                        bail!("Alert policy {policy_kind} is not configured. Supply all initial values; missing: {}", missing.join(", "));
+                    }
+                }
+                (
+                    policy,
+                    &[
+                        "enabled",
+                        "window_seconds",
+                        "threshold",
+                        "minimum_samples",
+                        "severity",
+                    ],
+                )
+            }
+            _ => return Ok(patch),
+        };
+        let mut merged = serde_json::Map::new();
+        for key in keys {
+            let value = source.get(*key).filter(|v| !v.is_null()).ok_or_else(|| {
+                anyhow::anyhow!("Current response is missing {key}; refusing to replace settings")
+            })?;
+            merged.insert((*key).to_owned(), value.clone());
+        }
+        if let Some(Value::Object(patch)) = patch {
+            for (key, value) in patch {
+                if !keys.contains(&key.as_str()) {
+                    bail!("Unknown update key: {key}");
+                }
+                merged.insert(key, value);
+            }
+        }
+        Ok(Some(Value::Object(merged)))
+    }
+
     pub fn request(&self) -> Result<IntelRequest> {
         let (method, path, body, destructive, sensitive, follow) = match self {
             IntelCommand::Activity {
@@ -396,19 +544,23 @@ impl IntelCommand {
                 false,
             ),
             IntelCommand::AlertPolicies {
-                action: AlertPoliciesAction::Update { policy_kind, body },
+                action:
+                    AlertPoliciesAction::Update {
+                        policy_kind,
+                        fields,
+                    },
             } => (
                 "PUT",
                 "/api/v1/projects/{project}/alert-policies/{id}"
                     .to_string()
                     .replace("{id}", &segment(policy_kind)?),
-                Some(body_object(body)?),
+                Some(typed_patch(fields)?),
                 true,
                 false,
                 false,
             ),
             IntelCommand::Logs {
-                action: LogsAction::List { follow },
+                action: LogsAction::List { follow, .. },
             } => (
                 "GET",
                 "/api/v1/projects/{project}/logs".to_string(),
@@ -671,11 +823,14 @@ impl IntelCommand {
                 false,
             ),
             IntelCommand::TestRuns {
-                action: TestRunsAction::Queue { body },
+                action: TestRunsAction::Queue { version },
             } => (
                 "POST",
                 "/api/v1/projects/{project}/test-runs".to_string(),
-                Some(body_object(body)?),
+                Some(match version {
+                    Some(v) => serde_json::json!({"version": v}),
+                    None => serde_json::json!({}),
+                }),
                 false,
                 false,
                 false,
@@ -713,11 +868,11 @@ impl IntelCommand {
                 false,
             ),
             IntelCommand::Settings {
-                action: SettingsAction::Update { body },
+                action: SettingsAction::Update { fields },
             } => (
                 "PATCH",
                 "/api/v1/projects/{project}/settings".to_string(),
-                Some(body_object(body)?),
+                Some(typed_patch(fields)?),
                 true,
                 false,
                 false,
@@ -800,12 +955,12 @@ pub mod tests {
                     "alert-policies",
                     "update",
                     "item",
-                    "--body",
-                    "{\"name\":\"example\"}",
+                    "--threshold",
+                    "5",
                 ],
                 "PUT",
                 "/api/v1/projects/{project}/alert-policies/item",
-                Some(serde_json::json!({"name":"example"})),
+                Some(serde_json::json!({"threshold":5.0})),
             ),
             (
                 vec!["intel", "logs", "list"],
@@ -980,16 +1135,10 @@ pub mod tests {
                 None,
             ),
             (
-                vec![
-                    "intel",
-                    "test-runs",
-                    "queue",
-                    "--body",
-                    "{\"name\":\"example\"}",
-                ],
+                vec!["intel", "test-runs", "queue", "--version", "1.2.3"],
                 "POST",
                 "/api/v1/projects/{project}/test-runs",
-                Some(serde_json::json!({"name":"example"})),
+                Some(serde_json::json!({"version":"1.2.3"})),
             ),
             (
                 vec!["intel", "traces", "list"],
@@ -1010,13 +1159,7 @@ pub mod tests {
                 None,
             ),
             (
-                vec![
-                    "intel",
-                    "settings",
-                    "update",
-                    "--body",
-                    "{\"name\":\"example\"}",
-                ],
+                vec!["intel", "settings", "update", "--name", "example"],
                 "PATCH",
                 "/api/v1/projects/{project}/settings",
                 Some(serde_json::json!({"name":"example"})),
@@ -1042,9 +1185,9 @@ pub mod tests {
     }
     #[test]
     fn invalid_bodies_and_path_injection() {
-        let parsed =
-            ParserHarness::try_parse_from(["intel", "settings", "update", "--body", "[]"]).unwrap();
-        assert!(parsed.command.request().is_err());
+        assert!(
+            ParserHarness::try_parse_from(["intel", "settings", "update", "--body", "[]"]).is_err()
+        );
         let parsed = ParserHarness::try_parse_from(["intel", "traces", "get", "a/b ?#"]).unwrap();
         assert!(parsed
             .command
@@ -1088,3 +1231,7 @@ pub mod tests {
         assert!(parsed.command.request().unwrap().destructive);
     }
 }
+
+#[cfg(test)]
+#[path = "intel_update_tests.rs"]
+mod update_tests;

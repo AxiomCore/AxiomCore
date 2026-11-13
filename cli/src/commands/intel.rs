@@ -5,6 +5,10 @@ use axiom_cloud::CloudClient;
 use clap::Args;
 use serde_json::Value;
 use std::io::Write;
+#[path = "intel_follow.rs"]
+mod follow;
+#[cfg(test)]
+use follow::{frame_end, stream};
 use std::time::Duration;
 
 #[derive(Debug, Args)]
@@ -40,7 +44,7 @@ pub async fn handle(args: &IntelArgs) -> Result<()> {
     execute(&crate::auth_store::authenticated_cloud_client()?, args).await
 }
 pub async fn execute(client: &CloudClient, args: &IntelArgs) -> Result<()> {
-    let request = args.command.request()?;
+    let mut request = args.command.request()?;
     if request.destructive && !args.yes {
         bail!("This changes project configuration or revokes access. Review the request and pass --yes to confirm.");
     }
@@ -68,10 +72,10 @@ pub async fn execute(client: &CloudClient, args: &IntelArgs) -> Result<()> {
             bail!("Project selection is missing or ambiguous; pass a unique project slug or ID");
         }
         let project = matches[0];
-        for segment in &mut segments {
-            if segment == "{project}" {
-                *segment = project.slug.clone();
-            }
+        if segments.first().map(String::as_str) == Some("projects")
+            && segments.get(1).map(String::as_str) == Some("{project}")
+        {
+            segments[1] = project.slug.clone();
         }
         if let Some(environment) = &args.environment {
             let environments = client.configuration_environments(&project.slug).await?;
@@ -94,34 +98,47 @@ pub async fn execute(client: &CloudClient, args: &IntelArgs) -> Result<()> {
         }
     }
     let segments: Vec<&str> = segments.iter().map(String::as_str).collect();
-    loop {
-        let response = client
-            .dashboard_request(
-                reqwest::Method::from_bytes(request.method.as_bytes())?,
-                &segments,
-                &args.query,
-                request.body.as_ref(),
-            )
-            .await?;
-        if request.path == "/api/v1/activity/stream" {
-            return stream(response, args.json, request.follow).await;
-        }
-        let mut value = read_json(response).await?;
-        if request.sensitive && !args.show_secrets {
+    if let Some(path) = args.command.update_read_path(&segments) {
+        let path: Vec<&str> = path.iter().map(String::as_str).collect();
+        let current = read_json(
+            client
+                .dashboard_request(reqwest::Method::GET, &path, &[], None)
+                .await?,
+        )
+        .await?;
+        request.body = args.command.merge_current_body(&current, request.body)?;
+    }
+    if request.path == "/api/v1/activity/stream" {
+        return follow::activity(client, &segments, &args.query, args.json, request.follow).await;
+    }
+    if request.follow {
+        return follow::logs(
+            client,
+            &segments,
+            &args.query,
+            args.json,
+            args.command.poll_interval(),
+        )
+        .await;
+    }
+    let response = client
+        .dashboard_request(
+            reqwest::Method::from_bytes(request.method.as_bytes())?,
+            &segments,
+            &args.query,
+            request.body.as_ref(),
+        )
+        .await?;
+    let mut value = read_json(response).await?;
+    if request.sensitive {
+        eprintln!("OTLP credentials are shown only once. Use --show-secrets at creation and store them securely.");
+        if !args.show_secrets {
             redact(&mut value);
         }
-        print_value(&value, args.json)?;
-        if !request.follow {
-            return Ok(());
-        }
-        // Logs are a snapshot endpoint, like the dashboard: follow polls the same
-        // route, emitting complete snapshots so repeated rows retain context.
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => return Ok(()),
-            _ = tokio::time::sleep(Duration::from_secs(2)) => {}
-        }
     }
+    print_value(&value, args.json)
 }
+
 fn decode_segment(input: &str) -> Result<String> {
     // Paths from the command enum already encode each individual identifier.
     // Decode once before passing segments to the shared URL builder.
@@ -160,9 +177,16 @@ fn redact(value: &mut Value) {
     match value {
         Value::Object(map) => {
             for (key, value) in map {
-                if ["dsn", "token", "secret", "credential", "authorization"]
-                    .iter()
-                    .any(|part| key.to_ascii_lowercase().contains(part))
+                if [
+                    "dsn",
+                    "token",
+                    "secret",
+                    "credential",
+                    "authorization",
+                    "acore_snippet",
+                ]
+                .iter()
+                .any(|part| key.to_ascii_lowercase().contains(part))
                 {
                     *value = Value::String("[redacted; use --show-secrets]".into());
                 } else {
@@ -184,65 +208,55 @@ fn print_value(value: &Value, json: bool) -> Result<()> {
     } else if value.is_null() {
         println!("Request completed.");
     } else {
-        println!("Cloud result:\n{}", serde_json::to_string_pretty(value)?);
+        print!("{}", human_value(value));
     }
     std::io::stdout().flush()?;
     Ok(())
 }
-async fn stream(mut response: reqwest::Response, json: bool, follow: bool) -> Result<()> {
-    if response
-        .headers()
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .is_none_or(|v| v.split(';').next() != Some("text/event-stream"))
-    {
-        bail!("Cloud returned an invalid activity stream content type");
-    }
-    let mut buffer = Vec::new();
-    loop {
-        let chunk = tokio::select! {
-            _ = tokio::signal::ctrl_c() => return Ok(()),
-            chunk = response.chunk() => chunk?,
-        };
-        let Some(chunk) = chunk else {
-            return Ok(());
-        };
-        buffer.extend_from_slice(&chunk);
-        while let Some((end, separator)) = frame_end(&buffer) {
-            if end > 2 * 1024 * 1024 {
-                bail!("Activity event exceeds 2 MiB");
-            }
-            let frame: Vec<_> = buffer.drain(..end + separator).collect();
-            let frame = String::from_utf8(frame).context("Invalid UTF-8 activity event")?;
-            let data = frame
-                .lines()
-                .filter_map(|l| l.strip_prefix("data:").map(str::trim_start))
-                .collect::<Vec<_>>()
-                .join("\n");
-            if data.is_empty() {
-                continue;
-            }
-            print_value(
-                &serde_json::from_str::<Value>(&data).context("Invalid activity event JSON")?,
-                json,
-            )?;
-            if !follow {
-                return Ok(());
-            }
-        }
-        if buffer.len() > 2 * 1024 * 1024 {
-            bail!("Activity event exceeds 2 MiB");
-        }
-    }
-}
-fn frame_end(buffer: &[u8]) -> Option<(usize, usize)> {
-    let lf = buffer.windows(2).position(|w| w == b"\n\n").map(|i| (i, 2));
-    let crlf = buffer
-        .windows(4)
-        .position(|w| w == b"\r\n\r\n")
-        .map(|i| (i, 4));
-    lf.into_iter().chain(crlf).min_by_key(|(i, _)| *i)
-}
 #[cfg(test)]
 #[path = "intel_tests.rs"]
 mod tests;
+
+fn human_value(value: &Value) -> String {
+    fn render(value: &Value, indent: usize, out: &mut String) {
+        let pad = " ".repeat(indent);
+        match value {
+            Value::Object(fields) => {
+                for (key, value) in fields {
+                    let label = key.replace('_', " ");
+                    let mut chars = label.chars();
+                    let label = chars
+                        .next()
+                        .map(|c| c.to_uppercase().to_string() + chars.as_str())
+                        .unwrap_or_default();
+                    if value.is_object() || value.is_array() {
+                        out.push_str(&format!("{pad}{label}:\n"));
+                        render(value, indent + 2, out);
+                    } else {
+                        let text = match value {
+                            Value::String(s) => s.clone(),
+                            Value::Bool(b) => if *b { "yes" } else { "no" }.into(),
+                            Value::Null => "none".into(),
+                            _ => value.to_string(),
+                        };
+                        out.push_str(&format!("{pad}{label}: {text}\n"));
+                    }
+                }
+            }
+            Value::Array(items) => {
+                if items.is_empty() {
+                    out.push_str(&format!("{pad}No results.\n"));
+                }
+                for item in items {
+                    render(item, indent, out);
+                    out.push('\n');
+                }
+            }
+            Value::String(text) => out.push_str(&format!("{pad}{text}\n")),
+            _ => out.push_str(&format!("{pad}{value}\n")),
+        }
+    }
+    let mut out = String::new();
+    render(value, 0, &mut out);
+    out
+}

@@ -78,9 +78,11 @@ axiom intel logs list --project example-project --follow --json
 ```
 
 `--follow` keeps logs running until you press Ctrl+C. Activity streams run until
-Ctrl+C or the server closes the stream; they do not reconnect automatically. Activity uses server-sent events and returns the first event without `--follow`.
-Logs poll the same endpoint every two seconds and emit complete snapshots, which
-can repeat rows; without `--follow`, logs return one snapshot. An interrupted follow does not modify the project.
+Ctrl+C, reconnecting after a disconnect with backoff from one to 30 seconds.
+Without `--follow`, activity skips the ready notification and returns the first activity change.
+Logs poll every 15 seconds by default; use `--interval SECONDS` with a positive integer
+to change the interval. Follow emits each new log row once, using its ID, and retains
+the latest 10,000 IDs. Without `--follow`, logs return one snapshot. An interrupted follow does not modify the project.
 
 ## Management commands
 
@@ -90,15 +92,15 @@ literal input.
 
 | Command suffix | Operation |
 | --- | --- |
-| `alert-policies update POLICY_KIND --body JSON --yes` | Update an alert policy. |
-| `observability settings update --body JSON --yes` | Update observability settings. |
+| `alert-policies update POLICY_KIND --threshold NUMBER --yes` | Update an alert policy. |
+| `observability settings update --name NAME --yes` | Update observability settings. |
 | `observability sources create --body JSON` | Create an OTLP ingestion source. |
 | `observability sources revoke SOURCE_ID --yes` | Revoke an OTLP source, stopping ingestion with its credentials. |
 | `pull-requests create --body JSON` | Create a project pull request. |
 | `pull-requests update NUMBER --body JSON --yes` | Update a pull request. |
 | `pull-requests comment NUMBER --body JSON` | Add a comment. |
-| `test-runs queue --body JSON` | Queue a contract test run. |
-| `settings update --body JSON --yes` | Update project settings. |
+| `test-runs queue [--version VERSION]` | Queue a contract test run. |
+| `settings update --name NAME --yes` | Update project settings. |
 | `cli-installed confirm` | Record CLI installation in dashboard setup. |
 
 For example, set retention and create an ingestion source:
@@ -108,9 +110,18 @@ axiom intel observability settings update --project example-project --body '{"re
 axiom intel observability sources create --project example-project --body '{"name":"example-source","spans_per_minute":100}'
 ```
 
-The source creation response hides credentials unless you also supply
+Settings updates accept `--name`, `--description`, `--default-branch`, and `--visibility private|public`.
+Alert policy updates accept `--enabled true|false`, `--threshold NUMBER`, and
+`--window-seconds SECONDS` (60 to 86400), `--minimum-samples COUNT` (at least one),
+and `--severity info|warning|critical`. Both read current values before writing, preserving
+fields you leave unspecified. An unconfigured alert policy requires all five
+policy flags for its initial configuration. Unknown flags and raw `--body` input are rejected
+for these commands and `test-runs queue`. Queueing without `--version` uses the
+current version selected by the service.
+
+The source creation response hides credentials, including the Acore snippet, unless you also supply
 `--show-secrets`. The dashboard exposes these credentials only at creation;
-listing sources is not a way to recover them. Revoke an unused source with
+listing sources is not a way to recover them. Creation prints a one-time credential warning to stderr. Revoke an unused source with
 `observability sources revoke SOURCE_ID --yes`.
 
 Use [Project commands](/tooling/cli-project) to list or link projects before

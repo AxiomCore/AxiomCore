@@ -307,6 +307,8 @@ enum Commands {
         #[arg(long, requires = "build")]
         variant: Option<String>,
     },
+    /// Inspect and administer Cloud project intelligence.
+    Intel(commands::intel::IntelArgs),
     Project {
         #[command(subcommand)]
         action: ProjectAction,
@@ -1739,6 +1741,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Release { .. } => "release",
         Commands::Pull { .. } => "pull",
         Commands::Watch { .. } => "watch",
+        Commands::Intel(..) => "intel",
         Commands::Project { .. } => "project",
         Commands::Auth(..) => "auth",
         Commands::Branch(..) => "branch",
@@ -3099,6 +3102,7 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
         }
         Commands::Auth(args) => commands::auth::handle(args).await,
         Commands::Branch(args) => commands::branch::handle(args).await,
+        Commands::Intel(args) => commands::intel::handle(args).await,
         Commands::Project { action } => match action {
             ProjectAction::List => commands::project::handle_project_list().await,
             ProjectAction::Resources { project, action } => {

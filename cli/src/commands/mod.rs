@@ -67,3 +67,6 @@ pub mod resources_recovery;
 pub(crate) mod cloud_mock;
 pub mod step_up;
 pub mod signers;
+
+pub mod intel;
+pub mod intel_routes;

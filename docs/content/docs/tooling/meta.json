@@ -11,6 +11,7 @@
     "cli-contracts",
     "cli-extensions",
     "cli-inspect",
-    "secrets-cli"
+    "secrets-cli",
+    "intel"
   ]
 }

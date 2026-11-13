@@ -1061,15 +1061,13 @@ async fn api_events(
     }
     let receiver = state.updates.subscribe();
     let stream = futures::stream::unfold(receiver, |mut receiver| async move {
-        loop {
-            match receiver.recv().await {
-                Ok(value) => return Some((Ok(SseEvent::default().data(value)), receiver)),
-                Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                    let value = json!({"type":"updates-dropped","count":skipped}).to_string();
-                    return Some((Ok(SseEvent::default().data(value)), receiver));
-                }
-                Err(broadcast::error::RecvError::Closed) => return None,
+        match receiver.recv().await {
+            Ok(value) => Some((Ok(SseEvent::default().data(value)), receiver)),
+            Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                let value = json!({"type":"updates-dropped","count":skipped}).to_string();
+                Some((Ok(SseEvent::default().data(value)), receiver))
             }
+            Err(broadcast::error::RecvError::Closed) => None,
         }
     });
     Ok(Sse::new(stream).keep_alive(axum::response::sse::KeepAlive::default()))

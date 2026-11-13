@@ -263,6 +263,8 @@ pub const APPROVALS_FORMAT: &str = "axiom-database-impact-approvals/v1";
 
 #[derive(clap::Subcommand, Debug)]
 pub enum ImpactAction {
+    /// Read the hosted migration release impact report
+    Get(crate::commands::data_metadata::ImpactArgs),
     /// Fail (exit 10) when a breaking change reaches endpoints or frontend consumers without an approval
     Check {
         /// The release (default: the newest release in .axiom/database/migrations of this directory)
@@ -346,7 +348,7 @@ fn newest_release(root: &Path) -> Result<PathBuf> {
 }
 
 pub fn run_check(action: &ImpactAction) -> Result<()> {
-    let ImpactAction::Check { release, approvals, require_complete, json } = action;
+    let ImpactAction::Check { release, approvals, require_complete, json } = action else { anyhow::bail!("Use the hosted impact handler for get") };
     let path = match release {
         Some(path) => path.clone(),
         None => newest_release(&std::env::current_dir()?)?,

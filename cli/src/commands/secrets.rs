@@ -14,6 +14,11 @@ use zeroize::Zeroizing;
 
 #[derive(Clone, Debug, Subcommand)]
 pub enum Action {
+    /// Inspect environment-scoped secret metadata
+    Environment {
+        #[command(subcommand)]
+        action: crate::commands::data_metadata::SecretsAction,
+    },
     Init {
         #[arg(default_value = ".")]
         root: PathBuf,
@@ -312,6 +317,7 @@ async fn metadata(
 }
 pub async fn handle(action: &Action) -> Result<()> {
     match action {
+        Action::Environment { action } => crate::commands::data_metadata::handle_secrets(action).await?,
         Action::Requirements { plan } => {
             let plan: axiom_lib::backend::ServerPlan =
                 axiom_server::serve::read_json(plan, 16_777_216)?;

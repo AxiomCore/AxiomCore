@@ -64,17 +64,43 @@ offer a way to add other members to a project.
 ## Create and link a project
 
 Create a project in the dashboard (**Projects**, then **New project**), where
-you can also save [database preferences](/cloud/project-resources). Or use the
-CLI:
+you can also save [database preferences](/cloud/project-resources). The form
+has no slug field: Axiom Cloud derives the slug from the project name. Or use
+the CLI:
 
 ```bash title="Terminal"
 axiom project create --name "Payments API" --slug payments-api
 ```
 
 The slug is the lowercase identifier used in release URLs: lowercase letters,
-digits and single hyphens. In CLI 0.149.1, `project create` needs an
-interactive terminal even when you pass `--name` and `--slug`. It links the
+digits and single hyphens. Slugs are unique across Axiom Cloud, so creation
+fails if another project already uses yours. `project create` links the
 current directory to the new project.
+
+In CLI 0.151.0 and later, passing both `--name` and `--slug` creates the
+project without any prompt, so the command also works in scripts and CI. In an
+interactive terminal, the CLI prompts for a missing name, slug or description.
+Without a terminal, or when `CI` is set, a missing `--name` or `--slug` fails
+with `Non-interactive project creation requires --name and --slug`.
+
+The same command saves the project's database preferences. Choose them with
+options, or accept the defaults (Free, SQLite, `mumbai`, `development`):
+
+```bash title="Terminal"
+axiom project create --name "My App" --slug my-app \
+  --tier free --database sqlite --region mumbai --environment development
+```
+
+| Option | Default | Values |
+| --- | --- | --- |
+| `--tier` | `free` | `free` or `pro` |
+| `--database` | `sqlite` for Free, `postgres` for Pro | `sqlite` or `postgres`. Free allows only `sqlite`: `--tier free --database postgres` fails with `Invalid tier or database`. |
+| `--region` | `mumbai` for SQLite, `singapore` for PostgreSQL | A location from [Locations and allowances](/cloud/project-resources#locations-and-allowances) |
+| `--environment` | `development` | Hosted environment name |
+
+Saving preferences does not allocate a database or start a charge. A Pro
+project needs an active subscription before it is hosted. See
+[Provision a database](/cloud/project-resources#provision-a-database).
 
 To link an existing project:
 

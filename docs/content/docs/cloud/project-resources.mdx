@@ -71,10 +71,16 @@ start a charge. Hosting also needs an available database option and location,
 free capacity and the right project entitlement.
 
 1. Create a project and choose Free or Pro, SQLite or PostgreSQL, a location
-   and an environment name (default `development`). Free uses SQLite.
+   and an environment name (default `development`). Free uses SQLite. Use the
+   dashboard's **New project** form, which has no slug field (Axiom Cloud
+   derives the slug from the name), or
+   [`axiom project create`](/cloud/project-management#create-and-link-a-project)
+   with `--tier`, `--database`, `--region` and `--environment`.
 2. Open the project's **Resources** page. For an existing project without
    database preferences, an owner chooses them there and selects **Save
-   preferences**. Preferences are saved once and cannot be edited.
+   preferences**, or runs
+   [`axiom project resources configure`](#axiom-project-resources-configure).
+   Preferences are saved once and cannot be edited.
 3. Select **Provision**, review the environment and database, then confirm.
 4. Follow the operation under recent operations until it completes. `ready`
    means storage was initialized and verified. **Auth: not_configured** means
@@ -205,8 +211,132 @@ availability need separately funded allowances.
 Any project member can view the **Resources** page. Only owners can save
 preferences, run lifecycle actions, rotate access and manage billing.
 
-The resource-management CLI commands (`axiom project resources`) are a source
-preview and are not in CLI 0.149.1. Use the dashboard for this workflow.
+The same rules apply to the `axiom project resources` commands in CLI 0.151.0
+and later. See [Manage resources from the CLI](#manage-resources-from-the-cli).
+
+## Manage resources from the CLI
+
+`axiom project resources` reads and changes a project's managed resources from
+a terminal. Every subcommand needs `axiom login` and takes the project slug
+with `--project`, written before the subcommand. Most subcommands print the
+service's response as JSON.
+
+```text title="Usage"
+axiom project resources --project <PROJECT> [COMMAND]
+```
+
+Without a subcommand, it prints the project's resources and recent
+operations:
+
+```bash title="Terminal"
+axiom project resources --project my-project
+```
+
+| Subcommand | Use it to | Details |
+| --- | --- | --- |
+| `checkout` | Create or reuse the project's Stripe-hosted Checkout session | [Below](#axiom-project-resources-checkout) |
+| `billing-portal` | Get the project's Stripe subscription management URL | [Below](#axiom-project-resources-billing-portal) |
+| `configure` | Save database preferences for an existing project that has none | [Below](#axiom-project-resources-configure) |
+| `catalog` | List the configured database options and which locations admit new databases | [Below](#axiom-project-resources-catalog) |
+| `request` | Request `provision`, `retry`, `suspend`, `resume`, `delete` or `rotate` for one database, a recovery action, or a conversion | [Conversion](/database/project-upgrades) |
+| `recovery` | Show restore options for one database | [Upgrade guide](/cloud/upgrade-guide) |
+| `placement`, `relocation-consent`, `receipt` | Inspect placement and consent to a move | [Database placement](/cloud/database-placement) |
+| `connect`, `connection`, `disconnect` | Use your own Turso database | [Your own Turso database](/cloud/turso-connections) |
+
+`request` takes the database ID (`--resource`), the `--action` and the
+resource generation you saw (`--generation`). A delete also needs
+`--confirm 'delete database'`. Add `--wait` to poll until the operation
+finishes. Status labels on this page and the linked pages still apply: for
+example, backups, restore and your own Turso database are **Coming soon**.
+
+### axiom project resources configure
+
+Save database preferences for an existing project that does not have any yet.
+This is the CLI form of **Save preferences**. It records your choices only: it
+does not allocate a database or start a charge. Preferences are saved once.
+
+```text title="Usage"
+axiom project resources --project <PROJECT> configure [OPTIONS]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--tier` | `free` or `pro` | `free` | Project plan. |
+| `--database` | `sqlite` or `postgres` | `sqlite` for Free, `postgres` for Pro | Database engine. Free allows only `sqlite`. |
+| `--region` | location name | `mumbai` for SQLite, `singapore` for PostgreSQL | Requested location. `catalog` shows the locations that admit new databases. |
+| `--environment` | environment name | `development` | Hosted environment. Up to 64 characters: a lowercase first letter, then lowercase letters, digits, `-` or `_`. |
+
+```bash title="Terminal"
+axiom project resources --project my-project configure \
+  --tier free --database sqlite --region mumbai --environment development
+```
+
+The CLI checks the choices before it sends the request. `--tier free
+--database postgres` fails with `Invalid tier or database`, and a name that
+breaks the environment rule fails with `Invalid environment name`. Only an
+owner can save preferences.
+
+### axiom project resources checkout
+
+Create or reuse the project's Stripe-hosted Checkout session for the Pro
+subscription.
+
+```text title="Usage"
+axiom project resources --project <PROJECT> checkout [OPTIONS]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--operation-id` | UUID | a new random UUID | Idempotency key for the request. |
+
+```bash title="Terminal"
+axiom project resources --project my-project checkout
+```
+
+The command prints `Checkout idempotency key: <UUID>` to standard error, then
+the service's JSON response. It does not open a browser. If the connection
+fails before you see a response, run it again with
+`--operation-id <UUID>` and the printed key, so the request is not repeated
+under a new key. `--operation-id` must be a UUID.
+
+Only an owner can manage billing. Public paid checkout is **Coming soon**, so
+the service can refuse checkout for your project. Controlled test checkout is
+labeled **Test billing** and makes no real charge. Completing Checkout does
+not activate paid access by itself: see [Plans and billing](#plans-and-billing).
+
+### axiom project resources billing-portal
+
+Get the URL of the Stripe page that manages the project's subscription.
+
+```text title="Usage"
+axiom project resources --project <PROJECT> billing-portal
+```
+
+```bash title="Terminal"
+axiom project resources --project my-project billing-portal
+```
+
+There are no options other than `--help`. The command prints the service's
+JSON response and does not open a browser: open the URL it returns yourself.
+Only an owner can manage billing.
+
+### axiom project resources catalog
+
+Show the database options that are currently configured and whether each
+location admits new databases. Check it before you choose `--region` for
+`configure` or `axiom project create`.
+
+```text title="Usage"
+axiom project resources --project <PROJECT> catalog
+```
+
+```bash title="Terminal"
+axiom project resources --project my-project catalog
+```
+
+There are no options other than `--help`. The catalog is the same for every
+project, but the command still requires `--project`. A location in the
+catalog does not prove backup residency or an availability guarantee.
 
 <span id="credentials" />
 <span id="recovery" />

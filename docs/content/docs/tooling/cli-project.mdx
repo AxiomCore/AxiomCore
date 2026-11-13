@@ -188,6 +188,8 @@ axiom project <COMMAND>
 | [`create`](#axiom-project-create) | Create a Cloud project and link this directory to it. |
 | [`link`](#axiom-project-link) | Link this directory to a Cloud project. |
 | [`rotate-key`](#axiom-project-rotate-key) | Replace the project's active signing key. |
+| [`resources`](/cloud/project-resources#manage-resources-from-the-cli) | Configure, provision and bill managed databases (CLI 0.151.0 and later). |
+| [`signers`](/cloud/hosted-migrations) | Manage the keys allowed to sign hosted database releases (CLI 0.151.0 and later). |
 | [`resolve`](#axiom-project-resolve) | Resolve the dependencies of a local Acore project. |
 | [`package`](#axiom-project-package) | Package a local Acore project. |
 
@@ -207,7 +209,8 @@ No options other than `--help`.
 
 ### axiom project create
 
-Create a Cloud project and link the current directory to it.
+Create a Cloud project, save its database preferences and link the current
+directory to it. Options as listed by CLI 0.151.0:
 
 ```text title="Usage"
 axiom project create [OPTIONS]
@@ -216,19 +219,33 @@ axiom project create [OPTIONS]
 | Option | Value | Default | Meaning |
 | --- | --- | --- | --- |
 | `--name` | text | prompted | Display name. |
-| `--slug` | slug | prompted, from the name | Lowercase project identifier used in release URLs, for example `payments-api`. Letters, numbers and single hyphens. |
-| `--description` | text | prompted, may be empty | Project description. |
+| `--slug` | slug | prompted, from the name | Lowercase project identifier used in release URLs, for example `payments-api`. Letters, numbers and single hyphens. Unique across Axiom Cloud. |
+| `--description` | text | prompted in a terminal, otherwise empty | Project description. |
 | `--path` | path | none | A `.axiom` artifact whose project ID suggests the slug. Otherwise the directory name is used. |
+| `--tier` | `free` or `pro` | `free` | Project plan. |
+| `--database` | `sqlite` or `postgres` | `sqlite` for Free, `postgres` for Pro | Database engine. Free allows only `sqlite`. |
+| `--region` | location name | `mumbai` for SQLite, `singapore` for PostgreSQL | Requested database location. |
+| `--environment` | environment name | `development` | Hosted environment for the preferences. |
 
-In 0.149.1 the command always needs an interactive terminal, even when you pass
-every option: it fails without one or when `CI` is set. It prompts for any
-missing value, then links the current directory. In automation, create the
-project once interactively or in the Cloud Dashboard, then use
-`axiom project link --project-id`.
+In CLI 0.151.0 and later, the command runs without prompts when you pass both
+`--name` and `--slug`, so it works in scripts and CI. In an interactive
+terminal it prompts for a missing name, slug or description. Without a
+terminal, or when `CI` is set, a missing `--name` or `--slug` fails with
+`Non-interactive project creation requires --name and --slug`. In 0.149.1 the
+command needed an interactive terminal even when you passed every option.
 
 ```bash title="Terminal"
-axiom project create --name "Payments API" --slug payments-api
+axiom project create --name "My App" --slug my-app \
+  --tier free --database sqlite --region mumbai --environment development
 ```
+
+The CLI checks the plan, database and environment before it sends the
+request: `--tier free --database postgres` fails with
+`Invalid tier or database`. A slug that is already taken fails with
+`Could not create project` and the slug. Saving preferences does not allocate
+a database; see [Managed resources](/cloud/project-resources). The dashboard's
+**New project** form has no slug field: Axiom Cloud derives the slug from the
+name.
 
 ### axiom project link
 

@@ -58,7 +58,7 @@ secrets and local paths.
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| The UI reports an incompatible host | The installed web UI host does not match the CLI's capabilities | `axiom ui host install --target web --version 0.6.12 --non-interactive`, then check `axiom ui host status --target web` |
+| The UI reports an incompatible host | The installed web UI host does not match the CLI's capabilities | `axiom ui host install --target web --version 0.8.0 --non-interactive` (0.6.12 for CLI 0.149.1), then check `axiom ui host status --target web` |
 | The UI cannot load tasks | The backend is not running, the API key is wrong, or the frontend manifest's `baseUrl` is wrong | Check the backend terminal, paste the development API key it printed, and check `baseUrl` |
 | Port already in use | Another process uses 8080 or 5173 | Change the port in the command, the manifest URL, and the CORS origins together |
 | The backend connects to an unexpected database | `DATABASE_URL` is set in your shell | `unset DATABASE_URL`, then restart the backend |

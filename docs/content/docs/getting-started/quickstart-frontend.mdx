@@ -23,8 +23,10 @@ Simulator paths.
 
 ### Prerequisites
 
-- [Axiom CLI 0.149.1](/getting-started/installation) and the web UI host 0.6.12
-  (`axiom ui host install --target web --version 0.6.12 --non-interactive`).
+- [Axiom CLI 0.151.0](/getting-started/installation) and the web UI host 0.8.0
+  (`axiom ui host install --target web --version 0.8.0 --non-interactive`).
+  This page was last run end to end with CLI 0.149.1 and host 0.6.12; with
+  CLI 0.149.1, pass `--version 0.6.12`.
 - A browser. Port 5173 free.
 
 ### 1. Create the starter
@@ -127,7 +129,7 @@ SDK guides cover initialization, authentication, errors, caching and disposal.
 | Symptom | Fix |
 | --- | --- |
 | `refusing to initialize non-empty directory` | Choose a new or empty directory for `axiom ui init`. |
-| The UI host is missing or incompatible | Install web UI host 0.6.12 with `--target web`. |
+| The UI host is missing or incompatible | Install the web UI host for your CLI with `--target web`: 0.8.0 for CLI 0.151.0, 0.6.12 for CLI 0.149.1. |
 | The app starts for the wrong target | Pass `--target web`; UI commands default to `ios`. |
 | Port 5173 is in use | Pass another `--port`. |
 | `atmx-cli generation failed` | Install `atmx-cli@0.146.7` in the project, and check Node.js and npm with `axiom doctor`. |

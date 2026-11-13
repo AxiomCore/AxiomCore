@@ -71,3 +71,6 @@ pub mod contract_releases;
 pub mod sandbox_environments;
 pub mod workspace;
 pub mod signers;
+
+pub mod intel;
+pub mod intel_routes;

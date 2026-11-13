@@ -176,12 +176,15 @@ def main():
     parser.add_argument('--frontend', type=Path, required=True)
     parser.add_argument('--format', choices=['text', 'json', 'markdown'], default='text')
     parser.add_argument('--output', type=Path)
+    parser.add_argument('--group', help='only report one dashboard group (exact name)')
     parser.add_argument('--strict', action='store_true', help='exit 1 if any dashboard endpoint lacks a CLI mapping')
     args = parser.parse_args()
     try:
         from parity_dashboard import scan_dashboard
         from parity_cli import scan_cli, EXEMPT
         rows = compare(scan_dashboard(args.frontend), scan_cli(args.core), EXEMPT)
+        if args.group:
+            rows = [row for row in rows if row['group'] == args.group]
         if not rows:
             raise ValueError('No dashboard actions extracted')
         if args.format == 'json':

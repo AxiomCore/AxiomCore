@@ -152,6 +152,15 @@ CALLERS = [
     {'command': 'axiom mock --cloud', 'method': 'GET', 'path': '/api/v1/projects/{project}/mocks', 'source': 'cli/src/commands/legacy_mock.rs', 'evidence': 'client.get_mock_config(&project_slug, etag.as_deref()).await', 'command_evidence': 'pub async fn cloud_configuration('},
 ]
 
+# Reviewed exemptions: (METHOD, path) -> why the CLI deliberately has no command.
+EXEMPT = {}
+
+# P4 cli-workspace (W4-L7 part 2): workspace, onboarding, sandbox environments and hosted
+# contract releases, plus the account-authentication exemptions.
+from parity_cli_p4 import CALLERS as _P4_CALLERS, EXEMPT as _P4_EXEMPT  # noqa: E402
+CALLERS += _P4_CALLERS
+EXEMPT.update(_P4_EXEMPT)
+
 def production(text: str) -> str:
     # Command tests live in trailing cfg(test) modules. Drop them before matching.
     text = re.split(r"#\[cfg\(test\)\]\s*mod\s+", text, maxsplit=1)[0]

@@ -83,7 +83,7 @@ class DashboardExtractionTests(unittest.TestCase):
             self.scan()
 
     def test_typed_table_addition_becomes_gap(self):
-        (self.root / 'static/js/data-editor-client.js').write_text("const ROUTES = ([\n['POST', 'sql/read', 'data.rows.read', ''],\n]);")
+        (self.root / 'static/js/data-editor-client.js').write_text("const ROUTES = ([\n['POST', 'sql/read', 'data.rows.read', ''],\n]); call('POST', 'sql/read');")
         rows = checker.compare(self.scan(), [])
         self.assertEqual(rows[0]['method'], 'POST')
         self.assertTrue(rows[0]['path'].endswith('/data/environments/{environment}/sql/read'))

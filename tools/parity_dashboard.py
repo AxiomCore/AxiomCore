@@ -32,7 +32,7 @@ def arguments(text, start):
 
 
 def group_for(path):
-    for token, group in [('auth/environments', 'Authentication administration'), ('/data/', 'Data editor and capture'), ('/branches', 'Branches'), ('/migrations', 'Migrations'), ('/resources', 'Resources and billing'), ('/resource-catalog', 'Resources and billing'), ('secret', 'Secrets'), ('configuration-environments', 'Configuration environments'), ('/workspace', 'Workspace'), ('/onboarding', 'Onboarding'), ('/auth', 'Account authentication'), ('/session', 'Account authentication'), ('/environments', 'Sandbox'), ('/contracts', 'Contracts and releases'), ('/releases', 'Contracts and releases')]:
+    for token, group in [('auth/policy', 'Authentication administration'), ('auth/environments', 'Authentication administration'), ('/data/', 'Data editor and capture'), ('/branches', 'Branches'), ('/migrations', 'Migrations'), ('/resources', 'Resources and billing'), ('/resource-catalog', 'Resources and billing'), ('secret', 'Secrets'), ('configuration-environments', 'Configuration environments'), ('/workspace', 'Workspace'), ('/onboarding', 'Onboarding'), ('/auth', 'Account authentication'), ('/session', 'Account authentication'), ('/environments', 'Sandbox'), ('/contracts', 'Contracts and releases'), ('/releases', 'Contracts and releases')]:
         if token in path: return group
     return 'Projects and intelligence'
 
@@ -49,6 +49,34 @@ def scan_dashboard(root):
         text = file.read_text()
         rows.append(dict(action=action, method=method, path=path, source=str(file.relative_to(root)), line=text.count('\n', 0, pos)+1, group=group_for(path), evidence=evidence))
     files = sorted(js.glob('*.js')) + sorted((root / 'templates').rglob('*.tmpl'))
+    # These legacy partials are not mounted by any dashboard page.
+    files = [f for f in files if f.name not in {'import_terminal.tmpl', 'welcome_demographics.tmpl'}]
+    page_sources = []
+    for f in files:
+        if f.name == 'api-client.js': continue
+        page = f.read_text().replace('?.', '.')
+        # Resolve namespace aliases within their own file (including getter
+        # functions), before combining references across dashboard pages.
+        for alias in re.finditer(r'\b(\w+)\s*=\s*(?:\(\)\s*=>\s*)?window\.axiomAPI\.(\w+)\s*[,;]', page):
+            page = re.sub(r'\b' + alias.group(1) + r'(?:\(\))?\.', 'axiomAPI.' + alias.group(2) + '.', page)
+        page_sources.append(page)
+    page_text = '\n'.join(page_sources)
+    def wrapper_used(text, pos):
+        # Object method plus its namespace prevents unrelated .get() calls
+        # from establishing reachability. Recognize optional chaining and the
+        # dashboard's local const alias for setup.confirmCLIInstalled.
+        namespaces = list(re.finditer(r'^([ \t]*)(\w+):\s*Object\.freeze\(\{', text[:pos], re.M))
+        indent = len(namespaces[-1].group(1)) + 2 if namespaces else None
+        names = [m for m in re.finditer(r'^([ \t]+)(?:async\s+)?(\w+)\([^\n]*\)\s*\{', text[:pos], re.M) if (indent is None or len(m.group(1)) == indent) and m.group(2) not in {'if', 'for', 'while', 'switch', 'catch'}]
+        if not names: return True
+        method = names[-1].group(2)
+        reference = (namespaces[-1].group(2) + '.' if namespaces else '') + method
+        pages = page_text.replace('?.', '.')
+        pattern = r'\.' + re.escape(reference)
+        if re.search(pattern + r'\s*\.?\s*\(', pages): return True
+        for alias in re.finditer(r'const\s+(\w+)\s*=\s*[^;\n]*' + pattern + r'\s*;', pages):
+            if re.search(r'\b' + alias.group(1) + r'\s*\(', pages): return True
+        return False
     # Every raw transport currently has a reviewed resolver below. A new raw
     # transport must be taught to this scanner rather than silently excluded.
     known_transports = {
@@ -72,12 +100,13 @@ def scan_dashboard(root):
     for file in files:
         if file.name.startswith(('atmx', 'axui')): continue
         text = file.read_text()
-        pattern = r'(?:queryOnce|mutate|watch|watchLive|watchTelemetry|cachedQuery)\(\s*[\'\"]([A-Za-z_]+)[\'\"]|axiom\.([A-Za-z_]+)'
+        pattern = r'(?:queryOnce|mutate|watch|watchLive|watchTelemetry|cachedQuery)\(\s*[\'\"]([A-Za-z_]+)[\'\"]|axiom\.([A-Za-z_]+)\s*\(|mutateBytes\(\s*"axiom\.([A-Za-z_]+)"'
         for m in re.finditer(pattern, text):
-            name = m.group(1) or m.group(2)
+            name = m.group(1) or m.group(2) or m.group(3)
             endpoint = endpoint_map.get(canonical(name))
             if endpoint:
                 add(endpoint['name'], endpoint['method'], endpoint['path'], file, m.start(), m.group())
+                if file.name == 'api-client.js' and not wrapper_used(text, m.start()): rows[-1]['capability_only'] = True
             elif m.group(1): errors.append(f'{file.name}: unknown SDK operation {name}')
     # Browser stream is a first-class read transport, outside the generated SDK.
     file = js / 'api-client.js'; text = file.read_text()
@@ -85,6 +114,7 @@ def scan_dashboard(root):
         path = re.sub(r'\$\{[^}]+\}', '{id}', m.group(1))
         action = 'watch activity stream' if path.endswith('/activity/stream') else 'download contract release' if path.endswith('/pull') else 'download latest contract'
         add(action, 'GET', path, file, m.start(), m.group())
+        if not wrapper_used(text, m.start()): rows[-1]['capability_only'] = True
     # Direct SDK bindings in templates must resolve too. One existing legacy
     # partial references a removed operation; keep that defect visible.
     for file in files:
@@ -95,14 +125,18 @@ def scan_dashboard(root):
             if name == 'createOrg':
                 add('legacy create organization (unresolved SDK)', 'UNRESOLVED', 'SDK:createOrg', file, m.start(), m.group())
             else: errors.append(f'{file.name}: unknown direct SDK operation {name}')
-    # Typed clients expose explicit capability allowlists. Inventory all entries,
-    # including reads: command parity is not limited to mutations.
+    # An allowlist is a capability, not a call. Match concrete typed calls.
     for name, prefix in [('auth-admin-client.js', PROJECT+'/auth/environments/{environment}/'), ('data-editor-client.js', PROJECT+'/data/environments/{environment}/')]:
         file = js / name; text = file.read_text()
         block = text.index('const ROUTES'); end = text.index(']);', block)
+        calls = set()
+        for call in re.finditer(r"\b(?:call|send)\(\s*'(GET|POST|PUT|PATCH|DELETE)'\s*,\s*(['`])(.+?)\2", text):
+            route = re.sub(r'\$\{[^}]+\}', '{}', call.group(3)).split('?')[0]
+            calls.add((call.group(1), route))
         for m in re.finditer(r"\['(GET|POST|PUT|PATCH|DELETE)', '([^']+)'", text[block:end]):
             method, suffix = m.groups()
             add(f'{method.lower()} {suffix}', method, prefix+suffix, file, block+m.start(), m.group())
+            if (method, re.sub(r'\{[^}]+\}', '{}', suffix)) not in calls: rows[-1]['capability_only'] = True
     # Handwritten transport wrappers. Resolve their base paths and enumerate
     # finite action selectors, rather than treating an action as a path ID.
     for file in files:
@@ -167,7 +201,7 @@ def scan_dashboard(root):
             for path in paths:
                 # Nearest named method provides a useful dashboard action label.
                 before = text[:m.start()]
-                names = list(re.finditer(r'(?:async\s+)?(\w+)\([^()]*\)\s*\{', before))
+                names = [n for n in re.finditer(r'(?:async\s+)?(\w+)\([^()]*\)\s*\{', before) if n.group(1) not in {'if', 'for', 'while', 'switch', 'catch'}]
                 action = names[-1].group(1) if names else method.lower()
                 add(f'{name[:-3]}: {action} ({method} {path.split("/")[-1]})', method, path, file, m.start(), m.group()+args[0])
     if errors: raise ValueError('\n'.join(sorted(set(errors))))

@@ -23,7 +23,7 @@ def compare(dashboard, cli):
     for row in dashboard:
         matches = index.get(route_key(row['method'], row['path']), [])
         result.append({**row, 'commands': sorted({r['command'] for r in matches}),
-                       'cli_evidence': matches, 'status': 'unresolved' if row['method'] == 'UNRESOLVED' else 'partial' if matches and all(r.get('note') for r in matches) else 'mapped' if matches else 'gap'})
+                       'cli_evidence': matches, 'status': 'capability only' if row.get('capability_only') else 'unresolved' if row['method'] == 'UNRESOLVED' else 'partial' if matches and all(r.get('note') for r in matches) else 'mapped' if matches else 'gap'})
     return sorted(result, key=lambda r: (r['group'], r['path'], r['method'], r['action'], r['source'], r['line']))
 
 
@@ -35,14 +35,40 @@ def cell(value):
     return str(value).replace('|', '\\|').replace('\n', ' ')
 
 
+def grouped_gaps(rows):
+    endpoints = {}
+    for r in rows:
+        if r['status'] not in ('gap', 'partial', 'unresolved'): continue
+        key = route_key(r['method'], r['path'])
+        if key not in endpoints: endpoints[key] = {**r, 'actions': set()}
+        endpoints[key]['actions'].add(r['action'])
+    return sorted(endpoints.values(), key=lambda r: (r['group'], r['status'], route_key(r['method'], r['path'])))
+
+
+def gap_lines(rows):
+    gaps = grouped_gaps(rows)
+    lines = []
+    for group in sorted({r['group'] for r in gaps}):
+        members = [r for r in gaps if r['group'] == group]
+        counts = {s: sum(r['status'] == s for r in members) for s in ('gap', 'partial', 'unresolved')}
+        lines += [f"### {group} — {counts['gap']} gaps, {counts['partial']} partial" + (f", {counts['unresolved']} unresolved" if counts['unresolved'] else ''), '']
+        for r in members:
+            lines.append(f"- **{r['status']}** `{r['method']} {r['path']}`: {', '.join(sorted(r['actions']))}")
+        lines.append('')
+    return lines
+
+
 def markdown(rows, frontend_rev, cli_rev):
+    capabilities = [r for r in rows if r['status'] == 'capability only']
+    rows = [r for r in rows if r['status'] != 'capability only']
     gaps = [r for r in rows if r['status'] != 'mapped']
     unique = lambda rs: len({route_key(r['method'], r['path']) for r in rs if r['method'] != 'UNRESOLVED'})
     lines = ['# Dashboard / CLI parity matrix', '',
              'W4-L7 part 1, D9 parity plus. Source audit only; no commands are added by this change.', '',
              f'Frontend revision: `{frontend_rev}`. AxiomCore revision: `{cli_rev}`.', '',
              f'{len(rows)} action records; {unique(rows)} HTTP endpoints; {unique(gaps)} endpoints with missing or partial CLI coverage.', '',
-             'An action record is a referenced SDK operation, a typed client capability, or a direct request call site. '
+             f"{unique([r for r in rows if r['status'] == 'mapped'])} mapped; {unique([r for r in rows if r['status'] == 'partial'])} partial; {unique([r for r in rows if r['status'] == 'gap'])} no CLI call. Capability-only rows are excluded from these totals.", '',
+             'An action record is a referenced SDK operation, a used typed client route, or a direct request call site. '
              'Repeated call sites are retained. `mapped` proves a source-level command/HTTP route correspondence, '
              'not complete payload, permissions, output, or production behavior equivalence. '
              'Parameterized paths are matched by position; HTTP methods must match. '
@@ -61,19 +87,16 @@ def markdown(rows, frontend_rev, cli_rev):
              'The deployments service described by D9 is future shared dashboard/CLI work. '
              'A local server package command or managed sandbox does not establish hosted deployment parity.', '',
              '## Grouped gaps', '']
-    for group in sorted({r['group'] for r in gaps}):
-        lines += [f'### {group}', '']
-        endpoints = {}
-        for r in gaps:
-            if r['group'] == group:
-                endpoints.setdefault((r['method'], r['path']), set()).add(r['action'])
-        for (method, path), actions in sorted(endpoints.items()):
-            lines.append(f'- `{method} {path}`: {", ".join(sorted(actions))}')
-        lines.append('')
+    lines += gap_lines(rows)
+    lines += ['## Capability only (excluded from endpoint counts)', '']
+    for r in capabilities:
+        lines.append(f"- `{r['method']} {r['path']}` — {r['action']} (`{r['source']}:{r['line']}`)")
+    lines.append('')
     lines += ['## Complete matrix', '', '| Group / dashboard action | HTTP endpoint | CLI command | Dashboard evidence |', '| --- | --- | --- | --- |']
     for r in rows:
         commands = ', '.join('`'+c+'`' for c in r['commands']) or ('**UNRESOLVED**' if r['status'] == 'unresolved' else '**GAP**')
         notes = sorted({c['note'] for c in r['cli_evidence'] if c.get('note')})
+        if r['status'] == 'partial': commands = '**PARTIAL** ' + commands
         if notes:
             commands += ' (' + '; '.join(notes) + ')'
         lines.append('| ' + ' | '.join(map(cell, [r['group']+' / '+r['action'], f"`{r['method']} {r['path']}`", commands, f"`{r['source']}:{r['line']}`"])) + ' |')
@@ -100,14 +123,12 @@ def main():
         elif args.format == 'markdown':
             output = markdown(rows, revision(args.frontend), revision(args.core))
         else:
-            missing = {(r['group'], r['method'], r['path']) for r in rows if r['status'] != 'mapped'}
-            output = '\n'.join(f'{g}: {m} {p}' for g, m, p in sorted(missing))
-            output += f'\n{len(rows)} action records; {len(missing)} grouped endpoint gaps\n'
+            output = '\n'.join(gap_lines(rows)) + f'\n{len(grouped_gaps(rows))} grouped endpoint gaps or partial\n'
         if args.output:
             args.output.write_text(output)
         else:
             print(output, end='')
-        return int(args.strict and any(r['status'] != 'mapped' for r in rows))
+        return int(args.strict and any(r['status'] in ('gap', 'partial', 'unresolved') for r in rows))
     except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as error:
         print(f'parity-check: {error}', file=sys.stderr)
         return 2

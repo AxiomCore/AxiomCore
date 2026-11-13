@@ -171,6 +171,18 @@ The consumer is always `server`. A workload holds at most one active grant per
 requirement on a database. If the confirmation is lost, select **Grant access**
 again with the same details: the retry does not create a second grant.
 
+Owners can grant from the CLI instead. `--workload` takes the workload ID or
+its Google subject; the plan fills in from the registration:
+
+```bash
+axiom project resources --project my-project grant --environment production \
+  --requirement tasks --workload SERVICE_ACCOUNT_UNIQUE_ID --expires-days 30
+axiom project resources --project my-project grants --environment production
+```
+
+If the command's result is lost, it prints the `--operation-id` and
+`--expires-at` to repeat it with. The repeat does not create a second grant.
+
 ## 6. Write the secrets profile
 
 Create `AxiomSecrets.toml` in the project root. It contains IDs and no
@@ -289,7 +301,9 @@ startup.
 
 ## 10. Revoke access
 
-On the **Resources** page, select **Revoke** next to the grant and confirm. To
+On the **Resources** page, select **Revoke** next to the grant and confirm, or
+run `axiom project resources --project my-project revoke GRANT_ID --environment production`
+(`grants` lists the IDs). To
 stop every grant of one server at once, disable its workload identity on the
 **Secrets** page. Disabling the environment stops all of them.
 

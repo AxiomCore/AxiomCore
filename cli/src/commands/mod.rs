@@ -64,6 +64,7 @@ mod editor_schema_parity;
 pub mod secret_development;
 
 pub mod resources;
+pub mod resources_access;
 pub mod resources_placement;
 pub mod resources_recovery;
 #[cfg(test)]

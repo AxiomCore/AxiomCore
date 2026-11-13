@@ -196,9 +196,9 @@ error, and `--operation-id` sets it. If the result of `grant` is lost, the
 command prints how to repeat it with the same `--operation-id` and
 `--expires-at`: the repeat returns the same grant. The same `--operation-id`
 with other details is refused with `AXRESOURCE_CONFLICT`. A workload holds at most one
-active grant per requirement, so no repeat creates a second one. Repeat
-within five minutes for a 90-day grant; after that its expiry is past the
-90-day limit and the repeat is refused. Run `grants` to check instead.
+active grant per requirement, so no repeat creates a second one. A repeat
+works while the first attempt's expiry is still in the future; otherwise, run
+`grants` to check what was saved.
 
 `revoke` stops new credentials at once. A credential the workload already holds
 keeps working for a bounded time: on SQLite until it expires, at most 15

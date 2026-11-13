@@ -606,10 +606,20 @@ async fn set_enabled(args: &AuthArgs, enabled: bool, yes: bool) -> Result<()> {
     }
     let body = settings_put_body(&current, &json!({"enabled": enabled}));
     let saved = target.call(Method::PUT, "settings", &[], Some(&body)).await?;
-    let report = json!({"enabled": enabled, "changed": true, "revision": saved["revision"], "status": status_report(&target).await?});
+    // The change is saved; like the dashboard, a failed re-read does not turn it into a failure.
+    let status = match status_report(&target).await {
+        Ok(status) => status,
+        Err(error) => {
+            eprintln!("axiom auth: the change is saved, but the status could not be read ({error:#}); run `axiom auth status`");
+            Value::Null
+        }
+    };
+    let report = json!({"enabled": enabled, "changed": true, "revision": saved["revision"], "status": status});
     print(args, &report, |r| {
         let mut lines = vec![if enabled { "Authentication is turned on. Setup continues in the background.".to_string() } else { "Authentication is turned off.".to_string() }];
-        lines.extend(status_lines(&r["status"]));
+        if !r["status"].is_null() {
+            lines.extend(status_lines(&r["status"]));
+        }
         lines
     })
 }

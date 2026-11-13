@@ -239,6 +239,22 @@ fn activate_without_revision_sends_the_listed_revision() {
 }
 
 #[test]
+fn upper_case_uuids_match_the_listed_ids() {
+    // The backend lists IDs in lower case; an upper-case secret UUID must still find its
+    // revision (7), not fall back to 1.
+    let (cloud, log) = stub(route);
+    let directory = tempfile::tempdir().unwrap();
+    profile(directory.path());
+    let upper = SECRET.to_ascii_uppercase();
+    let output = axiom(&cloud, directory.path(), &["secrets", "activate", &upper, &V2.to_ascii_uppercase(), "--project", "shop", "--environment", &ENV.to_ascii_uppercase()], None);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let requests = log.lock().unwrap().clone();
+    let activate = requests.last().unwrap();
+    assert_eq!(activate.path, format!("{}/secrets/{SECRET}/versions/{V2}/activate", scope()));
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&activate.body).unwrap(), serde_json::json!({"expected_revision":7}));
+}
+
+#[test]
 fn rotate_writes_then_activates_with_the_current_revision() {
     let (cloud, log) = stub(route);
     let directory = tempfile::tempdir().unwrap();

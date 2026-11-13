@@ -309,3 +309,28 @@ fn refused_mfa_writes_map_to_the_dashboard_messages() {
     let output = axiom(&url, directory.path(), &["mfa", "set", "--step-up-minutes", "20"]);
     assert_eq!(output.status.code(), Some(4), "{}", stderr(&output));
 }
+
+#[test]
+fn a_failed_status_read_after_a_saved_change_is_not_a_failure() {
+    // The PUT succeeds, then GET overview and GET mfa answer 503: the change is saved, so the
+    // command warns and exits 0 (the dashboard keeps its previous view in the same case).
+    let env = format!("/api/v1/projects/shop/auth/environments/{PROD}");
+    let route: Route = Arc::new(move |method, path, body| match (method, path.strip_prefix(env.as_str())) {
+        ("GET", _) if path == "/api/v1/projects/shop/configuration-environments" => {
+            (200, format!(r#"[{{"id":"{PROD}","slug":"production","kind":"production"}}]"#))
+        }
+        ("GET", Some("/settings")) => (200, settings().to_string()),
+        ("PUT", Some("/settings")) => (200, body.to_string()),
+        _ => (503, r#"{"error":{"code":"AXAUTH_UNAVAILABLE"}}"#.into()),
+    });
+    let (url, log) = stub(route);
+    let directory = tempfile::tempdir().unwrap();
+    let output = axiom(&url, directory.path(), &["enable"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("Authentication is turned on"));
+    assert!(stderr(&output).contains("the change is saved, but the status could not be read"), "{}", stderr(&output));
+    assert_eq!(puts(&log).len(), 1);
+    let output = axiom(&url, directory.path(), &["mfa", "set", "--step-up-minutes", "20"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(stderr(&output).contains("multi-factor settings are saved, but their status could not be read"), "{}", stderr(&output));
+}

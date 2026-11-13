@@ -1049,7 +1049,14 @@ async fn mfa_set(args: &AuthArgs, change: &MfaChange<'_>, yes: bool) -> Result<(
     if !args.json {
         println!("Multi-factor settings saved.");
     }
-    print_mfa_status(args, &target).await
+    // The settings are saved; like the dashboard, a failed re-read does not turn it into a failure.
+    if let Err(error) = print_mfa_status(args, &target).await {
+        eprintln!("axiom auth: the multi-factor settings are saved, but their status could not be read ({error:#}); run `axiom auth mfa status`");
+        if args.json {
+            println!("{}", json!({"saved": true, "status": null}));
+        }
+    }
+    Ok(())
 }
 
 /// `users factors`, `reset-factors`, `consents`, `revoke-consent`.

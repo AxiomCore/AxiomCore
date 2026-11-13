@@ -31,7 +31,8 @@ async fn rows(client: &CloudClient, project: &str, segments: &[&str]) -> Result<
 /// Resolve `--environment` (a configured environment name or UUID) to its UUID.
 pub(crate) async fn environment_id(client: &CloudClient, project: &str, value: &str) -> Result<String> {
     if uuid_shaped(value) {
-        return Ok(value.to_string());
+        // The backend lists IDs in lower case; matching them below needs the same form.
+        return Ok(value.to_ascii_lowercase());
     }
     rows(client, project, &["configuration-environments"])
         .await?
@@ -46,7 +47,8 @@ pub(crate) async fn environment_id(client: &CloudClient, project: &str, value: &
 /// Resolve a secret (a defined secret name or UUID) to its UUID.
 pub(crate) async fn secret_id(client: &CloudClient, project: &str, value: &str) -> Result<String> {
     if uuid_shaped(value) {
-        return Ok(value.to_string());
+        // The backend lists IDs in lower case; matching them below needs the same form.
+        return Ok(value.to_ascii_lowercase());
     }
     rows(client, project, &["secrets"])
         .await?
@@ -87,7 +89,8 @@ fn version_number(value: &str) -> Option<u64> {
 /// Resolve a version (`v<N>`, `<N>` or a version UUID) to its UUID.
 async fn version_id(client: &CloudClient, project: &str, environment: &str, secret: &str, value: &str) -> Result<String> {
     if uuid_shaped(value) {
-        return Ok(value.to_string());
+        // The backend lists IDs in lower case; matching them below needs the same form.
+        return Ok(value.to_ascii_lowercase());
     }
     let number = version_number(value).with_context(|| format!("invalid version \"{value}\"; pass v<N>, <N> or a version UUID"))?;
     versions(client, project, environment, secret)
@@ -208,7 +211,8 @@ pub(crate) async fn version_action(
 pub(crate) fn read_material(stdin: bool) -> Result<Zeroizing<Vec<u8>>> {
     use std::io::Read;
     let material = if stdin {
-        let mut value = Zeroizing::new(Vec::new());
+        // Sized up front so `read_to_end` never reallocates and leaves an unzeroized copy.
+        let mut value = Zeroizing::new(Vec::with_capacity(65_538));
         std::io::stdin().take(65_537).read_to_end(&mut value)?;
         value
     } else {
@@ -282,7 +286,7 @@ pub(crate) async fn rotate(
     let revision = match activated {
         Ok(revision) => revision,
         Err(error) => bail!(
-            "The candidate was saved as {label} ({candidate}), but activating it failed: {error}\n\
+            "The candidate was saved as {label} ({candidate}), but it could not be activated: {error}\n\
              Finish with: axiom secrets activate {secret} {label} --project {project} --environment {environment}"
         ),
     };

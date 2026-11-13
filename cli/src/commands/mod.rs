@@ -50,6 +50,7 @@ pub mod server;
 #[allow(dead_code)] // Standalone mock CLI types remain reserved for their execution phase.
 pub(crate) mod server_command_contract;
 mod server_development;
+mod server_builder;
 mod server_workflow;
 pub mod test;
 pub mod ui;

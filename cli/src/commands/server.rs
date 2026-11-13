@@ -100,11 +100,22 @@ pub enum ServerAction {
         bindings: Option<PathBuf>,
         #[arg(long, default_value = "native-server")]
         target: String,
-        /// Reviewed workspace source root used to build a container or Worker runtime
+        /// Reviewed workspace source root used to build a Worker runtime, or a container
+        /// runtime from source instead of the published builder image
         #[arg(long)]
         runtime_source: Option<PathBuf>,
-        #[arg(short, long)]
-        output: PathBuf,
+        /// Container targets without --runtime-source: the digest-pinned builder image
+        /// (`<registry>/<repository>@sha256:<digest>`, for a mirror). Default: the image
+        /// this CLI release pins for the target
+        #[arg(long, conflicts_with = "runtime_source")]
+        builder_image: Option<String>,
+        /// New container context or release directory
+        #[arg(short, long, required_unless_present = "output_input", conflicts_with = "output_input")]
+        output: Option<PathBuf>,
+        /// Container targets: write only the data-only input directory (no Dockerfile, no
+        /// source), for an upload or a CI build
+        #[arg(long, conflicts_with_all = ["runtime_source", "builder_image"])]
+        output_input: Option<PathBuf>,
     },
     /// Verify all release files, platform, contracts and capability requirements
     VerifyBundle { directory: PathBuf },

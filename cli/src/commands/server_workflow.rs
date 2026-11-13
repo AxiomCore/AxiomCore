@@ -118,15 +118,28 @@ pub fn handle(action: &ServerAction) -> Result<bool> {
             bindings,
             target,
             runtime_source,
+            builder_image,
             output,
+            output_input,
         } => {
             let container = matches!(target.as_str(), "container-amd64" | "container-arm64");
             anyhow::ensure!(container || secrets.environment.is_none(), "AXSECRET_UNSUPPORTED_TARGET: --environment seals a secrets profile into container releases only");
+            anyhow::ensure!(container || (builder_image.is_none() && output_input.is_none()), "AXPACKAGE_CONTAINER_ONLY: --builder-image and --output-input apply to container targets only");
+            let out = || output.as_deref().ok_or_else(|| anyhow::anyhow!("--output is required"));
             if container {
                 let sealed = secrets.sealed(contract)?;
-                axiom_server::container::package_context_with_secrets(contract, plan, deployment, bindings.as_deref(), target, runtime_source.as_deref().ok_or_else(|| anyhow::anyhow!("container packaging requires --runtime-source pointing to the reviewed workspace root"))?, output, sealed.as_ref())?;
+                if let Some(directory) = output_input {
+                    let metadata = axiom_server::container::package_input_only(contract, plan, deployment, bindings.as_deref(), target, directory, sealed.as_ref())?;
+                    println!("{}", json!({"containerInput":directory,"metadata":metadata,"preflight":"artifacts-only"}));
+                } else if let Some(source) = runtime_source {
+                    axiom_server::container::package_context_with_secrets(contract, plan, deployment, bindings.as_deref(), target, source, out()?, sealed.as_ref())?;
+                } else {
+                    let builder = super::server_builder::select(target, builder_image.as_deref())?;
+                    let metadata = axiom_server::container::package_prebuilt_context(contract, plan, deployment, bindings.as_deref(), target, &builder.image, out()?, sealed.as_ref())?;
+                    println!("{}", json!({"containerContext":out()?,"metadata":metadata,"builder":{"image":builder.image.reference(),"pinnedBy":builder.pinned_by,"cosignPublicKey":builder.public_key},"preflight":"artifacts-only","configuration":"validated before readiness"}));
+                }
             } else if target.starts_with("cloudflare-workers") {
-                axiom_server::worker_package::package(contract,plan,deployment,bindings.as_deref(),target,runtime_source.as_deref().ok_or_else(|| anyhow::anyhow!("Worker packaging requires --runtime-source pointing to the reviewed workspace root"))?,output)?;
+                axiom_server::worker_package::package(contract,plan,deployment,bindings.as_deref(),target,runtime_source.as_deref().ok_or_else(|| anyhow::anyhow!("Worker packaging requires --runtime-source pointing to the reviewed workspace root"))?,out()?)?;
             } else {
                 anyhow::ensure!(
                     runtime_source.is_none(),
@@ -138,7 +151,7 @@ pub fn handle(action: &ServerAction) -> Result<bool> {
                     deployment,
                     bindings.as_deref(),
                     target,
-                    output,
+                    out()?,
                     env!("CARGO_PKG_VERSION"),
                 )?;
             }

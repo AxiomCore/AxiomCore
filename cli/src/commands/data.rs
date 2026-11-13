@@ -8,10 +8,13 @@ use std::{io::IsTerminal, path::PathBuf};
 
 #[derive(Debug, Args)]
 pub struct DataArgs {
+    /// Project ID, slug, or unambiguous display name.
     #[arg(long, global = true)]
     project: Option<String>,
+    /// Environment ID, slug, or unambiguous display name.
     #[arg(long, global = true)]
     environment: Option<String>,
+    /// Emit only the JSON result on stdout.
     #[arg(long, global = true)]
     json: bool,
     #[command(subcommand)]
@@ -19,35 +22,43 @@ pub struct DataArgs {
 }
 #[derive(Debug, Subcommand)]
 pub enum Action {
+    /// Inspect admission, permissions, limits, and the current schema head.
     Overview {
         #[command(subcommand)]
         action: Get,
     },
+    /// Inspect tables, columns, keys, and side effects.
     Catalog {
         #[command(subcommand)]
         action: Get,
     },
+    /// List query and write history.
     History {
         #[command(subcommand)]
         action: List,
     },
+    /// List data audit events.
     Events {
         #[command(subcommand)]
         action: List,
     },
+    /// Read SQL or preview and confirm a SQL write.
     Sql {
         #[command(subcommand)]
         action: Sql,
     },
+    /// Query, count, export, or review row changes for a table.
     Tables {
         table: String,
         #[command(subcommand)]
         action: Table,
     },
+    /// Manage saved SQL queries.
     SavedQueries {
         #[command(subcommand)]
         action: Saved,
     },
+    /// Preview schema changes and capture a migration release.
     Capture {
         #[command(subcommand)]
         action: Capture,

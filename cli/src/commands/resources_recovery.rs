@@ -333,7 +333,7 @@ impl Api {
             elevated = Some(token);
         }
         for _ in 0..3 {
-            if key.is_none() || reply.status != 409 || reply.code() != Some("AXDATA_WRITE_PENDING") { break; }
+            if key.is_none() || reply.status != 409 || reply.body["error"]["code"].as_str().or_else(|| reply.code()) != Some("AXDATA_WRITE_PENDING") { break; }
             tokio::time::sleep(Duration::from_secs(reply.retry_after.unwrap_or(1).min(10)).min(self.wait_interval)).await;
             reply = if let Some(token) = elevated.as_deref() {
                 self.send_as(method, url.clone(), body, key, token, ResponseKind::DataJson).await?

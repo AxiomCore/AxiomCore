@@ -38,6 +38,7 @@ COMMAND_LINE = re.compile(r"^  ([a-z0-9][a-z0-9-]*)(?:,\s*[a-z0-9-]+)*(?:\s{2,}.
 FENCE = re.compile(r"^(\s*)(`{3,}|~{3,})")
 INLINE_CODE = re.compile(r"(`+)(.+?)\1", re.S)
 AXIOM_WORD = re.compile(r"(?<![\w./-])axiom(?=\s)")
+SHELL_COMMENT = re.compile(r"(?:^|\s)#(?:\s.*|$)")
 
 
 def parse_subcommands(help_text: str) -> list[str]:
@@ -108,8 +109,11 @@ def code_fragments(text: str) -> list[str]:
             block.append(line)
     if block is not None:
         fragments.append("\n".join(block))
-    for match in INLINE_CODE.finditer("\n".join(prose)):
-        fragments.append(match.group(2).replace("\n", " "))
+    # Inline code cannot span a blank line, so an unbalanced backtick cannot
+    # turn the rest of a page into code.
+    for paragraph in re.split(r"\n\s*\n", "\n".join(prose)):
+        for match in INLINE_CODE.finditer(paragraph):
+            fragments.append(match.group(2).replace("\n", " "))
     return fragments
 
 
@@ -118,6 +122,8 @@ def invocations(fragment: str) -> list[list[str]]:
     fragment = re.sub(r"\\\r?\n\s*", " ", fragment)  # shell line continuations
     out: list[list[str]] = []
     for line in fragment.splitlines():
+        # A shell comment mentions a command; it does not show how to run it.
+        line = SHELL_COMMENT.sub("", line)
         for match in AXIOM_WORD.finditer(line):
             rest = re.split(r"[|;&<>`)]|\$\(", line[match.end():], maxsplit=1)[0]
             try:

@@ -75,7 +75,7 @@ webhook or hook signing secret) goes to a new file named by
 `--output-secret`, created with mode `0600`, or is shown once on a terminal
 with a warning. It is never part of `--json` output. When stdout is not a
 terminal, or with `--json`, `--output-secret` is required and the command
-stops before it sends a request. `--output-secret` never replaces an existing
+stops before it changes anything. `--output-secret` never replaces an existing
 file.
 
 **Output.** Fields that hold secrets, passwords, tokens or hashes are removed

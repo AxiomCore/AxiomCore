@@ -227,9 +227,10 @@ axiom project create [OPTIONS]
 | `--region` | location name | `mumbai` for SQLite, `singapore` for PostgreSQL | Requested database location. |
 | `--environment` | environment name | `development` | Hosted environment for the preferences. |
 
-In CLI 0.151.0 and later, the command runs without prompts when you pass both
-`--name` and `--slug`, so it works in scripts and CI. In an interactive
-terminal it prompts for a missing name, slug or description. Without a
+In CLI 0.151.0 and later, the command runs without a terminal when you pass
+both `--name` and `--slug`, so it works in scripts and CI. In an interactive
+terminal it prompts for a missing name, slug or description; pass
+`--description` as well to skip every prompt there. Without a
 terminal, or when `CI` is set, a missing `--name` or `--slug` fails with
 `Non-interactive project creation requires --name and --slug`. In 0.149.1 the
 command needed an interactive terminal even when you passed every option.

@@ -78,8 +78,9 @@ fails if another project already uses yours. `project create` links the
 current directory to the new project.
 
 In CLI 0.151.0 and later, passing both `--name` and `--slug` creates the
-project without any prompt, so the command also works in scripts and CI. In an
-interactive terminal, the CLI prompts for a missing name, slug or description.
+project without a terminal, so the command also works in scripts and CI. In an
+interactive terminal, the CLI prompts for a missing name, slug or description;
+pass `--description` as well to skip every prompt there.
 Without a terminal, or when `CI` is set, a missing `--name` or `--slug` fails
 with `Non-interactive project creation requires --name and --slug`.
 

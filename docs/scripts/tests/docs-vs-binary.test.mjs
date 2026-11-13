@@ -45,7 +45,11 @@ test('reports commands that no code block or inline code shows', () => {
     'a.mdx': [
       'Run `axiom auth --environment production users list` to list users.',
       'The axiom auth status command is only named in prose here.',
+      'An unbalanced ` backtick must not make the next paragraph code.',
+      '',
+      'Prose again: axiom auth status` and more.',
       '```bash title="Terminal"',
+      '# axiom auth users ban is only a comment',
       'axiom init \\',
       '  --module axiom-fastapi',
       'axiom nonsense here',

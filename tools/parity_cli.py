@@ -152,7 +152,8 @@ CALLERS = [
     {'command': 'axiom mock --cloud', 'method': 'GET', 'path': '/api/v1/projects/{project}/mocks', 'source': 'cli/src/commands/legacy_mock.rs', 'evidence': 'client.get_mock_config(&project_slug, etag.as_deref()).await', 'command_evidence': 'pub async fn cloud_configuration('},
 ]
 
-# Reviewed exemptions: (METHOD, path) -> why the CLI deliberately has no command.
+# Reviewed exemptions: (METHOD, path) -> {'category', 'reason'}: why the CLI deliberately has
+# no command. parity-check.validate_exemptions allows only listed categories and routes.
 EXEMPT = {}
 
 # P4 cli-workspace (W4-L7 part 2): workspace, onboarding, sandbox environments and hosted

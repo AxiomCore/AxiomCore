@@ -15,19 +15,74 @@ def route_key(method, path):
     return method.upper(), path
 
 
+# The only reasons the CLI may deliberately lack a command for a dashboard route. Each
+# category names the exact routes it may cover and the dashboard groups allowed to use them;
+# anything else stays a gap until a command maps it.
+EXEMPTION_CATEGORIES = {
+    'browser-session': {
+        'description': 'dashboard sign-in routes of the browser session (email code, HttpOnly cookie); the CLI uses device login',
+        'groups': {'Account authentication'},
+        'routes': {
+            ('POST', '/api/v1/auth/send'),
+            ('POST', '/api/v1/auth/verify'),
+            ('GET', '/api/v1/auth/session'),
+            ('POST', '/api/v1/auth/session/refresh'),
+            ('DELETE', '/api/v1/auth/session'),
+        },
+    },
+}
+
+
+def validate_exemptions(exempt, dashboard, cli):
+    """Checks every exemption and returns them keyed by `route_key`. An exemption must be
+    `{'category': <allowlisted category>, 'reason': <non-blank text>}` on a route of that
+    category, only used by the category's dashboard groups, and never on a route a CLI
+    command maps (the mapping wins, so the exemption is stale or hides a partial). Any
+    violation raises ValueError, which fails the checker (exit 2)."""
+    mapped = {route_key(row['method'], row['path']) for row in cli}
+    errors, result = [], {}
+    for raw_key, entry in (exempt or {}).items():
+        key = route_key(*raw_key)
+        name = f'{key[0]} {key[1]}'
+        if not isinstance(entry, dict):
+            errors.append(f'{name}: an exemption must be {{"category": ..., "reason": ...}}, not {type(entry).__name__}')
+            continue
+        category, reason = entry.get('category'), entry.get('reason')
+        spec = EXEMPTION_CATEGORIES.get(category) if isinstance(category, str) else None
+        if not isinstance(reason, str) or not reason.strip():
+            errors.append(f'{name}: the exemption has no reason')
+        if spec is None:
+            errors.append(f'{name}: category {category!r} is not an allowed exemption category ({", ".join(sorted(EXEMPTION_CATEGORIES))})')
+        elif key not in {route_key(*route) for route in spec['routes']}:
+            errors.append(f'{name}: not a {category} route, so exempting it would hide a real gap')
+        if key in mapped:
+            errors.append(f'{name}: a CLI command maps this route; remove the exemption')
+        if spec is not None:
+            outside = sorted({row['group'] for row in dashboard if route_key(row['method'], row['path']) == key} - spec['groups'])
+            if outside:
+                errors.append(f'{name}: the dashboard uses it in {", ".join(outside)}, outside the {category} category, so exempting it would hide a real gap')
+        if key in result:
+            errors.append(f'{name}: exempted twice')
+        result[key] = {'category': category, 'reason': reason.strip() if isinstance(reason, str) else ''}
+    if errors:
+        raise ValueError('invalid parity exemptions:\n  ' + '\n  '.join(errors))
+    return result
+
+
 def compare(dashboard, cli, exempt=None):
-    """`exempt` maps a (METHOD, path) to the reviewed reason the CLI deliberately has no
-    command for it; such an endpoint is `exempt` rather than a gap while no command maps it."""
+    """`exempt` maps a (METHOD, path) to `{'category', 'reason'}`: the reviewed reason the CLI
+    deliberately has no command for it (see `validate_exemptions`, which runs first and
+    raises ValueError on an invalid one). Such an endpoint is `exempt` rather than a gap."""
+    exempt = validate_exemptions(exempt, dashboard, cli)
     index = {}
     for row in cli:
         index.setdefault(route_key(row['method'], row['path']), []).append(row)
-    exempt = {route_key(*key): reason for key, reason in (exempt or {}).items()}
     result = []
     for row in dashboard:
         key = route_key(row['method'], row['path'])
         matches = index.get(key, [])
         status = 'capability only' if row.get('capability_only') else 'unresolved' if row['method'] == 'UNRESOLVED' else 'partial' if matches and all(r.get('note') for r in matches) else 'mapped' if matches else 'exempt' if key in exempt else 'gap'
-        extra = {'exempt_reason': exempt[key]} if status == 'exempt' else {}
+        extra = {'exempt_category': exempt[key]['category'], 'exempt_reason': exempt[key]['reason']} if status == 'exempt' else {}
         result.append({**row, 'commands': sorted({r['command'] for r in matches}),
                        'cli_evidence': matches, 'status': status, **extra})
     return sorted(result, key=lambda r: (r['group'], r['path'], r['method'], r['action'], r['source'], r['line']))

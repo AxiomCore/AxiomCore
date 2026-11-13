@@ -110,6 +110,7 @@ async fn deletes_resolve_names_and_need_confirmation() {
 
     permissions_with(&args(), &target, &PermissionsAction::Delete { permission: "posts.write".into(), yes: true }).await.unwrap();
     assert_eq!(mock.seen(&route("DELETE", &format!("permissions/{WRITE}"))).len(), 1);
+    assert_eq!(mock.seen(&route("DELETE", &format!("permissions/{WRITE}")))[0].body, Value::Null);
 
     if !std::io::stdin().is_terminal() {
         assert!(roles_with(&args(), &target, &RolesAction::Delete { role: "editor".into(), yes: false }).await.is_err());
@@ -154,6 +155,7 @@ async fn assignments_list_add_and_remove() {
     mock.script(&route("DELETE", &format!("assignments/{GRANT}")), 200, json!({"deleted": true}));
     assignments_with(&args(), &target, &AssignmentsAction::Remove { id: GRANT.into(), yes: true }).await.unwrap();
     assert_eq!(mock.seen(&route("DELETE", &format!("assignments/{GRANT}"))).len(), 1);
+    assert_eq!(mock.seen(&route("DELETE", &format!("assignments/{GRANT}")))[0].body, Value::Null);
 }
 
 #[tokio::test]

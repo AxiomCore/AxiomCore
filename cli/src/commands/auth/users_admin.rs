@@ -105,13 +105,63 @@ pub enum EventsAction {
 }
 
 pub async fn users(args: &AuthArgs, action: &UsersAdminAction) -> Result<()> {
+    precheck_users(args, action)?;
     let target = target(args).await?;
     users_with(args, &target, action).await
 }
 
 pub async fn events(args: &AuthArgs, action: &EventsAction) -> Result<()> {
+    precheck_events(action)?;
     let target = target(args).await?;
     events_with(args, &target, action).await
+}
+
+/// Local refusals (exit 2) before signing in or resolving the project: ids, and an export
+/// file that could not be written after the export is already recorded.
+fn precheck_users(args: &AuthArgs, action: &UsersAdminAction) -> Result<()> {
+    match action {
+        UsersAdminAction::Delete { user_id, .. } | UsersAdminAction::Sessions { user_id } | UsersAdminAction::SendVerification { user_id } => {
+            checked_id(user_id)?;
+        }
+        UsersAdminAction::RemoveFactor { user_id, factor_id, .. } => {
+            checked_id(user_id)?;
+            checked_id(factor_id)?;
+        }
+        UsersAdminAction::Export { user_id, output } => {
+            checked_id(user_id)?;
+            export_destination(args, output.as_deref())?;
+        }
+    }
+    Ok(())
+}
+
+fn precheck_events(action: &EventsAction) -> Result<()> {
+    let EventsAction::List { user_id, cursor, .. } = action;
+    if let Some(user_id) = user_id {
+        checked_id(user_id)?;
+    }
+    if cursor.as_deref().is_some_and(|c| !valid_cursor(c)) {
+        return Err(usage("--cursor is not a cursor printed by `axiom auth events list`"));
+    }
+    Ok(())
+}
+
+/// The export is recorded in the audit trail when it is made, so the destination is checked
+/// first: a new file in an existing directory, or stdout under --json.
+fn export_destination(args: &AuthArgs, output: Option<&Path>) -> Result<()> {
+    match output {
+        Some(path) if path.exists() => Err(usage(format!("{} exists; --output never replaces a file", path.display()))),
+        Some(path) => {
+            let parent = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+            if parent.is_dir() {
+                Ok(())
+            } else {
+                Err(usage(format!("{} is not an existing directory", parent.display())))
+            }
+        }
+        None if !args.json => Err(usage("the export contains personal data: pass --output <file> (a new file, mode 0600) or --json to print it")),
+        None => Ok(()),
+    }
 }
 
 fn session_line(s: &Value) -> String {
@@ -181,11 +231,7 @@ pub(super) async fn users_with(args: &AuthArgs, target: &Target, action: &UsersA
         UsersAdminAction::Export { user_id, output } => {
             let user_id = checked_id(user_id)?;
             // Refuse before the request: the export is recorded in the audit trail.
-            match output {
-                Some(path) if path.exists() => return Err(usage(format!("{} exists; --output never replaces a file", path.display()))),
-                None if !args.json => return Err(usage("the export contains personal data: pass --output <file> (a new file, mode 0600) or --json to print it")),
-                _ => {}
-            }
+            export_destination(args, output.as_deref())?;
             let mut document = target.call(Method::POST, &format!("users/{user_id}/export"), &[], Some(&json!({}))).await?;
             // Never secrets; addresses stay (the export is the user's data).
             sanitize(&mut document, true);
@@ -207,7 +253,7 @@ pub(super) async fn users_with(args: &AuthArgs, target: &Target, action: &UsersA
         UsersAdminAction::SendVerification { user_id } => {
             let user_id = checked_id(user_id)?;
             let sent = match target.call(Method::POST, &format!("users/{user_id}/verification"), &[], Some(&json!({}))).await {
-                Err(error) if error.downcast_ref::<Exit>().is_some_and(|e| e.code == 4) => {
+                Err(error) if error.downcast_ref::<Exit>().is_some_and(|e| e.code == 4 && e.message.starts_with("AXAUTH_CONFLICT:")) => {
                     return Err(Exit { code: 4, message: "AXAUTH_CONFLICT: the address is already verified, or the user cannot receive a verification email (not an active email and password user, or the address is suppressed)".into() }.into());
                 }
                 other => other?,

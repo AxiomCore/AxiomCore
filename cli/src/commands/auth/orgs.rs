@@ -66,6 +66,9 @@ pub enum OrganizationsAction {
         /// Membership status; a suspended member's roles in the organization do not count
         #[arg(long, value_parser = STATUSES, default_value = "active")]
         status: String,
+        /// Suspend without a confirmation prompt
+        #[arg(long)]
+        yes: bool,
     },
     /// Remove a user from an organization
     RemoveMember {
@@ -300,8 +303,11 @@ pub(super) async fn organizations_with(args: &AuthArgs, target: &Target, action:
                 lines
             })
         }
-        OrganizationsAction::AddMember { organization, user, status } => {
+        OrganizationsAction::AddMember { organization, user, status, yes } => {
             let user = checked_id(user)?;
+            if status == "suspended" {
+                confirm_yes(*yes, &format!("Suspend user {user} in organization {organization}? Their roles within it stop counting"))?;
+            }
             let id = organization_id(target, organization).await?;
             let mut saved = target.call(Method::PUT, &format!("organizations/{id}/members/{user}"), &[], Some(&json!({"status": status}))).await?;
             sanitize(&mut saved, true);

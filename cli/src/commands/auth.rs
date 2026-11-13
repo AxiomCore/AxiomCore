@@ -382,19 +382,26 @@ fn uuid_shaped(value: &str) -> bool {
 }
 
 async fn target(args: &AuthArgs) -> Result<Target> {
+    let mut target = project_target(args).await?;
+    target.environment = resolve_environment(&target.client, &target.slug, &args.environment).await?;
+    Ok(target)
+}
+
+/// The signed-in client and project slug only, for project-wide routes such as policy
+/// releases (`environment` is left empty and never sent).
+async fn project_target(args: &AuthArgs) -> Result<Target> {
     let client = crate::auth_store::authenticated_cloud_client()
         .map_err(|_| Exit { code: 3, message: "AXAUTH_UNAUTHENTICATED: run `axiom login` first".into() })?;
+    let unavailable = || Exit { code: 5, message: "AXAUTH_UNAVAILABLE: could not list projects".into() };
     let slug = match &args.project {
-        Some(given) => match client.list_projects().await {
-            Ok(projects) => pick_project(&projects, given).unwrap_or_else(|| given.clone()),
-            // The slug alone still addresses the project; the API answers if it is unknown.
-            Err(_) => given.clone(),
-        },
+        // A slug addresses the project directly; only an id or a display name needs the list.
+        Some(given) if slug_shaped(given) => given.clone(),
+        Some(given) => pick_project(&client.list_projects().await.map_err(|_| unavailable())?, given)?,
         None => {
             let directory = std::env::current_dir()?;
             let linked = crate::auth_store::get_project_id(&directory)?
                 .ok_or_else(|| usage("no project: pass --project <slug> or link this directory with `axiom project link`"))?;
-            let projects = client.list_projects().await.map_err(|_| Exit { code: 5, message: "AXAUTH_UNAVAILABLE: could not list projects".into() })?;
+            let projects = client.list_projects().await.map_err(|_| unavailable())?;
             projects
                 .into_iter()
                 .find(|p| p.id == linked || p.slug == linked)
@@ -402,19 +409,29 @@ async fn target(args: &AuthArgs) -> Result<Target> {
                 .ok_or_else(|| usage("the linked project is not available; pass --project <slug>"))?
         }
     };
-    let environment = resolve_environment(&client, &slug, &args.environment).await?;
-    Ok(Target { client, slug, environment })
+    Ok(Target { client, slug, environment: String::new() })
 }
 
-/// `--project` by slug, id or (case-insensitive, when unique) name.
-pub fn pick_project(projects: &[axiom_cloud::project::Project], given: &str) -> Option<String> {
-    if let Some(p) = projects.iter().find(|p| p.slug == given || p.id == given) {
-        return Some(p.slug.clone());
+/// Lowercase letters, digits and inner hyphens, and not a UUID.
+fn slug_shaped(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && !uuid_shaped(value)
+        && !value.starts_with('-')
+        && !value.ends_with('-')
+        && value.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
+/// `--project` given as an id or a display name (case-insensitive; it must be unique).
+pub fn pick_project(projects: &[axiom_cloud::project::Project], given: &str) -> Result<String> {
+    if let Some(p) = projects.iter().find(|p| p.id == given || p.slug == given) {
+        return Ok(p.slug.clone());
     }
-    let mut named = projects.iter().filter(|p| p.name.eq_ignore_ascii_case(given));
-    match (named.next(), named.next()) {
-        (Some(p), None) => Some(p.slug.clone()),
-        _ => None,
+    let named: Vec<_> = projects.iter().filter(|p| p.name.eq_ignore_ascii_case(given.trim())).collect();
+    match named.as_slice() {
+        [p] => Ok(p.slug.clone()),
+        [] => Err(usage(format!("no project with the id or name `{given}`; pass its slug (see `axiom project list`)"))),
+        _ => Err(usage(format!("more than one project is named `{given}`; pass its slug"))),
     }
 }
 
@@ -1440,6 +1457,29 @@ mod tests {
         assert_eq!(status(503), 5);
         assert_eq!(status(400), 2);
         assert_eq!(exit_code(&AuthAdminError::Unauthenticated), 3);
+    }
+
+    #[test]
+    fn projects_resolve_by_slug_id_or_unique_name() {
+        let project = |id: &str, name: &str, slug: &str| axiom_cloud::project::Project {
+            id: id.into(),
+            name: name.into(),
+            slug: slug.into(),
+            visibility: "private".into(),
+            description: String::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        let id = "6a0c1f8e-3b2d-4c5e-9f70-1a2b3c4d5e6f";
+        let projects = [project(id, "Web Shop", "shop"), project("p2", "Twin", "twin-a"), project("p3", "twin", "twin-b")];
+        assert!(slug_shaped("shop") && slug_shaped("web-shop-2"));
+        assert!(!slug_shaped("Web Shop") && !slug_shaped(id) && !slug_shaped("-x") && !slug_shaped(""));
+        assert_eq!(pick_project(&projects, id).unwrap(), "shop");
+        assert_eq!(pick_project(&projects, "web shop").unwrap(), "shop");
+        let ambiguous = pick_project(&projects, "Twin").unwrap_err();
+        assert_eq!(ambiguous.downcast_ref::<Exit>().unwrap().code, 2);
+        assert!(ambiguous.to_string().contains("more than one"));
+        assert_eq!(pick_project(&projects, "Nope").unwrap_err().downcast_ref::<Exit>().unwrap().code, 2);
     }
 
     #[test]

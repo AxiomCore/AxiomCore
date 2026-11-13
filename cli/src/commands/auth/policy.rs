@@ -3,7 +3,7 @@
 //! exits 0 clean, 6 unacknowledged widening, 7 unacknowledged narrowing, 8 stale approvals,
 //! 9 partial coverage with `--require-complete`, 2 usage. Releases are signed with an enrolled
 //! migration signer key and carry the impact sidecar.
-use super::{admin, print, target, text, usage, AuthArgs, Exit, Target};
+use super::{admin, print, project_target, target, text, usage, AuthArgs, Exit, Target};
 use anyhow::{Context, Result};
 use axiom_database::developer as db;
 use axiom_lib::auth_impact::{self as ai, Approvals, Policy, Report, Subject};
@@ -245,7 +245,8 @@ pub async fn run(args: &AuthArgs, action: &PolicyAction) -> Result<()> {
         }
         PolicyAction::Release { policy, schema, parent, base, plan, base_plan } => release(args, policy, schema.as_deref(), parent.as_deref(), base.as_deref(), plan.as_deref(), base_plan.as_deref()).await,
         PolicyAction::Releases => {
-            let target = target(args).await?;
+            // Releases are project-wide: --environment is not resolved.
+            let target = project_target(args).await?;
             releases(args, &target).await
         }
         PolicyAction::Plan { release } => {

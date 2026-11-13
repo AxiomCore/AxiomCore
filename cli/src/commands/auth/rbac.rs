@@ -6,7 +6,7 @@
 //! each user's next access token; tokens already issued keep their authority
 //! until they expire.
 use super::advanced::confirm_yes;
-use super::{checked_id, print, sanitize, target, text, usage, uuid_shaped, AuthArgs, Target};
+use super::{checked_id, print, sanitize, target, text, usage, uuid_shaped, AuthArgs, Exit, Target};
 use anyhow::Result;
 use clap::Subcommand;
 use reqwest::Method;
@@ -192,8 +192,8 @@ async fn names(target: &Target, rest: &str) -> HashMap<String, String> {
 
 fn description(value: &str) -> Result<&str> {
     let value = value.trim();
-    if value.chars().count() > 256 {
-        return Err(usage("the description is at most 256 characters"));
+    if value.len() > 256 {
+        return Err(usage("the description is at most 256 bytes (256 characters of plain ASCII)"));
     }
     Ok(value)
 }
@@ -281,7 +281,10 @@ pub(super) async fn roles_with(args: &AuthArgs, target: &Target, action: &RolesA
             if !wanted.is_empty() {
                 let id = checked_id(role["id"].as_str().unwrap_or_default())?.to_string();
                 let body = json!({"permission_ids": wanted, "revision": role["revision"]});
-                role = target.call(Method::PUT, &format!("roles/{id}/permissions"), &[], Some(&body)).await?;
+                role = target.call(Method::PUT, &format!("roles/{id}/permissions"), &[], Some(&body)).await.map_err(|error| match error.downcast::<Exit>() {
+                    Ok(exit) => Exit { code: exit.code, message: format!("{}; role {name} was created without permissions: grant them with `axiom auth roles set-permissions {name}`", exit.message) }.into(),
+                    Err(other) => other,
+                })?;
             }
             sanitize(&mut role, true);
             print(args, &role, |r| vec![format!("Role {} created ({}).", text(r, "name"), text(r, "id"))])

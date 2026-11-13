@@ -104,14 +104,14 @@ async fn members_list_add_and_remove() {
     assert!(mock.seen(&admin_route("GET", "organizations")).is_empty());
 
     mock.script(&admin_route("PUT", &member), 200, json!({"organization_id": ORG, "user_id": USER, "status": "suspended"}));
-    organizations_with(&args(), &target, &OrganizationsAction::AddMember { organization: ORG.into(), user: USER.into(), status: "suspended".into() }).await.unwrap();
+    organizations_with(&args(), &target, &OrganizationsAction::AddMember { organization: ORG.into(), user: USER.into(), status: "suspended".into(), yes: true }).await.unwrap();
     let put = mock.seen(&admin_route("PUT", &member));
     assert_eq!(put.len(), 1);
     assert_eq!(put[0].body, json!({"status": "suspended"}));
 
     // By slug: the organization list resolves the id first.
     mock.script(&admin_route("GET", "organizations"), 200, json!({"organizations": [org(ORG, "acme", 2)], "next_cursor": null}));
-    organizations_with(&args(), &target, &OrganizationsAction::AddMember { organization: "acme".into(), user: USER.into(), status: "active".into() }).await.unwrap();
+    organizations_with(&args(), &target, &OrganizationsAction::AddMember { organization: "acme".into(), user: USER.into(), status: "active".into(), yes: false }).await.unwrap();
     assert_eq!(mock.seen(&admin_route("PUT", &member))[1].body, json!({"status": "active"}));
     assert_eq!(mock.seen(&admin_route("GET", "organizations")).len(), 1);
 
@@ -122,10 +122,14 @@ async fn members_list_add_and_remove() {
     assert_eq!(deleted[0].body, Value::Null);
 
     // A non-UUID user is a usage error and sends nothing.
-    let bad = OrganizationsAction::AddMember { organization: ORG.into(), user: "jane@example.com".into(), status: "active".into() };
+    let bad = OrganizationsAction::AddMember { organization: ORG.into(), user: "jane@example.com".into(), status: "active".into(), yes: false };
     let error = organizations_with(&args(), &target, &bad).await.unwrap_err();
     assert_eq!(error.downcast_ref::<Exit>().map(|e| e.code), Some(2));
     if !std::io::stdin().is_terminal() {
+        let puts = mock.seen(&admin_route("PUT", &member)).len();
+        let suspend = OrganizationsAction::AddMember { organization: ORG.into(), user: USER.into(), status: "suspended".into(), yes: false };
+        assert!(organizations_with(&args(), &target, &suspend).await.is_err());
+        assert_eq!(mock.seen(&admin_route("PUT", &member)).len(), puts);
         let refused = OrganizationsAction::RemoveMember { organization: ORG.into(), user: USER.into(), yes: false };
         assert!(organizations_with(&args(), &target, &refused).await.is_err());
     }

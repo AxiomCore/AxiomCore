@@ -174,6 +174,7 @@ async fn templates_list_show_and_reset() {
     }
     templates_with(&args(), &target, &TemplatesAction::Reset { kind: "invitation".into(), yes: true }).await.unwrap();
     assert_eq!(mock.seen(&admin_route("DELETE", "templates/invitation")).len(), 1);
+    assert_eq!(mock.seen(&admin_route("DELETE", "templates/invitation"))[0].body, Value::Null);
 }
 
 #[tokio::test]

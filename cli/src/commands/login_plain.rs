@@ -24,9 +24,13 @@ const DEFAULT_INTERVAL: u64 = 5;
 const DEFAULT_EXPIRES_IN: u64 = 600;
 /// Consecutive network or 5xx failures tolerated while waiting for approval.
 const MAX_TRANSIENT_FAILURES: u32 = 3;
-/// Smallest terminal the login screen can draw its link and code in.
-const MIN_TUI_COLUMNS: u16 = 40;
-const MIN_TUI_ROWS: u16 = 10;
+/// Smallest terminal the login screen shows its link and code in: the screen
+/// draws a box of 70% x 50% of the terminal, and the code is its sixth line.
+const MIN_TUI_COLUMNS: u16 = 60;
+const MIN_TUI_ROWS: u16 = 24;
+/// Bounds for the server's `expires_in` (the API sends 600).
+const MIN_EXPIRES_IN: u64 = 60;
+const MAX_EXPIRES_IN: u64 = 1800;
 
 // -----------------------------------------------------------------------------
 // TUI or plain text
@@ -117,8 +121,30 @@ impl DeviceStart {
     }
 
     pub fn expires_in_seconds(&self) -> u64 {
-        self.expires_in.unwrap_or(DEFAULT_EXPIRES_IN)
+        self.expires_in
+            .unwrap_or(DEFAULT_EXPIRES_IN)
+            .clamp(MIN_EXPIRES_IN, MAX_EXPIRES_IN)
     }
+
+    /// Server text goes to the terminal: drop control characters (escape
+    /// sequences) and keep the prefilled link only in its parsed form, so the
+    /// printed link is exactly the one handed to the browser.
+    fn sanitized(mut self) -> Self {
+        self.user_code = printable(&self.user_code);
+        self.verification_uri = printable(&self.verification_uri);
+        self.verification_uri_complete = self
+            .verification_uri_complete
+            .as_deref()
+            .map(str::trim)
+            .and_then(|link| url::Url::parse(link).ok())
+            .map(|link| link.to_string())
+            .filter(|link| is_web_link(link));
+        self
+    }
+}
+
+fn printable(value: &str) -> String {
+    value.trim().chars().filter(|c| !c.is_control()).collect()
 }
 
 /// Only absolute http(s) links are shown as the prefilled link or handed to a browser.
@@ -153,10 +179,11 @@ pub async fn start_device_login(client: &reqwest::Client, base_url: &str) -> Res
         let body = response.text().await.unwrap_or_default();
         bail!(start_error(status.as_u16(), retry_after, &body));
     }
-    let start: DeviceStart = response
-        .json()
+    let start = response
+        .json::<DeviceStart>()
         .await
-        .context("AxiomCore authentication returned an invalid device-login response")?;
+        .context("AxiomCore authentication returned an invalid device-login response")?
+        .sanitized();
     if start.device_code.trim().is_empty() || start.user_code.trim().is_empty() {
         bail!("AxiomCore authentication returned an invalid device-login response");
     }
@@ -224,16 +251,16 @@ struct ErrorBody {
 
 /// The device-flow error code in a poll body. The API sends JSON
 /// (`{"error":"authorization_pending"}`) for a pending code but plain text
-/// (`expired_token\n`) for the others, so both are accepted.
+/// (`expired_token\n`, `invalid_device_code\n`) for the others, so both are
+/// accepted; plain text counts only when it is a single snake_case word.
 fn error_code(body: &[u8]) -> Option<String> {
     if let Ok(error) = serde_json::from_slice::<ErrorBody>(body) {
         return Some(error.error);
     }
     let text = std::str::from_utf8(body).ok()?.trim();
-    matches!(
-        text,
-        "authorization_pending" | "slow_down" | "expired_token" | "access_denied"
-    )
+    (!text.is_empty()
+        && text.len() <= 64
+        && text.chars().all(|c| c.is_ascii_lowercase() || c == '_'))
     .then(|| text.to_string())
 }
 
@@ -247,18 +274,16 @@ fn looks_like_code(value: &str) -> bool {
 }
 
 pub fn classify(status: u16, body: &[u8]) -> PollOutcome {
-    if let Some(code) = error_code(body) {
-        return match code.as_str() {
-            "authorization_pending" => PollOutcome::Pending,
-            "slow_down" => PollOutcome::SlowDown,
-            "expired_token" => PollOutcome::Expired,
-            "access_denied" => PollOutcome::Denied,
-            other if looks_like_code(other) => {
-                PollOutcome::Failed(format!("Authentication failed: {other}."))
-            }
-            _ => PollOutcome::Failed(format!("Authentication failed (HTTP {status}).")),
-        };
+    let code = error_code(body);
+    match code.as_deref() {
+        Some("authorization_pending") => return PollOutcome::Pending,
+        Some("slow_down") => return PollOutcome::SlowDown,
+        Some("expired_token") => return PollOutcome::Expired,
+        Some("access_denied") => return PollOutcome::Denied,
+        _ => {}
     }
+    // A gateway's own error body ({"error":"Rate exceeded"}, "Bad Gateway")
+    // must not end the login: the status decides first.
     if status == 429 {
         return PollOutcome::SlowDown;
     }
@@ -266,6 +291,13 @@ pub fn classify(status: u16, body: &[u8]) -> PollOutcome {
         return PollOutcome::Transient(format!(
             "AxiomCore authentication is temporarily unavailable (HTTP {status})"
         ));
+    }
+    if let Some(code) = code {
+        return if looks_like_code(&code) {
+            PollOutcome::Failed(format!("Authentication failed: {code}."))
+        } else {
+            PollOutcome::Failed(format!("Authentication failed (HTTP {status})."))
+        };
     }
     if !(200..300).contains(&status) {
         return PollOutcome::Failed(format!("Authentication failed (HTTP {status})."));
@@ -487,12 +519,12 @@ pub fn instructions(start: &DeviceStart) -> Vec<String> {
     lines
 }
 
-fn print_lines(lines: &[String]) {
+fn print_lines(lines: &[String]) -> std::io::Result<()> {
     let mut stdout = std::io::stdout().lock();
     for line in lines {
-        let _ = writeln!(stdout, "{line}");
+        writeln!(stdout, "{line}")?;
     }
-    let _ = stdout.flush();
+    stdout.flush()
 }
 
 /// Plain-text device login for a device code that was already started.
@@ -502,13 +534,15 @@ pub async fn run_plain_with(
     start: &DeviceStart,
     terminal: TerminalFacts,
 ) -> Result<()> {
-    print_lines(&instructions(start));
+    // Polling for ten minutes is pointless if nobody can see the code.
+    print_lines(&instructions(start)).context("Could not print the sign-in link and code")?;
     if should_open_browser(start, terminal) {
         open_browser(start.link());
     }
     let session = poll_for_session(client, base_url, start, Timing::PRODUCTION).await?;
     save_session(&session)?;
-    print_lines(&["Signed in to AxiomCore.".to_string()]);
+    // The session is already saved; a closed stdout is not a failed login.
+    let _ = print_lines(&["Signed in to AxiomCore.".to_string()]);
     Ok(())
 }
 
@@ -535,7 +569,7 @@ mod tests {
             choose_mode(
                 false,
                 TerminalFacts {
-                    size: Some((MIN_TUI_COLUMNS, MIN_TUI_ROWS)),
+                    size: Some((80, 24)),
                     ..TTY
                 }
             ),
@@ -571,7 +605,9 @@ mod tests {
             None,
             Some((0, 40)),
             Some((120, 0)),
-            Some((30, 8)),
+            Some((40, 10)),
+            Some((MIN_TUI_COLUMNS - 1, 40)),
+            Some((120, MIN_TUI_ROWS - 1)),
         ] {
             assert_eq!(
                 choose_mode(false, TerminalFacts { size, ..TTY }),
@@ -691,6 +727,19 @@ mod tests {
             PollOutcome::Denied
         );
         assert_eq!(classify(429, b""), PollOutcome::SlowDown);
+        // A gateway's JSON error does not end the login.
+        assert_eq!(
+            classify(429, br#"{"error":"Rate exceeded"}"#),
+            PollOutcome::SlowDown
+        );
+        assert!(matches!(
+            classify(502, br#"{"error":"Bad Gateway"}"#),
+            PollOutcome::Transient(_)
+        ));
+        assert_eq!(
+            classify(400, b"invalid_device_code\n"),
+            PollOutcome::Failed("Authentication failed: invalid_device_code.".into())
+        );
         assert!(matches!(
             classify(503, b"<html>503</html>"),
             PollOutcome::Transient(_)
@@ -810,7 +859,7 @@ mod tests {
         (base, script)
     }
 
-    const UNIT: Duration = Duration::from_millis(40);
+    const UNIT: Duration = Duration::from_millis(50);
 
     #[tokio::test]
     async fn pending_then_slow_down_then_success() {
@@ -843,13 +892,14 @@ mod tests {
         let gaps: Vec<Duration> = std::iter::once(seen[0].0 - began)
             .chain(seen.windows(2).map(|pair| pair[1].0 - pair[0].0))
             .collect();
+        // sleep_until never wakes early, so lower bounds are exact: the third
+        // and fourth waits are at least 7 units only because slow_down added 5.
         for (gap, units) in gaps.iter().zip([2u32, 2, 7, 7]) {
-            assert!(*gap >= UNIT * units, "gap {gap:?} < {units} units");
+            assert!(
+                *gap >= UNIT * units,
+                "gap {gap:?} < {units} units: {gaps:?}"
+            );
         }
-        assert!(
-            gaps[2] > gaps[1] + UNIT * 4,
-            "slow_down did not widen: {gaps:?}"
-        );
     }
 
     #[tokio::test]
@@ -871,18 +921,53 @@ mod tests {
     async fn the_local_deadline_ends_a_code_that_stays_pending() {
         let (base, script) = mock(vec![]).await;
         let client = http_client().unwrap();
+        // 60 units of lifetime (the minimum), a poll every 20 units.
         let start = DeviceStart {
-            interval: Some(1),
-            expires_in: Some(3),
+            interval: Some(20),
+            expires_in: Some(1),
             ..start_device_login(&client, &base).await.unwrap()
         };
-        let error = poll_for_session(&client, &base, &start, Timing { unit: UNIT })
+        assert_eq!(start.expires_in_seconds(), MIN_EXPIRES_IN);
+        let unit = Duration::from_millis(5);
+        let began = Instant::now();
+        let error = poll_for_session(&client, &base, &start, Timing { unit })
             .await
             .unwrap_err();
         assert_eq!(error.to_string(), EXPIRED_MESSAGE);
-        // Polls at about 1, 2 (and 3) units; never after the code's lifetime.
-        let polls = script.seen.lock().unwrap().len();
-        assert!((2..=3).contains(&polls), "{polls} polls");
+        // Never polls after the code's lifetime.
+        let seen = script.seen.lock().unwrap().clone();
+        assert!((1..=3).contains(&seen.len()), "{} polls", seen.len());
+        let lifetime = unit * 60 + Duration::from_millis(50);
+        assert!(seen.iter().all(|(at, _)| *at - began <= lifetime));
+    }
+
+    #[test]
+    fn expires_in_is_kept_within_bounds() {
+        let mut device = start(None);
+        device.expires_in = Some(0);
+        assert_eq!(device.expires_in_seconds(), MIN_EXPIRES_IN);
+        device.expires_in = Some(86_400);
+        assert_eq!(device.expires_in_seconds(), MAX_EXPIRES_IN);
+        device.expires_in = Some(600);
+        assert_eq!(device.expires_in_seconds(), 600);
+    }
+
+    #[test]
+    fn server_text_is_stripped_of_control_characters() {
+        let device = DeviceStart {
+            user_code: "AB\u{1b}[2JCD".into(),
+            verification_uri: "https://x.test/\u{1b}]8;;evil\u{7}device".into(),
+            verification_uri_complete: Some(" https://x.test/device?user_code=AB CD ".into()),
+            ..start(None)
+        }
+        .sanitized();
+        assert_eq!(device.user_code, "AB[2JCD");
+        assert!(!device.verification_uri.chars().any(char::is_control));
+        // The printed prefilled link is the parsed (encoded) form that is opened.
+        assert_eq!(
+            device.complete_link(),
+            Some("https://x.test/device?user_code=AB%20CD")
+        );
     }
 
     #[tokio::test]

@@ -41,7 +41,15 @@ async fn handle_login_tui(
 ) -> std::result::Result<(), TuiError> {
     let mut tui = crate::tui::Tui::new().map_err(|_| TuiError::Unavailable)?;
     if tui.enter().is_err() {
-        let _ = tui.exit();
+        // Undo each step on its own: if the alternate screen failed, leaving it
+        // fails too, and raw mode must still be switched off before plain text.
+        // (`enter` starts the input task only after both steps succeed.)
+        let _ = crossterm::execute!(
+            std::io::stdout(),
+            crossterm::terminal::LeaveAlternateScreen,
+            crossterm::cursor::Show
+        );
+        let _ = crossterm::terminal::disable_raw_mode();
         return Err(TuiError::Unavailable);
     }
 

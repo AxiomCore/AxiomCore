@@ -261,15 +261,16 @@ Calls `GET /organizations/{id}/members`.
 Adds a user to an organization, or changes an existing member's status. The alias is `update-member`. A user belongs to at most 64 organizations. A suspended member's roles in the organization do not count.
 
 ```text title="Usage"
-axiom auth organizations add-member ORGANIZATION USER_ID [--status active|suspended]
+axiom auth organizations add-member ORGANIZATION USER_ID [--status active|suspended] [--yes]
 ```
 
 - `USER_ID`: the user's UUID (see `axiom auth users list`).
-- `--status`: `active` (default) or `suspended`.
+- `--status`: `active` (default) or `suspended`. With `active`, an existing suspended member is reactivated.
+- `--yes`: suspend without a confirmation prompt (required without a terminal).
 
 ```bash title="Terminal"
 axiom auth organizations add-member acme 4b5c6d7e-8f9a-4b0c-9d1e-2f3a4b5c6d7e
-axiom auth organizations update-member acme 4b5c6d7e-8f9a-4b0c-9d1e-2f3a4b5c6d7e --status suspended
+axiom auth organizations update-member acme 4b5c6d7e-8f9a-4b0c-9d1e-2f3a4b5c6d7e --status suspended --yes
 ```
 
 Calls `PUT /organizations/{id}/members/{user_id}` with `{"status": "..."}`.

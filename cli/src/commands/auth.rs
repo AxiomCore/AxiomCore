@@ -18,12 +18,16 @@ use zeroize::Zeroizing;
 
 mod advanced;
 mod config;
+mod email;
 mod emulate;
+mod orgs;
 mod policy;
+mod rbac;
+mod users_admin;
 
 #[derive(Args, Debug)]
 pub struct AuthArgs {
-    /// Cloud project slug (default: the project linked to this directory)
+    /// Cloud project slug, name or id (default: the project linked to this directory)
     #[arg(long, global = true)]
     pub project: Option<String>,
     /// Environment name or UUID
@@ -117,6 +121,51 @@ pub enum Action {
         #[command(subcommand)]
         action: advanced::SmsAction,
     },
+    /// Roles and the permissions each role grants
+    Roles {
+        #[command(subcommand)]
+        action: rbac::RolesAction,
+    },
+    /// Permission keys that roles grant
+    Permissions {
+        #[command(subcommand)]
+        action: rbac::PermissionsAction,
+    },
+    /// Role assignments of users (environment-wide or in an organization)
+    Assignments {
+        #[command(subcommand)]
+        action: rbac::AssignmentsAction,
+    },
+    /// Organizations and their members
+    Organizations {
+        #[command(subcommand)]
+        action: orgs::OrganizationsAction,
+    },
+    /// Pending, accepted and revoked invitations
+    Invitations {
+        #[command(subcommand)]
+        action: orgs::InvitationsAction,
+    },
+    /// The authentication audit trail
+    Events {
+        #[command(subcommand)]
+        action: users_admin::EventsAction,
+    },
+    /// Email delivery usage and suppressed addresses
+    Email {
+        #[command(subcommand)]
+        action: email::EmailAction,
+    },
+    /// Custom SMTP server for authentication email (Owner)
+    Smtp {
+        #[command(subcommand)]
+        action: email::SmtpAction,
+    },
+    /// Authentication email templates
+    Templates {
+        #[command(subcommand)]
+        action: email::TemplatesAction,
+    },
     /// Local auth emulation: a loopback issuer on a disposable SQLite store with the hosted
     /// auth stream, a mail viewer and a mock OIDC issuer (no network, no hosted database)
     Emulate(emulate::EmulateArgs),
@@ -188,6 +237,14 @@ pub enum ProvidersAction {
     },
     /// Check the provider's credentials without signing anyone in
     Test { provider: String },
+    /// Delete a disabled provider's configuration and client secret; users keep their accounts
+    Remove {
+        /// `google`, `github`, `microsoft`, `apple`, `oidc-<slug>` or the provider's UUID
+        provider: String,
+        /// Delete without asking for confirmation
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -243,6 +300,8 @@ pub enum UsersAction {
         #[arg(long)]
         yes: bool,
     },
+    #[command(flatten)]
+    Admin(users_admin::UsersAdminAction),
 }
 
 #[derive(Subcommand, Debug)]
@@ -326,7 +385,11 @@ async fn target(args: &AuthArgs) -> Result<Target> {
     let client = crate::auth_store::authenticated_cloud_client()
         .map_err(|_| Exit { code: 3, message: "AXAUTH_UNAUTHENTICATED: run `axiom login` first".into() })?;
     let slug = match &args.project {
-        Some(slug) => slug.clone(),
+        Some(given) => match client.list_projects().await {
+            Ok(projects) => pick_project(&projects, given).unwrap_or_else(|| given.clone()),
+            // The slug alone still addresses the project; the API answers if it is unknown.
+            Err(_) => given.clone(),
+        },
         None => {
             let directory = std::env::current_dir()?;
             let linked = crate::auth_store::get_project_id(&directory)?
@@ -341,6 +404,18 @@ async fn target(args: &AuthArgs) -> Result<Target> {
     };
     let environment = resolve_environment(&client, &slug, &args.environment).await?;
     Ok(Target { client, slug, environment })
+}
+
+/// `--project` by slug, id or (case-insensitive, when unique) name.
+pub fn pick_project(projects: &[axiom_cloud::project::Project], given: &str) -> Option<String> {
+    if let Some(p) = projects.iter().find(|p| p.slug == given || p.id == given) {
+        return Some(p.slug.clone());
+    }
+    let mut named = projects.iter().filter(|p| p.name.eq_ignore_ascii_case(given));
+    match (named.next(), named.next()) {
+        (Some(p), None) => Some(p.slug.clone()),
+        _ => None,
+    }
 }
 
 /// A name resolves through `configuration-environments`; a UUID passes through.
@@ -505,7 +580,17 @@ async fn run(args: &AuthArgs) -> Result<()> {
         Action::Users { action: UsersAction::ResetFactors { user_id, reason, yes } } => advanced::reset_factors(args, user_id, reason, *yes).await,
         Action::Users { action: UsersAction::Consents { user_id } } => advanced::user_consents(args, user_id).await,
         Action::Users { action: UsersAction::RevokeConsent { user_id, consent_id, yes } } => advanced::revoke_consent(args, user_id, consent_id, *yes).await,
+        Action::Users { action: UsersAction::Admin(action) } => users_admin::users(args, action).await,
         Action::Users { action } => users(args, action).await,
+        Action::Roles { action } => rbac::roles(args, action).await,
+        Action::Permissions { action } => rbac::permissions(args, action).await,
+        Action::Assignments { action } => rbac::assignments(args, action).await,
+        Action::Organizations { action } => orgs::organizations(args, action).await,
+        Action::Invitations { action } => orgs::invitations(args, action).await,
+        Action::Events { action } => users_admin::events(args, action).await,
+        Action::Email { action } => email::email(args, action).await,
+        Action::Smtp { action } => email::smtp(args, action).await,
+        Action::Templates { action } => email::templates(args, action).await,
         Action::OauthApps { action } => advanced::oauth_apps(args, action).await,
         Action::Oidc { action } => advanced::oidc(args, action).await,
         Action::TrustedIssuers { action } => advanced::trusted_issuers(args, action).await,
@@ -645,7 +730,16 @@ fn read_secret(stdin: bool) -> Result<Zeroizing<String>> {
 }
 
 async fn providers(args: &AuthArgs, action: &ProvidersAction) -> Result<()> {
+    if let ProvidersAction::Remove { provider, .. } = action {
+        if !uuid_shaped(provider) {
+            provider_selector(provider)?;
+        }
+    }
     let target = target(args).await?;
+    providers_with(args, &target, action).await
+}
+
+async fn providers_with(args: &AuthArgs, target: &Target, action: &ProvidersAction) -> Result<()> {
     match action {
         ProvidersAction::List => {
             let mut listed = target.call(Method::GET, "providers", &[], None).await?;
@@ -785,6 +879,23 @@ async fn providers(args: &AuthArgs, action: &ProvidersAction) -> Result<()> {
                 }]
             })
         }
+        ProvidersAction::Remove { provider, yes } => {
+            let listed = target.call(Method::GET, "providers", &[], None).await?;
+            let found = if uuid_shaped(provider) {
+                listed["providers"].as_array().into_iter().flatten().find(|p| p["id"].as_str() == Some(provider.as_str()))
+            } else {
+                let (kind, slug) = provider_selector(provider)?;
+                find_provider(&listed, kind, slug.as_deref())
+            };
+            let found = found.ok_or_else(|| usage(format!("provider {provider} is not configured")))?;
+            if found["enabled"] == true {
+                return Err(Exit { code: 4, message: format!("AXAUTH_CONFLICT: provider {provider} is enabled; disable it first with `axiom auth providers set {provider} --disable`") }.into());
+            }
+            let id = checked_id(found["id"].as_str().unwrap_or_default())?.to_string();
+            advanced::confirm_yes(*yes, &format!("Delete provider {provider}? Its configuration and client secret are removed; users who signed in with it keep their accounts."))?;
+            target.call(Method::DELETE, &format!("providers/{id}"), &[], None).await?;
+            print(args, &json!({"deleted": id, "provider": provider}), |_| vec![format!("Provider {provider} deleted.")])
+        }
     }
 }
 
@@ -880,7 +991,7 @@ async fn users(args: &AuthArgs, action: &UsersAction) -> Result<()> {
             sanitize(&mut user, false);
             print(args, &user, |u| vec![format!("Unbanned {}.", text(u, "id"))])
         }
-        UsersAction::Factors { .. } | UsersAction::ResetFactors { .. } | UsersAction::Consents { .. } | UsersAction::RevokeConsent { .. } => unreachable!("dispatched in run"),
+        UsersAction::Factors { .. } | UsersAction::ResetFactors { .. } | UsersAction::Consents { .. } | UsersAction::RevokeConsent { .. } | UsersAction::Admin(..) => unreachable!("dispatched in run"),
         UsersAction::Revoke { user_id, session, yes } => {
             let user_id = checked_id(user_id)?;
             if !yes {
@@ -1224,7 +1335,7 @@ mod tests {
         assert!(arguments.contains(&"client-secret-stdin".to_string()));
         // Secret input is stdin or a file; one-time secrets go to a file; the rest name
         // identifiers, never values (auth-advanced/v1 17.3).
-        let allowed = ["client-secret-stdin", "auth-token-stdin", "api-key-secret-stdin", "private-key-file", "token-file", "output-secret", "key-id", "api-key-sid", "idempotency-key", "signing-key-file"];
+        let allowed = ["client-secret-stdin", "auth-token-stdin", "api-key-secret-stdin", "private-key-file", "token-file", "output-secret", "key-id", "api-key-sid", "idempotency-key", "signing-key-file", "password-stdin", "password-prompt"];
         for argument in &arguments {
             let secretish = ["secret", "password", "token", "key"].iter().any(|word| argument.contains(word));
             assert!(!secretish || allowed.contains(&argument.as_str()), "secret-bearing flag --{argument}");
@@ -1234,6 +1345,7 @@ mod tests {
             &["t", "sms", "set", "--auth-token", "t"],
             &["t", "trusted-issuers", "test", "x", "--token", "t"],
             &["t", "providers", "set", "apple", "--private-key", "k"],
+            &["t", "smtp", "set", "--password", "p"],
         ] {
             assert!(Harness::try_parse_from(refused).is_err(), "{refused:?}");
         }

@@ -169,3 +169,156 @@ fn oidc_report_checks_metadata_and_keys() {
     assert_eq!(oidc_report(issuer, &other, &jwks, Some(&epoch))["ok"], false);
     assert_eq!(oidc_report(issuer, &discovery, &jwks, Some(&json!({"keys_rev": 5})))["ok"], false);
 }
+
+const PROVIDER: &str = "3e4f5a6b-7c8d-4e9f-a0b1-2c3d4e5f6a70";
+const ISSUER_ID: &str = "4f5a6b7c-8d9e-4fa0-b1c2-3d4e5f6a7b81";
+
+fn code(error: anyhow::Error) -> i32 {
+    error.downcast_ref::<Exit>().map(|e| e.code).unwrap_or(-1)
+}
+
+#[tokio::test]
+async fn providers_remove_resolves_the_selector_and_deletes_by_id() {
+    use crate::commands::auth::ProvidersAction;
+    let (mock, target) = fixture().await;
+    mock.script(&admin_route("GET", "providers"), 200, json!({"providers": [
+        {"id": "5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c92", "kind": "google", "enabled": true, "revision": 2},
+        {"id": PROVIDER, "kind": "oidc", "slug": "oidc-okta", "enabled": false, "revision": 4}]}));
+    mock.script(&admin_route("DELETE", &format!("providers/{PROVIDER}")), 200, json!({"deleted": true}));
+    let remove = ProvidersAction::Remove { provider: "oidc-okta".into(), yes: true };
+    super::super::providers_with(&args(), &target, &remove).await.unwrap();
+    let seen = mock.seen(&admin_route("DELETE", &format!("providers/{PROVIDER}")));
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0].body, Value::Null);
+    assert_eq!(seen[0].query, None);
+    // By UUID too.
+    let by_id = ProvidersAction::Remove { provider: PROVIDER.into(), yes: true };
+    super::super::providers_with(&args(), &target, &by_id).await.unwrap();
+    assert_eq!(mock.seen(&admin_route("DELETE", &format!("providers/{PROVIDER}"))).len(), 2);
+    // An enabled provider is refused locally (the server refuses it too); nothing is deleted.
+    let enabled = ProvidersAction::Remove { provider: "google".into(), yes: true };
+    assert_eq!(code(super::super::providers_with(&args(), &target, &enabled).await.unwrap_err()), 4);
+    // Unknown provider and a bad selector are usage errors.
+    let missing = ProvidersAction::Remove { provider: "github".into(), yes: true };
+    assert_eq!(code(super::super::providers_with(&args(), &target, &missing).await.unwrap_err()), 2);
+    let bad = ProvidersAction::Remove { provider: "oidc-Bad_Slug".into(), yes: true };
+    assert_eq!(code(super::super::providers_with(&args(), &target, &bad).await.unwrap_err()), 2);
+    assert!(mock.seen(&admin_route("DELETE", "providers/5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c92")).is_empty());
+    // Without --yes and without a terminal nothing is deleted.
+    if !std::io::stdin().is_terminal() {
+        let unconfirmed = ProvidersAction::Remove { provider: "oidc-okta".into(), yes: false };
+        assert_eq!(code(super::super::providers_with(&args(), &target, &unconfirmed).await.unwrap_err()), 2);
+        assert_eq!(mock.seen(&admin_route("DELETE", &format!("providers/{PROVIDER}"))).len(), 2);
+    }
+}
+
+fn issuer_update(id: &str) -> TrustedIssuersAction {
+    TrustedIssuersAction::Update {
+        id: id.into(),
+        audiences: vec![],
+        jwks_uri: None,
+        algorithms: vec![],
+        subject_claim: None,
+        email_claim: None,
+        no_email_claim: false,
+        required_claims: None,
+        forbidden_claims: None,
+        authorized_parties: vec![],
+        clear_authorized_parties: false,
+        assurance_mapping: None,
+        max_age_seconds: None,
+        session_lifetime_seconds: None,
+        create_users: false,
+        no_create_users: false,
+        enable: false,
+        disable: false,
+    }
+}
+
+#[tokio::test]
+async fn trusted_issuer_update_reads_the_revision_and_sends_only_given_fields() {
+    let (mock, target) = fixture().await;
+    let issuer = "https://tenant.example.auth0.com/";
+    mock.script(&admin_route("GET", "trusted-issuers"), 200, json!({"trusted_issuers": [{"id": ISSUER_ID, "issuer": issuer, "preset": "auth0", "revision": 6, "enabled": true}]}));
+    mock.script(&admin_route("PATCH", &format!("trusted-issuers/{ISSUER_ID}")), 200, json!({"id": ISSUER_ID, "issuer": issuer, "revision": 7, "enabled": true}));
+    let mut update = issuer_update(issuer);
+    if let TrustedIssuersAction::Update { audiences, algorithms, no_email_claim, required_claims, clear_authorized_parties, assurance_mapping, session_lifetime_seconds, no_create_users, enable, .. } = &mut update {
+        *audiences = vec!["api://one".into(), "api://two".into()];
+        *algorithms = vec!["RS256".into()];
+        *no_email_claim = true;
+        *required_claims = Some(r#"{"gty": "password"}"#.into());
+        *clear_authorized_parties = true;
+        *assurance_mapping = Some("null".into());
+        *session_lifetime_seconds = Some(7200);
+        *no_create_users = true;
+        *enable = true;
+    }
+    trusted_issuers_with(&args(), &target, &update, None).await.unwrap();
+    let seen = mock.seen(&admin_route("PATCH", &format!("trusted-issuers/{ISSUER_ID}")));
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0].body, json!({
+        "revision": 6, "audiences": ["api://one", "api://two"], "algorithms": ["RS256"], "email_claim": "", "required_claims": {"gty": "password"},
+        "authorized_parties": [], "assurance_mapping": null, "session_lifetime_seconds": 7200, "create_users": false, "enabled": true}));
+    assert_eq!(mock.seen(&admin_route("GET", "trusted-issuers")).len(), 1);
+    // A pure disable by UUID (what a preset issuer accepts with its switch off).
+    let mut disable = issuer_update(ISSUER_ID);
+    if let TrustedIssuersAction::Update { disable: d, .. } = &mut disable {
+        *d = true;
+    }
+    trusted_issuers_with(&args(), &target, &disable, None).await.unwrap();
+    assert_eq!(mock.seen(&admin_route("PATCH", &format!("trusted-issuers/{ISSUER_ID}")))[1].body, json!({"revision": 6, "enabled": false}));
+    // An unknown issuer is a usage error and sends no PATCH.
+    assert_eq!(code(trusted_issuers_with(&args(), &target, &issuer_update("https://other.example/"), None).await.unwrap_err()), 2);
+    assert_eq!(mock.seen(&admin_route("PATCH", &format!("trusted-issuers/{ISSUER_ID}"))).len(), 2);
+}
+
+#[test]
+fn trusted_issuer_patch_checks_its_flags_locally() {
+    assert_eq!(code(trusted_issuer_patch(&issuer_update(ISSUER_ID), Value::Null).unwrap_err()), 2);
+    fn with(f: impl FnOnce(&mut TrustedIssuersAction)) -> Result<Value> {
+        let mut a = issuer_update(ISSUER_ID);
+        f(&mut a);
+        trusted_issuer_patch(&a, json!(1))
+    }
+    assert!(with(|a| if let TrustedIssuersAction::Update { required_claims, .. } = a { *required_claims = Some("[1]".into()) }).is_err());
+    assert!(with(|a| if let TrustedIssuersAction::Update { forbidden_claims, .. } = a { *forbidden_claims = Some("{not json".into()) }).is_err());
+    assert!(with(|a| if let TrustedIssuersAction::Update { assurance_mapping, .. } = a { *assurance_mapping = Some("[]".into()) }).is_err());
+    assert!(with(|a| if let TrustedIssuersAction::Update { jwks_uri, .. } = a { *jwks_uri = Some("http://keys.example/jwks".into()) }).is_err());
+    assert!(with(|a| if let TrustedIssuersAction::Update { audiences, .. } = a { *audiences = vec!["a".into(), "b".into(), "c".into(), "d".into(), "e".into()] }).is_err());
+    let mapped = with(|a| {
+        if let TrustedIssuersAction::Update { assurance_mapping, forbidden_claims, authorized_parties, max_age_seconds, .. } = a {
+            *assurance_mapping = Some(r#"[{"claim": "amr", "contains": "mfa"}]"#.into());
+            *forbidden_claims = Some(r#"{"is_anonymous": true}"#.into());
+            *authorized_parties = vec!["https://app.example".into()];
+            *max_age_seconds = Some(600);
+        }
+    })
+    .unwrap();
+    assert_eq!(mapped, json!({"revision": 1, "assurance_mapping": [{"claim": "amr", "contains": "mfa"}], "forbidden_claims": {"is_anonymous": true}, "authorized_parties": ["https://app.example"], "max_token_age_seconds": 600}));
+    assert!(issuer_selector(ISSUER_ID).is_ok());
+    assert!(issuer_selector("https://issuer.example/").is_ok());
+    assert_eq!(code(issuer_selector("my-issuer").unwrap_err()), 2);
+    assert_eq!(code(issuer_selector("4F5A6B7C-8D9E-4FA0-B1C2-3D4E5F6A7B81").unwrap_err()), 2);
+}
+
+#[tokio::test]
+async fn trusted_issuer_remove_deletes_by_id_or_issuer_url() {
+    let (mock, target) = fixture().await;
+    let issuer = "https://project.supabase.co/auth/v1";
+    mock.script(&admin_route("GET", "trusted-issuers"), 200, json!({"trusted_issuers": [{"id": ISSUER_ID, "issuer": issuer, "revision": 2}]}));
+    mock.script(&admin_route("DELETE", &format!("trusted-issuers/{ISSUER_ID}")), 200, json!({"deleted": true}));
+    trusted_issuers_with(&args(), &target, &TrustedIssuersAction::Remove { id: ISSUER_ID.into(), yes: true }, None).await.unwrap();
+    // A UUID needs no lookup.
+    assert!(mock.seen(&admin_route("GET", "trusted-issuers")).is_empty());
+    trusted_issuers_with(&args(), &target, &TrustedIssuersAction::Remove { id: issuer.into(), yes: true }, None).await.unwrap();
+    assert_eq!(mock.seen(&admin_route("GET", "trusted-issuers")).len(), 1);
+    let seen = mock.seen(&admin_route("DELETE", &format!("trusted-issuers/{ISSUER_ID}")));
+    assert_eq!(seen.len(), 2);
+    assert_eq!(seen[0].body, Value::Null);
+    assert_eq!(seen[0].query, None);
+    if !std::io::stdin().is_terminal() {
+        let unconfirmed = TrustedIssuersAction::Remove { id: ISSUER_ID.into(), yes: false };
+        assert_eq!(code(trusted_issuers_with(&args(), &target, &unconfirmed, None).await.unwrap_err()), 2);
+        assert_eq!(mock.seen(&admin_route("DELETE", &format!("trusted-issuers/{ISSUER_ID}"))).len(), 2);
+    }
+}

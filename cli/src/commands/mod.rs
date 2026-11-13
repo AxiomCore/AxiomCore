@@ -66,4 +66,8 @@ pub mod resources_recovery;
 #[cfg(test)]
 pub(crate) mod cloud_mock;
 pub mod step_up;
+pub mod cloud_cli;
+pub mod contract_releases;
+pub mod sandbox_environments;
+pub mod workspace;
 pub mod signers;

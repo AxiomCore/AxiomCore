@@ -315,6 +315,8 @@ enum Commands {
     Auth(commands::auth::AuthArgs),
     /// Short-lived branch environments of a hosted database: create, review, delete
     Branch(commands::branch::BranchArgs),
+    /// Workspace settings, members, invitations, notifications, billing and onboarding
+    Workspace(commands::workspace::WorkspaceArgs),
     Deploy {
         #[command(subcommand)]
         target: DeployTarget,
@@ -476,6 +478,8 @@ enum SecurityAction {
 
 #[derive(Subcommand)]
 enum ContractAction {
+    /// Hosted contract releases of a Cloud project: list, inspect, compare, import, download
+    Releases(commands::contract_releases::ReleasesArgs),
     /// Resolve AxiomDeps.toml contract artifacts into a deterministic lockfile
     Resolve {
         #[arg(long, default_value = "AxiomDeps.toml")]
@@ -1546,6 +1550,8 @@ enum ProjectAction {
         #[command(subcommand)]
         action: commands::signers::Action,
     },
+    /// Managed sandbox and hosted-mock environments: list, create, connect, reset, delete
+    Environments(commands::sandbox_environments::EnvironmentsArgs),
     Create {
         #[arg(long)]
         name: Option<String>,
@@ -1742,6 +1748,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Project { .. } => "project",
         Commands::Auth(..) => "auth",
         Commands::Branch(..) => "branch",
+        Commands::Workspace(..) => "workspace",
         Commands::Diff { .. } => "diff",
         Commands::Contract { .. } => "contract",
         Commands::Packages { .. } => "packages",
@@ -1801,7 +1808,6 @@ fn is_local_command(command: &Commands) -> bool {
         | Commands::Explain { .. }
         | Commands::Migrate { .. }
         | Commands::Server { .. }
-        | Commands::Contract { .. }
         | Commands::Init { .. }
         | Commands::Domain { .. }
         | Commands::Security { .. }
@@ -1815,6 +1821,7 @@ fn is_local_command(command: &Commands) -> bool {
         | Commands::Serve(..)
         | Commands::Watch { build: true, .. } => true,
         Commands::Database { action } => !action.hosted(),
+        Commands::Contract { action } => !matches!(action, ContractAction::Releases(..)),
         Commands::Mock(input) => !input.cloud,
         Commands::Pull {
             source,
@@ -1914,6 +1921,7 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             }
         },
         Commands::Contract { action } => match action {
+            ContractAction::Releases(args) => commands::contract_releases::handle(args).await,
             ContractAction::Resolve { deps, lock } => {
                 commands::contract::handle_resolve(deps.clone(), lock.clone()).await
             }
@@ -3099,12 +3107,14 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
         }
         Commands::Auth(args) => commands::auth::handle(args).await,
         Commands::Branch(args) => commands::branch::handle(args).await,
+        Commands::Workspace(args) => commands::workspace::handle(args).await,
         Commands::Project { action } => match action {
             ProjectAction::List => commands::project::handle_project_list().await,
             ProjectAction::Resources { project, action } => {
                 commands::resources::handle(&project, action.as_ref()).await
             }
             ProjectAction::Signers { action } => commands::signers::handle(action).await,
+            ProjectAction::Environments(args) => commands::sandbox_environments::handle(args).await,
             ProjectAction::Create {
                 name,
                 slug,

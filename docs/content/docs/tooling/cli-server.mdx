@@ -225,7 +225,7 @@ No options other than `--help`.
 | Target | Available | Scope |
 | --- | --- | --- |
 | `native-server` | Yes, on macOS `aarch64` and Linux `aarch64`/`x86_64` | Managed and verified sandbox HTTP actions. Database persistence and the PostgreSQL provider are included only on macOS `aarch64`. |
-| `container-amd64`, `container-arm64` | Yes | Linux managed and sandbox HTTP images, built on the published builder image or from `--runtime-source`. |
+| `container-amd64`, `container-arm64` | Yes | Linux managed and sandbox HTTP images, built from `--runtime-source`, or on the published builder image (**Coming soon**). |
 | `cloudflare-workers-local` | Yes | Portable managed JSON API with HS256 JWT and bounded HTTP providers, checked with local workerd. Packaging needs `--runtime-source`. |
 | `container` | No | Select an architecture-specific container target. |
 | `serverless` | No | Lambda runtime and hosted checks are pending. |
@@ -502,7 +502,7 @@ Create an immutable, hash-bound release directory for one target after an
 artifact-only preflight. Production credentials are not resolved.
 
 ```text title="Usage"
-axiom server package [OPTIONS] --deployment <DEPLOYMENT> <--output <OUTPUT>|--output-input <OUTPUT_INPUT>> <CONTRACT> <PLAN>
+axiom server package [OPTIONS] --deployment <DEPLOYMENT> <CONTRACT> <PLAN>
 ```
 
 | Option | Value | Default | Meaning |
@@ -513,7 +513,7 @@ axiom server package [OPTIONS] --deployment <DEPLOYMENT> <--output <OUTPUT>|--ou
 | `--bindings` | path | none | Sandbox bindings file. The environment variables it names must point to the package, authority and module files to seal. |
 | `--target` | target ID | `native-server` | Target profile. |
 | `--runtime-source` | directory | none | Reviewed workspace source root used to build a container or Worker runtime. Required for `cloudflare-workers-local`. Optional for `container-amd64` and `container-arm64`: without it, the context builds on the published builder image. Rejected for other targets. |
-| `--builder-image` | image reference | the image this CLI release pins | Container targets without `--runtime-source`: the `axiom-server-host` builder image, `REGISTRY/REPOSITORY@sha256:DIGEST` (a mirror of the published image). Tags are refused. A CLI release that pins no image (**Coming soon**) fails with `AXPACKAGE_BUILDER_UNPINNED` unless you pass this or `--runtime-source`. |
+| `--builder-image` | image reference | the image this CLI release pins | Container targets without `--runtime-source`: the `axiom-server-host` builder image, `REGISTRY/REPOSITORY@sha256:DIGEST`. Where the CLI release pins an image, this must be a mirror of it (the same digest, else `AXPACKAGE_BUILDER_MISMATCH`). Tags are refused. A CLI release that pins no image (**Coming soon**) fails with `AXPACKAGE_BUILDER_UNPINNED` unless you pass this or `--runtime-source`. |
 | `--output-input` | directory | none | Container targets: write only the data-only container input (`input.json` and the files it lists), not a build context. Replaces `--output`; not combined with `--runtime-source` or `--builder-image`. |
 | `--environment` | profile name | none | Container targets only: seal this `AxiomSecrets.toml` profile into the release as a value-free record, so the container resolves its Cloud sources through the workload identity at run time. Rejected for other targets with `AXSECRET_UNSUPPORTED_TARGET`. Needs a released CLI with this option, which is **Coming soon**. |
 | `--secret-root` | directory | the contract's directory | Directory that holds `AxiomSecrets.toml`. Requires `--environment`. |

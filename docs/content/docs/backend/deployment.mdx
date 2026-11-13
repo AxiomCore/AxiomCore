@@ -154,7 +154,7 @@ context and an image:
 ```bash title="Terminal"
 axiom build service.acore --out backend.axiom
 axiom server inspect backend.axiom backend.server.json --deployment deployment.json --target container-arm64
-axiom server package backend.axiom backend.server.json --deployment deployment.json --target container-arm64 --output container-context
+axiom server package backend.axiom backend.server.json --deployment deployment.json --target container-arm64 --runtime-source /path/to/runtime-source --output container-context
 cat container-context/container.json
 docker buildx build --platform linux/arm64 --load --tag my-api:candidate container-context
 ```
@@ -163,16 +163,16 @@ For x86_64, use `container-amd64` with `--platform linux/amd64`. Add
 `--bindings bindings.json` for sandbox plans. Production provider paths and
 credentials are resolved at startup, not during packaging.
 
-Without `--runtime-source`, the Dockerfile's build stage is the published
-`axiom-server-host` builder image for this runtime version and architecture,
-pinned by digest in the CLI release (**Coming soon**: until a CLI release pins
-one, this fails with `AXPACKAGE_BUILDER_UNPINNED`). The printed `builder.image`
-and `container.json` name the exact image. To use a mirror of that image,
-pass `--builder-image REGISTRY/REPOSITORY@sha256:DIGEST`; a tag is refused.
-With `--runtime-source /path/to/runtime-source`, Docker compiles the runtime
-from that reviewed source instead, as before. `--output-input DIR` writes only
-the data-only input (the context's `input/` directory), for an upload or a CI
-build.
+With `--runtime-source`, Docker compiles the runtime from that reviewed
+source. Packaging without it is **Coming soon**: the Dockerfile's build stage
+becomes the published `axiom-server-host` builder image for this runtime
+version and architecture, pinned by digest in the CLI release, and the context
+holds no source. Until a CLI release pins that image, leaving out
+`--runtime-source` fails with `AXPACKAGE_BUILDER_UNPINNED`. The printed
+`builder.image` and `container.json` name the exact image; to use a mirror of
+it, pass `--builder-image REGISTRY/REPOSITORY@sha256:DIGEST` (the same digest;
+a tag is refused). `--output-input DIR` writes only the data-only input (the
+context's `input/` directory), for an upload or a CI build.
 
 - **Context.** The exact public and private artifacts, content-addressed sandbox
   files, a pinned Dockerfile, image metadata and a Compose template; with

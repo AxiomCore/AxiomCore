@@ -153,7 +153,7 @@ Choose a new, immutable output directory for each release.
 | Target | Package | Then |
 | --- | --- | --- |
 | `native-server` | `axiom server package ... --target native-server --output release-v1` | `axiom server verify-bundle release-v1`, then `release-v1/bin/axiom server run-bundle release-v1 --listen 127.0.0.1:8080` |
-| `container-arm64`, `container-amd64` | `axiom server package ... --target container-arm64 --output container-v1` (add `--runtime-source DIR` to build the runtime from source) | `docker buildx build --platform linux/arm64 --load --tag my-api:candidate container-v1` |
+| `container-arm64`, `container-amd64` | `axiom server package ... --target container-arm64 --runtime-source DIR --output container-v1` (without `--runtime-source` once a CLI release pins the builder image: **Coming soon**) | `docker buildx build --platform linux/arm64 --load --tag my-api:candidate container-v1` |
 | `cloudflare-workers-local` | `axiom server package ... --target cloudflare-workers-local --runtime-source DIR --output worker-v1` | `axiom server verify-bundle worker-v1`, then `pnpm install`, `pnpm verify`, `pnpm dry-run` and `pnpm dev` in `worker-v1` |
 
 `...` stands for `backend.axiom backend.server.json --deployment deployment.json`;

@@ -1,7 +1,7 @@
 //! The published `axiom-server-host` builder image a no-source container context starts
-//! `FROM` (DEPLOYMENTS-DESIGN §10). The release plane publishes and signs one image per
-//! runtime version and architecture, then writes its digest into `builder-image.json` before
-//! it builds this CLI, so each CLI release pins exactly one builder per target.
+//! `FROM`. The release plane publishes and signs one image per runtime version and
+//! architecture, then writes its digest into `builder-image.json` before it builds this CLI,
+//! so each CLI release pins exactly one builder per target.
 use anyhow::{ensure, Context, Result};
 use axiom_server::container::{BuilderImage, RUNTIME_VERSION};
 use serde::Deserialize;
@@ -36,28 +36,33 @@ fn pin(text: &str) -> Result<Pin> {
     Ok(pin)
 }
 
-/// `explicit` (`--builder-image`, for a mirror) or the image pinned for `target` in this CLI.
+/// The image pinned for `target` in this CLI, or `explicit` (`--builder-image`). Where this
+/// CLI pins a digest, `explicit` must be a mirror of exactly that image (same digest);
+/// without a pin it is operator-supplied, and the CLI vouches for nothing about it.
 pub(super) fn select(target: &str, explicit: Option<&str>) -> Result<Selected> {
     select_from(PIN, target, explicit)
 }
 
 fn select_from(text: &str, target: &str, explicit: Option<&str>) -> Result<Selected> {
     let pin = pin(text)?;
-    if let Some(reference) = explicit {
-        return Ok(Selected { image: BuilderImage::parse(reference)?, pinned_by: "--builder-image", public_key: pin.cosign_public_key });
-    }
-    ensure!(
-        pin.runtime_version == RUNTIME_VERSION,
-        "AXPACKAGE_BUILDER_UNPINNED: this CLI pins builder images for runtime {} but packages runtime {RUNTIME_VERSION}; reinstall the CLI from a release",
-        pin.runtime_version
-    );
-    let digest = pin.images.get(target).cloned().flatten().with_context(|| {
-        format!(
+    let digest = if pin.runtime_version == RUNTIME_VERSION { pin.images.get(target).cloned().flatten() } else { None };
+    let pinned = digest.map(|digest| BuilderImage::parse(&format!("{}@{digest}", pin.repository))).transpose()?;
+    match (explicit, pinned) {
+        (Some(reference), Some(pinned)) => {
+            let image = BuilderImage::parse(reference)?;
+            ensure!(
+                image.reference().rsplit_once('@').map(|(_, d)| d) == pinned.reference().rsplit_once('@').map(|(_, d)| d),
+                "AXPACKAGE_BUILDER_MISMATCH: --builder-image must be a mirror of the builder this CLI pins for {target} ({}): the same digest",
+                pinned.reference()
+            );
+            Ok(Selected { image, pinned_by: "mirror-of-cli-release", public_key: pin.cosign_public_key })
+        }
+        (Some(reference), None) => Ok(Selected { image: BuilderImage::parse(reference)?, pinned_by: "operator-supplied", public_key: None }),
+        (None, Some(image)) => Ok(Selected { image, pinned_by: "cli-release", public_key: pin.cosign_public_key }),
+        (None, None) => anyhow::bail!(
             "AXPACKAGE_BUILDER_UNPINNED: this CLI build pins no published builder image for {target} (runtime {RUNTIME_VERSION}); pass --builder-image <registry>/<repository>@sha256:<digest>, or --runtime-source DIR to build the runtime from source"
-        )
-    })?;
-    let image = BuilderImage::parse(&format!("{}@{digest}", pin.repository))?;
-    Ok(Selected { image, pinned_by: "cli-release", public_key: pin.cosign_public_key })
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -81,15 +86,22 @@ mod tests {
         let selected = select_from(&text(Some(DIGEST), RUNTIME_VERSION), "container-amd64", None).unwrap();
         assert_eq!(selected.image.reference(), format!("ghcr.io/axiomcore/axiom-server-host@{DIGEST}"));
         assert_eq!(selected.pinned_by, "cli-release");
+        // No pin for the target, no pin at all, or a pin for another runtime version.
         for (pin, target) in [(text(Some(DIGEST), RUNTIME_VERSION), "container-arm64"), (text(None, RUNTIME_VERSION), "container-amd64"), (text(Some(DIGEST), "0.0.9"), "container-amd64")] {
             let error = select_from(&pin, target, None).unwrap_err().to_string();
             assert!(error.starts_with("AXPACKAGE_BUILDER_UNPINNED"), "{error}");
         }
         // A tag in the pin is refused, not resolved.
         assert!(select_from(&text(Some(":0.1.0"), RUNTIME_VERSION), "container-amd64", None).is_err());
-        // An explicit mirror must itself be digest-pinned.
+        // A mirror of the pinned image: same digest, any registry.
         let mirror = format!("asia-southeast1-docker.pkg.dev/p/r/axiom-server-host@{DIGEST}");
-        assert_eq!(select_from(&text(None, RUNTIME_VERSION), "container-arm64", Some(&mirror)).unwrap().pinned_by, "--builder-image");
+        assert_eq!(select_from(&text(Some(DIGEST), RUNTIME_VERSION), "container-amd64", Some(&mirror)).unwrap().pinned_by, "mirror-of-cli-release");
+        let other = format!("ghcr.io/axiomcore/axiom-server-host@sha256:{}", "f".repeat(64));
+        let error = select_from(&text(Some(DIGEST), RUNTIME_VERSION), "container-amd64", Some(&other)).unwrap_err().to_string();
+        assert!(error.starts_with("AXPACKAGE_BUILDER_MISMATCH"), "{error}");
+        // Without a pin, an explicit image is operator-supplied, with no key vouching for it.
+        let supplied = select_from(&text(None, RUNTIME_VERSION), "container-arm64", Some(&mirror)).unwrap();
+        assert_eq!((supplied.pinned_by, supplied.public_key), ("operator-supplied", None));
         assert!(select_from(&text(None, RUNTIME_VERSION), "container-arm64", Some("ghcr.io/a/b:latest")).is_err());
     }
 }

@@ -1,5 +1,5 @@
 //! `axiom server package` for containers without `--runtime-source` (published builder
-//! image) and `--output-input` (DEPLOYMENTS-DESIGN §10). Offline; no Docker.
+//! image) and `--output-input`. Offline; no Docker.
 use std::path::Path;
 use std::process::{Command, Output};
 
@@ -65,22 +65,37 @@ fn container_packaging_needs_no_runtime_source() {
     let base = ["server", "package", "backend.axiom", "backend.server.json", "--deployment", "deployment.json", "--target", "container-amd64"];
     let package = |extra: &[&str]| cli(d, &[&base[..], extra].concat());
 
-    // This build pins no published builder yet: refused with the remedies, nothing written.
-    let error = refused(&package(&["--output", "unpinned"]));
-    assert!(error.contains("AXPACKAGE_BUILDER_UNPINNED") && error.contains("--builder-image") && error.contains("--runtime-source"), "{error}");
-    assert!(!d.join("unpinned").exists());
+    // The shipped pin decides the default: the pinned image, or a refusal naming the remedies
+    // with nothing written.
+    let pin: serde_json::Value = serde_json::from_str(include_str!("../builder-image.json")).unwrap();
+    let pinned = pin["images"]["container-amd64"].as_str().map(|digest| format!("{}@{digest}", pin["repository"].as_str().unwrap()));
+    match &pinned {
+        None => {
+            let error = refused(&package(&["--output", "unpinned"]));
+            assert!(error.contains("AXPACKAGE_BUILDER_UNPINNED") && error.contains("--builder-image") && error.contains("--runtime-source"), "{error}");
+            assert!(!d.join("unpinned").exists());
+        }
+        Some(image) => {
+            let out: serde_json::Value = serde_json::from_str(&ok(&package(&["--output", "pinned"]))).unwrap();
+            assert_eq!((out["builder"]["image"].as_str(), out["builder"]["pinnedBy"].as_str()), (Some(image.as_str()), Some("cli-release")));
+        }
+    }
     // A tag, or anything but one digest-pinned reference, is refused.
     for bad in ["ghcr.io/axiomcore/axiom-server-host:0.1.0", &format!("ghcr.io/a/b@sha256:{DIGEST}\nRUN id")] {
         let error = refused(&package(&["--builder-image", bad, "--output", "tagged"]));
         assert!(error.contains("AXPACKAGE_BUILDER_REFERENCE"), "{error}");
     }
 
-    // A digest-pinned builder: the context is input/ plus a Dockerfile FROM that image.
-    let image = format!("ghcr.io/axiomcore/axiom-server-host@sha256:{DIGEST}");
+    // A digest-pinned builder (a mirror of the pin, when there is one): the context is input/
+    // plus a Dockerfile FROM that image.
+    let image = match &pinned {
+        Some(pinned) => format!("mirror.example/axiom-server-host@{}", pinned.rsplit_once('@').unwrap().1),
+        None => format!("ghcr.io/axiomcore/axiom-server-host@sha256:{DIGEST}"),
+    };
     let out: serde_json::Value = serde_json::from_str(&ok(&package(&["--builder-image", &image, "--output", "context"]))).unwrap();
     assert_eq!(out["builder"]["image"], image.as_str());
-    assert_eq!(out["builder"]["pinnedBy"], "--builder-image");
-    assert_eq!(out["metadata"]["runtimeBinary"], "published-builder-image");
+    assert_eq!(out["builder"]["pinnedBy"], if pinned.is_some() { "mirror-of-cli-release" } else { "operator-supplied" });
+    assert_eq!(out["metadata"]["runtimeBinary"], "prebuilt-builder-image");
     let context = files(&d.join("context"));
     assert_eq!(context.iter().filter(|n| !n.starts_with("input/")).collect::<Vec<_>>(), [".dockerignore", "Dockerfile", "compose.yaml", "container.json"]);
     assert!(context.contains(&"input/input.json".to_owned()));

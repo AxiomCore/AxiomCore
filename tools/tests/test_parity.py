@@ -26,6 +26,24 @@ class ComparisonTests(unittest.TestCase):
         cli = [dict(method='GET', path='/api/v1/projects/{project}/data/branches', command='axiom branch list')]
         self.assertEqual(checker.compare([self.action()], cli)[0]['status'], 'gap')
 
+    def test_exemption_needs_a_reason_and_yields_to_a_command(self):
+        session = dict(method='GET', path='/api/v1/auth/session', action='GetSession', source='a.js', line=1, group='Account authentication')
+        exempt = {('GET', '/api/v1/auth/session'): 'browser session'}
+        row = checker.compare([session], [], exempt)[0]
+        self.assertEqual((row['status'], row['exempt_reason']), ('exempt', 'browser session'))
+        self.assertEqual(checker.grouped_gaps([row]), [])
+        cli = [dict(method='GET', path='/api/v1/auth/session', command='axiom whoami')]
+        self.assertEqual(checker.compare([session], cli, exempt)[0]['status'], 'mapped')
+        self.assertEqual(checker.compare([session], [])[0]['status'], 'gap')
+
+    def test_every_exemption_has_a_reason(self):
+        import parity_cli
+        self.assertTrue(parity_cli.EXEMPT)
+        for (method, path), reason in parity_cli.EXEMPT.items():
+            self.assertIn(method, {'GET', 'POST', 'PUT', 'PATCH', 'DELETE'})
+            self.assertTrue(path.startswith('/'))
+            self.assertGreater(len(reason), 40)
+
     def test_query_and_trailing_slash_normalized(self):
         self.assertEqual(checker.route_key('get', '/api/v1/items/?limit=5'), ('GET', '/api/v1/items'))
 

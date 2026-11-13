@@ -54,7 +54,10 @@ axiom branch create checkout-v2 --project my-project --parent production \
 | `--redirect-url`, `--allowed-origin` | Extra loopback or preview URLs for the branch's issuer |
 
 The branch is an environment named `br-<name>` with its own issuer URL. Use
-the normal deployment path to run a backend against it.
+the normal deployment path to run a backend against it. Find a branch's ID with
+`axiom branch list --project my-project` and its issuer and source with
+`axiom branch show BRANCH_ID --project my-project`. Every option is listed in the
+[branch command reference](/tooling/cli-branch).
 
 ## Sanitization policy
 
@@ -85,6 +88,9 @@ every application table and column. Anything unclassified refuses the build
 ```bash title="Terminal"
 axiom branch policy set --project my-project --environment production --file sanitization.json
 ```
+
+`axiom branch policy get --project my-project --environment production` prints
+the saved policy with its revision.
 
 | Rule | Result | Allowed on |
 | --- | --- | --- |
@@ -126,6 +132,7 @@ and create password test users:
 
 ```bash title="Terminal"
 axiom branch mail list BRANCH_ID --project my-project
+axiom branch mail show BRANCH_ID MESSAGE_ID --project my-project
 axiom branch test-users BRANCH_ID --project my-project --count 3 --role editor --output ./test-users.txt
 ```
 
@@ -151,10 +158,14 @@ Branches never merge. To promote a change:
 3. Apply the same release to the parent through its normal path.
 
 A review is accepted only when the release succeeded on the branch. It lasts
-30 days, can be revoked and survives the branch's deletion. With
+30 days, can be revoked and survives the branch's deletion. List a parent's
+reviews with `axiom branch review list --environment production` and revoke one
+with `axiom branch review revoke REVIEW_ID`. With
 `axiom branch settings set --environment production --require-review true`, the
 parent refuses a migration or policy apply without a matching review
-(`AXRESOURCE_REVIEW_REQUIRED`). Checks and status are never gated.
+(`AXRESOURCE_REVIEW_REQUIRED`); `axiom branch settings get --environment production`
+shows the current setting. Checks and status are never gated. Each of these
+commands also needs `--project`.
 
 ## Limits and lifetime
 
@@ -169,8 +180,9 @@ parent refuses a migration or policy apply without a matching review
 
 Branches share the project's monthly allowances and are metered as their own
 resources. A parent larger than 100 MB cannot get a `sanitized` branch, or any
-libSQL branch. `extend` moves the expiry up to the maximum. At expiry, or on
-`axiom branch delete BRANCH_ID --confirm "delete branch <name>"`, the
+libSQL branch. `axiom branch extend BRANCH_ID --project my-project --hours 48`
+moves the expiry up to the maximum. At expiry, or on
+`axiom branch delete BRANCH_ID --project my-project --confirm "delete branch <name>"`, the
 environment is disabled and the database deleted.
 
 Branch databases cannot be restored, archived, backed up, suspended, moved or
@@ -179,5 +191,6 @@ converted, and a branch cannot be the source of another branch. A
 
 ## Next steps
 
+- [Branch command reference](/tooling/cli-branch)
 - [Auth policy releases and impact](/authentication/policy-releases)
 - [Develop sign-in locally](/authentication/local-emulation)

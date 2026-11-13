@@ -192,6 +192,7 @@ never run. Python wheels are parsed, never installed or executed.
 | `axiom dependencies cache verify` | Check every cache object. | `--cache`, `--json` |
 | `axiom dependencies cache prune` | Remove objects not referenced by the given locks. Requires at least one `--lock`; refuses an unhealthy cache. | `--cache`, `--lock` (repeatable), `--json` |
 | `axiom dependencies cache recover` | Quarantine corrupt objects and download the exact locked bytes again. Needs the network. | `--lock .axiom/AxiomDeps.lock`, `--cache`, `--json` |
+| `axiom dependencies check-compat <name>@<version>` | CLI 0.151.0. Check whether one npm package can run in a TypeScript extension: resolve it, build a probe that imports it and run the probe in the sandbox. Exits 1 when it is not compatible. Needs the network and `@axiomcore/extension-sdk` in `node_modules`. See [the command reference](/tooling/cli-contracts#axiom-dependencies-check-compat). | `--deps AxiomDeps.toml`, `--registry`, `--cache`, `--json` |
 
 The cache defaults to `axiom/dependencies/v1` inside your user cache directory
 (for example `~/Library/Caches` on macOS or `~/.cache` on Linux). Pass

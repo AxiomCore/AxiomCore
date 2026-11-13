@@ -7,6 +7,8 @@
     "cli-testing",
     "cli-server",
     "cli-database",
+    "cli-auth",
+    "cli-branch",
     "cli-ui",
     "cli-contracts",
     "cli-extensions",

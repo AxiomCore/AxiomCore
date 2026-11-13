@@ -40,6 +40,16 @@ pub struct AuthArgs {
 pub enum Action {
     /// Show whether authentication is enabled and ready, and the issuer epoch
     Status,
+    /// Turn authentication on: creates the environment's first signing key and installs the
+    /// authentication tables in its database, then prints the status
+    Enable,
+    /// Turn authentication off: signup, sign-in, token exchange and refresh are refused until it
+    /// is turned on again (users, sessions and settings are kept)
+    Disable {
+        /// Confirm without a prompt (required without a terminal)
+        #[arg(long)]
+        yes: bool,
+    },
     /// Read or replace the environment's authentication settings
     Settings {
         #[command(subcommand)]
@@ -364,10 +374,12 @@ pub fn pick_environment(environments: &[Value], name: &str) -> Result<String> {
 
 impl Target {
     async fn call(&self, method: Method, rest: &str, query: &[(&str, String)], body: Option<&Value>) -> Result<Value> {
-        self.client
-            .auth_admin_request(method, &self.slug, &self.environment, rest, query, body)
-            .await
-            .map_err(admin)
+        self.call_raw(method, rest, query, body).await.map_err(admin)
+    }
+
+    /// `call` without the exit-code mapping, for commands that word some refusals themselves.
+    async fn call_raw(&self, method: Method, rest: &str, query: &[(&str, String)], body: Option<&Value>) -> std::result::Result<Value, AuthAdminError> {
+        self.client.auth_admin_request(method, &self.slug, &self.environment, rest, query, body).await
     }
 }
 
@@ -440,32 +452,11 @@ async fn run(args: &AuthArgs) -> Result<()> {
         Action::Emulate(emulate) => emulate::run(args, emulate).await,
         Action::Status => {
             let target = target(args).await?;
-            let mut overview = target.call(Method::GET, "overview", &[], None).await?;
-            sanitize(&mut overview, false);
-            let epoch = match overview["issuer"].as_str() {
-                Some(issuer) if valid_issuer(issuer) => public_issuer_get(issuer, "/epoch").await.ok(),
-                _ => None,
-            };
-            let report = json!({
-                "enabled": overview["enabled"],
-                "auth_status": overview["auth_status"],
-                "stream_version": overview["stream_version"],
-                "upgrade_pending": overview["upgrade_pending"],
-                "issuer": overview["issuer"],
-                "users_count": overview["users_count"],
-                "viewer": overview["viewer"],
-                "epoch": epoch,
-            });
-            print(args, &report, |r| {
-                vec![
-                    format!("Authentication: {} ({})", if r["enabled"] == true { "enabled" } else { "disabled" }, text(r, "auth_status")),
-                    format!("Stream version: {}{}", text(r, "stream_version"), if r["upgrade_pending"] == true { " (upgrade pending)" } else { "" }),
-                    format!("Issuer: {}", text(r, "issuer")),
-                    format!("Users: {}", text(r, "users_count")),
-                    format!("Epoch: {}", r["epoch"]["epoch"].as_i64().map_or("unavailable".to_string(), |e| format!("{e} (keys_rev {})", r["epoch"]["keys_rev"]))),
-                ]
-            })
+            let report = status_report(&target).await?;
+            print(args, &report, status_lines)
         }
+        Action::Enable => set_enabled(args, true, false).await,
+        Action::Disable { yes } => set_enabled(args, false, *yes).await,
         Action::Settings { action: SettingsAction::Get { output } } => {
             let target = target(args).await?;
             let mut settings = target.call(Method::GET, "settings", &[], None).await?;
@@ -548,6 +539,101 @@ async fn run(args: &AuthArgs) -> Result<()> {
     }
 }
 
+/// The overview `axiom auth status` prints (the epoch is read from the public issuer).
+async fn status_report(target: &Target) -> Result<Value> {
+    let mut overview = target.call(Method::GET, "overview", &[], None).await?;
+    sanitize(&mut overview, false);
+    let epoch = match overview["issuer"].as_str() {
+        Some(issuer) if valid_issuer(issuer) => public_issuer_get(issuer, "/epoch").await.ok(),
+        _ => None,
+    };
+    Ok(json!({
+        "enabled": overview["enabled"],
+        "auth_status": overview["auth_status"],
+        "stream_version": overview["stream_version"],
+        "upgrade_pending": overview["upgrade_pending"],
+        "issuer": overview["issuer"],
+        "users_count": overview["users_count"],
+        "viewer": overview["viewer"],
+        "epoch": epoch,
+    }))
+}
+
+fn status_lines(r: &Value) -> Vec<String> {
+    vec![
+        format!("Authentication: {} ({})", if r["enabled"] == true { "enabled" } else { "disabled" }, text(r, "auth_status")),
+        format!("Stream version: {}{}", text(r, "stream_version"), if r["upgrade_pending"] == true { " (upgrade pending)" } else { "" }),
+        format!("Issuer: {}", text(r, "issuer")),
+        format!("Users: {}", text(r, "users_count")),
+        format!("Epoch: {}", r["epoch"]["epoch"].as_i64().map_or("unavailable".to_string(), |e| format!("{e} (keys_rev {})", r["epoch"]["keys_rev"]))),
+    ]
+}
+
+/// `enable` and `disable`: the dashboard's toggle, a settings write of `enabled` only.
+async fn set_enabled(args: &AuthArgs, enabled: bool, yes: bool) -> Result<()> {
+    let target = target(args).await?;
+    let current = target.call(Method::GET, "settings", &[], None).await?;
+    let environment = &args.environment;
+    let word = if enabled { "on" } else { "off" };
+    if current["enabled"] == enabled {
+        let report = json!({"enabled": enabled, "changed": false, "status": status_report(&target).await?});
+        return print(args, &report, |r| {
+            let mut lines = vec![format!("Authentication is already {word} in {environment}; nothing changed.")];
+            lines.extend(status_lines(&r["status"]));
+            lines
+        });
+    }
+    if enabled {
+        if !args.json {
+            let signup = match current["signup_policy"].as_str() {
+                Some("open") => "Open",
+                Some("invite_only") => "Invite only",
+                _ => "Closed",
+            };
+            eprintln!(
+                "Turning on authentication in {environment}. This creates the environment's first signing key and installs the authentication tables in this environment's database. Users can then sign in with the enabled methods. Signup stays {signup} until you change it with `axiom auth settings set`."
+            );
+        }
+    } else if !yes {
+        let consequence = "While it is off, signup, sign-in, token exchange and refresh are refused. Logout still works. Access tokens already issued stay valid until they expire (at most 15 minutes). Users, sessions and settings are kept.";
+        if !std::io::stdin().is_terminal() {
+            return Err(usage(format!("turning authentication off stops sign-in in {environment}. {consequence} Pass --yes to confirm without a prompt")));
+        }
+        eprintln!("{consequence}");
+        if !dialoguer::Confirm::new().with_prompt(format!("Turn off authentication in {environment}?")).default(false).interact()? {
+            return Err(usage("cancelled"));
+        }
+    }
+    let body = settings_put_body(&current, &json!({"enabled": enabled}));
+    let saved = target.call(Method::PUT, "settings", &[], Some(&body)).await?;
+    let report = json!({"enabled": enabled, "changed": true, "revision": saved["revision"], "status": status_report(&target).await?});
+    print(args, &report, |r| {
+        let mut lines = vec![if enabled { "Authentication is turned on. Setup continues in the background.".to_string() } else { "Authentication is turned off.".to_string() }];
+        lines.extend(status_lines(&r["status"]));
+        lines
+    })
+}
+
+/// Fields `PUT settings` accepts, as the dashboard's `settingsBody` sends them
+/// (auth-admin-client.js `SETTINGS_INPUT` and `SETTINGS_W8_INPUT`, `revision` included).
+pub const SETTINGS_INPUT: [&str; 28] = [
+    "enabled", "signup_policy", "access_ttl_seconds", "session_absolute_seconds", "session_idle_seconds", "audiences", "allowed_origins",
+    "enabled_methods", "require_verified_email", "password_min_length", "redirect_urls", "logout_urls", "default_redirect_url", "email_sender",
+    "email_from_name", "app_name", "invitation_ttl_seconds", "captcha", "turnstile_site_key", "rate_limits", "revision",
+    "mfa_policy", "mfa_factors", "step_up_seconds", "webauthn_rp_id", "webauthn_rp_name", "webauthn_origins", "policy_mode",
+];
+
+/// The PUT body of a settings change: the accepted keys of `{...current, ...changes}`
+/// (the dashboard's `settingsBody`). Read-only fields of the GET view are never sent back.
+pub fn settings_put_body(current: &Value, changes: &Value) -> Value {
+    let mut merged = current.as_object().cloned().unwrap_or_default();
+    for (key, value) in changes.as_object().into_iter().flatten() {
+        merged.insert(key.clone(), value.clone());
+    }
+    let body = SETTINGS_INPUT.iter().filter_map(|key| merged.get(*key).map(|value| (key.to_string(), value.clone()))).collect::<Map<_, _>>();
+    Value::Object(body)
+}
+
 /// Fields `GET settings` returns that `PUT settings` does not accept.
 const READ_ONLY_SETTINGS: [&str; 4] = ["updated_at", "turnstile_secret_set", "stream_version", "upgrade_pending"];
 
@@ -589,6 +675,11 @@ pub fn settings_body(file: &Path) -> Result<Value> {
     if let Value::Object(map) = &mut body {
         for key in READ_ONLY_SETTINGS {
             map.remove(key);
+        }
+        // GET reports when factors were last reset; PUT accepts only "now" (the incident
+        // reset), so the timestamp of a `settings get` file is not sent back.
+        if map.get("factor_reset_at").is_some_and(|v| v.as_str() != Some("now")) {
+            map.remove("factor_reset_at");
         }
     }
     Ok(body)
@@ -1308,6 +1399,20 @@ mod tests {
         for absent in READ_ONLY_SETTINGS {
             assert!(body.get(absent).is_none(), "{absent}");
         }
+        // The GET timestamp of the last factor reset is not sent back; "now" still is.
+        for (value, kept) in [(json!("2026-10-30T00:00:00Z"), false), (Value::Null, false), (json!("now"), true)] {
+            std::fs::write(&path, json!({"revision": 4, "factor_reset_at": value}).to_string()).unwrap();
+            assert_eq!(settings_body(&path).unwrap().get("factor_reset_at").is_some(), kept, "{value}");
+        }
+    }
+
+    #[test]
+    fn settings_writes_send_the_dashboard_keys_of_current_and_changes() {
+        let current = json!({"revision": 9, "enabled": false, "signup_policy": "open", "default_redirect_url": null, "rate_limits": {"smtp-env-hour": 10},
+            "updated_at": "x", "turnstile_secret_set": true, "stream_version": 3, "upgrade_pending": false, "factor_reset_at": "2026-10-30T00:00:00Z",
+            "hosted_sessions": true, "mfa_policy": "off"});
+        let body = settings_put_body(&current, &json!({"enabled": true, "mfa_policy": "optional"}));
+        assert_eq!(body, json!({"revision": 9, "enabled": true, "signup_policy": "open", "default_redirect_url": null, "rate_limits": {"smtp-env-hour": 10}, "mfa_policy": "optional"}));
     }
 
     #[test]

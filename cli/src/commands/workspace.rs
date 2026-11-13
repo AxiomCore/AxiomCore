@@ -121,7 +121,7 @@ pub enum InvitationsAction {
     /// Accept an invitation sent to your account email. Without --token-stdin or --token-file,
     /// asks for the token or the full invitation link without echoing it
     Accept {
-        /// Read the token or the invitation link from standard input
+        /// Read the token or the invitation link from standard input (on a terminal, the hidden prompt is used instead)
         #[arg(long, conflicts_with = "token_file")]
         token_stdin: bool,
         /// Read the token or the invitation link from this file
@@ -260,7 +260,8 @@ pub fn invitation_token(input: &str) -> Result<Zeroizing<String>> {
 
 fn read_token(stdin: bool, file: Option<&Path>) -> Result<Zeroizing<String>> {
     let mut raw = Zeroizing::new(String::new());
-    if stdin {
+    // On a terminal, typed or pasted standard input is echoed: use the hidden prompt instead.
+    if stdin && !std::io::stdin().is_terminal() {
         std::io::stdin().take(MAX_TOKEN_INPUT).read_to_string(&mut raw).context("read the invitation token from standard input")?;
     } else if let Some(path) = file {
         std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?.take(MAX_TOKEN_INPUT).read_to_string(&mut raw).with_context(|| format!("read {}", path.display()))?;
@@ -736,6 +737,7 @@ mod tests {
         let seen = h.mock.seen(&format!("DELETE /api/v1/workspace/members/{MEMBER}"));
         assert_eq!(seen.len(), 1);
         assert_eq!(seen[0].query.as_deref(), Some("workspace_slug=acme"));
+        assert_eq!(seen[0].body, Value::Null, "no body");
     }
 
     #[tokio::test]
@@ -762,6 +764,7 @@ mod tests {
         let seen = h.mock.seen(&format!("POST /api/v1/workspace/invitations/{INVITE}/resend"));
         assert_eq!(seen.len(), 1);
         assert_eq!(seen[0].query.as_deref(), Some("workspace_slug=acme"));
+        assert_eq!(seen[0].body, Value::Null, "no body");
 
         h.mock.script(&format!("DELETE /api/v1/workspace/invitations/{INVITE}"), 204, Value::Null);
         if !std::io::stdin().is_terminal() {
@@ -770,6 +773,7 @@ mod tests {
         }
         exec(&h, &["invitations", "cancel", INVITE, "--yes"]).await.unwrap();
         assert_eq!(h.mock.seen(&format!("DELETE /api/v1/workspace/invitations/{INVITE}")).len(), 1);
+        assert_eq!(h.mock.seen(&format!("DELETE /api/v1/workspace/invitations/{INVITE}"))[0].body, Value::Null);
         assert!(exec(&h, &["invitations", "cancel", "other@acme.dev", "--yes"]).await.unwrap_err().to_string().contains("no invitation"));
     }
 
@@ -840,6 +844,7 @@ mod tests {
         let seen = h.mock.seen("POST /api/v1/workspace/notifications/test");
         assert_eq!(seen.len(), 1);
         assert_eq!(seen[0].query, None);
+        assert_eq!(seen[0].body, Value::Null, "no body");
     }
 
     #[test]

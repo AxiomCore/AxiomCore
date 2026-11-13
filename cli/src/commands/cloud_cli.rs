@@ -35,7 +35,8 @@ pub fn error(reply: &Reply) -> anyhow::Error {
     let code = reply.body.pointer("/error/code").or_else(|| reply.body.get("code")).and_then(Value::as_str).filter(|c| code_shaped(c));
     let reason = reply
         .text
-        .clone()
+        .as_deref()
+        .map(clean)
         .or_else(|| ["/message", "/error/message", "/error"].iter().find_map(|p| reply.body.pointer(p).and_then(Value::as_str)).map(clean))
         .filter(|r| !r.is_empty());
     let words = match reply.status {
@@ -45,7 +46,10 @@ pub fn error(reply: &Reply) -> anyhow::Error {
         404 => "Not found",
         409 => "This conflicts with the current state",
         413 => "The request is too large",
+        410 => "No longer available: it expired or was already used",
         429 => "Too many requests or no capacity right now. Retry later",
+        502 => "The server could not reach the service or URL it depends on",
+        400..=499 => "The request was refused",
         _ => "The service is unavailable. Retry later",
     };
     let mut message = String::new();
@@ -61,9 +65,11 @@ pub fn error(reply: &Reply) -> anyhow::Error {
     anyhow!("{message} (HTTP {})", reply.status)
 }
 
-/// Terminal-safe text from a server value: no control characters, at most 200 characters.
+/// Terminal-safe text from a server value: no control characters and no bidirectional or
+/// zero-width formatting characters (which could reorder what the terminal shows), at most
+/// 200 characters.
 pub fn clean(value: &str) -> String {
-    value.chars().filter(|c| !c.is_control()).take(200).collect()
+    value.chars().filter(|c| !c.is_control() && !matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{061C}' | '\u{FEFF}')).take(200).collect()
 }
 
 /// The text at a JSON pointer, or `-`.
@@ -96,25 +102,37 @@ pub fn print(json: bool, value: &Value, human: impl FnOnce(&Value) -> Vec<String
     Ok(())
 }
 
-/// The item whose `id` or one of `keys` equals `wanted` (names compare case-insensitively).
+/// The item whose `id`, then one of `keys` in order, equals `wanted`; then a unique
+/// case-insensitive match on `keys`. Two or more matches at the same step are refused with
+/// their ids, never silently resolved to the first.
 pub fn pick<'a>(list: &[&'a Value], wanted: &str, keys: &[&str], what: &str) -> Result<&'a Value> {
     let wanted = wanted.trim();
-    let matches = |item: &&Value, exact: bool| {
-        std::iter::once("id").chain(keys.iter().copied()).any(|k| match item.get(k).and_then(Value::as_str) {
-            Some(v) if exact => v == wanted,
-            Some(v) => v.eq_ignore_ascii_case(wanted),
-            None => false,
-        })
-    };
-    if let Some(found) = list.iter().find(|i| matches(i, true)) {
-        return Ok(found);
+    let value = |item: &Value, key: &str| item.get(key).and_then(Value::as_str).map(str::to_string);
+    let exact = std::iter::once("id").chain(keys.iter().copied()).map(|key| (key, true));
+    let loose = keys.iter().copied().map(|key| (key, false));
+    for (key, exact) in exact.chain(loose) {
+        let found: Vec<&'a Value> = list
+            .iter()
+            .copied()
+            .filter(|item| value(item, key).is_some_and(|v| if exact { v == wanted } else { v.eq_ignore_ascii_case(wanted) }))
+            .collect();
+        match found.as_slice() {
+            [] => continue,
+            [one] => return Ok(one),
+            many => {
+                let ids: Vec<String> = many
+                    .iter()
+                    .take(5)
+                    .map(|item| {
+                        let details: Vec<String> = ["kind", "status"].iter().filter_map(|k| value(item, k)).map(|v| clean(&v)).collect();
+                        if details.is_empty() { text(item, "/id") } else { format!("{} ({})", text(item, "/id"), details.join(", ")) }
+                    })
+                    .collect();
+                bail!("`{}` matches {} {what}s: {}. Pass the id instead.", clean(wanted), many.len(), ids.join("; "));
+            }
+        }
     }
-    let loose: Vec<_> = list.iter().filter(|i| matches(i, false)).collect();
-    match loose.as_slice() {
-        [one] => Ok(one),
-        [] => bail!("no {what} `{}` here; list them to see the names and ids", clean(wanted)),
-        _ => bail!("`{}` matches more than one {what}; pass its id", clean(wanted)),
-    }
+    bail!("no {what} `{}` here; list them to see the names and ids", clean(wanted))
 }
 
 /// The project slug from `--project` (a slug, name or id) or the project linked to this
@@ -184,6 +202,26 @@ mod tests {
         assert_eq!(project_slug(&h.api, Some("11111111-1111-4111-8111-111111111111")).await.unwrap(), "demo");
         assert!(project_slug(&h.api, Some("missing")).await.unwrap_err().to_string().contains("no project `missing`"));
         assert_eq!(h.mock.seen("GET /api/v1/projects")[0].bearer.as_deref(), Some("access"));
+    }
+
+    #[test]
+    fn pick_prefers_ids_then_keys_in_order_and_refuses_ambiguity() {
+        let a = json!({"id": "a", "slug": "api", "name": "web"});
+        let b = json!({"id": "b", "slug": "web", "name": "API"});
+        let c = json!({"id": "c", "slug": "c", "name": "Shared", "kind": "sandbox", "status": "ready"});
+        let d = json!({"id": "d", "slug": "d", "name": "shared", "kind": "hosted_mock", "status": "ready"});
+        let list = vec![&a, &b, &c, &d];
+        assert_eq!(pick(&list, "b", &["slug", "name"], "project").unwrap()["id"], "b");
+        // A slug outranks another project's equal name.
+        assert_eq!(pick(&list, "web", &["slug", "name"], "project").unwrap()["id"], "b");
+        assert_eq!(pick(&list, "api", &["slug", "name"], "project").unwrap()["id"], "a");
+        assert_eq!(pick(&list, "Shared", &["slug", "name"], "project").unwrap()["id"], "c");
+        let e = pick(&list, "SHARED", &["slug", "name"], "environment").unwrap_err().to_string();
+        assert!(e.contains("matches 2 environments: c (sandbox, ready); d (hosted_mock, ready)"), "{e}");
+        let twins = json!({"id": "e", "name": "Shared"});
+        let e = pick(&[&c, &twins], "Shared", &["name"], "member").unwrap_err().to_string();
+        assert!(e.contains("matches 2 members"), "{e}");
+        assert_eq!(clean("a\u{202E}b\u{2066}c\u{1b}"), "abc");
     }
 
     #[tokio::test]

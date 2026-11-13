@@ -217,7 +217,7 @@ axiom workspace invitations accept [--token-stdin | --token-file PATH] [--json]
 
 | Option | Value | Default | Meaning |
 | --- | --- | --- | --- |
-| `--token-stdin` | flag | off | Read the link or token from standard input. |
+| `--token-stdin` | flag | off | Read the link or token from standard input. On a terminal, where input would be echoed, the hidden prompt is used instead. |
 | `--token-file` | path | none | Read the link or token from this file. |
 
 With neither option, the command prompts on a terminal and refuses otherwise.

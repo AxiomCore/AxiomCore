@@ -25,7 +25,7 @@ server's reason, for example that you can run the contract locally with
 | --- | --- | --- | --- |
 | `--project` | slug, name or id | the project linked with `axiom project link` | Cloud project. |
 | `--json` | flag | off | Print the server reply as pretty JSON. |
-| `--environment` | name or id | none | The environment that `show`, `events`, `connection`, `reset` and `delete` act on. An id is used as given. A name is looked up in the list, and live environments are preferred over deleted or expired ones with the same name. |
+| `--environment` | name or id | none | The environment that `show`, `events`, `connection`, `reset` and `delete` act on. An id is used as given. A name is looked up in the list: live environments first, deleted or expired ones only when no live one matches. If two live environments share the name (a `sandbox` and a `hosted_mock` can both be called `sandbox`), the command stops and lists their ids; pass the id. The `reset` and `delete` confirmations name the kind, status and id they resolved. |
 
 ## Commands
 
@@ -108,7 +108,7 @@ axiom project environments connection --environment <NAME|ID> [--show-secret]
 | `--show-secret` | flag | off | Print the access key. Send it in the `X-Axiom-Sandbox-Key` header. |
 
 Calls `POST /api/v1/projects/{project_slug}/environments/{environment_id}/connection`
-with `{}`. This is a POST so that the key never lands in a cache. Before the
+with no body, like the dashboard. This is a POST so that the key never lands in a cache. Before the
 sandbox is ready, the server answers HTTP 409.
 
 ### reset
@@ -126,7 +126,7 @@ axiom project environments reset --environment <NAME|ID> [--yes]
 | `--yes` | flag | off | Skip the confirmation prompt. Without a terminal, `--yes` is required. |
 
 Calls `POST /api/v1/projects/{project_slug}/environments/{environment_id}/reset`
-with `{}`.
+with no body, like the dashboard.
 
 ### delete
 

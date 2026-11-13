@@ -60,8 +60,8 @@ pub enum Action {
     Diff {
         /// Release version, or `latest` for the active release (a contract id is not accepted)
         version: String,
-        /// An earlier release version, or `baseline` to compare with nothing. Default: the release
-        /// created just before VERSION (or `baseline` when there is none)
+        /// An earlier release version, or `baseline` to compare with nothing (the default, as on
+        /// the dashboard: an earlier release is never chosen implicitly)
         #[arg(long)]
         against: Option<String>,
     },
@@ -69,7 +69,7 @@ pub enum Action {
     Impact {
         /// Release version, or `latest` for the active release (a contract id is not accepted)
         version: String,
-        /// An earlier release version, or `baseline`. Default: the release created just before VERSION
+        /// An earlier release version, or `baseline` (the default, as on the dashboard)
         #[arg(long)]
         against: Option<String>,
     },
@@ -158,13 +158,13 @@ pub async fn run(api: &Api, args: &ReleasesArgs) -> Result<()> {
             cloud_cli::print(json, &value, render_verification)
         }
         Action::Diff { version, against } => {
-            let query = comparison_query(api, &slug, version, against.as_deref(), true).await?;
-            let value = cloud_cli::call(api, Method::GET, &["projects", &slug, "contracts", version, "diff"], &query, None).await.map_err(|e| not_ready(e, version))?;
+            let query = comparison_query(against.as_deref(), true);
+            let value = cloud_cli::call(api, Method::GET, &["projects", &slug, "contracts", version, "diff"], &query, None).await.map_err(|e| comparison_not_ready(e, version, &query[0].1))?;
             cloud_cli::print(json, &value, render_diff)
         }
         Action::Impact { version, against } => {
-            let query = comparison_query(api, &slug, version, against.as_deref(), false).await?;
-            let value = cloud_cli::call(api, Method::GET, &["projects", &slug, "contracts", version, "impact"], &query, None).await.map_err(|e| not_ready(e, version))?;
+            let query = comparison_query(against.as_deref(), false);
+            let value = cloud_cli::call(api, Method::GET, &["projects", &slug, "contracts", version, "impact"], &query, None).await.map_err(|e| comparison_not_ready(e, version, &query[0].1))?;
             cloud_cli::print(json, &value, render_impact)
         }
         Action::SemanticView { version } => {
@@ -177,7 +177,7 @@ pub async fn run(api: &Api, args: &ReleasesArgs) -> Result<()> {
             cloud_cli::print(json, &value, render_semantic_items)
         }
         Action::Backfill { version } => {
-            let value = cloud_cli::call(api, Method::POST, &["projects", &slug, "contracts", version, "semantic-backfill"], &[], Some(&json!({}))).await?;
+            let value = cloud_cli::call(api, Method::POST, &["projects", &slug, "contracts", version, "semantic-backfill"], &[], None).await?;
             cloud_cli::print(json, &value, render_backfill)
         }
         Action::Endpoints { version } => {
@@ -190,12 +190,11 @@ pub async fn run(api: &Api, args: &ReleasesArgs) -> Result<()> {
         }
         Action::Import { url, version, rebuild } => {
             let body = import_body(url, version.as_deref(), *rebuild);
-            let value = cloud_cli::call(api, Method::POST, &["projects", &slug, "contracts", "import"], &[], Some(&body)).await?;
+            let value = cloud_cli::call(api, Method::POST, &["projects", &slug, "contracts", "import"], &[], Some(&body)).await.map_err(import_error)?;
             cloud_cli::print(json, &value, |v| vec![format!("Imported release {} ({}); SHA-256 {}.", cloud_cli::text(v, "/version"), cloud_cli::text(v, "/status"), cloud_cli::text(v, "/sha256"))])
         }
         Action::Download { version, output, force } => {
-            let client = crate::auth_store::authenticated_cloud_client()?;
-            download(api, &client, &slug, version, output.as_deref(), *force, json).await
+            download(api, crate::auth_store::authenticated_cloud_client, &slug, version, output.as_deref(), *force, json).await
         }
     }
 }
@@ -213,46 +212,44 @@ async fn release(api: &Api, slug: &str, version: &str) -> Result<Value> {
 /// The semantic reads answer 409 until the release worker has produced the analysis.
 fn not_ready(error: anyhow::Error, version: &str) -> anyhow::Error {
     if error.to_string().contains("(HTTP 409)") {
-        error.context(format!(
-            "The analysis of release {} is not ready yet. It is produced by the release worker shortly after signing; for releases signed before analysis existed, run `axiom contract releases backfill {}`.",
-            cloud_cli::clean(version),
-            cloud_cli::clean(version)
-        ))
+        let v = cloud_cli::clean(version);
+        error.context(format!("The analysis of release {v} is not ready yet. The release worker produces it shortly after signing; for a release signed before analysis existed, run `axiom contract releases backfill {v}`."))
+    } else {
+        error
+    }
+}
+
+/// [`not_ready`] for diff and impact, where either release may lack its analysis.
+fn comparison_not_ready(error: anyhow::Error, version: &str, against: &str) -> anyhow::Error {
+    if error.to_string().contains("(HTTP 409)") {
+        let (v, a) = (cloud_cli::clean(version), cloud_cli::clean(against));
+        let source = if a == "baseline" { String::new() } else { format!(" or of {a}") };
+        error.context(format!("The analysis of release {v}{source} is not ready yet. For a release signed before analysis existed, run `axiom contract releases backfill <VERSION>` for it, or compare with `--against baseline`."))
     } else {
         error
     }
 }
 
 /// The `against` query of diff and impact (and `summary=true` for diff, like the dashboard).
-async fn comparison_query(api: &Api, slug: &str, version: &str, against: Option<&str>, summary: bool) -> Result<Vec<(&'static str, String)>> {
-    let against = match against.map(str::trim).filter(|a| !a.is_empty()) {
-        Some(given) => given.to_string(),
-        None => {
-            let listed = list_releases(api, slug).await?;
-            let list = cloud_cli::items(&listed, &["contracts", "items"]);
-            let created = match list.iter().find(|c| c.get("version").and_then(Value::as_str) == Some(version)) {
-                Some(found) => cloud_cli::text(found, "/created_at"),
-                None => cloud_cli::text(&release(api, slug, version).await?, "/created_at"),
-            };
-            previous_version(&list, &created)
-        }
-    };
-    let mut query = vec![("against", against)];
+/// Without `--against` the comparison is with `baseline`, as on the dashboard, which never
+/// picks an earlier (possibly unverified or unanalysed) release implicitly.
+fn comparison_query(against: Option<&str>, summary: bool) -> Vec<(&'static str, String)> {
+    let against = against.map(str::trim).filter(|a| !a.is_empty()).unwrap_or("baseline");
+    let mut query = vec![("against", against.to_string())];
     if summary {
         query.push(("summary", "true".into()));
     }
-    Ok(query)
+    query
 }
 
-/// The release created most recently before `created` (RFC 3339 UTC strings compare in time
-/// order), or `baseline` when there is none.
-fn previous_version(list: &[&Value], created: &str) -> String {
-    list.iter()
-        .filter_map(|c| Some((c.get("created_at")?.as_str()?, c.get("version")?.as_str()?)))
-        .filter(|(at, _)| *at < created)
-        .max_by(|a, b| a.0.cmp(b.0))
-        .map(|(_, v)| v.to_string())
-        .unwrap_or_else(|| "baseline".into())
+/// An import can outlast the 20 s request timeout while the server fetches, signs and verifies;
+/// the server derives its idempotency from the artifact, so a retry is safe.
+fn import_error(error: anyhow::Error) -> anyhow::Error {
+    if error.to_string().contains("request failed") {
+        error.context("The import may still complete on the server. Check `axiom contract releases list` before retrying; a retry of the same artifact is safe.")
+    } else {
+        error
+    }
 }
 
 fn items_query(kind: &str, cursor: Option<u64>, limit: u32) -> Vec<(&'static str, String)> {
@@ -280,7 +277,9 @@ fn checked_version(version: &str) -> Result<&str> {
 
 /// Downloads the artifact of `version` with the existing Cloud client, checks it against the
 /// SHA-256 of the release record and writes it to a new file (or replaces it with `--force`).
-async fn download(api: &Api, client: &CloudClient, slug: &str, version: &str, output: Option<&Path>, force: bool, json: bool) -> Result<()> {
+/// The client is created only after the record is read, so it starts from the session the
+/// [`Api`] may just have refreshed (refresh tokens are single-use).
+async fn download(api: &Api, client: impl FnOnce() -> Result<CloudClient>, slug: &str, version: &str, output: Option<&Path>, force: bool, json: bool) -> Result<()> {
     let record = release(api, slug, version).await?;
     let resolved = record.get("version").and_then(Value::as_str).filter(|v| !v.is_empty()).unwrap_or(version);
     let resolved = checked_version(resolved)?.to_string();
@@ -289,26 +288,35 @@ async fn download(api: &Api, client: &CloudClient, slug: &str, version: &str, ou
     if !force && path.exists() {
         bail!("{} exists; pass --force to replace it", path.display());
     }
+    let client = client()?;
     let bytes = client.pull_contract_content(slug, &resolved).await.map_err(|e| anyhow!("could not download release {resolved}: {}", cloud_cli::clean(&e.to_string())))?;
     let sha256 = hex::encode(Sha256::digest(&bytes));
     if !expected.is_empty() && expected != sha256 {
         bail!("the downloaded artifact of release {resolved} has SHA-256 {sha256}, but the release record says {}; nothing was written", cloud_cli::clean(&expected));
     }
     write_artifact(&path, &bytes, force)?;
-    let summary = json!({"version": resolved, "path": path.display().to_string(), "size_bytes": bytes.len(), "sha256": sha256});
-    cloud_cli::print(json, &summary, |_| vec![format!("Downloaded release {resolved} to {} ({} bytes, SHA-256 {sha256}).", path.display(), bytes.len())])
+    let checked = !expected.is_empty();
+    let summary = json!({"version": resolved, "path": path.display().to_string(), "size_bytes": bytes.len(), "sha256": sha256, "sha256_checked": checked});
+    cloud_cli::print(json, &summary, |_| {
+        let mut lines = vec![format!("Downloaded release {resolved} to {} ({} bytes, SHA-256 {sha256}).", path.display(), bytes.len())];
+        if !checked {
+            lines.push("The release record has no SHA-256, so the file could not be checked against it.".into());
+        }
+        lines
+    })
 }
 
+/// Writes a new file, or with `force` replaces `path` atomically: the bytes go to a temporary
+/// file in the same directory that is renamed over it, so a failed write keeps the old file.
 fn write_artifact(path: &Path, bytes: &[u8], force: bool) -> Result<()> {
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true);
-    if force {
-        options.create(true).truncate(true);
-    } else {
-        options.create_new(true);
+    if !force {
+        let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(path).with_context(|| format!("could not create {} (pass --force to replace an existing file)", path.display()))?;
+        return file.write_all(bytes).with_context(|| format!("could not write {}", path.display()));
     }
-    let mut file = options.open(path).with_context(|| format!("could not create {}{}", path.display(), if force { "" } else { " (pass --force to replace an existing file)" }))?;
-    file.write_all(bytes).with_context(|| format!("could not write {}", path.display()))?;
+    let dir = path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let mut temp = tempfile::NamedTempFile::new_in(dir).with_context(|| format!("could not create a temporary file in {}", dir.display()))?;
+    temp.write_all(bytes).with_context(|| format!("could not write {}", path.display()))?;
+    temp.persist(path).map_err(|e| anyhow!("could not replace {}: {}", path.display(), e.error))?;
     Ok(())
 }
 
@@ -562,37 +570,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn diff_and_impact_compare_with_the_previous_release_by_default() {
+    async fn diff_and_impact_compare_with_baseline_by_default_like_the_dashboard() {
         let h = harness().await;
         projects(&h.mock);
-        h.mock.script(LIST, 200, releases());
         let diff = "GET /api/v1/projects/demo/contracts/1.2.0/diff";
         let impact = "GET /api/v1/projects/demo/contracts/1.2.0/impact";
-        h.mock.script(diff, 200, json!({"from_version": "1.1.0", "to_version": "1.2.0", "breaking_changes": 1}));
+        h.mock.script(diff, 200, json!({"from_version": "baseline", "to_version": "1.2.0", "breaking_changes": 1}));
         h.mock.script(impact, 200, json!({"affected_routes": ["GET /users"]}));
         run(&h.api, &args(Action::Diff { version: "1.2.0".into(), against: None })).await.unwrap();
         run(&h.api, &args(Action::Diff { version: "1.2.0".into(), against: Some("1.0.0".into()) })).await.unwrap();
         run(&h.api, &args(Action::Impact { version: "1.2.0".into(), against: None })).await.unwrap();
+        run(&h.api, &args(Action::Impact { version: "1.2.0".into(), against: Some("1.1.0".into()) })).await.unwrap();
         let seen = h.mock.seen(diff);
-        assert_eq!(seen[0].query.as_deref(), Some("against=1.1.0&summary=true"));
+        assert_eq!(seen[0].query.as_deref(), Some("against=baseline&summary=true"));
         assert_eq!(seen[1].query.as_deref(), Some("against=1.0.0&summary=true"));
-        assert_eq!(h.mock.seen(impact)[0].query.as_deref(), Some("against=1.1.0"));
-        // The explicit `--against` needs no list lookup.
-        assert_eq!(h.mock.seen(LIST).len(), 2);
-    }
-
-    #[tokio::test]
-    async fn the_oldest_release_and_latest_compare_with_the_right_source() {
-        let h = harness().await;
-        projects(&h.mock);
-        h.mock.script(LIST, 200, releases());
-        h.mock.script("GET /api/v1/projects/demo/contracts/latest", 200, releases()[0].clone());
-        h.mock.script("GET /api/v1/projects/demo/contracts/1.0.0/impact", 200, json!({}));
-        h.mock.script("GET /api/v1/projects/demo/contracts/latest/diff", 200, json!({}));
-        run(&h.api, &args(Action::Impact { version: "1.0.0".into(), against: None })).await.unwrap();
-        run(&h.api, &args(Action::Diff { version: "latest".into(), against: None })).await.unwrap();
-        assert_eq!(h.mock.seen("GET /api/v1/projects/demo/contracts/1.0.0/impact")[0].query.as_deref(), Some("against=baseline"));
-        assert_eq!(h.mock.seen("GET /api/v1/projects/demo/contracts/latest/diff")[0].query.as_deref(), Some("against=1.1.0&summary=true"));
+        assert_eq!(h.mock.seen(impact)[0].query.as_deref(), Some("against=baseline"));
+        assert_eq!(h.mock.seen(impact)[1].query.as_deref(), Some("against=1.1.0"));
+        assert!(seen.iter().chain(h.mock.seen(impact).iter()).all(|s| s.body == Value::Null));
+        assert!(h.mock.seen(LIST).is_empty(), "no implicit predecessor lookup");
     }
 
     #[tokio::test]
@@ -602,6 +597,9 @@ mod tests {
         h.mock.script("GET /api/v1/projects/demo/contracts/0.9.0/manifest", 409, json!({"message": "contract manifest is not ready"}));
         let error = format!("{:#}", run(&h.api, &args(Action::Manifest { version: "0.9.0".into() })).await.unwrap_err());
         assert!(error.contains("axiom contract releases backfill 0.9.0") && error.contains("HTTP 409"), "{error}");
+        h.mock.script("GET /api/v1/projects/demo/contracts/0.9.0/diff", 409, json!({"message": "source manifest is not ready"}));
+        let error = format!("{:#}", run(&h.api, &args(Action::Diff { version: "0.9.0".into(), against: Some("0.8.0".into()) })).await.unwrap_err());
+        assert!(error.contains("release 0.9.0 or of 0.8.0 is not ready") && error.contains("--against baseline"), "{error}");
     }
 
     #[tokio::test]
@@ -611,7 +609,7 @@ mod tests {
         let backfill = "POST /api/v1/projects/demo/contracts/1.0.0/semantic-backfill";
         h.mock.script(backfill, 202, json!({"status": "queued", "version": "1.0.0", "message": "queued"}));
         run(&h.api, &args(Action::Backfill { version: "1.0.0".into() })).await.unwrap();
-        assert_eq!(h.mock.seen(backfill)[0].body, json!({}));
+        assert_eq!(h.mock.seen(backfill)[0].body, Value::Null, "no body, like the dashboard");
 
         let import = "POST /api/v1/projects/demo/contracts/import";
         h.mock.script(import, 201, json!({"version": "2.0.0", "status": "signed", "sha256": "ab"}));
@@ -622,58 +620,53 @@ mod tests {
         assert_eq!(seen[1].body, json!({"url": "https://example.com/a.axiom", "version": "2.0.0", "rebuild": true}));
     }
 
-    async fn download_fixture() -> (Mock, Api, CloudClient, tempfile::TempDir) {
+    async fn download_fixture() -> (Mock, Api, String, tempfile::TempDir) {
         let mock = Mock::default();
         let base = mock.start().await;
         let dir = tempfile::tempdir().unwrap();
         let api = Api::new(&base, "access".into(), "refresh".into(), false, StepUpStore::at(dir.path().join("step-up.json"))).unwrap().fast();
-        let client = CloudClient::for_loopback(&base, "access".into(), "refresh".into()).unwrap();
-        (mock, api, client, dir)
+        (mock, api, base, dir)
+    }
+
+    fn loopback(base: &str) -> impl FnOnce() -> Result<CloudClient> + '_ {
+        move || CloudClient::for_loopback(base, "access".into(), "refresh".into())
     }
 
     #[tokio::test]
     async fn download_checks_the_sha256_and_never_overwrites_without_force() {
-        let (mock, api, client, dir) = download_fixture().await;
+        let (mock, api, base, dir) = download_fixture().await;
         let artifact = json!("AXIOM-ARTIFACT");
         let bytes = artifact.to_string().into_bytes();
         let sha = hex::encode(Sha256::digest(&bytes));
         mock.script("GET /api/v1/projects/demo/contracts/latest", 200, json!({"version": "1.2.0", "sha256": sha}));
         mock.script("GET /api/v1/projects/demo/contracts/1.2.0/pull", 200, artifact);
         let path = dir.path().join("release.axiom");
-        download(&api, &client, "demo", "latest", Some(&path), false, false).await.unwrap();
+        download(&api, loopback(&base), "demo", "latest", Some(&path), false, false).await.unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), bytes);
         let pulled = mock.seen("GET /api/v1/projects/demo/contracts/1.2.0/pull");
         assert_eq!(pulled.len(), 1);
         assert_eq!(pulled[0].bearer.as_deref(), Some("access"));
 
         std::fs::write(&path, b"keep").unwrap();
-        assert!(download(&api, &client, "demo", "latest", Some(&path), false, false).await.unwrap_err().to_string().contains("--force"));
+        assert!(download(&api, loopback(&base), "demo", "latest", Some(&path), false, false).await.unwrap_err().to_string().contains("--force"));
         assert_eq!(std::fs::read(&path).unwrap(), b"keep");
-        download(&api, &client, "demo", "latest", Some(&path), true, true).await.unwrap();
+        download(&api, loopback(&base), "demo", "latest", Some(&path), true, true).await.unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path()).unwrap().filter_map(|e| e.ok()).map(|e| e.file_name()).filter(|n| n != "release.axiom" && n != "step-up.json").collect();
+        assert!(leftovers.is_empty(), "the temporary file is renamed over the target: {leftovers:?}");
     }
 
     #[tokio::test]
     async fn a_mismatching_download_is_not_written() {
-        let (mock, api, client, dir) = download_fixture().await;
+        let (mock, api, base, dir) = download_fixture().await;
         mock.script("GET /api/v1/projects/demo/contracts/1.2.0", 200, json!({"version": "1.2.0", "sha256": "00".repeat(32)}));
         mock.script("GET /api/v1/projects/demo/contracts/1.2.0/pull", 200, json!("tampered"));
         let path = dir.path().join("release.axiom");
-        let error = download(&api, &client, "demo", "1.2.0", Some(&path), false, false).await.unwrap_err().to_string();
+        let error = download(&api, loopback(&base), "demo", "1.2.0", Some(&path), false, false).await.unwrap_err().to_string();
         assert!(error.contains("nothing was written"), "{error}");
         assert!(!path.exists());
         mock.script("GET /api/v1/projects/demo/contracts/x", 200, json!({"version": "../x", "sha256": ""}));
-        assert!(download(&api, &client, "demo", "x", Some(&path), false, false).await.is_err());
-    }
-
-    #[test]
-    fn previous_version_picks_the_latest_earlier_release() {
-        let list = releases();
-        let list = cloud_cli::items(&list, &[]);
-        assert_eq!(previous_version(&list, "2026-11-03T10:00:00Z"), "1.1.0");
-        assert_eq!(previous_version(&list, "2026-11-02T10:00:00Z"), "1.0.0");
-        assert_eq!(previous_version(&list, "2026-11-01T10:00:00Z"), "baseline");
-        assert_eq!(previous_version(&list, "-"), "baseline");
+        assert!(download(&api, loopback(&base), "demo", "x", Some(&path), false, false).await.is_err());
     }
 
     #[test]

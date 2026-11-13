@@ -88,8 +88,11 @@ Calls `POST /api/v1/projects/{project_slug}/contracts/import` with
 
 Download a release artifact to a file. The command first reads the release
 record, downloads the artifact and checks its SHA-256 against the record; on a
-mismatch nothing is written. It never replaces an existing file unless you
-pass `--force`, and prints the size and SHA-256 of what it wrote.
+mismatch nothing is written. If the record has no SHA-256 (some older uploads),
+the file cannot be checked and the command says so. It never replaces an
+existing file unless you pass `--force`; with `--force` the new file is written
+next to the old one and renamed over it, so a failed download keeps the old
+file. It prints the size and SHA-256 of what it wrote.
 
 ```text title="Usage"
 axiom contract releases download VERSION [--output FILE] [--force] [--project PROJECT] [--json]
@@ -196,18 +199,21 @@ axiom contract releases backfill VERSION [--project PROJECT] [--json]
 ```
 
 Calls `POST /api/v1/projects/{project_slug}/contracts/{version}/semantic-backfill`
-with `{}`.
+with no body, like the dashboard.
 
 ## Compare releases
 
-Both commands compare `VERSION` with an earlier release. The server needs the
-earlier release explicitly; without `--against`, the command picks the release
-created just before `VERSION` from the release list, or `baseline` (compare
-with nothing) when `VERSION` is the oldest.
+Both commands compare `VERSION` with an earlier release. Without `--against`
+they compare with `baseline` (nothing), as the dashboard does: an earlier
+release is never chosen implicitly, because an unverified or legacy upload
+must not look like a trustworthy comparison source, and a release that
+predates the semantic analysis would answer HTTP 409. Pass `--against` with an
+earlier release whose signature verified (see
+`axiom contract releases verification`).
 
 | Option | Value | Default | Meaning |
 | --- | --- | --- | --- |
-| `--against` | version or `baseline` | the previous release | Earlier release to compare with. It must be older than `VERSION`. |
+| `--against` | version or `baseline` | `baseline` | Earlier release to compare with. It must be older than `VERSION`. |
 
 ### axiom contract releases diff
 
@@ -222,9 +228,7 @@ axiom contract releases diff VERSION [--against VERSION] [--project PROJECT] [--
 ```
 
 Calls `GET /api/v1/projects/{project_slug}/contracts/{version}/diff?against=VERSION&summary=true`,
-like the dashboard. Without `--against` it first calls
-`GET /api/v1/projects/{project_slug}/contracts` (and, for `latest`,
-`GET /api/v1/projects/{project_slug}/contracts/latest`).
+like the dashboard.
 
 ### axiom contract releases impact
 

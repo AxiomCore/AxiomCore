@@ -131,19 +131,19 @@ pub async fn run(api: &Api, args: &EnvironmentsArgs) -> Result<()> {
         }
         Action::Connection { environment, show_secret } => {
             let id = environment_id(api, slug, environment).await?;
-            let connection = cloud_cli::call(api, Method::POST, &["projects", slug, "environments", &id, "connection"], &[], Some(&json!({}))).await?;
+            let connection = cloud_cli::call(api, Method::POST, &["projects", slug, "environments", &id, "connection"], &[], None).await?;
             let shown = redact(&connection, *show_secret);
             cloud_cli::print(json, &shown, |v| connection_lines(v, *show_secret))
         }
         Action::Reset { environment, yes } => {
-            let id = environment_id(api, slug, environment).await?;
-            cloud_cli::confirm(*yes, &format!("Reset environment `{}`? Its stateful mock data returns to the initial state declared by the project's current mock configuration; the URL and access key stay the same.", cloud_cli::clean(environment)))?;
-            let value = cloud_cli::call(api, Method::POST, &["projects", slug, "environments", &id, "reset"], &[], Some(&json!({}))).await?;
+            let (id, described) = resolve(api, slug, environment).await?;
+            cloud_cli::confirm(*yes, &format!("Reset {described}? Its stateful mock data returns to the initial state declared by the project's current mock configuration; the URL and access key stay the same."))?;
+            let value = cloud_cli::call(api, Method::POST, &["projects", slug, "environments", &id, "reset"], &[], None).await?;
             cloud_cli::print(json, &value, |v| vec![format!("Reset requested for `{}`: status {}. Follow it with `axiom project environments events --environment {}`.", cloud_cli::text(v, "/name"), cloud_cli::text(v, "/status"), cloud_cli::text(v, "/id"))])
         }
         Action::Delete { environment, yes } => {
-            let id = environment_id(api, slug, environment).await?;
-            cloud_cli::confirm(*yes, &format!("Delete environment `{}`? Its URL stops serving, the managed runtime is removed and its access key no longer works.", cloud_cli::clean(environment)))?;
+            let (id, described) = resolve(api, slug, environment).await?;
+            cloud_cli::confirm(*yes, &format!("Delete {described}? Its URL stops serving, the managed runtime is removed and its access key no longer works."))?;
             let value = cloud_cli::call(api, Method::DELETE, &["projects", slug, "environments", &id], &[], None).await?;
             cloud_cli::print(json, &value, |v| vec![format!("Deletion of `{}` accepted: status {}.", cloud_cli::text(v, "/name"), cloud_cli::text(v, "/status"))])
         }
@@ -158,19 +158,33 @@ async fn fetch(api: &Api, slug: &str, id: &str) -> Result<Value> {
     cloud_cli::call(api, Method::GET, &["projects", slug, "environments", id], &[], None).await
 }
 
-/// The id of `--environment`: a UUID is used as given; a name is looked up in the list,
-/// preferring live environments over deleted or expired ones with the same name.
+/// The id of `--environment`: a UUID is used as given; a name is looked up in the list.
 async fn environment_id(api: &Api, slug: &str, wanted: &str) -> Result<String> {
     let wanted = wanted.trim();
     if uuid::Uuid::parse_str(wanted).is_ok() && wanted.len() == 36 {
         return Ok(wanted.to_string());
     }
+    Ok(resolve(api, slug, wanted).await?.0)
+}
+
+/// The id of `--environment` (an id or a name) and its description for a confirmation, from the
+/// list. Live environments are matched first; deleted or expired ones only when no live one
+/// matches. Two matches at the same step (for example a `sandbox` and a `hosted_mock` both named
+/// `sandbox`) are refused with their ids.
+async fn resolve(api: &Api, slug: &str, wanted: &str) -> Result<(String, String)> {
     let listed = list(api, slug).await?;
     let all = cloud_cli::items(&listed, &["environments", "items"]);
     let ended = |v: &&Value| matches!(v.get("status").and_then(Value::as_str), Some("deleted" | "expired"));
-    let ordered: Vec<&Value> = all.iter().filter(|v| !ended(v)).chain(all.iter().filter(|v| ended(v))).copied().collect();
-    let found = cloud_cli::pick(&ordered, wanted, &["name"], "environment")?;
-    Ok(cloud_cli::text(found, "/id"))
+    let live: Vec<&Value> = all.iter().filter(|v| !ended(v)).copied().collect();
+    let gone: Vec<&Value> = all.iter().filter(|v| ended(v)).copied().collect();
+    let found = match cloud_cli::pick(&live, wanted, &["name"], "environment") {
+        Ok(found) => found,
+        Err(error) if error.to_string().starts_with("no environment") && !gone.is_empty() => cloud_cli::pick(&gone, wanted, &["name"], "environment")?,
+        Err(error) => return Err(error),
+    };
+    let id = found.get("id").and_then(Value::as_str).filter(|id| !id.is_empty()).ok_or_else(|| anyhow::anyhow!("the environment list has no id for `{}`", cloud_cli::clean(wanted)))?.to_string();
+    let described = format!("{} environment `{}` ({}, {})", cloud_cli::text(found, "/kind"), cloud_cli::text(found, "/name"), cloud_cli::text(found, "/status"), id);
+    Ok((id, described))
 }
 
 /// Validates the flags as the server does and builds `POST …/environments`.
@@ -443,7 +457,7 @@ mod tests {
         run(&h.api, &args(&["--project", "demo", "--json", "connection", "--environment", "sandbox", "--show-secret"])).await.unwrap();
         let seen = h.mock.seen(&format!("POST {BASE}/{ID}/connection"));
         assert_eq!(seen.len(), 2);
-        assert_eq!(seen[0].body, json!({}));
+        assert_eq!(seen[0].body, Value::Null);
 
         let hidden = connection_lines(&reply, false).join("\n");
         assert!(!hidden.contains("s3cr3t"), "{hidden}");
@@ -470,7 +484,24 @@ mod tests {
         }
         run(&h.api, &args(&["--project", "demo", "reset", "--environment", "sandbox", "--yes"])).await.unwrap();
         run(&h.api, &args(&["--project", "demo", "delete", "--environment", ID, "--yes"])).await.unwrap();
-        assert_eq!(h.mock.seen(&format!("POST {BASE}/{ID}/reset"))[0].body, json!({}));
+        assert_eq!(h.mock.seen(&format!("POST {BASE}/{ID}/reset"))[0].body, Value::Null);
         assert_eq!(h.mock.seen(&format!("DELETE {BASE}/{ID}")).len(), 1);
+        assert_eq!(h.mock.seen(&format!("DELETE {BASE}/{ID}"))[0].body, Value::Null);
+    }
+
+    #[tokio::test]
+    async fn a_name_shared_by_two_live_environments_is_refused_with_their_ids() {
+        let h = harness().await;
+        h.mock.script("GET /api/v1/projects", 200, json!([{"id": "p1", "slug": "demo", "name": "Demo"}]));
+        let mut mock_env = sandbox(OLD, "ready");
+        mock_env["kind"] = json!("hosted_mock");
+        h.mock.script(&format!("GET {BASE}"), 200, json!([sandbox(ID, "ready"), mock_env]));
+        let e = run(&h.api, &args(&["--project", "demo", "delete", "--environment", "sandbox", "--yes"])).await.unwrap_err().to_string();
+        assert!(e.contains("matches 2 environments") && e.contains(&format!("{ID} (sandbox, ready)")) && e.contains(&format!("{OLD} (hosted_mock, ready)")), "{e}");
+        assert!(h.mock.seen(&format!("DELETE {BASE}/{ID}")).is_empty() && h.mock.seen(&format!("DELETE {BASE}/{OLD}")).is_empty());
+        if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+            let e = run(&h.api, &args(&["--project", "demo", "reset", "--environment", ID])).await.unwrap_err().to_string();
+            assert!(e.contains(&format!("Reset sandbox environment `sandbox` (ready, {ID})?")), "{e}");
+        }
     }
 }

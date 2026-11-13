@@ -46,6 +46,7 @@ pub mod release;
 pub mod run;
 pub mod scenario;
 pub mod secrets;
+mod secrets_cloud;
 pub mod security;
 pub mod serve;
 pub mod server;

@@ -65,6 +65,9 @@ pub struct Reply {
     pub status: u16,
     pub body: Value,
     pub retry_after: Option<u64>,
+    /// A failed reply's plain-text reason (control characters removed, at most 200
+    /// characters) when its body is not JSON; `None` for JSON and successful replies.
+    pub text: Option<String>,
 }
 
 impl Reply {
@@ -183,11 +186,23 @@ impl Api {
         } else {
             Value::Null
         };
+        let text = (!(200..300).contains(&status) && body.is_null())
+            .then(|| {
+                String::from_utf8_lossy(&bytes)
+                    .chars()
+                    .map(|c| if c.is_control() { ' ' } else { c })
+                    .take(200)
+                    .collect::<String>()
+                    .trim()
+                    .to_string()
+            })
+            .filter(|t| !t.is_empty());
         bytes.fill(0);
         Ok(Reply {
             status,
             body,
             retry_after,
+            text,
         })
     }
 
@@ -224,6 +239,17 @@ impl Api {
         }
         self.send(method, url, body, key, &tokens.access_token)
             .await
+    }
+
+    /// Any request with the CLI session (refreshed once on 401), returning the reply
+    /// whatever its status, for commands that word their own errors (`axiom workspace`,
+    /// `axiom project environments`, `axiom contract releases`).
+    pub async fn request(&self, method: &Method, segments: &[&str], query: &[(&str, String)], body: Option<&Value>, key: Option<&str>) -> Result<Reply> {
+        let mut url = self.url(segments)?;
+        if !query.is_empty() {
+            url.query_pairs_mut().extend_pairs(query.iter().map(|(k, v)| (*k, v.as_str())));
+        }
+        self.send_session(method, url, body, key).await
     }
 
     /// A write with the CLI session only (no step-up), refreshed once on 401.

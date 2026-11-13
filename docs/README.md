@@ -61,6 +61,15 @@ pnpm release:manifest
 pnpm test:routes
 ```
 
+To find Axiom CLI commands that no page shows, compare a CLI binary with the
+docs. It walks `axiom --help` recursively and lists every command that no code
+block or inline code span writes as `axiom <command>`, and exits 1 if any are
+missing:
+
+```bash
+python3 tools/docs-vs-binary.py --axiom "$(command -v axiom)"
+```
+
 Before merging a content change, also confirm:
 
 1. every new public capability has an accurate status in the support matrix;

@@ -39,9 +39,12 @@ architecture. `native-server` is reported and packaged for the machine the CLI
 runs on: the macOS arm64 build of CLI 0.149.1 packages it for macOS `aarch64`.
 Native packaging from the 0.149.1 Linux archives (**Experimental**) has not been
 checked, and the CLI cannot package the native profile for a different
-operating system or architecture. Container and
-Worker packaging need the matching AxiomCore runtime source
-(`--runtime-source`), which is not distributed with the CLI.
+operating system or architecture. Container packaging builds on the published
+`axiom-server-host` builder image that the CLI release pins, so it needs no
+runtime source; that builder image is **Coming soon**, and until a CLI release
+pins one, container packaging needs `--runtime-source`. Worker packaging needs
+the matching AxiomCore runtime source (`--runtime-source`), which is not
+distributed with the CLI.
 
 ```mermaid title="Choosing a deployment target"
 flowchart TD
@@ -146,12 +149,12 @@ workers have their own runner and queue setup. See
 ## Linux containers
 
 Compile and review the deployment and sandbox bindings first, then build a
-source context and an image:
+context and an image:
 
 ```bash title="Terminal"
 axiom build service.acore --out backend.axiom
 axiom server inspect backend.axiom backend.server.json --deployment deployment.json --target container-arm64
-axiom server package backend.axiom backend.server.json --deployment deployment.json --target container-arm64 --runtime-source /path/to/runtime-source --output container-context
+axiom server package backend.axiom backend.server.json --deployment deployment.json --target container-arm64 --output container-context
 cat container-context/container.json
 docker buildx build --platform linux/arm64 --load --tag my-api:candidate container-context
 ```
@@ -160,12 +163,24 @@ For x86_64, use `container-amd64` with `--platform linux/amd64`. Add
 `--bindings bindings.json` for sandbox plans. Production provider paths and
 credentials are resolved at startup, not during packaging.
 
+Without `--runtime-source`, the Dockerfile's build stage is the published
+`axiom-server-host` builder image for this runtime version and architecture,
+pinned by digest in the CLI release (**Coming soon**: until a CLI release pins
+one, this fails with `AXPACKAGE_BUILDER_UNPINNED`). The printed `builder.image`
+and `container.json` name the exact image. To use a mirror of that image,
+pass `--builder-image REGISTRY/REPOSITORY@sha256:DIGEST`; a tag is refused.
+With `--runtime-source /path/to/runtime-source`, Docker compiles the runtime
+from that reviewed source instead, as before. `--output-input DIR` writes only
+the data-only input (the context's `input/` directory), for an upload or a CI
+build.
+
 - **Context.** The exact public and private artifacts, content-addressed sandbox
-  files, the source allowlist and hashes, a pinned Dockerfile, image metadata
-  and a Compose template. It excludes production configuration, mock
-  fixtures, caches and host executables. Docker builds the Linux runtime from
-  source and seals a v2 release with that Linux executable; a macOS executable
-  never becomes a Linux image. `/app/release.json` binds the runtime, target,
+  files, a pinned Dockerfile, image metadata and a Compose template; with
+  `--runtime-source`, also the source allowlist and hashes. It excludes
+  production configuration, mock fixtures, caches and host executables. The
+  Linux runtime comes from the builder image or is compiled from source, and
+  seals a v2 release with that Linux executable; a macOS executable never
+  becomes a Linux image. `/app/release.json` binds the runtime, target,
   requirements, launch template and full file inventory. Modified, extra,
   symlinked or unbound files fail verification.
 - **Toolchain.** Rust 1.93.0 and digest-pinned Debian images. Cross-compilation

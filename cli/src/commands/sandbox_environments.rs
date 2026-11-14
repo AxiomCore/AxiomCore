@@ -97,6 +97,14 @@ pub enum Action {
 /// How long `create --wait` follows a sandbox.
 const WAIT_LIMIT: Duration = Duration::from_secs(10 * 60);
 
+/// Confirmation eligibility is checked before authentication or environment lookup.
+pub(crate) fn asks_first(args: &EnvironmentsArgs) -> Option<bool> {
+    match &args.action {
+        Action::Reset { yes, .. } | Action::Delete { yes, .. } => Some(*yes),
+        _ => None,
+    }
+}
+
 pub async fn handle(args: &EnvironmentsArgs) -> Result<()> {
     let api = Api::from_profile()?;
     run(&api, args).await

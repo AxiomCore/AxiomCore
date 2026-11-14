@@ -110,7 +110,7 @@ enum Commands {
         #[arg(long)]
         step_up: bool,
         /// Print the sign-in link and code as plain text instead of the full-screen view.
-        /// This is automatic when output is not a terminal (CI, a pipe) or the terminal
+        /// This is automatic when output is not a terminal (headless CI, a pipe) or the terminal
         /// reports no size.
         #[arg(long)]
         no_tui: bool,
@@ -1817,11 +1817,29 @@ async fn main() -> anyhow::Result<()> {
 }
 
 /// A confirmation that cannot be asked (no terminal, no `--yes`) exits 2 here, before
-/// registration, sign-in, telemetry or any request: `auth disable`, an `auth mfa set` that may
-/// weaken or turn on multi-factor, and `project resources revoke`. (`axiom secrets` is a local
-/// command with neither registration nor telemetry; it refuses in its own handler.)
+/// registration, sign-in, telemetry or any request. Data writes retain their reviewed
+/// preview confirmation after this eligibility check. (`axiom secrets` is local and
+/// refuses in its own handler.)
 fn confirmation_preflight(command: &Commands) {
     let (name, yes) = match command {
+        Commands::Data(args) => match commands::data::asks_first(args) {
+            Some(yes) => ("data", yes),
+            None => return,
+        },
+        Commands::Workspace(args) => match commands::workspace::asks_first(args) {
+            Some(yes) => ("workspace", yes),
+            None => return,
+        },
+        Commands::Intel(args) => match commands::intel::asks_first(args) {
+            Some(yes) => ("intel", yes),
+            None => return,
+        },
+        Commands::Project {
+            action: ProjectAction::Environments(args),
+        } => match commands::sandbox_environments::asks_first(args) {
+            Some(yes) => ("project", yes),
+            None => return,
+        },
         Commands::Auth(args) => match commands::auth::asks_first(args) {
             Some(yes) => ("auth", yes),
             None => return,

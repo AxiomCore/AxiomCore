@@ -478,6 +478,19 @@ pub fn onboarding_lines(v: &Value) -> Vec<String> {
     ]
 }
 
+/// Confirmation eligibility is checked before authentication or member lookup.
+pub(crate) fn asks_first(args: &WorkspaceArgs) -> Option<bool> {
+    match &args.action {
+        WorkspaceAction::Members {
+            action: MembersAction::Remove { yes, .. },
+        }
+        | WorkspaceAction::Invitations {
+            action: InvitationsAction::Cancel { yes, .. },
+        } => Some(*yes),
+        _ => None,
+    }
+}
+
 pub async fn handle(args: &WorkspaceArgs) -> Result<()> {
     let api = Api::from_profile()?;
     run(&api, args).await

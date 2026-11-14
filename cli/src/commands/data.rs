@@ -108,7 +108,7 @@ pub enum Table {
     Export {
         #[command(flatten)]
         input: Input,
-        /// Save validated CSV to a file.
+        /// Save validated CSV to a file, or use - to write CSV to stdout (also with --json).
         #[arg(long)]
         out: Option<PathBuf>,
         /// Atomically replace an existing regular file (never a symlink).
@@ -145,6 +145,31 @@ pub enum Capture {
 pub enum Settings {
     Get,
     Set(Write),
+}
+
+/// Detect commands that prompt without reading input files or resolving a target.
+pub(crate) fn asks_first(args: &DataArgs) -> Option<bool> {
+    match &args.action {
+        Action::Sql {
+            action: Sql::Write(w),
+        }
+        | Action::Tables {
+            action: Table::Write(w),
+            ..
+        }
+        | Action::Capture {
+            action: Capture::Create(w),
+        }
+        | Action::Capture {
+            action: Capture::Settings {
+                action: Settings::Set(w),
+            },
+        } => Some(w.yes),
+        Action::SavedQueries {
+            action: Saved::Delete { yes, .. },
+        } => Some(*yes),
+        _ => None,
+    }
 }
 
 fn input(input: &Input, max: usize) -> Result<Value> {
@@ -360,7 +385,21 @@ pub async fn handle(args: &DataArgs) -> Result<()> {
     .await?;
     let api = Api::from_profile()?.with_data_environment(args.environment.as_deref().unwrap());
     let value = run(&api, &project, &environment, &args.action).await?;
-    print(&value, args.json)
+    if matches!(&args.action, Action::Tables { action: Table::Export { out: Some(path), .. }, .. } if path == std::path::Path::new("-"))
+    {
+        use std::io::Write;
+        let mut stdout = std::io::stdout().lock();
+        stdout.write_all(
+            value["csv"]
+                .as_str()
+                .context("Export returned no CSV")?
+                .as_bytes(),
+        )?;
+        stdout.flush()?;
+        Ok(())
+    } else {
+        print(&value, args.json)
+    }
 }
 async fn run(api: &Api, project: &str, environment: &str, action: &Action) -> Result<Value> {
     let t = Target {
@@ -487,7 +526,10 @@ async fn run(api: &Api, project: &str, environment: &str, action: &Action) -> Re
                             &input(i, 65536)?,
                         )
                         .await?;
-                    if let Some(path) = out {
+                    if let Some(path) = out
+                        .as_ref()
+                        .filter(|path| path.as_path() != std::path::Path::new("-"))
+                    {
                         write_export(path, *force, |file| {
                             use std::io::Write;
                             file.write_all(csv.as_bytes())?;

@@ -40,13 +40,41 @@ fn parse_query(input: &str) -> Result<(String, String), String> {
     }
     Ok((key.into(), value.into()))
 }
+/// Classify before validating request bodies, sign-in, or project lookup.
+pub(crate) fn asks_first(args: &IntelArgs) -> Option<bool> {
+    use super::intel_routes::{
+        AlertPoliciesAction, ObservabilityAction, ObservabilitySettingsAction,
+        ObservabilitySourcesAction, PullRequestsAction,
+    };
+    let destructive = matches!(
+        &args.command,
+        IntelCommand::AlertPolicies {
+            action: AlertPoliciesAction::Update { .. }
+        } | IntelCommand::Observability {
+            action: ObservabilityAction::Settings {
+                action: ObservabilitySettingsAction::Update { .. }
+            }
+        } | IntelCommand::Observability {
+            action: ObservabilityAction::Sources {
+                action: ObservabilitySourcesAction::Revoke { .. }
+            }
+        } | IntelCommand::PullRequests {
+            action: PullRequestsAction::Update { .. }
+        } | IntelCommand::Settings { .. }
+    );
+    destructive.then_some(args.yes)
+}
+
 pub async fn handle(args: &IntelArgs) -> Result<()> {
     execute(&crate::auth_store::authenticated_cloud_client()?, args).await
 }
 pub async fn execute(client: &CloudClient, args: &IntelArgs) -> Result<()> {
     let mut request = args.command.request()?;
-    if request.destructive && !args.yes {
-        bail!("This changes project configuration or revokes access. Review the request and pass --yes to confirm.");
+    if request.destructive {
+        super::auth::confirm_yes(
+            args.yes,
+            "Apply this change to project configuration or access?",
+        )?;
     }
     let mut segments: Vec<String> = request
         .path
@@ -259,4 +287,27 @@ fn human_value(value: &Value) -> String {
     let mut out = String::new();
     render(value, 0, &mut out);
     out
+}
+
+#[cfg(test)]
+#[test]
+fn confirmation_preflight_covers_every_destructive_route() {
+    use super::intel_routes::tests::{cases, ParserHarness};
+    use clap::Parser;
+    for (argv, _, _, _) in cases() {
+        let args = IntelArgs {
+            project: None,
+            environment: None,
+            json: false,
+            yes: false,
+            show_secrets: false,
+            query: vec![],
+            command: ParserHarness::try_parse_from(argv.clone()).unwrap().command,
+        };
+        assert_eq!(
+            asks_first(&args).is_some(),
+            args.command.request().unwrap().destructive,
+            "{argv:?}"
+        );
+    }
 }

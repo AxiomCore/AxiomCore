@@ -7,7 +7,7 @@
 //! archive POST follows the step-up rule of the per-database archive
 //! ([`Api::post_action_reply`]); restore is not destructive and uses the session only.
 //! Only known codes select fixed messages; server text and unknown values are cleaned.
-use super::cloud_cli::{self, clean, items, pick};
+use super::cloud_cli::{self, clean, items};
 use super::resources_recovery::{Api, Reply};
 use anyhow::{anyhow, bail, Result};
 use reqwest::Method;
@@ -66,10 +66,21 @@ pub fn confirm_phrase(slug: &str) -> String {
 // Project resolution
 // ---------------------------------------------------------------------------
 
+/// Which command resolves the project: a restore prefers an archived project when two
+/// projects match at the same step.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Purpose {
+    Archive,
+    Restore,
+    Status,
+}
+
 /// The project slug from the argument (a slug, name or id) or the project linked to this
-/// directory. An archived project is hidden from `GET /api/v1/projects`, so a value that
-/// matches none of the listed projects is looked up again among the archived ones.
-pub async fn project_slug(api: &Api, given: Option<&str>) -> Result<String> {
+/// directory. An archived project is hidden from `GET /api/v1/projects`, so both that list
+/// and `?archived=true` are read, merged (by id) and searched once: id, then exact slug, then
+/// exact name, then case-insensitive slug and name. Two matches at the same step are refused,
+/// except that a restore takes the only archived one among them.
+pub async fn project_slug(api: &Api, given: Option<&str>, purpose: Purpose) -> Result<String> {
     let wanted = match given.map(str::trim).filter(|p| !p.is_empty()) {
         Some(p) => p.to_string(),
         None => crate::auth_store::get_project_id(&std::env::current_dir()?)?.ok_or_else(|| {
@@ -77,27 +88,70 @@ pub async fn project_slug(api: &Api, given: Option<&str>) -> Result<String> {
         })?,
     };
     let listed = cloud_cli::get(api, &["projects"]).await?;
-    let mut list = items(&listed, &["projects", "items"]);
-    if let Ok(found) = pick(&list, &wanted, &["slug", "name"], "project") {
-        return slug_of(found, &wanted);
-    }
     let archived = cloud_cli::call(api, Method::GET, &["projects"], &[("archived", "true".into())], None).await?;
-    for item in items(&archived, &["projects", "items"]) {
-        let id = item.get("id").and_then(Value::as_str);
-        if !list.iter().any(|known| id.is_some() && known.get("id").and_then(Value::as_str) == id) {
-            list.push(item);
+    let archived_items = items(&archived, &["projects", "items"]);
+    let id_of = |item: &Value| item.get("id").and_then(Value::as_str).map(str::to_string);
+    let archived_ids: Vec<String> = archived_items.iter().filter_map(|i| id_of(i)).collect();
+    // (project, is archived)
+    let mut list: Vec<(&Value, bool)> = Vec::new();
+    for item in items(&listed, &["projects", "items"]).into_iter().chain(archived_items.iter().copied()) {
+        let id = id_of(item);
+        if id.is_some() && list.iter().any(|(known, _)| id_of(known) == id) {
+            continue;
+        }
+        let is_archived = id.as_ref().is_some_and(|id| archived_ids.contains(id));
+        list.push((item, is_archived));
+    }
+    slug_of(choose(&list, &wanted, purpose)?, &wanted)
+}
+
+fn choose<'a>(list: &[(&'a Value, bool)], wanted: &str, purpose: Purpose) -> Result<&'a Value> {
+    let value = |item: &Value, key: &str| item.get(key).and_then(Value::as_str).map(str::to_string);
+    let steps = [("id", true), ("slug", true), ("name", true), ("slug", false), ("name", false)];
+    for (key, exact) in steps {
+        let found: Vec<(&'a Value, bool)> = list
+            .iter()
+            .copied()
+            .filter(|(item, _)| value(item, key).is_some_and(|v| if exact { v == wanted } else { v.eq_ignore_ascii_case(wanted) }))
+            .collect();
+        match found.as_slice() {
+            [] => continue,
+            [(one, _)] => return Ok(one),
+            many => {
+                let archived: Vec<&&'a Value> = many.iter().filter(|(_, a)| *a).map(|(item, _)| item).collect();
+                if purpose == Purpose::Restore {
+                    if let [one] = archived.as_slice() {
+                        return Ok(one);
+                    }
+                }
+                let slugs: Vec<String> = many
+                    .iter()
+                    .take(5)
+                    .map(|(item, a)| format!("{}{}", clean(&value(item, "slug").unwrap_or_default()), if *a { " (archived)" } else { "" }))
+                    .collect();
+                bail!("`{}` matches {} projects: {}. Pass the slug instead.", clean(wanted), many.len(), slugs.join("; "));
+            }
         }
     }
-    slug_of(pick(&list, &wanted, &["slug", "name"], "project")?, &wanted)
+    bail!("no project `{}` here, archived or not; see `axiom project list` and `axiom project list --archived`", clean(wanted))
+}
+
+/// A slug the API gave us is used verbatim in the URL and the confirmation phrase, so it is
+/// refused, never cleaned, unless it is plain lowercase letters, digits and hyphens.
+pub fn valid_slug(slug: &str) -> bool {
+    !slug.is_empty() && slug.len() <= 128 && slug.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
 fn slug_of(project: &Value, wanted: &str) -> Result<String> {
-    project
+    let slug = project
         .get("slug")
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty())
-        .map(str::to_string)
-        .ok_or_else(|| anyhow!("the project list has no slug for `{}`", clean(wanted)))
+        .ok_or_else(|| anyhow!("the project list has no slug for `{}`", clean(wanted)))?;
+    if !valid_slug(slug) {
+        bail!("the project list gave `{}` a slug that is not lowercase letters, digits and hyphens; nothing was sent", clean(wanted));
+    }
+    Ok(slug.to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -177,7 +231,7 @@ fn refusal(kind: Kind, slug: &str, reply: &Reply) -> anyhow::Error {
         "AXPROJECT_ARCHIVE_BLOCKED" => blocked_message(slug, &blockers(&reply.body)),
         "AXPROJECT_NOT_ARCHIVED" => format!("`{slug}` has not been archived, so there is nothing to restore."),
         "AXRESOURCE_CONFLICT" => match kind {
-            Kind::Restore => format!("An archive of `{slug}` is still running. Wait until it is archived or failed (`axiom project archive-status {slug}`), then retry the restore."),
+            Kind::Restore => format!("An archive of `{slug}` is still running, or another operation is running on one of its archived databases. Wait until it finishes (`axiom project archive-status {slug}` shows each database's operation), then retry the restore."),
             _ => format!("A restore of `{slug}` is running, or this request's Idempotency-Key was already used for a different request. Check `axiom project archive-status {slug}` and retry."),
         },
         "AXRESOURCE_DENIED" => match kind {
@@ -197,11 +251,16 @@ fn refusal(kind: Kind, slug: &str, reply: &Reply) -> anyhow::Error {
 
 /// Human rendering of `GET …/archive`. Every printed value is cleaned.
 pub fn render_view(slug: &str, view: &Value) -> Vec<String> {
-    if view.get("enabled").and_then(Value::as_bool) == Some(false) {
+    let state = state(view);
+    let enabled = view.get("enabled").and_then(Value::as_bool) != Some(false);
+    if !enabled && state == "none" {
         return vec![format!("Project archive is not enabled for `{slug}`.")];
     }
-    let state = state(view);
     let mut out = vec![format!("Project {slug}: {}", state_words(state))];
+    if !enabled {
+        // Restore works with the flag off; a new archive does not.
+        out.push(format!("  Project archive is not enabled for `{slug}`: it cannot be archived again, but it can be restored."));
+    }
     let mut when = Vec::new();
     if let Some(at) = field(view, "requested_at") {
         when.push(format!("requested {}", clean(at)));
@@ -313,31 +372,65 @@ async fn read_view(api: &Api, slug: &str) -> Result<Value> {
     Err(refusal(Kind::Status, slug, &reply))
 }
 
-/// Poll `GET …/archive` until archived, restored or failed. Succeeds only on `want`.
-async fn wait_for(api: &Api, slug: &str, kind: Kind, mut view: Value, poll: Poll, human: bool) -> Result<Value> {
+/// At most this many status reads in a row may fail (5xx, 429 or no answer) during `--wait`.
+const MAX_FAILED_READS: u32 = 10;
+
+/// Poll `GET …/archive` until archived, restored or failed. Succeeds only on `want`. A 5xx,
+/// 429 or transport failure is retried until the deadline (at most [`MAX_FAILED_READS`] in a
+/// row); any other refusal stops at once. On failure the last view read is returned with the
+/// error, so `--json` can still print it.
+async fn wait_for(api: &Api, slug: &str, kind: Kind, mut view: Value, poll: Poll, human: bool) -> Result<Value, (Value, anyhow::Error)> {
     let want = if kind == Kind::Restore { "restored" } else { "archived" };
     let deadline = tokio::time::Instant::now() + poll.limit;
     let mut last = String::new();
+    let mut failed_reads = 0u32;
     while !is_terminal_state(state(&view)) {
         if human && state(&view) != last {
             last = state(&view).to_string();
             eprintln!("{}", state_words(&last));
         }
         if tokio::time::Instant::now() >= deadline {
-            bail!(
+            let error = anyhow!(
                 "{slug} is still {} after {} minutes. Follow it with `axiom project archive-status {slug}`.",
                 clean(state(&view)),
                 poll.limit.as_secs() / 60
             );
+            return Err((view, error));
         }
         tokio::time::sleep(poll.interval).await;
-        view = read_view(api, slug).await?;
+        let transient = match api.request(&Method::GET, &["projects", slug, "archive"], &[], None, None).await {
+            Ok(reply) if (200..300).contains(&reply.status) => {
+                view = reply.body;
+                failed_reads = 0;
+                continue;
+            }
+            Ok(reply) if reply.status >= 500 || reply.status == 429 => refusal(Kind::Status, slug, &reply),
+            Ok(reply) => {
+                let error = refusal(Kind::Status, slug, &reply);
+                return Err((view, error));
+            }
+            Err(error) => error,
+        };
+        failed_reads += 1;
+        if human {
+            eprintln!("Could not read the archive status ({transient}); retrying.");
+        }
+        if failed_reads >= MAX_FAILED_READS {
+            let error = anyhow!("Stopped waiting: {MAX_FAILED_READS} status reads in a row failed; the last: {transient}. The {} may still be running; follow it with `axiom project archive-status {slug}`.", if kind == Kind::Restore { "restore" } else { "archive" });
+            return Err((view, error));
+        }
     }
     let end = state(&view).to_string();
     match end.as_str() {
         s if s == want => Ok(view),
-        "failed" => Err(failed_error(kind, slug, &view)),
-        other => bail!("{slug} ended {}, not {want}. See `axiom project archive-status {slug}`.", state_words(other)),
+        "failed" => {
+            let error = failed_error(kind, slug, &view);
+            Err((view, error))
+        }
+        other => {
+            let error = anyhow!("{slug} ended {}, not {want}. See `axiom project archive-status {slug}`.", state_words(other));
+            Err((view, error))
+        }
     }
 }
 
@@ -357,7 +450,7 @@ pub async fn archive(api: &Api, given: Option<&str>, yes: bool, wait: bool, json
     if !yes && !prompt.is_terminal() {
         return Err(exit2(super::auth::NEEDS_YES));
     }
-    let slug = project_slug(api, given).await?;
+    let slug = project_slug(api, given, Purpose::Archive).await?;
     let phrase = confirm_phrase(&slug);
     if !yes {
         // Show what would happen, and refuse early what the server would refuse.
@@ -388,7 +481,7 @@ pub async fn archive(api: &Api, given: Option<&str>, yes: bool, wait: bool, json
 
 /// `axiom project restore`.
 pub async fn restore(api: &Api, given: Option<&str>, wait: bool, json: bool, poll: Poll) -> Result<()> {
-    let slug = project_slug(api, given).await?;
+    let slug = project_slug(api, given, Purpose::Restore).await?;
     let key = uuid::Uuid::new_v4().to_string();
     eprintln!("Restore idempotency key: {key}");
     let reply = api.request(&Method::POST, &["projects", &slug, "restore"], &[], Some(&json!({})), Some(&key)).await?;
@@ -403,14 +496,24 @@ async fn finish(api: &Api, slug: &str, kind: Kind, view: Value, wait: bool, json
         let text = accepted_text(kind, slug, &view);
         return print(json, &view, text);
     }
-    let view = wait_for(api, slug, kind, view, poll, !json).await?;
-    let text = accepted_text(kind, slug, &view);
-    print(json, &view, text)
+    match wait_for(api, slug, kind, view, poll, !json).await {
+        Ok(view) => {
+            let text = accepted_text(kind, slug, &view);
+            print(json, &view, text)
+        }
+        Err((view, error)) => {
+            // `--json` always prints the last view read, also when the wait ends badly.
+            if json {
+                println!("{}", serde_json::to_string_pretty(&view)?);
+            }
+            Err(error)
+        }
+    }
 }
 
 /// `axiom project archive-status`.
 pub async fn status(api: &Api, given: Option<&str>, json: bool) -> Result<()> {
-    let slug = project_slug(api, given).await?;
+    let slug = project_slug(api, given, Purpose::Status).await?;
     let view = read_view(api, &slug).await?;
     print(json, &view, render_view(&slug, &view))
 }

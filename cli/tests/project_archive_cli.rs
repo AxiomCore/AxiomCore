@@ -178,3 +178,27 @@ fn restore_status_and_archived_list_need_no_confirmation() {
     assert!(stdout(&output).contains("Shop  shop  (archived, since 2026-11-14T10:00:00Z)"), "{}", stdout(&output));
     assert!(log.lock().unwrap().iter().any(|r| r.path == "/api/v1/projects?archived=true"));
 }
+
+fn failing_route(method: &str, path: &str) -> (u16, String) {
+    match (method, path) {
+        ("GET", "/api/v1/projects/shop/archive") => (
+            200,
+            view("failed").replace(r#""operation_status":"","failure_code":"""#, r#""operation_status":"failed","failure_code":"AXRESOURCE_SNAPSHOT_UNVERIFIED""#),
+        ),
+        _ => route(method, path),
+    }
+}
+
+#[test]
+fn json_wait_that_ends_failed_still_prints_the_last_view() {
+    let (cloud, _log) = stub(failing_route);
+    let directory = tempfile::tempdir().unwrap();
+    profile(directory.path());
+    let output = axiom(&cloud, directory.path(), &["archive", "shop", "--yes", "--wait", "--json"]);
+    assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
+    let value: Value = serde_json::from_str(&stdout(&output)).unwrap_or_else(|e| panic!("{e}: {}", stdout(&output)));
+    assert_eq!(value["state"], "failed");
+    assert_eq!(value["databases"][0]["failure_code"], "AXRESOURCE_SNAPSHOT_UNVERIFIED");
+    let text = stderr(&output);
+    assert!(text.contains("The archive of shop failed") && text.contains("  - production (AXRESOURCE_SNAPSHOT_UNVERIFIED)"), "{text}");
+}

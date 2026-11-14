@@ -159,7 +159,7 @@ async fn known_refusals_have_fixed_words() {
         (ARCHIVE, 403, "AXRESOURCE_DENIED", "AXRESOURCE_DENIED: Only a project Owner can archive or restore `shop`. (HTTP 403)"),
         (ARCHIVE, 409, "AXRESOURCE_CONFLICT", "AXRESOURCE_CONFLICT: A restore of `shop` is running, or this request's Idempotency-Key was already used for a different request. Check `axiom project archive-status shop` and retry. (HTTP 409)"),
         (RESTORE, 409, "AXPROJECT_NOT_ARCHIVED", "AXPROJECT_NOT_ARCHIVED: `shop` has not been archived, so there is nothing to restore. (HTTP 409)"),
-        (RESTORE, 409, "AXRESOURCE_CONFLICT", "AXRESOURCE_CONFLICT: An archive of `shop` is still running. Wait until it is archived or failed (`axiom project archive-status shop`), then retry the restore. (HTTP 409)"),
+        (RESTORE, 409, "AXRESOURCE_CONFLICT", "AXRESOURCE_CONFLICT: An archive of `shop` is still running, or another operation is running on one of its archived databases. Wait until it finishes (`axiom project archive-status shop` shows each database's operation), then retry the restore. (HTTP 409)"),
         (RESTORE, 403, "AXRESOURCE_DENIED", "AXRESOURCE_DENIED: Only a project Owner can archive or restore `shop`. (HTTP 403)"),
         (RESTORE, 409, "AXPROJECT_ARCHIVE_DISABLED", "AXPROJECT_ARCHIVE_DISABLED: Project archive is not enabled for `shop`. Nothing was changed. (HTTP 409)"),
     ];
@@ -204,11 +204,11 @@ async fn an_archived_project_is_found_in_the_archived_list() {
     assert_eq!(lists[0].query, None);
     assert_eq!(lists[1].query.as_deref(), Some("archived=true"));
     assert_eq!(h.mock.seen(RESTORE).len(), 1);
-    // A project in the plain list needs only that list.
+    // Both lists are always read, so an archived project's exact slug is never missed.
     let h = shop().await;
     h.mock.script(RESTORE, 202, view("restored"));
     restore(&h.api, Some("shop"), false, false, fast()).await.unwrap();
-    assert_eq!(h.mock.seen(PROJECTS).len(), 1);
+    assert_eq!(h.mock.seen(PROJECTS).len(), 2);
 }
 
 #[tokio::test]
@@ -348,4 +348,122 @@ async fn list_archived_asks_for_archived_projects_only() {
     let h = harness().await;
     h.mock.script(PROJECTS, 200, json!([]));
     assert_eq!(list_archived(&h.api).await.unwrap(), vec!["No archived projects."]);
+}
+
+/// The plain list, then the `?archived=true` list.
+async fn lists(plain: Value, archived: Value) -> Harness {
+    let h = harness().await;
+    h.mock.script(PROJECTS, 200, plain);
+    h.mock.script(PROJECTS, 200, archived);
+    h
+}
+
+#[tokio::test]
+async fn an_archived_projects_exact_slug_beats_a_visible_projects_name() {
+    // `shop` is archived; a new visible project is named "shop" with the slug shop-1.
+    let plain = json!([{"id": "v", "slug": "shop-1", "name": "shop"}]);
+    let archived = json!([{"id": "a", "slug": "shop", "name": "Shop", "archive": {"state": "archived"}}]);
+    let h = lists(plain.clone(), archived.clone()).await;
+    h.mock.script(RESTORE, 202, view("restoring"));
+    restore(&h.api, Some("shop"), false, false, fast()).await.unwrap();
+    assert_eq!(h.mock.seen(RESTORE).len(), 1);
+    assert!(h.mock.seen("POST /api/v1/projects/shop-1/restore").is_empty());
+
+    let h = lists(plain, archived).await;
+    h.mock.script(ARCHIVE, 202, view("archived"));
+    archive(&h.api, Some("shop"), true, false, false, fast(), &mut headless()).await.unwrap();
+    assert_eq!(h.mock.seen(ARCHIVE).len(), 1);
+    assert!(h.mock.seen("POST /api/v1/projects/shop-1/archive").is_empty());
+}
+
+#[tokio::test]
+async fn a_tie_prefers_the_archived_project_for_restore_only() {
+    let plain = json!([{"id": "v", "slug": "shop-1", "name": "Shop"}]);
+    let archived = json!([{"id": "a", "slug": "shop-2", "name": "Shop"}]);
+    let h = lists(plain.clone(), archived.clone()).await;
+    h.mock.script("POST /api/v1/projects/shop-2/restore", 202, view("restoring"));
+    restore(&h.api, Some("Shop"), false, false, fast()).await.unwrap();
+    assert_eq!(h.mock.seen("POST /api/v1/projects/shop-2/restore").len(), 1);
+
+    let h = lists(plain, archived).await;
+    let error = archive(&h.api, Some("Shop"), true, false, false, fast(), &mut headless()).await.unwrap_err().to_string();
+    assert_eq!(error, "`Shop` matches 2 projects: shop-1; shop-2 (archived). Pass the slug instead.");
+    assert!(h.mock.requests().iter().all(|r| r.route.starts_with("GET ")), "nothing is archived on a tie");
+
+    // The same project in both lists (an API that ignores ?archived=true) is one project.
+    let same = json!([{"id": "v", "slug": "shop", "name": "Shop"}]);
+    let h = lists(same.clone(), same).await;
+    h.mock.script(RESTORE, 202, view("restored"));
+    restore(&h.api, Some("Shop"), false, false, fast()).await.unwrap();
+    assert_eq!(h.mock.seen(RESTORE).len(), 1);
+}
+
+#[tokio::test]
+async fn a_slug_that_is_not_plain_is_refused_before_any_write() {
+    for slug in ["shop/../other", "Shop", "sh\u{1b}[31mop", "shop?x=1", "shop op"] {
+        let h = lists(json!([{"id": "x", "slug": slug, "name": "Evil"}]), json!([])).await;
+        let error = archive(&h.api, Some("Evil"), true, false, false, fast(), &mut headless()).await.unwrap_err().to_string();
+        assert!(error.contains("not lowercase letters, digits and hyphens; nothing was sent"), "{slug}: {error}");
+        assert!(!error.contains('\u{1b}'));
+        assert!(h.mock.requests().iter().all(|r| r.route.starts_with("GET /api/v1/projects") && !r.route.contains("archive")), "{slug}");
+        let h = lists(json!([]), json!([{"id": "x", "slug": slug, "name": "Evil"}])).await;
+        assert!(restore(&h.api, Some("Evil"), false, false, fast()).await.is_err());
+        assert!(h.mock.requests().iter().all(|r| r.route == PROJECTS));
+    }
+    assert!(valid_slug("shop-1") && !valid_slug("") && !valid_slug("shop_1"));
+}
+
+#[tokio::test]
+async fn wait_rides_out_server_errors_and_stops_on_a_refusal() {
+    let h = shop().await;
+    h.mock.script(ARCHIVE, 202, view("archiving"));
+    h.mock.script(VIEW, 503, json!({"code": "AXRESOURCE_UNAVAILABLE"}));
+    h.mock.script(VIEW, 502, Value::Null);
+    h.mock.script(VIEW, 429, json!({}));
+    h.mock.script(VIEW, 200, view("archiving"));
+    h.mock.script(VIEW, 500, json!({}));
+    h.mock.script(VIEW, 200, view("archived"));
+    archive(&h.api, Some("shop"), true, true, false, fast(), &mut headless()).await.unwrap();
+    assert_eq!(h.mock.seen(VIEW).len(), 6);
+
+    let h = shop().await;
+    h.mock.script(ARCHIVE, 202, view("archiving"));
+    h.mock.script(VIEW, 403, json!({"code": "AXRESOURCE_DENIED"}));
+    let error = archive(&h.api, Some("shop"), true, true, false, fast(), &mut headless()).await.unwrap_err().to_string();
+    assert!(error.starts_with("AXRESOURCE_DENIED"), "{error}");
+    assert_eq!(h.mock.seen(VIEW).len(), 1, "a 4xx stops the wait at once");
+
+    let h = shop().await;
+    h.mock.script(RESTORE, 202, view("restoring"));
+    h.mock.script(VIEW, 503, json!({"code": "AXRESOURCE_UNAVAILABLE"}));
+    let error = restore(&h.api, Some("shop"), true, false, fast()).await.unwrap_err().to_string();
+    assert!(error.starts_with("Stopped waiting: 10 status reads in a row failed; the last: AXRESOURCE_UNAVAILABLE"), "{error}");
+    assert!(error.contains("The restore may still be running"), "{error}");
+    assert_eq!(h.mock.seen(VIEW).len(), 10);
+}
+
+#[tokio::test]
+async fn a_failed_or_timed_out_wait_hands_back_the_last_view() {
+    let h = shop().await;
+    h.mock.script(VIEW, 200, view("restoring"));
+    let poll = Poll { interval: Duration::from_millis(5), limit: Duration::from_millis(30) };
+    let (last, error) = wait_for(&h.api, "shop", Kind::Restore, view("restoring"), poll, false).await.unwrap_err();
+    assert_eq!(last["state"], "restoring");
+    assert!(error.to_string().contains("is still restoring"));
+
+    let h = shop().await;
+    h.mock.script(VIEW, 200, view("failed"));
+    let (last, error) = wait_for(&h.api, "shop", Kind::Archive, view("archiving"), fast(), false).await.unwrap_err();
+    assert_eq!(last["state"], "failed");
+    assert!(error.to_string().starts_with("The archive of shop failed"));
+}
+
+#[test]
+fn status_of_an_archived_project_is_shown_when_archive_is_off() {
+    let mut value = view("archived");
+    value["enabled"] = json!(false);
+    let lines = render_view("shop", &value);
+    assert!(lines[0].starts_with("Project shop: archived"), "{lines:?}");
+    assert_eq!(lines[1], "  Project archive is not enabled for `shop`: it cannot be archived again, but it can be restored.");
+    assert!(lines.contains(&"  production  ready".to_string()), "{lines:?}");
 }

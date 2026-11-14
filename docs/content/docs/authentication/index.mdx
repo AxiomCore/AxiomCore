@@ -75,7 +75,8 @@ axiom auth disable --environment production --yes
 While it is off, signup, sign-in, token exchange and refresh are refused.
 Logout still works. Access tokens already issued stay valid until they expire
 (at most 15 minutes). Users, sessions and settings are kept. In a terminal
-`disable` asks for confirmation; without one it needs `--yes`. Both commands
+`disable` asks for confirmation; without one it needs `--yes`, and without it
+exits 2 before it signs in or sends anything. Both commands
 change only the `enabled` setting and accept `--json`.
 
 ## How a request is authenticated

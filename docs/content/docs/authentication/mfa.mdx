@@ -57,7 +57,7 @@ An Owner sets these in the dashboard's **Multi-factor** page, with
 axiom auth mfa status --environment production
 axiom auth mfa set --environment production --policy optional \
   --factor totp --factor passkey --step-up-minutes 10 \
-  --rp-id example.com --rp-name "Example" --origin https://app.example.com
+  --rp-id example.com --rp-name "Example" --origin https://app.example.com --yes
 ```
 
 `mfa status` shows the policy, the allowed factors and how many users have
@@ -76,7 +76,12 @@ clears the value. It checks the values before it sends anything:
   relying party ID, or SMS with enabled Twilio settings.
 
 Turning the policy on from `off` prints the SDK warning below and asks for
-confirmation; without a terminal it needs `--yes`. A refusal from the service
+confirmation. So does a change that weakens protection: a lower policy
+(`required` to `optional` or `off`, `optional` to `off`), a factor type
+removed from the allowed list, or a longer `--step-up-minutes` window. Whether
+a change does that depends on the stored settings, so without a terminal any
+`--policy`, `--factor` or `--step-up-minutes` change needs `--yes`; without it
+the command exits 2 before it signs in or reads anything. A refusal from the service
 changes nothing: `AXAUTH_INVALID_REQUEST` means the service does not accept
 these settings yet or a value is out of bounds, and `AXAUTH_FEATURE_DISABLED`
 means multi-factor is not available for the environment yet.

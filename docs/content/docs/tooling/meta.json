@@ -14,6 +14,9 @@
     "cli-extensions",
     "cli-inspect",
     "cli-auth-admin",
-    "secrets-cli"
+    "secrets-cli",
+    "cli-secret-metadata",
+    "cli-migration-impact",
+    "cli-data"
   ]
 }

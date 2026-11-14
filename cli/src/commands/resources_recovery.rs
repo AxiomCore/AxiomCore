@@ -52,6 +52,7 @@ struct Session {
 
 pub struct Api {
     base: String,
+    data_environment: Option<String>,
     http: reqwest::Client,
     session: tokio::sync::Mutex<Session>,
     persist_session: bool,
@@ -73,6 +74,13 @@ impl Reply {
     }
 }
 
+#[derive(Clone, Copy)]
+enum ResponseKind {
+    ResourceJson,
+    DataJson,
+    Csv,
+}
+
 impl Api {
     pub fn new(
         base: &str,
@@ -83,6 +91,7 @@ impl Api {
     ) -> Result<Self> {
         Ok(Self {
             base: base.trim_end_matches('/').to_string(),
+            data_environment: None,
             http: reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
                 .timeout(Duration::from_secs(20))
@@ -93,6 +102,11 @@ impl Api {
             step_up_poll_floor: Duration::from_secs(1),
             wait_interval: Duration::from_secs(5),
         })
+    }
+
+    pub(crate) fn with_data_environment(mut self, environment: &str) -> Self {
+        self.data_environment = Some(environment.to_owned());
+        self
     }
 
     pub fn from_profile() -> Result<Self> {
@@ -138,10 +152,34 @@ impl Api {
         key: Option<&str>,
         bearer: &str,
     ) -> Result<Reply> {
+        self.send_as(method, url, body, key, bearer, ResponseKind::ResourceJson)
+            .await
+    }
+
+    async fn send_as(
+        &self,
+        method: &Method,
+        url: reqwest::Url,
+        body: Option<&Value>,
+        key: Option<&str>,
+        bearer: &str,
+        kind: ResponseKind,
+    ) -> Result<Reply> {
         let mut request = self
             .http
             .request(method.clone(), url)
-            .bearer_auth(bearer);
+            .bearer_auth(bearer)
+            .header(
+                reqwest::header::ACCEPT,
+                if matches!(kind, ResponseKind::Csv) {
+                    "text/csv"
+                } else {
+                    "application/json"
+                },
+            );
+        if !matches!(kind, ResponseKind::ResourceJson) {
+            request = request.timeout(Duration::from_secs(140));
+        }
         if let Some(body) = body {
             request = request.json(body);
         }
@@ -157,8 +195,22 @@ impl Api {
             .get(reqwest::header::RETRY_AFTER)
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.trim().parse::<u64>().ok());
+        let csv = matches!(kind, ResponseKind::Csv) && (200..300).contains(&status);
+        if csv
+            && !response
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .is_some_and(|v| v.starts_with("text/csv"))
+        {
+            bail!("AXDATA_INVALID_RESPONSE: expected a CSV export");
+        }
         let limit = if (200..300).contains(&status) {
-            MAX_BODY
+            match kind {
+                ResponseKind::ResourceJson => MAX_BODY,
+                ResponseKind::DataJson => 4 * 1024 * 1024,
+                ResponseKind::Csv => 25 * 1024 * 1024,
+            }
         } else {
             MAX_ERROR_BODY
         };
@@ -178,8 +230,23 @@ impl Api {
         if !complete && (200..300).contains(&status) {
             bail!("AXRESOURCE_RESPONSE_TOO_LARGE");
         }
-        let body = if complete {
-            serde_json::from_slice(&bytes).unwrap_or(Value::Null)
+        let body = if csv {
+            Value::String(
+                String::from_utf8(bytes.clone())
+                    .map_err(|_| anyhow!("AXDATA_INVALID_RESPONSE: export is not UTF-8"))?,
+            )
+        } else if complete {
+            match serde_json::from_slice(&bytes) {
+                Ok(value) => value,
+                Err(_)
+                    if matches!(kind, ResponseKind::DataJson)
+                        && (200..300).contains(&status)
+                        && status != 204 =>
+                {
+                    bail!("AXDATA_INVALID_RESPONSE: expected JSON");
+                }
+                Err(_) => Value::Null,
+            }
         } else {
             Value::Null
         };
@@ -199,8 +266,22 @@ impl Api {
         body: Option<&Value>,
         key: Option<&str>,
     ) -> Result<Reply> {
+        self.send_session_as(method, url, body, key, ResponseKind::ResourceJson)
+            .await
+    }
+
+    async fn send_session_as(
+        &self,
+        method: &Method,
+        url: reqwest::Url,
+        body: Option<&Value>,
+        key: Option<&str>,
+        kind: ResponseKind,
+    ) -> Result<Reply> {
         let access = self.session.lock().await.access.clone();
-        let reply = self.send(method, url.clone(), body, key, &access).await?;
+        let reply = self
+            .send_as(method, url.clone(), body, key, &access, kind)
+            .await?;
         if reply.status != 401 {
             return Ok(reply);
         }
@@ -222,8 +303,94 @@ impl Api {
                 tokens.expires_in,
             )?;
         }
-        self.send(method, url, body, key, &tokens.access_token)
+        self.send_as(method, url, body, key, &tokens.access_token, kind)
             .await
+    }
+
+    /// Data API request using the normal CLI session. Data errors expose only
+    /// validated protocol codes, never SQL, values or engine error messages.
+    /// A browser-only refusal remains a refusal; it is not a step-up challenge.
+    pub async fn data_request(
+        &self,
+        method: &Method,
+        segments: &[&str],
+        body: Option<&Value>,
+        key: Option<&str>,
+        query: &[(&str, String)],
+    ) -> Result<Value> {
+        let mut url = self.url(segments)?;
+        if !query.is_empty() {
+            url.query_pairs_mut()
+                .extend_pairs(query.iter().map(|(k, v)| (*k, v.as_str())));
+        }
+        let mut reply = self
+            .send_session_as(method, url.clone(), body, key, ResponseKind::DataJson)
+            .await?;
+        let mut elevated = None;
+        if reply.status == 403 && reply.code() == Some("AXRESOURCE_REAUTH_REQUIRED") {
+            // Current /data routes never issue this challenge. Keep the established
+            // flow for forward compatibility, only on an explicit reauth code.
+            step_up(&self.base, &self.step_up, self.step_up_poll_floor).await?;
+            let token = self
+                .step_up
+                .load()
+                .context("The step-up sign-in expired; retry the command")?;
+            reply = self
+                .send_as(method, url.clone(), body, key, &token, ResponseKind::DataJson)
+                .await?;
+            elevated = Some(token);
+        }
+        for _ in 0..3 {
+            if key.is_none() || reply.status != 409 || reply.body["error"]["code"].as_str().or_else(|| reply.code()) != Some("AXDATA_WRITE_PENDING") { break; }
+            tokio::time::sleep(Duration::from_secs(reply.retry_after.unwrap_or(1).min(10)).min(self.wait_interval)).await;
+            reply = if let Some(token) = elevated.as_deref() {
+                self.send_as(method, url.clone(), body, key, token, ResponseKind::DataJson).await?
+            } else {
+                self.send_session_as(method, url.clone(), body, key, ResponseKind::DataJson).await?
+            };
+        }
+        data_route_result(reply, method, segments, &self.base, self.data_environment.as_deref())
+    }
+
+    /// Export through the same session refresh and bounded transport as JSON.
+    /// The CSV end marker is mandatory, including for truncated exports.
+    pub async fn data_export(&self, segments: &[&str], body: &Value) -> Result<String> {
+        let reply = self
+            .send_session_as(
+                &Method::POST,
+                self.url(segments)?,
+                Some(body),
+                None,
+                ResponseKind::Csv,
+            )
+            .await?;
+        let value = data_route_result(reply, &Method::POST, segments, &self.base, self.data_environment.as_deref())?;
+        let text = value
+            .as_str()
+            .context("AXDATA_INVALID_RESPONSE: expected CSV")?;
+        let last = text
+            .strip_suffix("\r\n")
+            .or_else(|| text.strip_suffix('\n'))
+            .unwrap_or(text)
+            .rsplit('\n')
+            .next()
+            .unwrap_or("")
+            .trim_end_matches('\r');
+        let marker = regex::Regex::new(r"^# (complete|truncated) (0|[1-9][0-9]{0,8}) rows$")?;
+        ensure_data(
+            marker.is_match(last),
+            "AXDATA_INVALID_RESPONSE: export end marker is missing",
+        )?;
+        let expected = marker.captures(last).and_then(|c| c[2].parse::<usize>().ok()).context("Invalid export count")?;
+        let mut quoted = false;
+        let mut records = 0usize;
+        for c in text.chars() {
+            if c == '"' { quoted = !quoted; }
+            else if c == '\n' && !quoted { records += 1; }
+        }
+        if !text.is_empty() && !text.ends_with('\n') { records += 1; }
+        ensure_data(!quoted && records.checked_sub(2) == Some(expected), "AXDATA_INVALID_RESPONSE: export row count does not match")?;
+        Ok(text.to_string())
     }
 
     /// A write with the CLI session only (no step-up), refreshed once on 401.
@@ -323,6 +490,70 @@ impl Api {
             return Err(recovery_error(&reply));
         }
     }
+}
+
+
+fn ensure_data(valid: bool, message: &str) -> Result<()> {
+    if !valid {
+        bail!("{message}");
+    }
+    Ok(())
+}
+
+fn data_route_result(reply: Reply, method: &Method, segments: &[&str], cloud_url: &str, environment_label: Option<&str>) -> Result<Value> {
+    if let ["projects", project, "data", "environments", environment, rest @ ..] = segments {
+        let browser_only = (*method == Method::POST
+            && matches!(rest, ["sql", "write", "preview" | "execute"]
+                | ["tables", _, "rows:write" | "export"]
+                | ["capture", "preview"] | ["capture"]))
+            || (*method == Method::PUT && rest == ["capture", "settings"]);
+        let error = &reply.body["error"];
+        let reason = error.get("reason").or_else(|| reply.body.get("reason"));
+        if reply.status == 403
+            && error["code"].as_str().or_else(|| reply.code()) == Some("AXDATA_FORBIDDEN")
+            && (reason.and_then(Value::as_str) == Some("browser_session")
+                || (reason.is_none() && browser_only))
+        {
+            let environment = environment_label.unwrap_or(environment);
+            // The public API and dashboard have separate origins.
+            // Honor explicit local Cloud overrides.
+            let cloud_url = if cloud_url == axiom_cloud::AXIOM_CLOUD_URL {
+                "https://app.axiomcore.dev"
+            } else {
+                cloud_url
+            };
+            bail!("AXDATA_FORBIDDEN: This operation currently needs a dashboard browser session. Open {cloud_url}/dashboard and select project {project}, environment {environment}, to do it.");
+        }
+    }
+    data_result(reply)
+}
+
+fn data_result(reply: Reply) -> Result<Value> {
+    if (200..300).contains(&reply.status) {
+        return Ok(reply.body);
+    }
+    let code = reply
+        .body
+        .get("error")
+        .and_then(|e| e.get("code"))
+        .and_then(Value::as_str)
+        .or_else(|| reply.code());
+    if let Some(code) = code.filter(|c| {
+        c.strip_prefix("AXDATA_").is_some_and(|tail| {
+            !tail.is_empty()
+                && tail.len() <= 40
+                && tail.bytes().all(|b| b.is_ascii_uppercase() || b == b'_')
+        })
+    }) {
+        bail!("{code}: data request refused (HTTP {}).", reply.status);
+    }
+    if reply.code() == Some("AXRESOURCE_REAUTH_REQUIRED") {
+        bail!("AXRESOURCE_REAUTH_REQUIRED: the step-up sign-in was not accepted");
+    }
+    bail!(
+        "AXDATA_REQUEST_FAILED: data request refused (HTTP {}).",
+        reply.status
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -934,3 +1165,6 @@ pub async fn handle_action(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod data_tests;

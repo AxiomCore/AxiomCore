@@ -1,0 +1,100 @@
+---
+title: Cloud data commands
+description: Inspect Cloud database data and prepare reviewed write requests with the Axiom CLI.
+pageType: reference
+---
+
+The `axiom data` command group uses the same project data endpoints as the dashboard.
+This source-build capability is **Experimental**. The current Cloud service requires
+browser sessions for writes, exports, and capture. Those commands return
+`AXDATA_FORBIDDEN` with CLI credentials until the service supports CLI authorization.
+The refusal says: “This operation currently needs a dashboard browser session.”
+It includes a dashboard link and the selected project and environment, preserving
+the environment name or slug you supplied. The link uses the configured Cloud URL
+(`AXIOM_CLOUD_URL` for local development). Use the dashboard for those operations
+in the meantime. Other permission refusals remain permission errors.
+
+Sign in with `axiom login`. Every command requires `--project` and `--environment`;
+each accepts an ID, slug, or unambiguous display name. Add `--json` for machine output.
+
+```sh title="Read Cloud data"
+axiom data overview get --project demo --environment staging --json
+axiom data catalog get --project demo --environment staging
+axiom data history list --project demo --environment staging
+axiom data events list --project demo --environment staging --action sql_read
+```
+
+History and events accept `--before` for pagination. Only events accept `--action`.
+
+## Request bodies
+
+Commands with `--file` read one JSON request object. SQL parameters and row values
+use typed values such as `{"t":"integer","v":1}` or `{"t":"null"}`. Keep application
+data in private files. For a read, create `query.json`:
+
+```json title="query.json"
+{"sql":"SELECT 1","params":[]}
+```
+
+```sh title="Run a SQL read"
+axiom data sql read --project demo --environment staging --file query.json --json
+```
+
+| Command following `axiom data` | Request file |
+| --- | --- |
+| `sql read`, `sql preview`, `sql write` | `sql`, optional typed `params` array |
+| `tables TABLE query` | Data API row query, including filters and pagination |
+| `tables TABLE cell` | Row key and column selection |
+| `tables TABLE count`, `tables TABLE export` | `filters` array |
+| `tables TABLE write` | `operations` array, at most 100 operations |
+| `saved-queries create` | `name`, `sql` |
+| `saved-queries update ID` | `name`, `sql`, `revision` |
+| `capture preview` | `sql`, `title` |
+| `capture create` | `sql`, `title`; execution hashes and version come from the fresh preview |
+| `capture settings set` | `enabled`; enabling also requires `acknowledged_min_cli_version` |
+
+`axiom data saved-queries list`, `saved-queries delete ID`, and `capture settings get`
+do not require a file. Export returns an object with a `csv` string after validating
+the CSV completion marker. Use `--out PATH` to save the validated CSV instead:
+
+```sh title="Save a CSV export when the service permits CLI exports"
+axiom data tables items export --project demo --environment staging --file filters.json --out items.csv
+```
+
+Create `filters.json` with `{"filters":[]}`. An existing output path is refused unless
+you add `--force` alongside `--out`. Symlink destinations are always refused, even
+with `--force`. On Unix, output files have mode `0600` (owner read and write only).
+The complete CSV is staged in the same directory and published atomically, so a
+failed write does not leave a partial export or truncate an existing file.
+Without `--out`, the response contains the `csv` string as before.
+
+## Reviewing changes
+
+`sql write` always obtains a fresh server preview. It displays affected rows,
+trigger and cascade totals, side effects, and the schema head. Confirmation binds
+execution to those counts and that head. SQL and parameters are read once and
+cannot change between preview and execution. The environment's confirmation limit
+is enforced before execution.
+
+Row writes display their operations and the current catalog for review. There is
+no separate server row-preview endpoint. Updates and deletes must include the
+original values and row keys required by the API so concurrent changes are refused.
+A rejected or uncertain receipt is not reported as success.
+
+SQL and row writes, capture changes, and saved-query deletion prompt interactively;
+`--yes` accepts the displayed review in automation.
+SQL confirmation asks for both counts when present. For destructive capture
+creation, the interactive prompt requires you to type the version from the fresh
+preview exactly before accepting execution. A mismatch cancels execution. `--yes`
+accepts that review without typing the version; noninteractive use requires it. Mutations that use idempotency
+print their UUID to stderr. Pending writes retry at most three times with the same
+body and key. Preserve the UUID for investigating uncertain outcomes. SQL writes
+and capture creation reject a supplied `--idempotency-key`, because a new preview
+can change the execution body; inspect history before starting a new operation.
+Other mutations accept `--idempotency-key UUID` to replay an unchanged request.
+Authentication refresh uses the existing CLI session. An explicit server step-up
+challenge uses the existing recent-sign-in flow; a forbidden response does not
+bypass authorization. Current browser-only restrictions also apply to step-up tokens.
+
+Use a disposable staging environment to validate changes before production. After
+an accepted write, inspect `axiom data history list` and query the affected rows.

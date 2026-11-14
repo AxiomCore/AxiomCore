@@ -38,6 +38,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Inspect and edit Cloud database data.
+    Data(commands::data::DataArgs),
     /// Runtime secret sources and Cloud metadata; values never enter compilation.
     Secrets {
         #[command(subcommand)]
@@ -765,6 +767,7 @@ impl DatabaseAction {
             DatabaseAction::Diff { project, .. } => project.is_some(),
             DatabaseAction::Pull(_) => true,
             DatabaseAction::Convert { .. } => true,
+            DatabaseAction::Impact { action: commands::database_impact::ImpactAction::Get(_) } => true,
             _ => false,
         }
     }
@@ -1732,6 +1735,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Extract command name for logging
     let cmd_name = match &*cli.command {
+        Commands::Data(_) => "data",
         Commands::Secrets { .. } => "secrets",
         Commands::Editor { .. } => "editor",
         Commands::Init { .. } => "init",
@@ -1832,6 +1836,7 @@ fn confirmation_preflight(command: &Commands) {
 /// that publish or retrieve cloud data retain their existing access checks.
 fn is_local_command(command: &Commands) -> bool {
     match command {
+        Commands::Data(_) => true,
         Commands::Secrets { .. } => true,
         Commands::Editor { .. } => true,
         Commands::Scenario { .. } => true,
@@ -1877,6 +1882,7 @@ fn is_local_command(command: &Commands) -> bool {
 
 async fn execute_command(command: &Commands) -> anyhow::Result<()> {
     match command {
+        Commands::Data(args) => commands::data::handle(args).await,
         Commands::Secrets { action } => commands::secrets::handle(action).await,
         Commands::Editor { action } => commands::editor::handle(action),
         Commands::Check {
@@ -2390,6 +2396,7 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             DatabaseAction::Pull(args) => commands::database_remote::pull(args).await,
             DatabaseAction::Convert { action } => commands::database_convert::run(action).await,
             DatabaseAction::Runtime { command } => commands::database_runtime::run(command),
+            DatabaseAction::Impact { action: commands::database_impact::ImpactAction::Get(args) } => commands::data_metadata::handle_impact(args).await,
             DatabaseAction::Impact { action } => commands::database_impact::run_check(action),
             DatabaseAction::Sqlite { command } => commands::database_sqlite::run(command),
             DatabaseAction::Fleet { command } => commands::database_fleet::run(command).await,

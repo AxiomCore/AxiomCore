@@ -330,3 +330,108 @@ fn template_subjects_are_never_argv() {
     }
     assert!(EmailHarness::try_parse_from(["t", "unsuppress", "a@example.com", "--yes"]).is_ok());
 }
+
+#[test]
+fn unsupported_variables_are_counted_never_named() {
+    // P1 re-verification round 3: the hex canary as an unsupported variable.
+    let probe = "{{abcdefabcdefabcdefabcdefabcdefab}}";
+    let problem = template_problem("signup", "the subject", &format!("Hi {probe} {{{{zzz}}}} {{{{app_name}}}}"), 600).unwrap();
+    assert!(problem.starts_with("the subject uses 2 unsupported placeholders; use {{app_name}}"), "{problem}");
+    assert!(!problem.contains("abcdef") && !problem.contains("zzz"), "{problem}");
+    let problem = template_problem("signup", "the intro", "Your new address is {{new_email}}", 2000).unwrap();
+    assert!(problem.contains("1 unsupported placeholder;"), "{problem}");
+
+    let summary = text_summary(&json!(format!("{probe} {{{{app_name}}}} {{{{ ABC }}}} {{{{app_name}}}} {{{{new_email}}}}")));
+    assert_eq!(summary["variables"], json!(["{{app_name}}", "{{new_email}}"]));
+    assert_eq!(summary["unsupported_placeholders"], 2);
+    assert!(!summary.to_string().contains("abcdef"), "{summary}");
+    assert!(describe(&summary).contains("variables {{app_name}} {{new_email}}, 2 unsupported placeholders, sha256 "), "{}", describe(&summary));
+    assert_eq!(text_summary(&json!("plain"))["unsupported_placeholders"], 0);
+    assert!(!describe(&text_summary(&json!("plain"))).contains("unsupported"));
+}
+
+#[test]
+fn only_documented_metadata_positions_with_valid_values_are_shown() {
+    let canary = "AbcDefghiJklMnopQrStUvWxYz_-abcDEF";
+    let mut view = json!({"kind": "signup", "updated_at": "2026-11-01T00:00:00.123456Z", "revision": 2, "overridden": true,
+        "new_field": {"kind": canary, "updated_at": canary, "created_at": canary, "name": canary, "id": canary},
+        "defaults": {"kind": "signup", "updated_at": "2026-11-01T00:00:00Z"},
+        "templates": [{"kind": "magic_link", "updated_at": "2026-11-01T00:00:00+01:00", "subject": canary, "nested": [{"kind": "signup"}]}]});
+    hide_text(&mut view);
+    assert!(!view.to_string().contains(canary), "{view}");
+    assert_eq!(view["kind"], "signup");
+    assert_eq!(view["updated_at"], "2026-11-01T00:00:00.123456Z");
+    assert_eq!(view["templates"][0]["kind"], "magic_link");
+    assert_eq!(view["templates"][0]["updated_at"], "2026-11-01T00:00:00+01:00");
+    // The same keys anywhere else are text, even with a metadata-shaped value.
+    assert_eq!(view["defaults"]["kind"]["set"], true);
+    assert_eq!(view["defaults"]["updated_at"]["set"], true);
+    assert_eq!(view["templates"][0]["nested"][0]["kind"]["set"], true);
+    assert_eq!(view["new_field"]["kind"]["set"], true);
+    // A documented position with an unexpected value is text too.
+    for (key, value) in [("kind", canary), ("kind", "Signup"), ("updated_at", canary), ("updated_at", "2026-11-01T00:00:00Z secret"), ("updated_at", "")] {
+        let mut probe = json!({ key: value, "templates": [{ key: value }] });
+        hide_text(&mut probe);
+        assert!(probe[key].is_object() && probe["templates"][0][key].is_object(), "{key}={value:?}: {probe}");
+    }
+}
+
+/// Every path to a string in `value` (JSON pointers).
+fn string_paths(value: &Value, at: String, out: &mut Vec<String>) {
+    match value {
+        Value::String(_) => out.push(at),
+        Value::Object(map) => map.iter().for_each(|(k, v)| string_paths(v, format!("{at}/{k}"), out)),
+        Value::Array(items) => items.iter().enumerate().for_each(|(i, v)| string_paths(v, format!("{at}/{i}"), out)),
+        _ => {}
+    }
+}
+
+#[test]
+fn a_marker_in_any_string_position_is_never_in_default_output_or_errors() {
+    let future = json!({"kind": "signup", "created_at": "2026-11-01T00:00:00Z", "name": "n", "id": "i", "list": ["s", {"updated_at": "2026-11-01T00:00:00Z", "kind": "magic_link", "deep": [["x"]]}]});
+    let list = json!({"templates": [{"kind": "signup", "overridden": true, "subject": "Welcome", "revision": 2, "updated_at": "2026-11-01T00:00:00Z", "future": future}], "note": "n"});
+    let view = json!({"kind": "signup", "overridden": true, "subject": "Welcome", "intro": "Hi", "outro": "Bye", "revision": 2, "updated_at": "2026-11-01T00:00:00Z",
+        "defaults": {"subject": "a", "intro": "b", "outro": "c", "kind": "signup"}, "new_field": future, "name": "j", "id": "k"});
+    let preview = json!({"subject": "Welcome", "text": "Hi", "html": "<p>Hi</p>", "kind": "signup", "meta": future});
+    let markers = ["QzMarker0123456789Zq", "{{qzmarkerzq}}", "Hi {{qzmarkerzq}} QzMarker0123456789Zq", "{{ QzMarker }}", "{{qzmarkerzq", "see qzmarkerzq.example.com"];
+    let mut checked = 0;
+    for sample in [&list, &view, &preview] {
+        let mut paths = Vec::new();
+        string_paths(sample, String::new(), &mut paths);
+        for path in &paths {
+            for marker in markers {
+                let mut probe = sample.clone();
+                *probe.pointer_mut(path).unwrap() = marker.into();
+                let mut hidden = probe.clone();
+                crate::commands::auth::sanitize(&mut hidden, true);
+                hide_text(&mut hidden);
+                let mut printed = vec![serde_json::to_string_pretty(&hidden).unwrap()];
+                printed.extend(template_lines(&hidden, false));
+                printed.extend(list_lines(&hidden, false));
+                printed.extend(preview_lines(&hidden, false, false));
+                printed.extend(preview_lines(&hidden, true, false));
+                // The text a `set` or `preview` would send from this response is checked first.
+                for kind in TEMPLATE_KINDS {
+                    match template_body(kind, &probe, None, None, None) {
+                        Err(error) => printed.push(format!("{error:#}")),
+                        Ok(_) => {}
+                    }
+                }
+                let printed = printed.join("\n").to_lowercase();
+                assert!(!printed.contains("qzmarker"), "{path} = {marker:?}: {printed}");
+                checked += 1;
+            }
+        }
+    }
+    assert!(checked > 100, "{checked}");
+    // Every field of the text checks, with the marker in every form.
+    for marker in markers {
+        for (field, max) in [("the subject", 600), ("the intro", 2000), ("the outro", 2000)] {
+            for value in [marker.to_string(), format!("{marker}\n{marker}"), format!("{marker}\u{7}"), marker.repeat(200)] {
+                if let Some(problem) = template_problem("signup", field, &value, max) {
+                    assert!(!problem.to_lowercase().contains("qzmarker"), "{field} {value:?}: {problem}");
+                }
+            }
+        }
+    }
+}

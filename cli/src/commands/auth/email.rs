@@ -6,9 +6,10 @@
 //! documented `{{variables}}`; it is checked here with the backend's rules before sending.
 //! Template text comes only from files or stdin (`-`), never argv. Template text is
 //! never printed unless `--reveal-text`: by default the `templates` commands print only
-//! metadata of each text field (whether it is set, its length, the `{{variables}}` it
-//! uses and its SHA-256), because a credential pasted into a template cannot be told
-//! apart from ordinary text reliably.
+//! metadata of each text field (whether it is set, its length, the supported
+//! `{{variables}}` it uses, a count of other placeholders and its SHA-256), because a
+//! credential pasted into a template cannot be told apart from ordinary text reliably.
+//! Errors about template text name the field, never the text.
 use super::advanced::{confirm_yes, read_secret_input};
 use super::{looks_like_email, print, sanitize, target, text, usage, AuthArgs, Target};
 use anyhow::{Context, Result};
@@ -19,6 +20,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 use zeroize::Zeroizing;
 
 /// Template kinds (auth-admin-client.js `TEMPLATE_KINDS`, backend `TemplateKinds`).
@@ -237,10 +239,21 @@ pub async fn smtp(args: &AuthArgs, action: &SmtpAction) -> Result<()> {
     smtp_with(args, &target, action, password).await
 }
 
+/// A supported-shape `{{variable}}` (the backend's pattern).
+static VARIABLE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"\{\{[a-z_]+\}\}").expect("static regex"));
+/// Any `{{…}}` placeholder, for summaries.
+static PLACEHOLDER: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"\{\{[^{}]*\}\}").expect("static regex"));
+static URL_LIKE: LazyLock<[regex::Regex; 3]> = LazyLock::new(|| {
+    [r"(?i)([a-z][a-z0-9+.-]*:)?//", r"(?i)\bwww\.", r"(?i)[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,63}\b"].map(|p| regex::Regex::new(p).expect("static regex"))
+});
+/// An RFC 3339 timestamp, as the backend writes `updated_at`.
+static TIMESTAMP: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,9})?(Z|[+-][0-9]{2}:[0-9]{2})$").expect("static regex"));
+
 fn url_like(value: &str) -> bool {
     // Backend `URLLike`: variables masked with an alphanumeric, then three patterns.
-    let masked = regex::Regex::new(r"\{\{[a-z_]+\}\}").expect("static regex").replace_all(value, "x");
-    [r"(?i)([a-z][a-z0-9+.-]*:)?//", r"(?i)\bwww\.", r"(?i)[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,63}\b"].iter().any(|p| regex::Regex::new(p).expect("static regex").is_match(&masked))
+    let masked = VARIABLE.replace_all(value, "x");
+    URL_LIKE.iter().any(|p| p.is_match(&masked))
 }
 
 fn control(value: &str) -> bool {
@@ -389,16 +402,26 @@ fn template_kind(kind: &str) -> Result<&str> {
     }
 }
 
+/// Every `{{variable}}` some template kind can use: the only placeholder text that is
+/// ever printed without `--reveal-text`. Any other placeholder is only counted.
+const SUPPORTED_VARIABLES: [&str; 4] = ["{{app_name}}", "{{expires_minutes}}", "{{recipient_email}}", "{{new_email}}"];
+
 fn template_variables(kind: &str) -> Vec<&'static str> {
-    let mut variables = vec!["{{app_name}}", "{{expires_minutes}}", "{{recipient_email}}"];
+    let mut variables = SUPPORTED_VARIABLES[..3].to_vec();
     if kind == "email_change_notice" {
         variables.push("{{new_email}}");
     }
     variables
 }
 
+/// `n unsupported placeholder(s)`.
+fn unsupported_count(count: usize) -> String {
+    format!("{count} unsupported placeholder{}", if count == 1 { "" } else { "s" })
+}
+
 /// The backend's `ValidateTemplate` rules for one field: byte bound, plain text, known
-/// variables only, no URL- or domain-like text.
+/// variables only, no URL- or domain-like text. The problem names the field, never its
+/// text: an unsupported `{{variable}}` is only counted.
 pub fn template_problem(kind: &str, field: &str, value: &str, max: usize) -> Option<String> {
     if value.len() > max {
         return Some(format!("{field} is at most {max} bytes"));
@@ -408,11 +431,16 @@ pub fn template_problem(kind: &str, field: &str, value: &str, max: usize) -> Opt
     }
     let allowed = template_variables(kind);
     let mut masked = value.to_string();
-    for found in regex::Regex::new(r"\{\{[a-z_]+\}\}").expect("static regex").find_iter(value) {
-        if !allowed.contains(&found.as_str()) {
-            return Some(format!("{field} uses {}, which is not available; use {}", found.as_str(), allowed.join(", ")));
+    let mut unsupported = 0;
+    for found in VARIABLE.find_iter(value) {
+        if allowed.contains(&found.as_str()) {
+            masked = masked.replacen(found.as_str(), "", 1);
+        } else {
+            unsupported += 1;
         }
-        masked = masked.replacen(found.as_str(), "", 1);
+    }
+    if unsupported > 0 {
+        return Some(format!("{field} uses {}; use {}", unsupported_count(unsupported), allowed.join(", ")));
     }
     if masked.contains("{{") || masked.contains("}}") {
         return Some(format!("{field} has an unclosed or unknown {{{{variable}}}}; use {}", allowed.join(", ")));
@@ -495,49 +523,80 @@ async fn template_view(target: &Target, kind: &str) -> Result<Value> {
     target.call(Method::GET, &format!("templates/{kind}"), &[], None).await
 }
 
-/// Response keys whose string values are metadata, not template text.
-const METADATA_KEYS: [&str; 3] = ["kind", "updated_at", "created_at"];
-
 /// What is printed instead of one template text field: whether it is set, its length in
-/// bytes, the `{{variables}}` it uses (in order, once each) and the SHA-256 of its UTF-8
-/// bytes, so two outputs can be compared without showing the text.
+/// bytes, the supported `{{variables}}` it uses (`SUPPORTED_VARIABLES`, in order, once
+/// each), how many other `{{…}}` placeholders it has (counted, never named) and the
+/// SHA-256 of its UTF-8 bytes, so two outputs can be compared without showing the text.
 pub fn text_summary(value: &Value) -> Value {
     match value.as_str() {
         Some(text) if !text.is_empty() => {
             let mut variables: Vec<&str> = Vec::new();
-            for found in regex::Regex::new(r"\{\{[a-z_]+\}\}").expect("static regex").find_iter(text) {
-                if !variables.contains(&found.as_str()) {
-                    variables.push(found.as_str());
+            let mut unsupported = 0;
+            for found in PLACEHOLDER.find_iter(text) {
+                match SUPPORTED_VARIABLES.iter().find(|v| **v == found.as_str()) {
+                    Some(v) if !variables.contains(v) => variables.push(v),
+                    Some(_) => {}
+                    None => unsupported += 1,
                 }
             }
-            json!({"set": true, "bytes": text.len(), "variables": variables, "sha256": hex::encode(Sha256::digest(text.as_bytes()))})
+            json!({"set": true, "bytes": text.len(), "variables": variables, "unsupported_placeholders": unsupported, "sha256": hex::encode(Sha256::digest(text.as_bytes()))})
         }
         _ => json!({"set": false}),
     }
 }
 
+/// One step of a path into a response: an object key, or any array element.
+type Step = Option<String>;
+
+/// The only strings of a templates response printed without `--reveal-text`, by their
+/// position in the documented response (not by key name alone), and only when the value
+/// has the expected form:
+/// - `/kind` and `/templates/*/kind`: one of `TEMPLATE_KINDS`;
+/// - `/updated_at` and `/templates/*/updated_at`: an RFC 3339 timestamp.
+///
+/// The template responses have no other string metadata (`revision` is a number and
+/// `overridden` a boolean); every other string, at any depth and under any key, known
+/// or not, is replaced by its `text_summary`.
+fn shown_metadata(path: &[Step], value: &str) -> bool {
+    let path: Vec<Option<&str>> = path.iter().map(Option::as_deref).collect();
+    match path.as_slice() {
+        [Some("kind")] | [Some("templates"), None, Some("kind")] => TEMPLATE_KINDS.contains(&value),
+        [Some("updated_at")] | [Some("templates"), None, Some("updated_at")] => TIMESTAMP.is_match(value),
+        _ => false,
+    }
+}
+
 /// Replace every string of a templates response with its `text_summary`, except the
-/// metadata keys (`METADATA_KEYS`); numbers, booleans and structure are kept. Unknown
-/// string fields are summarized too, so no template text is printed by default.
+/// metadata of `shown_metadata`; numbers, booleans, keys and structure are kept, and a
+/// null text field (`TEXT_FIELDS`) becomes `{"set": false}`.
 pub fn hide_text(value: &mut Value) {
+    hide_at(value, &mut Vec::new());
+}
+
+fn hide_at(value: &mut Value, path: &mut Vec<Step>) {
     match value {
         Value::Object(map) => {
-            for (key, value) in map.iter_mut() {
-                if value.is_string() && METADATA_KEYS.contains(&key.as_str()) {
-                    continue;
-                }
-                if value.is_string() || value.is_null() && TEXT_FIELDS.contains(&key.as_str()) {
-                    let summary = text_summary(value);
-                    *value = summary;
+            for (key, item) in map.iter_mut() {
+                path.push(Some(key.clone()));
+                if item.is_null() && TEXT_FIELDS.contains(&key.as_str()) {
+                    *item = text_summary(item);
                 } else {
-                    hide_text(value);
+                    hide_at(item, path);
                 }
+                path.pop();
             }
         }
-        Value::Array(items) => items.iter_mut().for_each(hide_text),
+        Value::Array(items) => {
+            for item in items {
+                path.push(None);
+                hide_at(item, path);
+                path.pop();
+            }
+        }
         Value::String(_) => {
-            let summary = text_summary(value);
-            *value = summary;
+            if !value.as_str().is_some_and(|text| shown_metadata(path, text)) {
+                *value = text_summary(value);
+            }
         }
         _ => {}
     }
@@ -546,13 +605,18 @@ pub fn hide_text(value: &mut Value) {
 /// Text fields of template views, summaries and previews; a null one is shown as not set.
 const TEXT_FIELDS: [&str; 5] = ["subject", "intro", "outro", "text", "html"];
 
-/// `set, 23 bytes, variables {{app_name}}, sha256 …` for a `text_summary`.
+/// `set, 23 bytes, variables {{app_name}}, sha256 …` (with `, 2 unsupported
+/// placeholders` after the variables if any) for a `text_summary`.
 fn describe(summary: &Value) -> String {
     if summary["set"] != true {
         return "not set".into();
     }
-    let variables: Vec<&str> = summary["variables"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
-    let variables = if variables.is_empty() { "no variables".to_string() } else { format!("variables {}", variables.join(" ")) };
+    let variables: Vec<&str> = summary["variables"].as_array().into_iter().flatten().filter_map(Value::as_str).filter(|v| SUPPORTED_VARIABLES.contains(v)).collect();
+    let mut variables = if variables.is_empty() { "no variables".to_string() } else { format!("variables {}", variables.join(" ")) };
+    match summary["unsupported_placeholders"].as_u64() {
+        Some(count) if count > 0 => variables.push_str(&format!(", {}", unsupported_count(count as usize))),
+        _ => {}
+    }
     format!("set, {} bytes, {variables}, sha256 {}", summary["bytes"], text(summary, "sha256"))
 }
 
@@ -598,6 +662,31 @@ fn template_lines(t: &Value, reveal: bool) -> Vec<String> {
     lines
 }
 
+/// Human lines of `templates list`; `l` as for `template_lines`.
+fn list_lines(l: &Value, reveal: bool) -> Vec<String> {
+    let mut lines: Vec<String> = l["templates"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|t| format!("{}  {}  revision {}  subject: {}", text(t, "kind"), if t["overridden"] == true { "customized" } else { "default" }, text(t, "revision"), shown(&t["subject"], reveal)))
+        .collect();
+    if !reveal {
+        lines.push(HIDDEN_HINT.into());
+    }
+    lines
+}
+
+/// Human lines of `templates preview` (the text part, or the HTML one); `r` as for
+/// `template_lines`.
+fn preview_lines(r: &Value, html: bool, reveal: bool) -> Vec<String> {
+    let part = if html { "html" } else { "text" };
+    if reveal {
+        vec![format!("Subject: {}", text(r, "subject")), String::new(), text(r, part)]
+    } else {
+        vec![format!("Subject: {}", describe(&r["subject"])), format!("{}: {}", if html { "HTML" } else { "Text" }, describe(&r[part])), HIDDEN_HINT.into()]
+    }
+}
+
 /// Print a templates response: the text itself with `--reveal-text` (after a warning on
 /// stderr), otherwise only its metadata.
 fn print_templates(args: &AuthArgs, mut value: Value, reveal: bool, human: impl FnOnce(&Value) -> Vec<String>) -> Result<()> {
@@ -615,18 +704,7 @@ pub(super) async fn templates_with(args: &AuthArgs, target: &Target, action: &Te
         TemplatesAction::List { reveal_text } => {
             let listed = target.call(Method::GET, "templates", &[], None).await?;
             let reveal = *reveal_text;
-            print_templates(args, listed, reveal, |l| {
-                let mut lines: Vec<String> = l["templates"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .map(|t| format!("{}  {}  revision {}  subject: {}", text(t, "kind"), if t["overridden"] == true { "customized" } else { "default" }, text(t, "revision"), shown(&t["subject"], reveal)))
-                    .collect();
-                if !reveal {
-                    lines.push(HIDDEN_HINT.into());
-                }
-                lines
-            })
+            print_templates(args, listed, reveal, |l| list_lines(l, reveal))
         }
         TemplatesAction::Show { kind, reveal_text } => {
             let view = template_view(target, template_kind(kind)?).await?;
@@ -669,14 +747,7 @@ pub(super) async fn templates_with(args: &AuthArgs, target: &Target, action: &Te
             };
             let rendered = target.call(Method::POST, &format!("templates/{kind}/preview"), &[], Some(&body)).await?;
             let reveal = *reveal_text;
-            print_templates(args, rendered, reveal, |r| {
-                let part = if *html { "html" } else { "text" };
-                if reveal {
-                    vec![format!("Subject: {}", text(r, "subject")), String::new(), text(r, part)]
-                } else {
-                    vec![format!("Subject: {}", describe(&r["subject"])), format!("{}: {}", if *html { "HTML" } else { "Text" }, describe(&r[part])), HIDDEN_HINT.into()]
-                }
-            })
+            print_templates(args, rendered, reveal, |r| preview_lines(r, *html, reveal))
         }
     }
 }

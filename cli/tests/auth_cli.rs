@@ -31,6 +31,10 @@ const LEAKS: [&str; 13] = [
     "internationalization",
     "Zanzibar",
 ];
+/// The verifier's hex canary as an unsupported `{{variable}}`.
+const PROBE_HEX: &str = "abcdefabcdefabcdefabcdefabcdefab";
+const PROBE_SUBJECT: &str = "{{abcdefabcdefabcdefabcdefabcdefab}}";
+const PROBE_KIND: &str = "AbcDefghiJklMnopQrStUvWxYz_-abcDEF";
 const SUBJECT: &str = "Welcome to {{app_name}} Zanzibar AbcDefghiJklMnopQrStUvWxYz_-abcDEF";
 
 fn template_text() -> String {
@@ -59,7 +63,7 @@ type Log = Arc<Mutex<Vec<(String, String, String)>>>;
 
 /// Serve canned responses on 127.0.0.1; `route` maps (method, path with
 /// query) to (status, body). Every request is recorded.
-fn stub(route: fn(&str, &str, &str) -> (u16, String)) -> (String, Log) {
+fn stub(route: impl Fn(&str, &str, &str) -> (u16, String) + Send + 'static) -> (String, Log) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = format!("http://{}", listener.local_addr().unwrap());
     let log: Log = Arc::default();
@@ -154,6 +158,14 @@ fn route(method: &str, path: &str, body: &str) -> (u16, String) {
             200,
             serde_json::json!({"kind": "signup", "overridden": true, "subject": SUBJECT, "intro": template_text(), "outro": null, "revision": 2,
                 "updated_at": "2026-11-01T00:00:00Z", "defaults": {"subject": "Welcome", "intro": "Hello", "outro": "Bye {{app_name}}"}})
+            .to_string(),
+        ),
+        // P1 re-verification round 3 (variable-probe.log, probes.py): an unsupported
+        // `{{variable}}` and an unknown nested field named `kind`.
+        ("GET", p) if p == format!("{}/templates/invitation", env(DEV)) => (
+            200,
+            serde_json::json!({"kind": "invitation", "overridden": true, "subject": PROBE_SUBJECT, "intro": "Join {{app_name}}", "outro": null, "revision": 4,
+                "updated_at": "2026-11-01T00:00:00Z", "defaults": {"subject": "Welcome", "intro": "Hello", "outro": "Bye"}, "new_field": {"kind": PROBE_KIND}})
             .to_string(),
         ),
         ("GET", p) if p == format!("{}/templates", env(DEV)) => (200, serde_json::json!({"templates": [{"kind": "signup", "overridden": true, "subject": SUBJECT, "revision": 2}]}).to_string()),
@@ -535,3 +547,117 @@ fn org_selects_a_project_outside_the_current_organization_by_exact_slug() {
     assert_eq!(after, ["GET /api/v1/projects/5e6f7081-92a3-4d4e-8f5a-6b7c8d9e0f1a", "GET /api/v1/projects/not-mine"], "{after:?}");
 }
 
+
+#[test]
+fn unsupported_variables_are_counted_and_never_echoed() {
+    let (cloud, log) = stub(route);
+    let directory = tempfile::tempdir().unwrap();
+    profile(directory.path());
+    // An unsupported variable read from stdin: exit 2, the error names the field and a count only.
+    for command in [&["set", "signup", "--subject-file", "-"][..], &["preview", "signup", "--subject-file", "-"]] {
+        let mut args = vec!["auth", "--project", "shop", "--environment", DEV, "templates"];
+        args.extend_from_slice(command);
+        let refused = axiom(&cloud, directory.path(), &args, Some(&format!("Hi {PROBE_SUBJECT} and {{{{zzz_other}}}}\n")));
+        assert_eq!(refused.status.code(), Some(2), "{command:?}");
+        let stderr = String::from_utf8_lossy(&refused.stderr);
+        assert!(!stderr.contains(PROBE_HEX) && !stderr.contains("zzz_other"), "{command:?}: {stderr}");
+        assert!(stderr.contains("the subject") && stderr.contains("2 unsupported placeholders"), "{command:?}: {stderr}");
+    }
+    assert!(!log.lock().unwrap().iter().any(|(m, p, _)| m == "PUT" || p.ends_with("/preview")));
+
+    // A stored subject with an unsupported variable, and an unknown nested `kind`: only counts and metadata.
+    for json in [false, true] {
+        let shown = templates(&cloud, directory.path(), &["show", "invitation"], if json { &["--json"] } else { &[] });
+        assert!(shown.status.success(), "{}", String::from_utf8_lossy(&shown.stderr));
+        let stdout = String::from_utf8_lossy(&shown.stdout);
+        let stderr = String::from_utf8_lossy(&shown.stderr);
+        for piece in [PROBE_HEX, PROBE_KIND, "Join"] {
+            assert!(!stdout.contains(piece) && !stderr.contains(piece), "json={json} printed {piece}: {stdout}");
+        }
+        if json {
+            let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+            assert_eq!(value["subject"]["variables"], serde_json::json!([]));
+            assert_eq!(value["subject"]["unsupported_placeholders"], 1);
+            assert_eq!(value["subject"]["sha256"], sha256(PROBE_SUBJECT));
+            assert_eq!(value["intro"]["variables"], serde_json::json!(["{{app_name}}"]));
+            assert_eq!(value["new_field"]["kind"]["set"], true);
+            assert_eq!(value["kind"], "invitation");
+            assert_eq!(value["updated_at"], "2026-11-01T00:00:00Z");
+        } else {
+            assert!(stdout.contains("1 unsupported placeholder,"), "{stdout}");
+        }
+    }
+}
+
+
+/// Every path to a string in `value`, as JSON pointers.
+fn string_paths(value: &serde_json::Value, at: String, out: &mut Vec<String>) {
+    match value {
+        serde_json::Value::String(_) => out.push(at),
+        serde_json::Value::Object(map) => map.iter().for_each(|(k, v)| string_paths(v, format!("{at}/{k}"), out)),
+        serde_json::Value::Array(items) => items.iter().enumerate().for_each(|(i, v)| string_paths(v, format!("{at}/{i}"), out)),
+        _ => {}
+    }
+}
+
+#[test]
+fn a_marker_in_any_string_of_a_templates_response_is_never_printed_by_default() {
+    let future = serde_json::json!({"kind": "signup", "created_at": "2026-11-01T00:00:00Z", "name": "n", "id": "i", "items": ["s", {"updated_at": "2026-11-01T00:00:00Z", "kind": "magic_link"}]});
+    let list = serde_json::json!({"templates": [{"kind": "signup", "overridden": true, "subject": "Welcome", "revision": 2, "updated_at": "2026-11-01T00:00:00Z", "future": future}], "note": "n"});
+    let view = serde_json::json!({"kind": "signup", "overridden": true, "subject": "Welcome", "intro": "Hi", "outro": "Bye", "revision": 2, "updated_at": "2026-11-01T00:00:00Z",
+        "defaults": {"subject": "a", "intro": "b", "outro": "c", "kind": "signup"}, "new_field": future, "name": "j", "id": "k", "created_at": "2026-11-01T00:00:00Z"});
+    let preview = serde_json::json!({"subject": "Welcome", "text": "Hi", "html": "<p>Hi</p>", "kind": "signup", "meta": future});
+    // `set` reads the current template (the response) and sends it back with the new intro.
+    let set: &[&str] = &["set", "signup", "--intro-file", "intro.txt"];
+    let samples: [(&serde_json::Value, Vec<&[&str]>); 3] = [
+        (&list, vec![&["list"]]),
+        (&view, vec![&["show", "signup"], set]),
+        (&preview, vec![&["preview", "signup"], &["preview", "signup", "--html"]]),
+    ];
+    // A marker alone, as an unsupported variable, and inside text.
+    let markers = ["QzMarker0123456789Zq", "{{qzmarkerzq}}", "Hi {{qzmarkerzq}} QzMarker0123456789Zq"];
+    let mut jobs = Vec::new();
+    for (sample, commands) in &samples {
+        let mut paths = Vec::new();
+        string_paths(sample, String::new(), &mut paths);
+        for path in paths {
+            for marker in markers {
+                let mut probe = (*sample).clone();
+                *probe.pointer_mut(&path).unwrap() = marker.into();
+                for command in commands {
+                    for json in [false, true] {
+                        jobs.push((format!("{command:?} json={json} {path} = {marker:?}"), probe.to_string(), *command, json));
+                    }
+                }
+            }
+        }
+    }
+    assert!(jobs.len() > 300, "{}", jobs.len());
+    // Four stubs (each answers every templates route with the current probe) in parallel.
+    let chunk = jobs.len().div_ceil(4);
+    let succeeded = std::sync::atomic::AtomicUsize::new(0);
+    let succeeded = &succeeded;
+    std::thread::scope(|scope| {
+        for part in jobs.chunks(chunk) {
+            scope.spawn(move || {
+                let response = Arc::new(Mutex::new(String::new()));
+                let answer = response.clone();
+                let (cloud, _) = stub(move |method, path, body| if path.contains("/templates") { (200, answer.lock().unwrap().clone()) } else { route(method, path, body) });
+                let directory = tempfile::tempdir().unwrap();
+                profile(directory.path());
+                std::fs::write(directory.path().join("intro.txt"), "Welcome aboard.\n").unwrap();
+                for (label, probe, command, json) in part {
+                    *response.lock().unwrap() = probe.clone();
+                    let shown = templates(&cloud, directory.path(), command, if *json { &["--json"] } else { &[] });
+                    let printed = format!("{}{}", String::from_utf8_lossy(&shown.stdout), String::from_utf8_lossy(&shown.stderr)).to_lowercase();
+                    assert!(!printed.contains("qzmarker"), "{label}: {printed}");
+                    if shown.status.success() {
+                        succeeded.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
+                }
+            });
+        }
+    });
+    // Most probes print a summary; the rest are refused before sending (a marker in text a `set` keeps).
+    assert!(succeeded.load(std::sync::atomic::Ordering::Relaxed) * 10 > jobs.len() * 8, "{succeeded:?} of {}", jobs.len());
+}

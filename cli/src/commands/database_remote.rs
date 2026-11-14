@@ -122,10 +122,7 @@ pub(crate) fn engine_error(error: axiom_database::Error) -> anyhow::Error {
 
 /// Requests an operation and waits for it to finish.
 async fn run_operation(h: &Hosted<'_>, mode: Mode, release: Option<&str>) -> Result<Operation> {
-    let operation = h
-        .client
-        .request_migration_operation(h.project, h.environment, mode, release, &idempotency_key())
-        .await?;
+    let operation = request_operation(h, mode, release, std::time::Duration::from_secs(10)).await?;
     if operation.finished() {
         return Ok(operation);
     }
@@ -133,6 +130,38 @@ async fn run_operation(h: &Hosted<'_>, mode: Mode, release: Option<&str>) -> Res
         .wait_migration_operation(h.project, &operation.id, h.wait)
         .await
 }
+// Current servers queue read-only admission and return a specific conflict reason.
+// Retry only legacy, unspecified 409s here; a reason-bearing response already
+// waited server-side or is a permanent refusal. Keep one key across retries.
+async fn request_operation(
+    h: &Hosted<'_>,
+    mode: Mode,
+    release: Option<&str>,
+    retry_budget: std::time::Duration,
+) -> Result<Operation> {
+    use std::time::Duration;
+    let deadline = tokio::time::Instant::now() + retry_budget;
+    let mut delay = Duration::from_millis(100);
+    let key = idempotency_key();
+    loop {
+        match h.client.request_migration_operation(h.project, h.environment, mode, release, &key).await {
+            Ok(operation) => return Ok(operation),
+            Err(error) => {
+                let message = error.to_string();
+                let legacy_conflict = message.starts_with("AXRESOURCE_CONFLICT:") && message.ends_with("(HTTP 409)");
+                if mode == Mode::Migrate || !legacy_conflict || tokio::time::Instant::now() >= deadline {
+                    return Err(error);
+                }
+                tokio::time::sleep(delay.min(deadline.saturating_duration_since(tokio::time::Instant::now()))).await;
+                if tokio::time::Instant::now() >= deadline {
+                    return Err(error);
+                }
+                delay = (delay * 2).min(Duration::from_secs(1));
+            }
+        }
+    }
+}
+
 fn outcome_word(operation: &Operation) -> &'static str {
     match operation.outcome.as_deref() {
         Some("validated") => "validated",
@@ -331,6 +360,15 @@ pub(crate) async fn upload(h: &Hosted<'_>, release: &Release) -> Result<()> {
     Ok(())
 }
 
+async fn upload_for_check(h: &Hosted<'_>, release: &Release, dry_run: bool) -> Result<()> {
+    if !dry_run {
+        return upload(h, release).await;
+    }
+    let body = axiom_database::canonical_bytes(release).map_err(engine_error)?;
+    h.client.upload_migration_candidate(h.project, &body, &idempotency_key()).await?;
+    Ok(())
+}
+
 /// Attaches the release's signed impact sidecar, when the catalog holds a valid one
 /// (`data-tools/v1`, "Storage: signed sidecar"). Never fails the migration: the sidecar
 /// is re-attachable, and a refusal is reported on standard error outside JSON mode.
@@ -497,7 +535,7 @@ pub(crate) async fn migrate_with(
                 dev::save_input(&loaded.root, &original, &loaded.input)?;
             }
         }
-        upload(h, candidate).await?;
+        upload_for_check(h, candidate, dry_run).await?;
         if !dry_run {
             upload_impact(h, &loaded.root, candidate, json).await;
         }
@@ -558,7 +596,7 @@ pub(crate) async fn rollback_with(
     if !dry_run {
         db::archive(&loaded.root, &release).map_err(engine_error)?;
     }
-    upload(h, &release).await?;
+    upload_for_check(h, &release, dry_run).await?;
     let mode = if dry_run { Mode::Check } else { Mode::Migrate };
     let operation = run_operation(h, mode, Some(&release.sha256)).await?;
     report(out, &operation, &release, &stream, json)?;
@@ -964,6 +1002,11 @@ pub(crate) mod fake {
     pub struct Cloud {
         pub signers: Vec<Value>,
         pub releases: Vec<(String, Vec<u8>)>,
+        pub candidates: Vec<(String, Vec<u8>)>,
+        pub legacy_server: bool,
+        pub operation_conflicts: usize,
+        pub operation_keys: Vec<String>,
+        pub conflict_reason: Option<String>,
         /// (head, generation, public key) of the one ledger stream.
         pub head: Option<(String, u64, String)>,
         pub stream: String,
@@ -1006,7 +1049,7 @@ pub(crate) mod fake {
             let release = op["release"].as_str().map(str::to_string);
             let parent_ok = |cloud: &Cloud| -> Option<Value> {
                 let sha = release.clone()?;
-                let (_, body) = cloud.releases.iter().find(|(s, _)| *s == sha)?;
+                let (_, body) = cloud.releases.iter().chain(&cloud.candidates).find(|(s, _)| *s == sha)?;
                 let v: Value = serde_json::from_slice(body).ok()?;
                 let parent = v["revision"]["parent"].as_str().map(str::to_string);
                 (parent == cloud.head.as_ref().map(|h| h.0.clone())).then_some(v)
@@ -1073,10 +1116,13 @@ pub(crate) mod fake {
                         return (400, br#"{"error":{"code":"AXRESOURCE_INVALID"}}"#.to_vec());
                     };
                     let sha = summary["sha256"].as_str().unwrap().to_string();
-                    let created = !self.releases.iter().any(|(s, _)| *s == sha);
+                    let candidate = !self.legacy_server && path.ends_with("?candidate=true");
+                    let releases = if candidate { &mut self.candidates } else { &mut self.releases };
+                    let created = !releases.iter().any(|(s, _)| *s == sha);
                     if created {
-                        self.releases.push((sha, body.to_vec()));
+                        releases.push((sha.clone(), body.to_vec()));
                     }
+                    if !candidate { self.candidates.retain(|(s, _)| *s != sha); }
                     (if created { 201 } else { 200 }, json!({"release": summary}).to_string().into_bytes())
                 }
                 ("PUT", r) if r.starts_with("/migrations/releases/") && r.ends_with("/impact") => {
@@ -1095,6 +1141,10 @@ pub(crate) mod fake {
                     }
                 }
                 ("POST", "/migrations/operations") => {
+                    if self.operation_conflicts > 0 {
+                        self.operation_conflicts -= 1;
+                        return (409, json!({"error": {"code": "AXRESOURCE_CONFLICT", "reason": self.conflict_reason}}).to_string().into_bytes());
+                    }
                     let v: Value = serde_json::from_slice(body).unwrap();
                     let id = format!("00000000-0000-4000-8000-{:012}", self.operations.len() + 1);
                     let op = json!({"id": id, "environment": v["environment"], "mode": v["mode"], "release": v.get("release").cloned().unwrap_or(Value::Null), "status": "pending", "outcome": null, "code": null, "targets": [], "created_at": format!("2026-10-20T00:00:{:02}Z", self.operations.len()), "finished_at": null});
@@ -1158,6 +1208,12 @@ pub(crate) mod fake {
                             break;
                         }
                         body.extend_from_slice(&chunk[..n]);
+                    }
+                    if method == "POST" && path.ends_with("/migrations/operations") {
+                        let key = head.lines().filter_map(|line| line.split_once(':'))
+                            .find(|(name, _)| name.eq_ignore_ascii_case("idempotency-key"))
+                            .map(|(_, value)| value.trim().to_string()).unwrap_or_default();
+                        cloud.lock().unwrap().operation_keys.push(key);
                     }
                     let (status, text) = cloud.lock().unwrap().handle(&method, &path, &body);
                     let mut response = format!(
@@ -1328,18 +1384,117 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dry_run_uploads_then_checks_and_writes_nothing_locally() {
+    async fn dry_run_uploads_candidate_then_checks_and_writes_nothing_locally() {
         let (state, client) = cloud(true).await;
         let root = project("1.0.0", TASKS);
         let mut out = vec![];
         migrate_with(&hosted(&client), &migrate_args(root.path(), true), &mut out).await.unwrap();
         assert!(text(out).contains("Hosted check passed for migration 1.0.0; nothing was changed"));
         let state = state.lock().unwrap();
-        assert_eq!(state.releases.len(), 1);
+        assert_eq!(state.releases.len(), 0);
+        assert_eq!(state.candidates.len(), 1);
         let modes = state.operations.iter().map(|o| o["mode"].as_str().unwrap().to_string()).collect::<Vec<_>>();
         assert_eq!(modes, ["status", "check"]);
         assert!(state.head.is_none());
         assert!(!catalog(root.path(), "1.0.0").exists());
+    }
+
+    #[tokio::test]
+    async fn two_dry_runs_then_migrate_publish_only_the_real_version() {
+        let (state, client) = cloud(true).await;
+        let root = project("1.0.0", TASKS);
+        migrate_with(&hosted(&client), &migrate_args(root.path(), false), &mut Vec::new()).await.unwrap();
+        std::fs::write(root.path().join("schema.acore"), schema("1.1.0", &format!("{TASKS} {NOTES}"))).unwrap();
+        for _ in 0..2 {
+            migrate_with(&hosted(&client), &migrate_args(root.path(), true), &mut Vec::new()).await.unwrap();
+        }
+        assert_eq!(state.lock().unwrap().releases.len(), 1);
+        migrate_with(&hosted(&client), &migrate_args(root.path(), false), &mut Vec::new()).await.unwrap();
+        let state = state.lock().unwrap();
+        assert_eq!(state.releases.len(), 2);
+        assert!(state.candidates.is_empty());
+        let release: Release = serde_json::from_slice(&state.releases[1].1).unwrap();
+        assert_eq!(release.revision.identity.version, "1.1.0");
+    }
+
+    #[tokio::test]
+    async fn rollback_dry_runs_do_not_publish_or_reserve_a_version() {
+        let (state, client) = cloud(true).await;
+        let root = project("1.0.0", TASKS);
+        migrate_with(&hosted(&client), &migrate_args(root.path(), false), &mut Vec::new()).await.unwrap();
+        let args = RollbackArgs {
+            source: root.path().join("schema.acore"), connection: Default::default(),
+            remote: migrate_args(root.path(), true).remote,
+            policy: dev::Policy { dry_run: true, non_interactive: true, ..Default::default() },
+            steps: Some(1), to: None,
+        };
+        for _ in 0..2 { rollback_with(&hosted(&client), &args, &mut Vec::new()).await.unwrap(); }
+        assert_eq!(state.lock().unwrap().releases.len(), 1);
+        let mut real = args;
+        real.policy.dry_run = false;
+        real.policy.allow_destructive = true;
+        real.policy.auto_version = true;
+        rollback_with(&hosted(&client), &real, &mut Vec::new()).await.unwrap();
+        let state = state.lock().unwrap();
+        assert_eq!(state.releases.len(), 2);
+        let release: Release = serde_json::from_slice(&state.releases[1].1).unwrap();
+        assert_eq!(release.revision.identity.version, "2.0.0");
+    }
+
+    #[tokio::test]
+    async fn candidate_upload_falls_back_on_a_legacy_server() {
+        let (state, client) = cloud(true).await;
+        state.lock().unwrap().legacy_server = true;
+        let root = project("1.0.0", TASKS);
+        migrate_with(&hosted(&client), &migrate_args(root.path(), true), &mut Vec::new()).await.unwrap();
+        let state = state.lock().unwrap();
+        assert_eq!(state.releases.len(), 1);
+        assert!(state.head.is_none());
+    }
+
+    #[tokio::test]
+    async fn read_only_operations_retry_legacy_conflicts() {
+        let (state, client) = cloud(true).await;
+        state.lock().unwrap().operation_conflicts = 2;
+        run_operation(&hosted(&client), Mode::Status, None).await.unwrap();
+        let state = state.lock().unwrap();
+        assert_eq!(state.count("POST", "/api/v1/projects/acme/migrations/operations"), 3);
+        assert_eq!(state.operation_keys.len(), 3);
+        assert!(api::is_uuid(&state.operation_keys[0]));
+        assert!(state.operation_keys.iter().all(|key| key == &state.operation_keys[0]));
+    }
+
+    #[tokio::test]
+    async fn legacy_conflicts_stop_at_the_retry_budget() {
+        let (state, client) = cloud(true).await;
+        state.lock().unwrap().operation_conflicts = usize::MAX;
+        let started = tokio::time::Instant::now();
+        let error = request_operation(&hosted(&client), Mode::Status, None, Duration::from_millis(250)).await.unwrap_err();
+        assert!(error.to_string().starts_with("AXRESOURCE_CONFLICT:"));
+        assert!(started.elapsed() >= Duration::from_millis(250));
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(state.lock().unwrap().count("POST", "/api/v1/projects/acme/migrations/operations") <= 2);
+    }
+
+    #[tokio::test]
+    async fn writes_and_specific_conflicts_are_not_retried() {
+        for (mode, reason) in [(Mode::Migrate, None), (Mode::Status, Some("key_revoked")), (Mode::Check, Some("idempotency_key_reused")), (Mode::Check, Some("operation_in_progress"))] {
+            let (state, client) = cloud(true).await;
+            state.lock().unwrap().operation_conflicts = 2;
+            state.lock().unwrap().conflict_reason = reason.map(str::to_string);
+            let release = "a".repeat(64);
+            assert!(run_operation(&hosted(&client), mode, if mode == Mode::Status { None } else { Some(&release) }).await.is_err());
+            assert_eq!(state.lock().unwrap().count("POST", "/api/v1/projects/acme/migrations/operations"), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn sqlite_existing_table_error_snapshot() {
+        let (state, client) = cloud(true).await;
+        let root = project("1.0.0", TASKS);
+        state.lock().unwrap().reject = Some("ADB1132".into());
+        let error = migrate_with(&hosted(&client), &migrate_args(root.path(), true), &mut Vec::new()).await.unwrap_err().to_string();
+        assert_eq!(error, "ADB1132: Hosted SQLite cannot alter an existing table's columns this way. Add a new table or use PostgreSQL. Hosted operation 00000000-0000-4000-8000-000000000002 rejected.");
     }
 
     #[tokio::test]

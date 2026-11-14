@@ -16,13 +16,25 @@ Every command accepts the global flags:
   otherwise a display name (any letter case). A name that more than one project
   shares, or a value that matches no project, exits with 2; pass the slug
   instead.
+- `--org`: the organization slug, for a project outside your current
+  organization. The Cloud API lists only the current organization's projects
+  and has no project list for other organizations, so with `--org` the
+  `--project` value must be the project's exact slug (names and ids are not
+  resolved). The CLI then looks the slug up directly, and the API checks that
+  you are a member of that project. The API does not report which organization
+  a project belongs to, so the CLI cannot check `--org` against the project.
+  `--org` needs `--project`.
 - `--environment`: the environment name or id (default `development`).
 - `--json`: print the API answer as JSON instead of plain sentences.
 
 Email addresses are masked in the output unless a command offers
 `--reveal-email`. Secret values are never printed and never taken as command
-arguments. Commands that remove or revoke something ask for confirmation; pass
-`--yes` in scripts. Failures exit with 2 (usage or refused request), 3 (your
+arguments. Commands that remove, revoke or suspend something ask for
+confirmation on a terminal; pass `--yes` in scripts. Without a terminal and
+without `--yes`, such a command exits with 2 (`pass --yes to confirm without a
+prompt`) before it signs in, looks up the project or sends any request.
+Template text is not printed unless you pass `--reveal-text` (see
+[templates](#axiom-auth-templates-show)). Failures exit with 2 (usage or refused request), 3 (your
 role does not allow it), 4 (conflict: refresh and retry) or 5 (unavailable).
 
 For the concepts behind these commands, see
@@ -526,7 +538,7 @@ Endpoint: `DELETE /api/v1/projects/{project}/auth/environments/{environment}/smt
 
 ### axiom auth templates list
 
-Lists every template kind, whether it is customized, its revision and its custom subject.
+Lists every template kind, whether it is customized, its revision and what its custom subject is like (not the subject itself; see below).
 
 Template kinds: `email_code`, `magic_link`, `signup`, `verify_email`, `password_reset`, `email_change_confirm`, `email_change_notice`, `invitation`.
 
@@ -540,7 +552,15 @@ Endpoint: `GET /api/v1/projects/{project}/auth/environments/{environment}/templa
 
 Shows a template's subject, intro and outro. Fields that are not customized show Axiom's default text, marked `(default)`.
 
-Template text is printed with token-like values (Axiom tokens such as `axr1_…`, JWTs, and long runs that mix letters and digits, such as API keys) replaced by `[redacted]`, in plain and `--json` output. UUIDs are kept. This applies to every `templates` command. Pass `--reveal-text` to print the text exactly as saved.
+No `templates` command prints template text by default, in plain or `--json` output, because a credential pasted into a template cannot be told apart from ordinary text reliably. For each text field (subject, intro, outro, Axiom's defaults, and a preview's text and HTML) they print only whether it is set, its length in bytes, the `{{variables}}` it uses and the SHA-256 of its text, so you can compare two templates without seeing them. In `--json` output each text field is an object such as `{"set": true, "bytes": 23, "variables": ["{{app_name}}"], "sha256": "…"}`, or `{"set": false}`. Pass `--reveal-text` to print the text exactly as saved; the command then prints a one-line warning on stderr.
+
+```text title="Output"
+magic_link: customized (revision 3)
+Subject: set, 7 bytes, no variables, sha256 1b3c…
+Intro: default text (set, 14 bytes, no variables, sha256 9e2f…)
+Outro: default text (set, 20 bytes, no variables, sha256 47aa…)
+Template text is not shown; pass --reveal-text to print it.
+```
 
 ```text title="Usage"
 axiom auth templates show KIND [--reveal-text]
@@ -560,7 +580,7 @@ Flags:
 - `--subject-file PATH`: file with the subject line (trailing line breaks are dropped)
 - `--intro-file PATH`: file with the intro text (trailing line breaks are dropped)
 - `--outro-file PATH`: file with the outro text
-- `--reveal-text`: print the saved template without redacting token-like values
+- `--reveal-text`: print the saved template's text (by default only its metadata is printed)
 
 ```bash title="Terminal"
 echo 'Welcome to {{app_name}}' | axiom auth templates set signup --subject-file - --intro-file intro.txt
@@ -570,7 +590,7 @@ Endpoint: `PUT /api/v1/projects/{project}/auth/environments/{environment}/templa
 
 ### axiom auth templates preview
 
-Renders a template with sample values (code 123456, a placeholder link, your app name) and sends nothing. Without text flags it renders the saved template; with `--subject-file`, `--intro-file` or `--outro-file` it renders that text over the saved template, exactly as `templates set` would save it. Prints the subject and the plain-text part, or the HTML part with `--html`.
+Renders a template with sample values (code 123456, a placeholder link, your app name) and sends nothing. Without text flags it renders the saved template; with `--subject-file`, `--intro-file` or `--outro-file` it renders that text over the saved template, exactly as `templates set` would save it. Describes the subject and the plain-text part, or the HTML part with `--html`; `--reveal-text` prints them.
 
 ```text title="Usage"
 axiom auth templates preview KIND [--subject-file PATH] [--intro-file PATH] [--outro-file PATH] [--html] [--reveal-text]

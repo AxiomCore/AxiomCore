@@ -704,3 +704,50 @@ fn a_marker_in_any_string_of_a_templates_response_is_never_printed_by_default() 
     assert!(hidden_ok.load(ordering) * 10 > hidden_jobs * 8, "{hidden_ok:?} of {hidden_jobs}");
     assert!(revealed.load(ordering) * 10 > (jobs.len() - hidden_jobs) * 8, "{revealed:?} of {}", jobs.len() - hidden_jobs);
 }
+
+/// P1 re-verification round 4 (p1-r4-evidence/VERIFY.txt): `updated_at` values of the
+/// right shape that are not real instants are summarized like any other text, and
+/// secret-shaped unknown keys are counted in `unknown_fields` like every other one.
+#[test]
+fn impossible_timestamps_are_hidden_and_secret_shaped_unknown_keys_are_counted() {
+    const IMPOSSIBLE: [&str; 9] = [
+        "9999-99-99T99:99:99Z",
+        "2026-02-30T12:00:00Z",
+        "2026-11-14T12:30:00+99:99",
+        "2026-13-01T00:00:00Z",
+        "2026-11-14T24:00:00Z",
+        "2026-11-14T23:59:60Z",
+        "2026-11-14T12:30:00Z junk",
+        "+10000-01-01T00:00:00Z",
+        "99999-01-01T00:00:00Z",
+    ];
+    const SECRET: &str = "zzz-synthetic-secret-value";
+    let mut entries: Vec<serde_json::Value> = IMPOSSIBLE.iter().map(|at| serde_json::json!({"kind": "signup", "overridden": false, "revision": 0, "updated_at": at})).collect();
+    entries.push(serde_json::json!({"kind": "magic_link", "overridden": true, "revision": 1, "updated_at": "2026-11-14T12:30:00Z",
+        "secret": SECRET, "password": SECRET, "access_token": SECRET, "new_field": SECRET}));
+    let listed = serde_json::json!({"templates": entries, "updated_at": IMPOSSIBLE[0], "client_secret": SECRET, "note": SECRET}).to_string();
+    let (cloud, _log) = stub(move |method, path, body| {
+        if method == "GET" && path.ends_with(&format!("/auth/environments/{DEV}/templates")) {
+            (200, listed.clone())
+        } else {
+            route(method, path, body)
+        }
+    });
+    let directory = tempfile::tempdir().unwrap();
+    profile(directory.path());
+    let output = templates(&cloud, directory.path(), &["list"], &["--json"]);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for piece in IMPOSSIBLE.iter().chain(&[SECRET]) {
+        assert!(!stdout.contains(piece), "printed {piece:?}: {stdout}");
+    }
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(value["updated_at"]["set"], true, "{value}");
+    for (index, at) in IMPOSSIBLE.iter().enumerate() {
+        assert_eq!(value["templates"][index]["updated_at"]["set"], true, "{at}: {value}");
+    }
+    let last = &value["templates"][IMPOSSIBLE.len()];
+    assert_eq!(last["updated_at"], "2026-11-14T12:30:00Z");
+    assert_eq!(last["unknown_fields"], 4, "{value}");
+    assert_eq!(value["unknown_fields"], 2, "{value}");
+}

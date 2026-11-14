@@ -494,3 +494,63 @@ fn a_marker_in_any_string_position_is_never_in_default_output_or_errors() {
         }
     }
 }
+
+/// P1 re-verification round 4 (VERIFY.txt, boundary-probes.log): `updated_at` values of
+/// the right shape that are not real instants.
+const IMPOSSIBLE_TIMESTAMPS: [&str; 16] = [
+    "9999-99-99T99:99:99Z",
+    "2026-02-30T12:00:00Z",
+    "2026-11-14T12:30:00+99:99",
+    "2026-13-01T00:00:00Z",
+    "2026-00-10T00:00:00Z",
+    "2026-11-00T00:00:00Z",
+    "2026-11-31T00:00:00Z",
+    "2025-02-29T00:00:00Z",
+    "2026-11-14T24:00:00Z",
+    "2026-11-14T12:60:00Z",
+    "2026-11-14T12:30:61Z",
+    "2016-12-31T23:59:60Z",
+    "2026-11-14T23:59:60+00:00",
+    "2026-11-14T12:30:00+24:00",
+    "2026-11-14T12:30:00-00:60",
+    "2026-11-14T12:30:00.Z",
+];
+
+#[test]
+fn updated_at_is_shown_only_when_it_is_a_real_instant() {
+    let shape_or_junk = ["2026-11-14T12:30:00Z junk", "2026-11-14T12:30:00Zjunk", "+10000-01-01T00:00:00Z", "10000-01-01T00:00:00Z", "99999999-12-31T23:59:59Z", "2026-11-14t12:30:00z", "2026-11-14 12:30:00Z", "2026-11-14T12:30:00.1234567890Z"];
+    for value in IMPOSSIBLE_TIMESTAMPS.iter().chain(&shape_or_junk) {
+        let mut probe = json!({"kind": "signup", "updated_at": value, "templates": [{"kind": "signup", "updated_at": value}]});
+        hide_text(&mut probe, None);
+        assert!(!probe.to_string().contains(value), "{value:?} printed: {probe}");
+        assert_eq!(probe["updated_at"]["set"], true, "{value:?}: {probe}");
+        assert_eq!(probe["templates"][0]["updated_at"]["set"], true, "{value:?}: {probe}");
+    }
+    for value in ["2026-11-14T12:30:00Z", "2024-02-29T00:00:00Z", "2026-11-14T23:59:59.999999999Z", "0001-01-01T00:00:00Z", "9999-12-31T23:59:59Z", "2026-11-14T12:30:00+23:59", "2026-11-14T12:30:00-05:30"] {
+        let mut probe = json!({"updated_at": value, "templates": [{"updated_at": value}]});
+        hide_text(&mut probe, None);
+        assert_eq!(probe["updated_at"], value);
+        assert_eq!(probe["templates"][0]["updated_at"], value);
+    }
+}
+
+#[test]
+fn every_unknown_key_is_counted_once_whatever_its_name() {
+    let secret = "zzz-synthetic-secret-value";
+    let view = json!({"kind": "signup", "secret": secret, "password": secret, "access_token": secret, "client_secret_set": true, "new_field": secret, "revision": 1,
+        "defaults": {"subject": "Welcome", "token": secret, "hash": secret},
+        "templates": [{"kind": "signup", "credential": secret, "updated_at": "2026-11-14T12:30:00Z"}]});
+    let hidden = templates_output(view.clone(), Some("signup"), false);
+    assert!(!hidden.to_string().contains(secret), "{hidden}");
+    assert_eq!(hidden["unknown_fields"], 5, "{hidden}");
+    assert_eq!(hidden["defaults"]["unknown_fields"], 2, "{hidden}");
+    assert_eq!(hidden["templates"][0]["unknown_fields"], 1, "{hidden}");
+    assert_eq!(hidden["templates"][0]["updated_at"], "2026-11-14T12:30:00Z");
+    // Revealed: no counts, and the secret scrub still removes non-boolean secret keys.
+    let revealed = templates_output(view, Some("signup"), true);
+    for key in ["secret", "password", "access_token"] {
+        assert!(revealed.get(key).is_none(), "{key}: {revealed}");
+    }
+    assert_eq!(revealed["client_secret_set"], true);
+    assert!(revealed.get("unknown_fields").is_none());
+}

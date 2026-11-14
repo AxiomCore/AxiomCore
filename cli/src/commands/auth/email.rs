@@ -246,9 +246,17 @@ static PLACEHOLDER: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(
 static URL_LIKE: LazyLock<[regex::Regex; 3]> = LazyLock::new(|| {
     [r"(?i)([a-z][a-z0-9+.-]*:)?//", r"(?i)\bwww\.", r"(?i)[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,63}\b"].map(|p| regex::Regex::new(p).expect("static regex"))
 });
-/// An RFC 3339 timestamp, as the backend writes `updated_at`.
+/// The RFC 3339 form the backend writes `updated_at` in (Go's `time.RFC3339Nano`).
 static TIMESTAMP: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,9})?(Z|[+-][0-9]{2}:[0-9]{2})$").expect("static regex"));
+
+/// `value` is an RFC 3339 timestamp of a real instant: the backend's form, a date that
+/// exists, a time of day within 00:00:00–23:59:59 and an offset under 24 hours. A leap
+/// second (`:60`) is refused: the backend (Go `time`) never writes one.
+fn timestamp(value: &str) -> bool {
+    use chrono::Timelike;
+    TIMESTAMP.is_match(value) && chrono::DateTime::parse_from_rfc3339(value).is_ok_and(|at| at.nanosecond() < 1_000_000_000)
+}
 
 fn url_like(value: &str) -> bool {
     // Backend `URLLike`: variables masked with an alphanumeric, then three patterns.
@@ -570,7 +578,8 @@ fn documented_keys(path: &[Step]) -> &'static [&'static str] {
 /// position in the documented response (not by key name alone), and only when the value
 /// has the expected form:
 /// - `/kind` and `/templates/*/kind`: one of `TEMPLATE_KINDS`;
-/// - `/updated_at` and `/templates/*/updated_at`: an RFC 3339 timestamp.
+/// - `/updated_at` and `/templates/*/updated_at`: an RFC 3339 timestamp of a real
+///   instant (`timestamp`).
 ///
 /// The template responses have no other string metadata (`revision` is a number and
 /// `overridden` a boolean); every other string, at any depth, is replaced by its
@@ -578,7 +587,7 @@ fn documented_keys(path: &[Step]) -> &'static [&'static str] {
 fn shown_metadata(path: &[Step], value: &str) -> bool {
     match steps(path).as_slice() {
         [Some("kind")] | [Some("templates"), None, Some("kind")] => TEMPLATE_KINDS.contains(&value),
-        [Some("updated_at")] | [Some("templates"), None, Some("updated_at")] => TIMESTAMP.is_match(value),
+        [Some("updated_at")] | [Some("templates"), None, Some("updated_at")] => timestamp(value),
         _ => false,
     }
 }
@@ -717,14 +726,23 @@ fn preview_lines(r: &Value, html: bool, reveal: bool) -> Vec<String> {
 
 /// Print a templates response: the text itself with `--reveal-text` (after a warning on
 /// stderr), otherwise only its metadata.
-fn print_templates(args: &AuthArgs, mut value: Value, kind: Option<&str>, reveal: bool, human: impl FnOnce(&Value) -> Vec<String>) -> Result<()> {
-    sanitize(&mut value, true);
+fn print_templates(args: &AuthArgs, value: Value, kind: Option<&str>, reveal: bool, human: impl FnOnce(&Value) -> Vec<String>) -> Result<()> {
     if reveal {
         warn_revealed();
-    } else {
+    }
+    print(args, &templates_output(value, kind, reveal), human)
+}
+
+/// A templates response as printed. Without `reveal`, `hide_text` runs first, so every
+/// unknown key, secret-shaped names included, is counted once in `unknown_fields`; the
+/// secret scrub that follows then has nothing left to remove. With `reveal`, only the
+/// scrub.
+fn templates_output(mut value: Value, kind: Option<&str>, reveal: bool) -> Value {
+    if !reveal {
         hide_text(&mut value, kind);
     }
-    print(args, &value, human)
+    sanitize(&mut value, true);
+    value
 }
 
 pub(super) async fn templates_with(args: &AuthArgs, target: &Target, action: &TemplatesAction) -> Result<()> {

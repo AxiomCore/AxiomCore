@@ -64,9 +64,9 @@ class VerifierCliTests(__import__('unittest').TestCase):
         ('GET', '/api/v1/resources/receipt-keys', 'mapped'),
         ('GET', P+'/auth/policy/releases', 'mapped'),
         ('GET', P+'/auth/environments/{environment}/roles', 'mapped'),
-        ('GET', P+'/contracts', 'partial'),
-        ('GET', P+'/contracts/{version}', 'partial'),
-        ('GET', P, 'partial'),
+        ('GET', P+'/contracts', 'mapped'),
+        ('GET', P+'/contracts/{version}', 'mapped'),
+        ('GET', P, 'mapped'),
     ]
     def test_fixed_routes_and_removing_only_call_drops_coverage(self):
         # Real source, real CALLERS; dispatch stays intact, including main.rs.

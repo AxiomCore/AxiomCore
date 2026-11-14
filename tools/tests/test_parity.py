@@ -26,6 +26,108 @@ class ComparisonTests(unittest.TestCase):
         cli = [dict(method='GET', path='/api/v1/projects/{project}/data/branches', command='axiom branch list')]
         self.assertEqual(checker.compare([self.action()], cli)[0]['status'], 'gap')
 
+    SESSION = dict(method='GET', path='/api/v1/auth/session', action='GetSession', source='a.js', line=1, group='Account authentication')
+    REASON = 'Browser-session route of the dashboard sign-in; the CLI uses device login.'
+
+    def exemption(self, reason=REASON, category='browser-session'):
+        return {'category': category, 'reason': reason}
+
+    def test_valid_exemption_marks_the_route_exempt(self):
+        exempt = {('GET', '/api/v1/auth/session'): self.exemption()}
+        row = checker.compare([self.SESSION], [], exempt)[0]
+        self.assertEqual((row['status'], row['exempt_reason'], row['exempt_category']), ('exempt', self.REASON, 'browser-session'))
+        self.assertEqual(checker.grouped_gaps([row]), [])
+        self.assertEqual(checker.compare([self.SESSION], [])[0]['status'], 'gap')
+
+    def test_exemption_without_a_reason_fails_the_checker(self):
+        for reason in ['', ' ', '\n\t', None, 7]:
+            with self.subTest(reason=reason), self.assertRaisesRegex(ValueError, 'no reason'):
+                checker.compare([self.SESSION], [], {('GET', '/api/v1/auth/session'): self.exemption(reason)})
+        for bare in ['a reason as a bare string', '', None]:
+            with self.subTest(bare=bare), self.assertRaisesRegex(ValueError, 'category'):
+                checker.compare([self.SESSION], [], {('GET', '/api/v1/auth/session'): bare})
+
+    def test_exemption_outside_an_allowlisted_category_fails_the_checker(self):
+        for category in [None, '', 'not-needed', 'Browser-Session', 'browser-session ']:
+            with self.subTest(category=category), self.assertRaisesRegex(ValueError, 'not an allowed exemption category'):
+                checker.compare([self.SESSION], [], {('GET', '/api/v1/auth/session'): self.exemption(category=category)})
+
+    def test_exemption_of_a_real_gap_fails_the_checker(self):
+        # The verifier's reproduction: GET /api/v1/workspace with no CLI mapping was exempt
+        # with any reason. A route outside the category stays a gap, whatever the reason.
+        workspace = dict(method='GET', path='/api/v1/workspace', action='GetWorkspace', source='w.js', line=1, group='Workspace')
+        for key in [('GET', '/api/v1/workspace'), ('PUT', '/api/v1/auth/session'), ('GET', '/api/v1/auth/session/extra'), ('GET', '/api/v1/projects/{slug}/auth/environments/{env}/sessions')]:
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, 'not a browser-session route'):
+                checker.compare([workspace], [], {key: self.exemption('arbitrary gap reason')})
+
+    def test_exemption_used_by_another_dashboard_flow_fails_the_checker(self):
+        # An allowlisted route the dashboard also calls from a main flow is a gap there.
+        elsewhere = {**self.SESSION, 'group': 'Workspace', 'action': 'loadWorkspaceSession'}
+        with self.assertRaisesRegex(ValueError, 'uses it in Workspace'):
+            checker.compare([self.SESSION, elsewhere], [], {('GET', '/api/v1/auth/session'): self.exemption()})
+
+    def test_exemption_called_from_another_dashboard_operation_fails_the_checker(self):
+        # The dashboard groups by path, so a main flow reaching an allowlisted route shows up
+        # as another action (and source) on the same route, not as another group.
+        for other in [{**self.SESSION, 'action': 'loadWorkspaceMembers', 'source': 'static/js/pages/workspace.js'},
+                      {**self.SESSION, 'action': 'request', 'source': 'static/js/api-client.js', 'line': 900},
+                      {**self.SESSION, 'action': None}]:
+            with self.subTest(other=other), self.assertRaisesRegex(ValueError, 'not a browser-session operation'):
+                checker.compare([self.SESSION, other], [], {('GET', '/api/v1/auth/session'): self.exemption()})
+        wrong_route = {**self.SESSION, 'method': 'DELETE', 'action': 'GetSession'}
+        with self.assertRaisesRegex(ValueError, 'calls it from GetSession'):
+            checker.compare([wrong_route], [], {('DELETE', '/api/v1/auth/session'): self.exemption()})
+
+    def test_malformed_exemption_key_fails_the_checker(self):
+        for key in [('GET',), ('GET', '/api/v1/auth/session', 'x'), (None, '/api/v1/auth/session'), 'GET /api/v1/auth/session']:
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, r'key must be \(METHOD, path\)'):
+                checker.compare([self.SESSION], [], {key: self.exemption()})
+
+    def test_exemption_of_a_mapped_route_fails_the_checker(self):
+        exempt = {('GET', '/api/v1/auth/session/'): self.exemption()}
+        for cli in [[dict(method='GET', path='/api/v1/auth/session', command='axiom whoami')],
+                    [dict(method='GET', path='/api/v1/auth/{x}', command='axiom other')] + [dict(method='get', path='/api/v1/auth/session?full=1', command='axiom whoami', note='partial')]]:
+            with self.subTest(cli=cli), self.assertRaisesRegex(ValueError, 'a CLI command maps this route'):
+                checker.compare([self.SESSION], cli, exempt)
+
+    def test_duplicate_exemption_after_normalisation_fails(self):
+        exempt = {('GET', '/api/v1/auth/session'): self.exemption(), ('get', '/api/v1/auth/session/'): self.exemption()}
+        with self.assertRaisesRegex(ValueError, 'exempted twice'):
+            checker.compare([self.SESSION], [], exempt)
+
+    def test_invalid_exemption_makes_the_checker_exit_2(self):
+        from unittest import mock
+        import io
+        import parity_cli
+        import parity_dashboard
+        bad = {('GET', '/api/v1/workspace'): {'category': 'browser-session', 'reason': ' '}}
+        workspace = dict(method='GET', path='/api/v1/workspace', action='GetWorkspace', source='w.js', line=1, group='Workspace')
+        with mock.patch.object(parity_dashboard, 'scan_dashboard', return_value=[workspace]), \
+             mock.patch.object(parity_cli, 'scan_cli', return_value=[]), \
+             mock.patch.object(parity_cli, 'EXEMPT', bad), \
+             mock.patch.object(sys, 'argv', ['parity-check.py', '--frontend', '.', '--strict']), \
+             mock.patch('sys.stderr', new_callable=io.StringIO) as err, mock.patch('sys.stdout', new_callable=io.StringIO):
+            self.assertEqual(checker.main(), 2)
+        self.assertIn('no reason', err.getvalue())
+        self.assertIn('not a browser-session route', err.getvalue())
+
+    def test_every_registered_exemption_is_a_valid_browser_session_route(self):
+        import parity_cli
+        self.assertEqual(len(parity_cli.EXEMPT), 5)
+        rows = parity_cli.scan_cli(TOOLS.parent)
+        valid = checker.validate_exemptions(parity_cli.EXEMPT, [], rows)
+        allowed = {checker.route_key(*r) for r in checker.EXEMPTION_CATEGORIES['browser-session']['routes']}
+        # Against the real dashboard source too, when the sibling checkout is there.
+        frontend = TOOLS.parent.parent / 'axiom-frontend'
+        if frontend.is_dir():
+            import parity_dashboard
+            rows = checker.compare(parity_dashboard.scan_dashboard(frontend), rows, parity_cli.EXEMPT)
+            self.assertEqual({checker.route_key(r['method'], r['path']) for r in rows if r['status'] == 'exempt'}, allowed)
+        self.assertEqual(set(valid), allowed)
+        for entry in valid.values():
+            self.assertEqual(entry['category'], 'browser-session')
+            self.assertGreater(len(entry['reason']), 40)
+
     def test_query_and_trailing_slash_normalized(self):
         self.assertEqual(checker.route_key('get', '/api/v1/items/?limit=5'), ('GET', '/api/v1/items'))
 

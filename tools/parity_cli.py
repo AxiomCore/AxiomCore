@@ -349,6 +349,651 @@ CALLERS.extend([{'command': 'axiom data overview get',
   'source': 'cli/src/commands/data_metadata.rs',
   'evidence': 'client.migration_impact(&project, &args.release).await?',
   'command_evidence': 'pub async fn impact_read('}])
+# Reviewed exemptions: (METHOD, path) -> {'category', 'reason'}: why the CLI deliberately has
+# no command. parity-check.validate_exemptions allows only listed categories and routes.
+EXEMPT = {}
+
+# P4 cli-workspace (W4-L7 part 2): workspace, onboarding, sandbox environments and hosted
+# contract releases, plus the account-authentication exemptions.
+from parity_cli_p4 import CALLERS as _P4_CALLERS, EXEMPT as _P4_EXEMPT  # noqa: E402
+CALLERS += _P4_CALLERS
+EXEMPT.update(_P4_EXEMPT)
+
+# Reviewed intel request arms. Keep method, route, and dispatch together.
+CALLERS += [{'command': 'axiom intel activity list',
+  'method': 'GET',
+  'path': '/api/v1/activity',
+  'source': 'cli/src/commands/intel_routes.rs',
+  'evidence': 'IntelCommand::Activity {\n'
+              '                action: ActivityAction::List,\n'
+              '            } => (\n'
+              '                "GET",\n'
+              '                "/api/v1/activity".to_string(),',
+  'command_evidence': 'pub fn request(&self) -> Result<IntelRequest>',
+  'cross_source_evidence': {'cli/src/commands/intel.rs': ['let mut request = args.command.request()?;',
+                                                          '.dashboard_request(',
+                                                          'request.body.as_ref()',
+                                                          'request.method.as_bytes()'],
+                            'cli/src/main.rs': ['Commands::Intel(args) => '
+                                                'commands::intel::handle(args).await']}},
+ {'command': 'axiom intel activity stream',
+  'method': 'GET',
+  'path': '/api/v1/activity/stream',
+  'source': 'cli/src/commands/intel_routes.rs',
+  'evidence': 'IntelCommand::Activity {\n'
+              '                action: ActivityAction::Stream { follow },\n'
+              '            } => (\n'
+              '                "GET",\n'
+              '                "/api/v1/activity/stream".to_string(),',
+  'command_evidence': 'pub fn request(&self) -> Result<IntelRequest>',
+  'cross_source_evidence': {'cli/src/commands/intel.rs': ['let mut request = args.command.request()?;',
+                                                          '.dashboard_request(',
+                                                          'request.body.as_ref()',
+                                                          'request.method.as_bytes()'],
+                            'cli/src/main.rs': ['Commands::Intel(args) => '
+                                                'commands::intel::handle(args).await']}},
+ {'command': 'axiom intel me get',
+  'method': 'GET',
+  'path': '/api/v1/me',
+  'source': 'cli/src/commands/intel_routes.rs',
+  'evidence': 'IntelCommand::Me {\n'
+              '                action: MeAction::Get,\n'
+              '            } => ("GET", "/api/v1/me".to_string(), None, false, false, false),',
+  'command_evidence': 'pub fn request(&self) -> Result<IntelRequest>',
+  'cross_source_evidence': {'cli/src/commands/intel.rs': ['let mut request = args.command.request()?;',
+                                                          '.dashboard_request(',
+                                                          'request.body.as_ref()',
+                                                          'request.method.as_bytes()'],
+                            'cli/src/main.rs': ['Commands::Intel(args) => '
+                                                'commands::intel::handle(args).await']}},
+ {'command': 'axiom intel project get',
+  'method': 'GET',
+  'path': '/api/v1/projects/{project}',
+  'source': 'cli/src/commands/intel_routes.rs',
+  'evidence': 'IntelCommand::Project {\n'
+              '                action: ProjectAction::Get,\n'
+              '            } => (\n'
+              '                "GET",\n'
+              '                "/api/v1/projects/{project}".to_string(),',
+  'command_evidence': 'pub fn request(&self) -> Result<IntelRequest>',
+  'cross_source_evidence': {'cli/src/commands/intel.rs': ['let mut request = args.command.request()?;',
+                                                          '.dashboard_request(',
+                                                          'request.body.as_ref()',
+                                                          'request.method.as_bytes()'],
+                            'cli/src/main.rs': ['Commands::Intel(args) => '
+                                                'commands::intel::handle(args).await']}},
+ {'command': 'axiom intel project overview',
+  'method': 'GET',
+  'path': '/api/v1/projects/{project}/overview',
+  'source': 'cli/src/commands/intel_routes.rs',
+  'evidence': 'IntelCommand::Project {\n'
+              '                action: ProjectAction::Overview,\n'
+              '            } => (\n'
+              '                "GET",\n'
+              '                "/api/v1/projects/{project}/overview".to_string(),',
+  'command_evidence': 'pub fn request(&self) -> Result<IntelRequest>',
+  'cross_source_evidence': {'cli/src/commands/intel.rs': ['let mut request = args.command.request()?;',
+                                                          '.dashboard_request(',
+                                                          'request.body.as_ref()',
+                                                          'request.method.as_bytes()'],
+                            'cli/src/main.rs': ['Commands::Intel(args) => '
+                                                'commands::intel::handle(args).await']}},
+ {'command': 'axiom intel alerts list',
+  'method': 'GET',
+  'path': '/api/v1/projects/{project}/alerts',
+  'source': 'cli/src/commands/intel_routes.rs',
+  'evidence': 'IntelCommand::Alerts {\n'
+              '                action: AlertsAction::List,\n'
+              '            } => (\n'
+              '                "GET",\n'
+              '                "/api/v1/projects/{project}/alerts".to_string(),',
+  'command_evidence': 'pub fn request(&self) -> Result<IntelRequest>',
+  'cross_source_evidence': {'cli/src/commands/intel.rs': ['let mut request = args.command.request()?;',
+                                                          '.dashboard_request(',
+                                                          'request.body.as_ref()',
+                                                          'request.method.as_bytes()'],
+                            'cli/src/main.rs': ['Commands::Intel(args) => '
+                                                'commands::intel::handle(args).await']}},
+ {'command': 'axiom intel alert-policies list',
+  'method': 'GET',
+  'path': '/api/v1/projects/{project}/alert-policies',
+  'source': 'cli/src/commands/intel_routes.rs',
+  'evidence': 'IntelCommand::AlertPolicies {\n'
+              '                action: AlertPoliciesAction::List,\n'
+              '            } => (\n'
+              '                "GET",\n'
+              '                "/api/v1/projects/{project}/alert-policies".to_string(),',
+  'command_evidence': 'pub fn request(&self) -> Result<IntelRequest>',
+  'cross_source_evidence': {'cli/src/commands/intel.rs': ['let mut request = args.command.request()?;',
+                                                          '.dashboard_request(',
+                                                          'request.body.as_ref()',
+                                                          'request.method.as_bytes()'],
+                            'cli/src/main.rs': ['Commands::Intel(args) => '
+                                                'commands::intel::handle(args).await']}},
+ {'command': 'axiom intel alert-policies update',
+  'method': 'PUT',
+  'path': '/api/v1/projects/{project}/alert-policies/{id}',
+  'source': 'cli/src/commands/intel_routes.rs',
+  'evidence': 'IntelCommand::AlertPolicies {\n'
+              '                action:\n'
+              '                    AlertPoliciesAction::Update {\n'
+              '                        policy_kind,\n'
+              '                        fields,\n'
+              '                    },\n'
+              '            } => (\n'
+              '                "PUT",\n'
+              '                "/api/v1/projects/{project}/alert-policies/{id}"\n'
+              '                    .to_string()\n'
+              '                    .replace("{id}", &segment(policy_kind)?),',
+  'command_evidence': 'pub fn request(&self) -> Result<IntelRequest>',
+  'cross_source_evidence': {'cli/src/commands/intel.rs': ['let mut request = args.command.request()?;',
+                                                          '.dashboard_request(',
+                                                          'request.body.as_ref()',
+                                                          'request.method.as_bytes()'],
+                            'cli/src/main.rs': ['Commands::Intel(args) => '
+                                                'commands::intel::handle(args).await']}},
+ {'command': 'axiom intel logs list',
+  'method': 'GET',
+  'path': '/api/v1/projects/{project}/logs',
+  'source': 'cli/src/commands/intel_routes.rs',
+  'evidence': 'IntelCommand::Logs {\n'
+              '                action: LogsAction::List { follow, .. },\n'
+              '            } => (\n'
+              '                "GET",\n'
+              '                "/api/v1/projects/{project}/logs".to_string(),',
+  'command_evidence': 'pub fn request(&self) -> Result<IntelRequest>',
+  'cross_source_evidence': {'cli/src/commands/intel.rs': ['let mut request = args.command.request()?;',
+                                                          '.dashboard_request(',
+                                                          'request.body.as_ref()',
+                                                          'request.method.as_bytes()'],
+                            'cli/src/main.rs': ['Commands::Intel(args) => '
+                                                'commands::intel::handle(args).await']}},
+ {'command': 'axiom intel observability get',
+  'method': 'GET',
+  'path': '/api/v1/projects/{project}/observability',
+  'source': 'cli/src/commands/intel_routes.rs',
+  'evidence': 'IntelCommand::Observability {\n'
+              '                action: ObservabilityAction::Get,\n'
+              '            } => (\n'
+              '                "GET",\n'
+              '                "/api/v1/projects/{project}/observability".to_string(),',
+  'command_evidence': 'pub fn request(&self) -> Result<IntelRequest>',
+  'cross_source_evidence': {'cli/src/commands/intel.rs': ['let mut request = args.command.request()?;',
+                                                          '.dashboard_request(',
+                                                          'request.body.as_ref()',
+                                                          'request.method.as_bytes()'],
+                            'cli/src/main.rs': ['Commands::Intel(args) => '
+                                                'commands::intel::handle(args).await']}},
+ {'command': 'axiom intel observability settings get',
+  'method': 'GET',
+  'path': '/api/v1/projects/{project}/observability/settings',
+  'source': 'cli/src/commands/intel_routes.rs',
+  'evidence': 'IntelCommand::Observability {\n'
+              '                action:\n'
+              '                    ObservabilityAction::Settings {\n'
+              '                        action: ObservabilitySettingsAction::Get,\n'
+              '                    },\n'
+              '            } => (\n'
+              '                "GET",\n'
+              '                "/api/v1/projects/{project}/observability/settings".to_string(),',
+  'command_evidence': 'pub fn request(&self) -> Result<IntelRequest>',
+  'cross_source_evidence': {'cli/src/commands/intel.rs': ['let mut request = args.command.request()?;',
+                                                          '.dashboard_request(',
+                                                          'request.body.as_ref()',
+                                                          'request.method.as_bytes()'],
+                            'cli/src/main.rs': ['Commands::Intel(args) => '
+                                                'commands::intel::handle(args).await']}},
+ {'command': 'axiom intel observability settings update',
+  'method': 'PUT',
+  'path': '/api/v1/projects/{project}/observability/settings',
+  'source': 'cli/src/commands/intel_routes.rs',
+  'evidence': 'IntelCommand::Observability {\n'
+              '                action:\n'
+              '                    ObservabilityAction::Settings {\n'
+              '                        action: ObservabilitySettingsAction::Update { body },\n'
+              '                    },\n'
+              '            } => (\n'
+              '                "PUT",\n'
+              '                "/api/v1/projects/{project}/observability/settings".to_string(),',
+  'command_evidence': 'pub fn request(&self) -> Result<IntelRequest>',
+  'cross_source_evidence': {'cli/src/commands/intel.rs': ['let mut request = args.command.request()?;',
+                                                          '.dashboard_request(',
+                                                          'request.body.as_ref()',
+                                                          'request.method.as_bytes()'],
+                            'cli/src/main.rs': ['Commands::Intel(args) => '
+                                                'commands::intel::handle(args).await']}},
+ {'command': 'axiom intel observability sources list',
+  'method': 'GET',
+  'path': '/api/v1/projects/{project}/observability/otlp/sources',
+  'source': 'cli/src/commands/intel_routes.rs',
+  'evidence': 'IntelCommand::Observability {\n'
+              '                action:\n'
+              '                    ObservabilityAction::Sources {\n'
+              '                        action: ObservabilitySourcesAction::List,\n'
+              '                    },\n'
+              '            } => (\n'
+              '                "GET",\n'
+              '                '
+              '"/api/v1/projects/{project}/observability/otlp/sources".to_string(),',
+  'command_evidence': 'pub fn request(&self) -> Result<IntelRequest>',
+  'cross_source_evidence': {'cli/src/commands/intel.rs': ['let mut request = args.command.request()?;',
+                                                          '.dashboard_request(',
+                                                          'request.body.as_ref()',
+                                                          'request.method.as_bytes()'],
+                            'cli/src/main.rs': ['Commands::Intel(args) => '
+                                                'commands::intel::handle(args).await']}},
+ {'command': 'axiom intel observability sources create',
+  'method': 'POST',
+  'path': '/api/v1/projects/{project}/observability/otlp/sources',
+  'source': 'cli/src/commands/intel_routes.rs',
+  'evidence': 'IntelCommand::Observability {\n'
+              '                action:\n'
+              '                    ObservabilityAction::Sources {\n'
+              '                        action: ObservabilitySourcesAction::Create { body },\n'
+              '                    },\n'
+              '            } => (\n'
+              '                "POST",\n'
+              '                '
+              '"/api/v1/projects/{project}/observability/otlp/sources".to_string(),',
+  'command_evidence': 'pub fn request(&self) -> Result<IntelRequest>',
+  'cross_source_evidence': {'cli/src/commands/intel.rs': ['let mut request = args.command.request()?;',
+                                                          '.dashboard_request(',
+                                                          'request.body.as_ref()',
+                                                          'request.method.as_bytes()'],
+                            'cli/src/main.rs': ['Commands::Intel(args) => '
+                                                'commands::intel::handle(args).await']}},
+ {'command': 'axiom intel observability sources revoke',
+  'method': 'POST',
+  'path': '/api/v1/projects/{project}/observability/otlp/sources/{id}/revoke',
+  'source': 'cli/src/commands/intel_routes.rs',
+  'evidence': 'IntelCommand::Observability {\n'
+              '                action:\n'
+              '                    ObservabilityAction::Sources {\n'
+              '                        action: ObservabilitySourcesAction::Revoke { source_id },\n'
+              '                    },\n'
+              '            } => (\n'
+              '                "POST",\n'
+              '                '
+              '"/api/v1/projects/{project}/observability/otlp/sources/{id}/revoke"\n'
+              '                    .to_string()\n'
+              '                    .replace("{id}", &segment(source_id)?),',
+  'command_evidence': 'pub fn request(&self) -> Result<IntelRequest>',
+  'cross_source_evidence': {'cli/src/commands/intel.rs': ['let mut request = args.command.request()?;',
+                                                          '.dashboard_request(',
+                                                          'request.body.as_ref()',
+                                                          'request.method.as_bytes()'],
+                            'cli/src/main.rs': ['Commands::Intel(args) => '
+                                                'commands::intel::handle(args).await']}},
+ {'command': 'axiom intel pipeline-runs list',
+  'method': 'GET',
+  'path': '/api/v1/projects/{project}/pipeline-runs',
+  'source': 'cli/src/commands/intel_routes.rs',
+  'evidence': 'IntelCommand::PipelineRuns {\n'
+              '                action: PipelineRunsAction::List,\n'
+              '            } => (\n'
+              '                "GET",\n'
+              '                "/api/v1/projects/{project}/pipeline-runs".to_string(),',
+  'command_evidence': 'pub fn request(&self) -> Result<IntelRequest>',
+  'cross_source_evidence': {'cli/src/commands/intel.rs': ['let mut request = args.command.request()?;',
+                                                          '.dashboard_request(',
+                                                          'request.body.as_ref()',
+                                                          'request.method.as_bytes()'],
+                            'cli/src/main.rs': ['Commands::Intel(args) => '
+                                                'commands::intel::handle(args).await']}},
+ {'command': 'axiom intel pipeline-runs steps',
+  'method': 'GET',
+  'path': '/api/v1/projects/{project}/pipeline-runs/{id}/steps',
+  'source': 'cli/src/commands/intel_routes.rs',
+  'evidence': 'IntelCommand::PipelineRuns {\n'
+              '                action: PipelineRunsAction::Steps { run_id },\n'
+              '            } => (\n'
+              '                "GET",\n'
+              '                "/api/v1/projects/{project}/pipeline-runs/{id}/steps"\n'
+              '                    .to_string()\n'
+              '                    .replace("{id}", &segment(run_id)?),',
+  'command_evidence': 'pub fn request(&self) -> Result<IntelRequest>',
+  'cross_source_evidence': {'cli/src/commands/intel.rs': ['let mut request = args.command.request()?;',
+                                                          '.dashboard_request(',
+                                                          'request.body.as_ref()',
+                                                          'request.method.as_bytes()'],
+                            'cli/src/main.rs': ['Commands::Intel(args) => '
+                                                'commands::intel::handle(args).await']}},
+ {'command': 'axiom intel pipeline-runs attempts',
+  'method': 'GET',
+  'path': '/api/v1/projects/{project}/pipeline-runs/{id}/attempts',
+  'source': 'cli/src/commands/intel_routes.rs',
+  'evidence': 'IntelCommand::PipelineRuns {\n'
+              '                action: PipelineRunsAction::Attempts { run_id },\n'
+              '            } => (\n'
+              '                "GET",\n'
+              '                "/api/v1/projects/{project}/pipeline-runs/{id}/attempts"\n'
+              '                    .to_string()\n'
+              '                    .replace("{id}", &segment(run_id)?),',
+  'command_evidence': 'pub fn request(&self) -> Result<IntelRequest>',
+  'cross_source_evidence': {'cli/src/commands/intel.rs': ['let mut request = args.command.request()?;',
+                                                          '.dashboard_request(',
+                                                          'request.body.as_ref()',
+                                                          'request.method.as_bytes()'],
+                            'cli/src/main.rs': ['Commands::Intel(args) => '
+                                                'commands::intel::handle(args).await']}},
+ {'command': 'axiom intel pull-requests list',
+  'method': 'GET',
+  'path': '/api/v1/projects/{project}/pull-requests',
+  'source': 'cli/src/commands/intel_routes.rs',
+  'evidence': 'IntelCommand::PullRequests {\n'
+              '                action: PullRequestsAction::List,\n'
+              '            } => (\n'
+              '                "GET",\n'
+              '                "/api/v1/projects/{project}/pull-requests".to_string(),',
+  'command_evidence': 'pub fn request(&self) -> Result<IntelRequest>',
+  'cross_source_evidence': {'cli/src/commands/intel.rs': ['let mut request = args.command.request()?;',
+                                                          '.dashboard_request(',
+                                                          'request.body.as_ref()',
+                                                          'request.method.as_bytes()'],
+                            'cli/src/main.rs': ['Commands::Intel(args) => '
+                                                'commands::intel::handle(args).await']}},
+ {'command': 'axiom intel pull-requests get',
+  'method': 'GET',
+  'path': '/api/v1/projects/{project}/pull-requests/{id}',
+  'source': 'cli/src/commands/intel_routes.rs',
+  'evidence': 'IntelCommand::PullRequests {\n'
+              '                action: PullRequestsAction::Get { number },\n'
+              '            } => (\n'
+              '                "GET",\n'
+              '                "/api/v1/projects/{project}/pull-requests/{id}"\n'
+              '                    .to_string()\n'
+              '                    .replace("{id}", &segment(number)?),',
+  'command_evidence': 'pub fn request(&self) -> Result<IntelRequest>',
+  'cross_source_evidence': {'cli/src/commands/intel.rs': ['let mut request = args.command.request()?;',
+                                                          '.dashboard_request(',
+                                                          'request.body.as_ref()',
+                                                          'request.method.as_bytes()'],
+                            'cli/src/main.rs': ['Commands::Intel(args) => '
+                                                'commands::intel::handle(args).await']}},
+ {'command': 'axiom intel pull-requests create',
+  'method': 'POST',
+  'path': '/api/v1/projects/{project}/pull-requests',
+  'source': 'cli/src/commands/intel_routes.rs',
+  'evidence': 'IntelCommand::PullRequests {\n'
+              '                action: PullRequestsAction::Create { body },\n'
+              '            } => (\n'
+              '                "POST",\n'
+              '                "/api/v1/projects/{project}/pull-requests".to_string(),',
+  'command_evidence': 'pub fn request(&self) -> Result<IntelRequest>',
+  'cross_source_evidence': {'cli/src/commands/intel.rs': ['let mut request = args.command.request()?;',
+                                                          '.dashboard_request(',
+                                                          'request.body.as_ref()',
+                                                          'request.method.as_bytes()'],
+                            'cli/src/main.rs': ['Commands::Intel(args) => '
+                                                'commands::intel::handle(args).await']}},
+ {'command': 'axiom intel pull-requests update',
+  'method': 'PATCH',
+  'path': '/api/v1/projects/{project}/pull-requests/{id}',
+  'source': 'cli/src/commands/intel_routes.rs',
+  'evidence': 'IntelCommand::PullRequests {\n'
+              '                action: PullRequestsAction::Update { number, body },\n'
+              '            } => (\n'
+              '                "PATCH",\n'
+              '                "/api/v1/projects/{project}/pull-requests/{id}"\n'
+              '                    .to_string()\n'
+              '                    .replace("{id}", &segment(number)?),',
+  'command_evidence': 'pub fn request(&self) -> Result<IntelRequest>',
+  'cross_source_evidence': {'cli/src/commands/intel.rs': ['let mut request = args.command.request()?;',
+                                                          '.dashboard_request(',
+                                                          'request.body.as_ref()',
+                                                          'request.method.as_bytes()'],
+                            'cli/src/main.rs': ['Commands::Intel(args) => '
+                                                'commands::intel::handle(args).await']}},
+ {'command': 'axiom intel pull-requests changes',
+  'method': 'GET',
+  'path': '/api/v1/projects/{project}/pull-requests/{id}/changes',
+  'source': 'cli/src/commands/intel_routes.rs',
+  'evidence': 'IntelCommand::PullRequests {\n'
+              '                action: PullRequestsAction::Changes { number },\n'
+              '            } => (\n'
+              '                "GET",\n'
+              '                "/api/v1/projects/{project}/pull-requests/{id}/changes"\n'
+              '                    .to_string()\n'
+              '                    .replace("{id}", &segment(number)?),',
+  'command_evidence': 'pub fn request(&self) -> Result<IntelRequest>',
+  'cross_source_evidence': {'cli/src/commands/intel.rs': ['let mut request = args.command.request()?;',
+                                                          '.dashboard_request(',
+                                                          'request.body.as_ref()',
+                                                          'request.method.as_bytes()'],
+                            'cli/src/main.rs': ['Commands::Intel(args) => '
+                                                'commands::intel::handle(args).await']}},
+ {'command': 'axiom intel pull-requests comments',
+  'method': 'GET',
+  'path': '/api/v1/projects/{project}/pull-requests/{id}/comments',
+  'source': 'cli/src/commands/intel_routes.rs',
+  'evidence': 'IntelCommand::PullRequests {\n'
+              '                action: PullRequestsAction::Comments { number },\n'
+              '            } => (\n'
+              '                "GET",\n'
+              '                "/api/v1/projects/{project}/pull-requests/{id}/comments"\n'
+              '                    .to_string()\n'
+              '                    .replace("{id}", &segment(number)?),',
+  'command_evidence': 'pub fn request(&self) -> Result<IntelRequest>',
+  'cross_source_evidence': {'cli/src/commands/intel.rs': ['let mut request = args.command.request()?;',
+                                                          '.dashboard_request(',
+                                                          'request.body.as_ref()',
+                                                          'request.method.as_bytes()'],
+                            'cli/src/main.rs': ['Commands::Intel(args) => '
+                                                'commands::intel::handle(args).await']}},
+ {'command': 'axiom intel pull-requests comment',
+  'method': 'POST',
+  'path': '/api/v1/projects/{project}/pull-requests/{id}/comments',
+  'source': 'cli/src/commands/intel_routes.rs',
+  'evidence': 'IntelCommand::PullRequests {\n'
+              '                action: PullRequestsAction::Comment { number, body },\n'
+              '            } => (\n'
+              '                "POST",\n'
+              '                "/api/v1/projects/{project}/pull-requests/{id}/comments"\n'
+              '                    .to_string()\n'
+              '                    .replace("{id}", &segment(number)?),',
+  'command_evidence': 'pub fn request(&self) -> Result<IntelRequest>',
+  'cross_source_evidence': {'cli/src/commands/intel.rs': ['let mut request = args.command.request()?;',
+                                                          '.dashboard_request(',
+                                                          'request.body.as_ref()',
+                                                          'request.method.as_bytes()'],
+                            'cli/src/main.rs': ['Commands::Intel(args) => '
+                                                'commands::intel::handle(args).await']}},
+ {'command': 'axiom intel release-channel latest',
+  'method': 'GET',
+  'path': '/api/v1/projects/{project}/release-channels/latest',
+  'source': 'cli/src/commands/intel_routes.rs',
+  'evidence': 'IntelCommand::ReleaseChannel {\n'
+              '                action: ReleaseChannelAction::Latest,\n'
+              '            } => (\n'
+              '                "GET",\n'
+              '                "/api/v1/projects/{project}/release-channels/latest".to_string(),',
+  'command_evidence': 'pub fn request(&self) -> Result<IntelRequest>',
+  'cross_source_evidence': {'cli/src/commands/intel.rs': ['let mut request = args.command.request()?;',
+                                                          '.dashboard_request(',
+                                                          'request.body.as_ref()',
+                                                          'request.method.as_bytes()'],
+                            'cli/src/main.rs': ['Commands::Intel(args) => '
+                                                'commands::intel::handle(args).await']}},
+ {'command': 'axiom intel security audit',
+  'method': 'GET',
+  'path': '/api/v1/projects/{project}/security-audit',
+  'source': 'cli/src/commands/intel_routes.rs',
+  'evidence': 'IntelCommand::Security {\n'
+              '                action: SecurityAction::Audit,\n'
+              '            } => (\n'
+              '                "GET",\n'
+              '                "/api/v1/projects/{project}/security-audit".to_string(),',
+  'command_evidence': 'pub fn request(&self) -> Result<IntelRequest>',
+  'cross_source_evidence': {'cli/src/commands/intel.rs': ['let mut request = args.command.request()?;',
+                                                          '.dashboard_request(',
+                                                          'request.body.as_ref()',
+                                                          'request.method.as_bytes()'],
+                            'cli/src/main.rs': ['Commands::Intel(args) => '
+                                                'commands::intel::handle(args).await']}},
+ {'command': 'axiom intel security posture',
+  'method': 'GET',
+  'path': '/api/v1/projects/{project}/security-posture',
+  'source': 'cli/src/commands/intel_routes.rs',
+  'evidence': 'IntelCommand::Security {\n'
+              '                action: SecurityAction::Posture,\n'
+              '            } => (\n'
+              '                "GET",\n'
+              '                "/api/v1/projects/{project}/security-posture".to_string(),',
+  'command_evidence': 'pub fn request(&self) -> Result<IntelRequest>',
+  'cross_source_evidence': {'cli/src/commands/intel.rs': ['let mut request = args.command.request()?;',
+                                                          '.dashboard_request(',
+                                                          'request.body.as_ref()',
+                                                          'request.method.as_bytes()'],
+                            'cli/src/main.rs': ['Commands::Intel(args) => '
+                                                'commands::intel::handle(args).await']}},
+ {'command': 'axiom intel speed-insights get',
+  'method': 'GET',
+  'path': '/api/v1/projects/{project}/speed-insights',
+  'source': 'cli/src/commands/intel_routes.rs',
+  'evidence': 'IntelCommand::SpeedInsights {\n'
+              '                action: SpeedInsightsAction::Get,\n'
+              '            } => (\n'
+              '                "GET",\n'
+              '                "/api/v1/projects/{project}/speed-insights".to_string(),',
+  'command_evidence': 'pub fn request(&self) -> Result<IntelRequest>',
+  'cross_source_evidence': {'cli/src/commands/intel.rs': ['let mut request = args.command.request()?;',
+                                                          '.dashboard_request(',
+                                                          'request.body.as_ref()',
+                                                          'request.method.as_bytes()'],
+                            'cli/src/main.rs': ['Commands::Intel(args) => '
+                                                'commands::intel::handle(args).await']}},
+ {'command': 'axiom intel test-runs list',
+  'method': 'GET',
+  'path': '/api/v1/projects/{project}/test-runs',
+  'source': 'cli/src/commands/intel_routes.rs',
+  'evidence': 'IntelCommand::TestRuns {\n'
+              '                action: TestRunsAction::List,\n'
+              '            } => (\n'
+              '                "GET",\n'
+              '                "/api/v1/projects/{project}/test-runs".to_string(),',
+  'command_evidence': 'pub fn request(&self) -> Result<IntelRequest>',
+  'cross_source_evidence': {'cli/src/commands/intel.rs': ['let mut request = args.command.request()?;',
+                                                          '.dashboard_request(',
+                                                          'request.body.as_ref()',
+                                                          'request.method.as_bytes()'],
+                            'cli/src/main.rs': ['Commands::Intel(args) => '
+                                                'commands::intel::handle(args).await']}},
+ {'command': 'axiom intel test-runs results',
+  'method': 'GET',
+  'path': '/api/v1/projects/{project}/test-runs/{id}/results',
+  'source': 'cli/src/commands/intel_routes.rs',
+  'evidence': 'IntelCommand::TestRuns {\n'
+              '                action: TestRunsAction::Results { test_run_id },\n'
+              '            } => (\n'
+              '                "GET",\n'
+              '                "/api/v1/projects/{project}/test-runs/{id}/results"\n'
+              '                    .to_string()\n'
+              '                    .replace("{id}", &segment(test_run_id)?),',
+  'command_evidence': 'pub fn request(&self) -> Result<IntelRequest>',
+  'cross_source_evidence': {'cli/src/commands/intel.rs': ['let mut request = args.command.request()?;',
+                                                          '.dashboard_request(',
+                                                          'request.body.as_ref()',
+                                                          'request.method.as_bytes()'],
+                            'cli/src/main.rs': ['Commands::Intel(args) => '
+                                                'commands::intel::handle(args).await']}},
+ {'command': 'axiom intel test-runs queue',
+  'method': 'POST',
+  'path': '/api/v1/projects/{project}/test-runs',
+  'source': 'cli/src/commands/intel_routes.rs',
+  'evidence': 'IntelCommand::TestRuns {\n'
+              '                action: TestRunsAction::Queue { version },\n'
+              '            } => (\n'
+              '                "POST",\n'
+              '                "/api/v1/projects/{project}/test-runs".to_string(),',
+  'command_evidence': 'pub fn request(&self) -> Result<IntelRequest>',
+  'cross_source_evidence': {'cli/src/commands/intel.rs': ['let mut request = args.command.request()?;',
+                                                          '.dashboard_request(',
+                                                          'request.body.as_ref()',
+                                                          'request.method.as_bytes()'],
+                            'cli/src/main.rs': ['Commands::Intel(args) => '
+                                                'commands::intel::handle(args).await']}},
+ {'command': 'axiom intel traces list',
+  'method': 'GET',
+  'path': '/api/v1/projects/{project}/traces',
+  'source': 'cli/src/commands/intel_routes.rs',
+  'evidence': 'IntelCommand::Traces {\n'
+              '                action: TracesAction::List,\n'
+              '            } => (\n'
+              '                "GET",\n'
+              '                "/api/v1/projects/{project}/traces".to_string(),',
+  'command_evidence': 'pub fn request(&self) -> Result<IntelRequest>',
+  'cross_source_evidence': {'cli/src/commands/intel.rs': ['let mut request = args.command.request()?;',
+                                                          '.dashboard_request(',
+                                                          'request.body.as_ref()',
+                                                          'request.method.as_bytes()'],
+                            'cli/src/main.rs': ['Commands::Intel(args) => '
+                                                'commands::intel::handle(args).await']}},
+ {'command': 'axiom intel traces get',
+  'method': 'GET',
+  'path': '/api/v1/projects/{project}/traces/{id}',
+  'source': 'cli/src/commands/intel_routes.rs',
+  'evidence': 'IntelCommand::Traces {\n'
+              '                action: TracesAction::Get { trace_id },\n'
+              '            } => (\n'
+              '                "GET",\n'
+              '                "/api/v1/projects/{project}/traces/{id}"\n'
+              '                    .to_string()\n'
+              '                    .replace("{id}", &segment(trace_id)?),',
+  'command_evidence': 'pub fn request(&self) -> Result<IntelRequest>',
+  'cross_source_evidence': {'cli/src/commands/intel.rs': ['let mut request = args.command.request()?;',
+                                                          '.dashboard_request(',
+                                                          'request.body.as_ref()',
+                                                          'request.method.as_bytes()'],
+                            'cli/src/main.rs': ['Commands::Intel(args) => '
+                                                'commands::intel::handle(args).await']}},
+ {'command': 'axiom intel traffic list',
+  'method': 'GET',
+  'path': '/api/v1/projects/{project}/traffic',
+  'source': 'cli/src/commands/intel_routes.rs',
+  'evidence': 'IntelCommand::Traffic {\n'
+              '                action: TrafficAction::List,\n'
+              '            } => (\n'
+              '                "GET",\n'
+              '                "/api/v1/projects/{project}/traffic".to_string(),',
+  'command_evidence': 'pub fn request(&self) -> Result<IntelRequest>',
+  'cross_source_evidence': {'cli/src/commands/intel.rs': ['let mut request = args.command.request()?;',
+                                                          '.dashboard_request(',
+                                                          'request.body.as_ref()',
+                                                          'request.method.as_bytes()'],
+                            'cli/src/main.rs': ['Commands::Intel(args) => '
+                                                'commands::intel::handle(args).await']}},
+ {'command': 'axiom intel settings update',
+  'method': 'PATCH',
+  'path': '/api/v1/projects/{project}/settings',
+  'source': 'cli/src/commands/intel_routes.rs',
+  'evidence': 'IntelCommand::Settings {\n'
+              '                action: SettingsAction::Update { fields },\n'
+              '            } => (\n'
+              '                "PATCH",\n'
+              '                "/api/v1/projects/{project}/settings".to_string(),',
+  'command_evidence': 'pub fn request(&self) -> Result<IntelRequest>',
+  'cross_source_evidence': {'cli/src/commands/intel.rs': ['let mut request = args.command.request()?;',
+                                                          '.dashboard_request(',
+                                                          'request.body.as_ref()',
+                                                          'request.method.as_bytes()'],
+                            'cli/src/main.rs': ['Commands::Intel(args) => '
+                                                'commands::intel::handle(args).await']}},
+ {'command': 'axiom intel cli-installed confirm',
+  'method': 'POST',
+  'path': '/api/v1/dashboard/setup/cli-installed',
+  'source': 'cli/src/commands/intel_routes.rs',
+  'evidence': 'IntelCommand::CliInstalled {\n'
+              '                action: CliInstalledAction::Confirm,\n'
+              '            } => (\n'
+              '                "POST",\n'
+              '                "/api/v1/dashboard/setup/cli-installed".to_string(),',
+  'command_evidence': 'pub fn request(&self) -> Result<IntelRequest>',
+  'cross_source_evidence': {'cli/src/commands/intel.rs': ['let mut request = args.command.request()?;',
+                                                          '.dashboard_request(',
+                                                          'request.body.as_ref()',
+                                                          'request.method.as_bytes()'],
+                            'cli/src/main.rs': ['Commands::Intel(args) => '
+                                                'commands::intel::handle(args).await']}}]
 
 def production(text: str) -> str:
     # Command tests live in trailing cfg(test) modules. Drop them before matching.
@@ -367,12 +1012,20 @@ def scan_cli(core: Path) -> list[dict]:
     main_path = core / "cli/src/main.rs"
     main = production(main_path.read_text()) if main_path.is_file() else ""
     result = []
+    sources = {}
+
+    def read_source(relative):
+        if relative not in sources:
+            path = core / relative
+            raw = path.read_text() if path.is_file() else ""
+            sources[relative] = (raw, production(raw))
+        return sources[relative]
+
     for caller in CALLERS:
         path = core / caller["source"]
         if not path.is_file():
             continue
-        raw = path.read_text()
-        source = production(raw)
+        raw, source = read_source(caller["source"])
         family = caller["command"].split()[1].capitalize()
         if "Commands::" + family not in main:
             continue
@@ -380,7 +1033,10 @@ def scan_cli(core: Path) -> list[dict]:
             continue
         if caller.get("command_evidence", "") not in source or any(e not in source for e in caller.get("extra_evidence", [])):
             continue
-        row = {k: v for k, v in caller.items() if k not in ("evidence", "command_evidence", "extra_evidence")}
+        cross = caller.get("cross_source_evidence", {})
+        if any(not (core / file).is_file() or any(anchor not in read_source(file)[1] for anchor in anchors) for file, anchors in cross.items()):
+            continue
+        row = {k: v for k, v in caller.items() if k not in ("evidence", "command_evidence", "extra_evidence", "cross_source_evidence")}
         row["line"] = raw[:raw.index(caller["evidence"])].count("\n") + 1
         result.append(row)
     return result

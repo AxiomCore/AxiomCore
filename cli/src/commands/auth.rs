@@ -416,13 +416,13 @@ async fn project_target(args: &AuthArgs) -> Result<Target> {
 /// listed project has it; otherwise it is a display name (case-insensitive), which must
 /// name exactly one project. Unknown and ambiguous values are usage errors (exit 2).
 pub fn pick_project(projects: &[axiom_cloud::project::Project], given: &str) -> Result<String> {
-    if let Some(p) = projects.iter().find(|p| p.slug == given).or_else(|| projects.iter().find(|p| p.id == given)) {
+    if let Some(p) = projects.iter().find(|p| p.slug == given).or_else(|| projects.iter().find(|p| p.id.eq_ignore_ascii_case(given))) {
         return Ok(p.slug.clone());
     }
     let named: Vec<_> = projects.iter().filter(|p| p.name.eq_ignore_ascii_case(given.trim())).collect();
     match named.as_slice() {
         [p] => Ok(p.slug.clone()),
-        [] => Err(usage(format!("no project with the slug, id or name `{given}` (see `axiom project list`)"))),
+        [] => Err(usage(format!("no project with the slug, id or name `{given}` in your current organization (see `axiom project list`)"))),
         _ => Err(usage(format!("more than one project is named `{given}`; pass its slug"))),
     }
 }
@@ -500,23 +500,26 @@ pub fn sanitize(value: &mut Value, reveal: bool) {
 const TEXT_KEYS: [&str; 5] = ["subject", "intro", "outro", "text", "html"];
 
 /// Replace token-like values in free text with `[redacted]`: Axiom token prefixes
-/// (`axr1_…`), JWTs, and runs of 20 or more letters, digits, `_` or `-` that mix
-/// letters and digits (API keys, hex and base64url secrets). UUIDs, `{{variables}}`
+/// (`axr1_…`), JWTs, runs of 20 or more letters, digits, `_` or `-` that mix letters
+/// and digits (API keys, hex and base64url secrets), and standard base64 runs of 30 or
+/// more that mix letters and digits (such as AWS secret keys). UUIDs, `{{variables}}`
 /// and ordinary words are kept. Key-based `sanitize` cannot see a credential pasted
 /// into template text, so the text itself is checked.
 pub fn redact_token_text(text: &str) -> String {
     use std::sync::LazyLock;
     static JWT: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"eyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}(?:\.[A-Za-z0-9_-]*)?").expect("static regex"));
     static PREFIXED: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"\bax[a-z]{0,4}[0-9]?_[A-Za-z0-9_-]{8,}").expect("static regex"));
+    static BASE64: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"[A-Za-z0-9+/]{30,}={0,2}").expect("static regex"));
     static RUN: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"[A-Za-z0-9_-]{20,}").expect("static regex"));
     let text = JWT.replace_all(text, "[redacted]");
     let text = PREFIXED.replace_all(&text, |c: &regex::Captures| if c[0].starts_with("axiom_") { c[0].to_string() } else { "[redacted]".into() });
-    RUN.replace_all(&text, |c: &regex::Captures| {
+    let mixed = |run: &str| run.bytes().any(|b| b.is_ascii_digit()) && run.bytes().any(|b| b.is_ascii_alphabetic());
+    let text = RUN.replace_all(&text, |c: &regex::Captures| {
         let run = &c[0];
-        let mixed = run.bytes().any(|b| b.is_ascii_digit()) && run.bytes().any(|b| b.is_ascii_alphabetic());
-        if mixed && !uuid_shaped(&run.to_ascii_lowercase()) { "[redacted]".into() } else { run.to_string() }
-    })
-    .into_owned()
+        if mixed(run) && !uuid_shaped(&run.to_ascii_lowercase()) { "[redacted]".into() } else { run.to_string() }
+    });
+    // 30 or more: a path of UUIDs (the preview's sample link) never has a longer run without `-`.
+    BASE64.replace_all(&text, |c: &regex::Captures| if mixed(&c[0]) { "[redacted]".into() } else { c[0].to_string() }).into_owned()
 }
 
 /// Apply `redact_token_text` to every free-text field (`TEXT_KEYS`) of a response.

@@ -427,10 +427,17 @@ pub fn template_problem(kind: &str, field: &str, value: &str, max: usize) -> Opt
 /// template body limit; trailing line breaks are dropped and empty text means the default.
 pub fn read_template_file(path: &Path) -> Result<Option<String>> {
     if path == Path::new("-") {
+        if std::io::stdin().is_terminal() {
+            eprintln!("Reading template text from stdin; end it with Ctrl-D.");
+        }
         let mut raw = Vec::new();
         std::io::stdin().take(TEMPLATE_BODY_LIMIT as u64 + 1).read_to_end(&mut raw)?;
         if raw.len() > TEMPLATE_BODY_LIMIT {
             return Err(usage("template text on stdin is at most 64 KiB"));
+        }
+        // Empty stdin is usually a missing pipe, not a request for the default text.
+        if raw.iter().all(|b| matches!(b, b'\r' | b'\n')) {
+            return Err(usage("no template text on stdin; to use the default text, pass an empty file"));
         }
         return template_text(raw, "stdin");
     }
@@ -449,10 +456,16 @@ fn template_text(raw: Vec<u8>, source: &str) -> Result<Option<String>> {
 
 /// `{subject, intro, outro}`: the given fields over the current template (fields left
 /// out keep the current text; an empty value is null, meaning the default text).
-pub fn template_body(kind: &str, current: &Value, subject_file: Option<&Path>, intro_file: Option<&Path>, outro_file: Option<&Path>) -> Result<Value> {
-    if [subject_file, intro_file, outro_file].iter().flatten().filter(|p| **p == Path::new("-")).count() > 1 {
+/// At most one template text flag reads stdin (`-`).
+fn stdin_once(paths: [Option<&Path>; 3]) -> Result<()> {
+    if paths.iter().flatten().filter(|p| **p == Path::new("-")).count() > 1 {
         return Err(usage("only one of --subject-file, --intro-file and --outro-file can read stdin (-)"));
     }
+    Ok(())
+}
+
+pub fn template_body(kind: &str, current: &Value, subject_file: Option<&Path>, intro_file: Option<&Path>, outro_file: Option<&Path>) -> Result<Value> {
+    stdin_once([subject_file, intro_file, outro_file])?;
     let keep = |key: &str| current[key].as_str().filter(|s| !s.is_empty()).map(str::to_string);
     let subject = match subject_file {
         Some(path) => read_template_file(path)?,
@@ -525,6 +538,7 @@ pub(super) async fn templates_with(args: &AuthArgs, target: &Target, action: &Te
             if subject_file.is_none() && intro_file.is_none() && outro_file.is_none() {
                 return Err(usage("nothing to change: pass --subject-file, --intro-file or --outro-file"));
             }
+            stdin_once([subject_file.as_deref(), intro_file.as_deref(), outro_file.as_deref()])?;
             let current = template_view(target, kind).await?;
             let mut body = template_body(kind, &current, subject_file.as_deref(), intro_file.as_deref(), outro_file.as_deref())?;
             if body["subject"].is_null() && body["intro"].is_null() && body["outro"].is_null() {
@@ -554,6 +568,7 @@ pub(super) async fn templates_with(args: &AuthArgs, target: &Target, action: &Te
             let body = if subject_file.is_none() && intro_file.is_none() && outro_file.is_none() {
                 json!({})
             } else {
+                stdin_once([subject_file.as_deref(), intro_file.as_deref(), outro_file.as_deref()])?;
                 let current = template_view(target, kind).await?;
                 template_body(kind, &current, subject_file.as_deref(), intro_file.as_deref(), outro_file.as_deref())?
             };

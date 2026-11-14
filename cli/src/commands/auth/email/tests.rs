@@ -268,7 +268,7 @@ fn template_text_follows_the_backend_rules() {
 #[test]
 fn token_like_template_text_is_redacted_and_ordinary_text_kept() {
     use crate::commands::auth::{redact_token_text, redact_tokens};
-    for token in ["axr1_SYNTHETICREFRESHCANARY01", "axg1_0123456789abcdef", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.c2lnbmF0dXJl", "sk_live_51SYNTHETICcanary0000", "ghp_SYNTHETIC0123456789abcdefCANARY", "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b"] {
+    for token in ["wJalrXUtnFEMI/K7MDENG/bPxRfiCYSYNTHETIC1", "axr1_SYNTHETICREFRESHCANARY01", "axg1_0123456789abcdef", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.c2lnbmF0dXJl", "sk_live_51SYNTHETICcanary0000", "ghp_SYNTHETIC0123456789abcdefCANARY", "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b"] {
         let shown = redact_token_text(&format!("Your key {token} expires"));
         assert_eq!(shown, "Your key [redacted] expires", "{token}");
     }
@@ -278,6 +278,8 @@ fn token_like_template_text_is_redacted_and_ordinary_text_kept() {
         "Authentication administration for internationalization",
         "Request 6a0c1f8e-3b2d-4c5e-9f70-1a2b3c4d5e6f",
         "Open #axiom_link=preview",
+        "Open https://auth.axiomcore.dev/6a0c1f8e-3b2d-4c5e-9f70-1a2b3c4d5e6f/0b5e2c1a-9f3d-4c7e-8a21-5d6f7e8a9b0c/sign-in/link#axiom_link=preview",
+        "and/or, 2026/11/14",
     ] {
         assert_eq!(redact_token_text(kept), kept);
     }
@@ -293,18 +295,14 @@ fn token_like_template_text_is_redacted_and_ordinary_text_kept() {
 }
 
 #[tokio::test]
-async fn templates_text_with_tokens_is_redacted_unless_revealed() {
+async fn two_template_fields_cannot_both_read_stdin() {
     let (mock, target) = fixture().await;
-    let token = "axr1_SYNTHETICREFRESHCANARY01";
-    let view = json!({"kind": "signup", "overridden": true, "subject": format!("Hi {token}"), "intro": null, "outro": null, "revision": 1, "defaults": {}});
-    mock.script(&admin_route("GET", "templates/signup"), 200, view);
-    templates_with(&args(), &target, &TemplatesAction::Show { kind: "signup".into(), reveal_text: false }).await.unwrap();
-    templates_with(&args(), &target, &TemplatesAction::Show { kind: "signup".into(), reveal_text: true }).await.unwrap();
-    assert_eq!(mock.seen(&admin_route("GET", "templates/signup")).len(), 2);
-
-    // Two text flags cannot both read stdin; nothing is sent.
+    // Refused before any request.
     let both = TemplatesAction::Set { kind: "signup".into(), subject_file: Some("-".into()), intro_file: Some("-".into()), outro_file: None, reveal_text: false };
     assert!(templates_with(&args(), &target, &both).await.is_err());
+    let trial = TemplatesAction::Preview { kind: "signup".into(), subject_file: None, intro_file: Some("-".into()), outro_file: Some("-".into()), html: false, reveal_text: false };
+    assert!(templates_with(&args(), &target, &trial).await.is_err());
+    assert!(mock.seen(&admin_route("GET", "templates/signup")).is_empty());
     assert!(mock.seen(&admin_route("PUT", "templates/signup")).is_empty());
 }
 

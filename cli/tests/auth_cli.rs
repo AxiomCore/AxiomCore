@@ -126,6 +126,11 @@ fn route(method: &str, path: &str, body: &str) -> (u16, String) {
             200,
             format!(r#"{{"kind":"signup","overridden":true,"subject":"Code {TOKEN}","intro":"Use {TOKEN} now","outro":null,"revision":2,"defaults":{{"outro":"Bye"}}}}"#),
         ),
+        ("GET", p) if p == format!("{}/templates", env(DEV)) => (200, format!(r#"{{"templates":[{{"kind":"signup","overridden":true,"subject":"Code {TOKEN}","revision":2}}]}}"#)),
+        ("POST", p) if p == format!("{}/templates/signup/preview", env(DEV)) => (
+            200,
+            format!(r#"{{"subject":"Code {TOKEN}","text":"Use {TOKEN} now: https://auth.axiomcore.dev/{SHOP_ID}/{DEV}/sign-in/link#axiom_link=preview","html":"<p>Use {TOKEN} now</p>"}}"#),
+        ),
         ("PUT", p) if p == format!("{}/templates/signup", env(DEV)) => {
             let mut saved: serde_json::Value = serde_json::from_str(body).unwrap();
             saved["kind"] = "signup".into();
@@ -268,20 +273,35 @@ fn template_text_comes_from_files_or_stdin_and_tokens_are_redacted_in_output() {
     assert_eq!(argv.status.code(), Some(2), "{}", String::from_utf8_lossy(&argv.stderr));
     assert!(!log.lock().unwrap().iter().any(|(m, _, _)| m == "PUT"));
 
-    // Shown text: token-like values are redacted in human and JSON output, unless --reveal-text.
-    for json in [false, true] {
-        let mut args = vec!["auth", "--project", "shop", "--environment", DEV, "templates", "show", "signup"];
-        if json {
-            args.push("--json");
+    // Shown text: token-like values are redacted in human and JSON output of every
+    // templates command, unless --reveal-text.
+    for command in [&["show", "signup"][..], &["list"], &["preview", "signup"], &["preview", "signup", "--html"]] {
+        for json in [false, true] {
+            let mut args = vec!["auth", "--project", "shop", "--environment", DEV, "templates"];
+            args.extend_from_slice(command);
+            if json {
+                args.push("--json");
+            }
+            let shown = axiom(&cloud, directory.path(), &args, None);
+            assert!(shown.status.success(), "{command:?}: {}", String::from_utf8_lossy(&shown.stderr));
+            let stdout = String::from_utf8_lossy(&shown.stdout);
+            assert!(!stdout.contains(TOKEN) && !stdout.contains("axr1_"), "{command:?}: {stdout}");
+            assert!(stdout.contains("[redacted]"), "{command:?}: {stdout}");
+            if command == ["preview", "signup"] {
+                // The sample sign-in link is kept.
+                assert!(stdout.contains(&format!("/{SHOP_ID}/{DEV}/sign-in/link#axiom_link=preview")), "{stdout}");
+            }
         }
-        let shown = axiom(&cloud, directory.path(), &args, None);
-        assert!(shown.status.success(), "{}", String::from_utf8_lossy(&shown.stderr));
-        let stdout = String::from_utf8_lossy(&shown.stdout);
-        assert!(!stdout.contains(TOKEN) && !stdout.contains("axr1_"), "{stdout}");
-        assert!(stdout.contains("[redacted]"), "{stdout}");
     }
     let revealed = axiom(&cloud, directory.path(), &["auth", "--project", "shop", "--environment", DEV, "templates", "show", "signup", "--reveal-text"], None);
     assert!(String::from_utf8_lossy(&revealed.stdout).contains(TOKEN));
+    let revealed = axiom(&cloud, directory.path(), &["auth", "--project", "shop", "--environment", DEV, "templates", "preview", "signup", "--reveal-text"], None);
+    assert!(String::from_utf8_lossy(&revealed.stdout).contains(TOKEN));
+
+    // Empty stdin is refused rather than resetting the subject to the default.
+    let empty = axiom(&cloud, directory.path(), &["auth", "--project", "shop", "--environment", DEV, "templates", "set", "signup", "--subject-file", "-"], Some(""));
+    assert_eq!(empty.status.code(), Some(2), "{}", String::from_utf8_lossy(&empty.stderr));
+    assert!(!log.lock().unwrap().iter().any(|(m, _, _)| m == "PUT"));
 
     // The subject from stdin is sent as given; the saved template echoed back is redacted.
     let set = axiom(

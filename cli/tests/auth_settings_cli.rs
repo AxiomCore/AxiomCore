@@ -11,6 +11,8 @@ use std::{
 };
 
 const PROD: &str = "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f";
+/// `GET /api/v1/projects`, for CLIs that resolve `--project` through the project list.
+const PROJECTS: &str = r#"[{"id":"0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d","name":"Shop","slug":"shop","visibility":"private","created_at":"","updated_at":""}]"#;
 
 type Log = Arc<Mutex<Vec<(String, String, String)>>>;
 type Route = Arc<dyn Fn(&str, &str, &str) -> (u16, String) + Send + Sync>;
@@ -108,6 +110,7 @@ fn cloud(current: Value, put: Option<(u16, String)>, sms: Value) -> (String, Log
     let route: Route = Arc::new(move |method, path, body| {
         let rest = path.strip_prefix(env.as_str());
         match (method, rest) {
+            ("GET", _) if path == "/api/v1/projects" => (200, PROJECTS.into()),
             ("GET", _) if path == "/api/v1/projects/shop/configuration-environments" => {
                 (200, format!(r#"[{{"id":"{PROD}","slug":"production","kind":"production"}}]"#))
             }
@@ -147,7 +150,12 @@ fn enable_reads_settings_and_puts_enabled_with_the_revision_and_only_accepted_ke
     let directory = tempfile::tempdir().unwrap();
     let output = axiom(&url, directory.path(), &["enable"]);
     assert!(output.status.success(), "{}", stderr(&output));
-    let calls = requests(&log).into_iter().map(|(m, p, _)| format!("{m} {}", p.rsplit('/').next().unwrap())).collect::<Vec<_>>();
+    // A project-list lookup for `--project` resolution, if the CLI makes one, is not part of the write.
+    let calls = requests(&log)
+        .into_iter()
+        .map(|(m, p, _)| format!("{m} {}", p.rsplit('/').next().unwrap()))
+        .filter(|call| call != "GET projects")
+        .collect::<Vec<_>>();
     assert_eq!(calls, ["GET configuration-environments", "GET settings", "PUT settings", "GET overview"]);
     let body = &puts(&log)[0];
     assert_eq!(body["enabled"], true);
@@ -316,6 +324,7 @@ fn a_failed_status_read_after_a_saved_change_is_not_a_failure() {
     // command warns and exits 0 (the dashboard keeps its previous view in the same case).
     let env = format!("/api/v1/projects/shop/auth/environments/{PROD}");
     let route: Route = Arc::new(move |method, path, body| match (method, path.strip_prefix(env.as_str())) {
+        ("GET", _) if path == "/api/v1/projects" => (200, PROJECTS.into()),
         ("GET", _) if path == "/api/v1/projects/shop/configuration-environments" => {
             (200, format!(r#"[{{"id":"{PROD}","slug":"production","kind":"production"}}]"#))
         }

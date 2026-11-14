@@ -460,16 +460,24 @@ pub fn duration_seconds(value: &str) -> Result<u64> {
     Ok(seconds)
 }
 
+/// The preflight half of [`confirm_yes`]: without `--yes` and without a terminal the command
+/// is refused here, before sign-in, a project lookup, a file read or any request. The refusal
+/// exits 2 with `pass --yes to confirm without a prompt`, as the other `axiom auth` commands do.
+pub(crate) fn require_yes_or_terminal(yes: bool) -> Result<()> {
+    if !yes && !std::io::stdin().is_terminal() {
+        return Err(usage("pass --yes to confirm without a prompt"));
+    }
+    Ok(())
+}
+
 /// Ask before a destructive change: `--yes` skips the question; without a terminal and
-/// without `--yes` it refuses before anything is sent. Under `axiom auth` the refusal exits 2;
-/// `axiom secrets` and `axiom project resources revoke` share it and exit 1.
+/// without `--yes` it refuses before anything is sent (exit 2). `axiom secrets` and
+/// `axiom project resources revoke` share it; `main` maps the refusal to exit 2 there too.
 pub(crate) fn confirm_yes(yes: bool, prompt: &str) -> Result<()> {
     if yes {
         return Ok(());
     }
-    if !std::io::stdin().is_terminal() {
-        return Err(usage("pass --yes to confirm without a prompt"));
-    }
+    require_yes_or_terminal(yes)?;
     if !dialoguer::Confirm::new().with_prompt(prompt).default(false).interact()? {
         return Err(usage("cancelled"));
     }
@@ -897,6 +905,33 @@ pub fn current_policy(settings: &Value, mfa: Option<&Value>) -> String {
     settings["mfa_policy"].as_str().or_else(|| mfa.and_then(|m| m["policy"].as_str())).unwrap_or("off").to_string()
 }
 
+/// How a multi-factor settings input weakens the stored protection: a lower policy
+/// (required, optional, off), an allowed factor type removed, or a longer reauthentication
+/// window. Empty when nothing weakens, or when multi-factor is off now.
+pub fn mfa_weakening(settings: &Value, mfa: Option<&Value>, input: &Value) -> Vec<String> {
+    let rank = |policy: &str| ["off", "optional", "required"].iter().position(|p| *p == policy).unwrap_or(0);
+    let current = current_policy(settings, mfa);
+    if current == "off" {
+        return vec![];
+    }
+    let mut weaker = vec![];
+    let policy = input["mfa_policy"].as_str().unwrap_or("off");
+    if rank(policy) < rank(&current) {
+        weaker.push(format!("the policy goes from {current} to {policy}"));
+    }
+    let factors: Vec<&str> = input["mfa_factors"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+    let removed: Vec<String> = current_factors(settings, mfa).into_iter().filter(|f| !factors.contains(&f.as_str())).collect();
+    if policy != "off" && !removed.is_empty() {
+        weaker.push(format!("{} no longer allowed", removed.join(", ")));
+    }
+    let window = settings["step_up_seconds"].as_i64().unwrap_or(600);
+    let step_up = input["step_up_seconds"].as_i64().unwrap_or(window);
+    if policy != "off" && step_up > window {
+        weaker.push(format!("the reauthentication window grows from {} to {} minutes", window / 60, step_up / 60));
+    }
+    weaker
+}
+
 /// A relying party ID the dashboard accepts: a host name (or localhost), never axiomcore.dev.
 fn rp_id_valid(id: &str) -> bool {
     static HOST: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
@@ -1013,6 +1048,13 @@ pub fn mfa_refusal(error: axiom_cloud::auth_admin::AuthAdminError) -> anyhow::Er
 }
 
 async fn mfa_set(args: &AuthArgs, change: &MfaChange<'_>, yes: bool) -> Result<()> {
+    // Before sign-in or any read: whether a policy, factor or window change turns multi-factor
+    // on or weakens it depends on the stored settings, so any such change counts as one that
+    // asks. Without a terminal it needs --yes; the prompt itself names the actual change below.
+    let may_ask = change.policy.is_some() || change.factors.is_some() || change.step_up_minutes.is_some();
+    if may_ask {
+        require_yes_or_terminal(yes)?;
+    }
     let target = target(args).await?;
     let settings = target.call(Method::GET, "settings", &[], None).await?;
     // Settings without the multi-factor fields: the policy and factors come from GET mfa.
@@ -1035,17 +1077,18 @@ async fn mfa_set(args: &AuthArgs, change: &MfaChange<'_>, yes: bool) -> Result<(
             return Err(usage("Required needs at least one factor that can be added now: TOTP, a passkey with a relying party ID, or SMS with enabled Twilio settings."));
         }
     }
-    if current_policy(&settings, mfa.as_ref()) == "off" && policy != "off" {
+    let turning_on = current_policy(&settings, mfa.as_ref()) == "off" && policy != "off";
+    let weaker = mfa_weakening(&settings, mfa.as_ref(), &input);
+    if turning_on {
         let effect = if policy == "required" { "Users without a factor must add one at their next sign-in." } else { "Users may add a factor; once they do, they need it at every sign-in." };
         eprintln!("Turning multi-factor {policy} in {}. {MFA_SDK_WARNING} {effect}", args.environment);
-        if !yes {
-            if !std::io::stdin().is_terminal() {
-                return Err(usage("pass --yes to turn multi-factor on without a prompt, after you upgrade your app's Axiom sign-in SDK"));
-            }
-            if !dialoguer::Confirm::new().with_prompt(format!("Turn multi-factor {policy}?")).default(false).interact()? {
-                return Err(usage("cancelled"));
-            }
-        }
+    }
+    if !weaker.is_empty() {
+        eprintln!("This weakens multi-factor protection in {}: {}.", args.environment, weaker.join("; "));
+    }
+    if turning_on || !weaker.is_empty() {
+        let prompt = if turning_on { format!("Turn multi-factor {policy}?") } else { "Weaken multi-factor protection?".to_string() };
+        confirm_yes(yes, &prompt)?;
     }
     let body = super::settings_put_body(&settings, &input);
     target.call_raw(Method::PUT, "settings", &[], Some(&body)).await.map_err(mfa_refusal)?;

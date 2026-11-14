@@ -196,16 +196,18 @@ fn enable_when_already_enabled_makes_no_put() {
     assert!(String::from_utf8_lossy(&output.stdout).contains("already on"));
 }
 
+/// Turning authentication off asks before sign-in, the project lookup or the settings read:
+/// without a terminal and without --yes it exits 2 and the stub records no request at all.
 #[test]
-fn disable_needs_yes_without_a_terminal() {
+fn disable_needs_yes_without_a_terminal_and_sends_nothing_without_it() {
     let mut current = settings();
     current["enabled"] = json!(true);
     let (url, log) = cloud(current, None, json!({}));
     let directory = tempfile::tempdir().unwrap();
     let refused = axiom(&url, directory.path(), &["disable"]);
     assert_eq!(refused.status.code(), Some(2), "{}", stderr(&refused));
-    assert!(stderr(&refused).contains("--yes"));
-    assert!(puts(&log).is_empty());
+    assert_eq!(stderr(&refused).trim_end(), "axiom auth: pass --yes to confirm without a prompt");
+    assert!(requests(&log).is_empty(), "{:?}", requests(&log));
     let output = axiom(&url, directory.path(), &["disable", "--yes"]);
     assert!(output.status.success(), "{}", stderr(&output));
     let body = &puts(&log)[0];
@@ -218,7 +220,7 @@ fn disable_needs_yes_without_a_terminal() {
 fn mfa_set_keeps_omitted_values_and_sends_minutes_as_seconds() {
     let (url, log) = cloud(settings(), None, json!({}));
     let directory = tempfile::tempdir().unwrap();
-    let output = axiom(&url, directory.path(), &["mfa", "set", "--step-up-minutes", "15"]);
+    let output = axiom(&url, directory.path(), &["mfa", "set", "--step-up-minutes", "15", "--yes"]);
     assert!(output.status.success(), "{}", stderr(&output));
     let body = &puts(&log)[0];
     assert_eq!(body["step_up_seconds"], 900);
@@ -237,7 +239,7 @@ fn mfa_set_keeps_omitted_values_and_sends_minutes_as_seconds() {
     assert!(stdout.contains("Policy: required") && stdout.contains("Users with factors: 4"), "{stdout}");
 
     // Repeatable flags replace the lists; an empty --rp-name clears it.
-    let output = axiom(&url, directory.path(), &["mfa", "set", "--factor", "totp", "--factor", "passkey", "--origin", "https://app.shop.example.com", "--rp-name", "", "--json"]);
+    let output = axiom(&url, directory.path(), &["mfa", "set", "--factor", "totp", "--factor", "passkey", "--origin", "https://app.shop.example.com", "--rp-name", "", "--json", "--yes"]);
     assert!(output.status.success(), "{}", stderr(&output));
     let body = &puts(&log)[1];
     assert_eq!(body["mfa_factors"], json!(["totp", "passkey"]));
@@ -254,13 +256,13 @@ fn mfa_set_validation_failures_make_no_put() {
     no_rp["webauthn_rp_id"] = Value::Null;
     no_rp["webauthn_origins"] = json!([]);
     let cases: [(Value, &[&str], &str); 7] = [
-        (settings(), &["mfa", "set", "--step-up-minutes", "1"], "2 to 60 minutes"),
-        (settings(), &["mfa", "set", "--step-up-minutes", "61"], "2 to 60 minutes"),
-        (no_rp.clone(), &["mfa", "set", "--factor", "passkey"], "need a relying party ID"),
+        (settings(), &["mfa", "set", "--step-up-minutes", "1", "--yes"], "2 to 60 minutes"),
+        (settings(), &["mfa", "set", "--step-up-minutes", "61", "--yes"], "2 to 60 minutes"),
+        (no_rp.clone(), &["mfa", "set", "--factor", "passkey", "--yes"], "need a relying party ID"),
         (settings(), &["mfa", "set", "--origin", "https://other.example.com"], "not an allowed origin"),
         (settings(), &["mfa", "set", "--origin", "https://shop.example.com/path"], "not an exact origin"),
         (settings(), &["mfa", "set", "--rp-id", "auth.axiomcore.dev"], "never an axiomcore.dev name"),
-        (no_rp, &["mfa", "set", "--policy", "required", "--factor", "sms"], "Required needs at least one factor"),
+        (no_rp, &["mfa", "set", "--policy", "required", "--factor", "sms", "--yes"], "Required needs at least one factor"),
     ];
     let directory = tempfile::tempdir().unwrap();
     for (current, args, message) in cases {
@@ -275,46 +277,91 @@ fn mfa_set_validation_failures_make_no_put() {
     current["webauthn_rp_id"] = Value::Null;
     current["webauthn_origins"] = json!([]);
     let (url, log) = cloud(current, None, json!({"sms": {"enabled": true, "secret_set": true}}));
-    let output = axiom(&url, directory.path(), &["mfa", "set", "--policy", "required", "--factor", "sms"]);
+    let output = axiom(&url, directory.path(), &["mfa", "set", "--policy", "required", "--factor", "sms", "--yes"]);
     assert!(output.status.success(), "{}", stderr(&output));
     assert_eq!(puts(&log)[0]["mfa_policy"], "required");
 }
 
+/// A policy, factor or reauthentication-window change may turn multi-factor on or weaken it,
+/// and which one it is depends on the stored settings. Without a terminal and without --yes
+/// each is refused (exit 2) before sign-in or any read: the stub records no request.
 #[test]
-fn turning_mfa_on_from_off_needs_yes_without_a_terminal() {
-    let mut current = settings();
-    current["mfa_policy"] = json!("off");
-    let (url, log) = cloud(current, None, json!({}));
+fn mfa_changes_that_may_turn_on_or_weaken_need_yes_and_send_nothing_without_it() {
+    let mut off = settings();
+    off["mfa_policy"] = json!("off");
+    let cases: [(Value, &[&str]); 6] = [
+        (off, &["mfa", "set", "--policy", "optional"]),
+        (settings(), &["mfa", "set", "--policy", "off"]),
+        (settings(), &["mfa", "set", "--policy", "required"]),
+        (settings(), &["mfa", "set", "--factor", "passkey"]),
+        (settings(), &["mfa", "set", "--step-up-minutes", "30"]),
+        (settings(), &["mfa", "set", "--step-up-minutes", "5"]),
+    ];
     let directory = tempfile::tempdir().unwrap();
-    let refused = axiom(&url, directory.path(), &["mfa", "set", "--policy", "optional"]);
-    assert_eq!(refused.status.code(), Some(2), "{}", stderr(&refused));
-    assert!(stderr(&refused).contains("upgrade your app's Axiom sign-in SDK"), "{}", stderr(&refused));
-    assert!(puts(&log).is_empty());
+    for (current, args) in cases {
+        let (url, log) = cloud(current, None, json!({}));
+        let refused = axiom(&url, directory.path(), args);
+        assert_eq!(refused.status.code(), Some(2), "{args:?}: {}", stderr(&refused));
+        assert_eq!(stderr(&refused).trim_end(), "axiom auth: pass --yes to confirm without a prompt", "{args:?}");
+        assert!(requests(&log).is_empty(), "{args:?} sent {:?}", requests(&log));
+        let mut confirmed = args.to_vec();
+        confirmed.push("--yes");
+        let output = axiom(&url, directory.path(), &confirmed);
+        assert!(output.status.success(), "{args:?}: {}", stderr(&output));
+        assert_eq!(puts(&log).len(), 1, "{args:?}");
+    }
+    // A change that can neither turn multi-factor on nor weaken it does not ask.
+    let (url, log) = cloud(settings(), None, json!({}));
+    let output = axiom(&url, directory.path(), &["mfa", "set", "--rp-name", "Shop Inc"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(puts(&log)[0]["webauthn_rp_name"], "Shop Inc");
+}
+
+/// With --yes the change goes through and says how it turns multi-factor on or weakens it.
+#[test]
+fn mfa_set_names_how_a_confirmed_change_turns_on_or_weakens_protection() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut off = settings();
+    off["mfa_policy"] = json!("off");
+    let (url, log) = cloud(off, None, json!({}));
     let output = axiom(&url, directory.path(), &["mfa", "set", "--policy", "optional", "--yes"]);
     assert!(output.status.success(), "{}", stderr(&output));
+    assert!(stderr(&output).contains("upgrade your app's Axiom sign-in SDK"), "{}", stderr(&output));
     assert_eq!(puts(&log)[0]["mfa_policy"], "optional");
-    // Lowering to off needs no confirmation.
-    let (url, log) = cloud(settings(), None, json!({}));
-    let output = axiom(&url, directory.path(), &["mfa", "set", "--policy", "off"]);
+    let cases: [(&[&str], &str); 3] = [
+        (&["mfa", "set", "--policy", "off", "--yes"], "the policy goes from optional to off"),
+        (&["mfa", "set", "--factor", "passkey", "--yes"], "totp no longer allowed"),
+        (&["mfa", "set", "--step-up-minutes", "30", "--yes"], "the reauthentication window grows from 10 to 30 minutes"),
+    ];
+    for (args, message) in cases {
+        let (url, log) = cloud(settings(), None, json!({}));
+        let output = axiom(&url, directory.path(), args);
+        assert!(output.status.success(), "{args:?}: {}", stderr(&output));
+        assert!(stderr(&output).contains(&format!("This weakens multi-factor protection in production: {message}")), "{args:?}: {}", stderr(&output));
+        assert_eq!(puts(&log).len(), 1, "{args:?}");
+    }
+    // A stronger change says nothing about weakening.
+    let (url, _) = cloud(settings(), None, json!({}));
+    let output = axiom(&url, directory.path(), &["mfa", "set", "--step-up-minutes", "5", "--yes"]);
     assert!(output.status.success(), "{}", stderr(&output));
-    assert_eq!(puts(&log)[0]["mfa_policy"], "off");
+    assert!(!stderr(&output).contains("weakens"), "{}", stderr(&output));
 }
 
 #[test]
 fn refused_mfa_writes_map_to_the_dashboard_messages() {
     let directory = tempfile::tempdir().unwrap();
     let (url, _) = cloud(settings(), Some((400, r#"{"error":{"code":"AXAUTH_INVALID_REQUEST"}}"#.into())), json!({}));
-    let output = axiom(&url, directory.path(), &["mfa", "set", "--step-up-minutes", "20"]);
+    let output = axiom(&url, directory.path(), &["mfa", "set", "--step-up-minutes", "20", "--yes"]);
     assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
     assert!(stderr(&output).contains("does not accept these multi-factor settings yet"), "{}", stderr(&output));
     assert!(stderr(&output).contains("Nothing was changed"));
     let (url, _) = cloud(settings(), Some((403, r#"{"error":{"code":"AXAUTH_FEATURE_DISABLED"}}"#.into())), json!({}));
-    let output = axiom(&url, directory.path(), &["mfa", "set", "--step-up-minutes", "20"]);
+    let output = axiom(&url, directory.path(), &["mfa", "set", "--step-up-minutes", "20", "--yes"]);
     assert_eq!(output.status.code(), Some(3), "{}", stderr(&output));
     assert!(stderr(&output).contains("AXAUTH_FEATURE_DISABLED") && stderr(&output).contains("multi-factor is not available for this environment yet"), "{}", stderr(&output));
     // Other refusals keep the generic mapping.
     let (url, _) = cloud(settings(), Some((409, r#"{"error":{"code":"AXAUTH_CONFLICT"}}"#.into())), json!({}));
-    let output = axiom(&url, directory.path(), &["mfa", "set", "--step-up-minutes", "20"]);
+    let output = axiom(&url, directory.path(), &["mfa", "set", "--step-up-minutes", "20", "--yes"]);
     assert_eq!(output.status.code(), Some(4), "{}", stderr(&output));
 }
 
@@ -339,7 +386,7 @@ fn a_failed_status_read_after_a_saved_change_is_not_a_failure() {
     assert!(String::from_utf8_lossy(&output.stdout).contains("Authentication is turned on"));
     assert!(stderr(&output).contains("the change is saved, but the status could not be read"), "{}", stderr(&output));
     assert_eq!(puts(&log).len(), 1);
-    let output = axiom(&url, directory.path(), &["mfa", "set", "--step-up-minutes", "20"]);
+    let output = axiom(&url, directory.path(), &["mfa", "set", "--step-up-minutes", "20", "--yes"]);
     assert!(output.status.success(), "{}", stderr(&output));
     assert!(stderr(&output).contains("multi-factor settings are saved, but their status could not be read"), "{}", stderr(&output));
 }

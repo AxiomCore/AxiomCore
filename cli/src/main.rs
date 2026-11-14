@@ -1787,6 +1787,14 @@ async fn main() -> anyhow::Result<()> {
         .await;
     }
 
+    // A refused or cancelled confirmation (`axiom secrets`, `axiom project resources revoke`)
+    // exits 2 with its message, as `axiom auth` does.
+    if let Err(error) = &result {
+        if let Some(exit) = error.downcast_ref::<commands::auth::Exit>() {
+            eprintln!("axiom {cmd_name}: {}", exit.message);
+            std::process::exit(exit.code);
+        }
+    }
     result
 }
 

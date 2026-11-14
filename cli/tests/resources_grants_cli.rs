@@ -337,8 +337,8 @@ fn revoke_without_a_terminal_needs_yes_and_sends_nothing() {
     let directory = tempfile::tempdir().unwrap();
     profile(directory.path());
     let output = axiom(&cloud, directory.path(), &["revoke", GRANT, "--environment", "production"]);
-    assert!(!output.status.success(), "{}", stdout(&output));
-    assert!(stderr(&output).contains("pass --yes to confirm without a prompt"), "{}", stderr(&output));
+    assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+    assert_eq!(stderr(&output).trim_end(), "axiom project: pass --yes to confirm without a prompt");
     assert!(log.lock().unwrap().is_empty(), "no request without confirmation: {:?}", log.lock().unwrap());
     let output = axiom(&cloud, directory.path(), &["revoke", GRANT, "--environment", "production", "--yes"]);
     assert!(output.status.success(), "{}", stderr(&output));

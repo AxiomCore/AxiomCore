@@ -15,7 +15,7 @@ use serde_json::{json, Map, Value};
 use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use zeroize::Zeroizing;
-pub(crate) use advanced::confirm_yes;
+pub(crate) use advanced::{confirm_yes, require_yes_or_terminal};
 
 mod advanced;
 mod config;
@@ -572,9 +572,18 @@ fn status_lines(r: &Value) -> Vec<String> {
 
 /// `enable` and `disable`: the dashboard's toggle, a settings write of `enabled` only.
 async fn set_enabled(args: &AuthArgs, enabled: bool, yes: bool) -> Result<()> {
+    let environment = &args.environment;
+    // Turning off asks before sign-in, the project lookup or the settings read, so a refusal
+    // sends nothing. It asks even when authentication may turn out to be off already.
+    if !enabled && !yes {
+        advanced::require_yes_or_terminal(yes)?;
+        eprintln!("While it is off, signup, sign-in, token exchange and refresh are refused. Logout still works. Access tokens already issued stay valid until they expire (at most 15 minutes). Users, sessions and settings are kept.");
+        if !dialoguer::Confirm::new().with_prompt(format!("Turn off authentication in {environment}?")).default(false).interact()? {
+            return Err(usage("cancelled"));
+        }
+    }
     let target = target(args).await?;
     let current = target.call(Method::GET, "settings", &[], None).await?;
-    let environment = &args.environment;
     let word = if enabled { "on" } else { "off" };
     if current["enabled"] == enabled {
         let report = json!({"enabled": enabled, "changed": false, "status": status_report(&target).await?});
@@ -584,26 +593,15 @@ async fn set_enabled(args: &AuthArgs, enabled: bool, yes: bool) -> Result<()> {
             lines
         });
     }
-    if enabled {
-        if !args.json {
-            let signup = match current["signup_policy"].as_str() {
-                Some("open") => "Open",
-                Some("invite_only") => "Invite only",
-                _ => "Closed",
-            };
-            eprintln!(
-                "Turning on authentication in {environment}. This creates the environment's first signing key and installs the authentication tables in this environment's database. Users can then sign in with the enabled methods. Signup stays {signup} until you change it with `axiom auth settings set`."
-            );
-        }
-    } else if !yes {
-        let consequence = "While it is off, signup, sign-in, token exchange and refresh are refused. Logout still works. Access tokens already issued stay valid until they expire (at most 15 minutes). Users, sessions and settings are kept.";
-        if !std::io::stdin().is_terminal() {
-            return Err(usage(format!("turning authentication off stops sign-in in {environment}. {consequence} Pass --yes to confirm without a prompt")));
-        }
-        eprintln!("{consequence}");
-        if !dialoguer::Confirm::new().with_prompt(format!("Turn off authentication in {environment}?")).default(false).interact()? {
-            return Err(usage("cancelled"));
-        }
+    if enabled && !args.json {
+        let signup = match current["signup_policy"].as_str() {
+            Some("open") => "Open",
+            Some("invite_only") => "Invite only",
+            _ => "Closed",
+        };
+        eprintln!(
+            "Turning on authentication in {environment}. This creates the environment's first signing key and installs the authentication tables in this environment's database. Users can then sign in with the enabled methods. Signup stays {signup} until you change it with `axiom auth settings set`."
+        );
     }
     let body = settings_put_body(&current, &json!({"enabled": enabled}));
     let saved = target.call(Method::PUT, "settings", &[], Some(&body)).await?;

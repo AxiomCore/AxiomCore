@@ -62,7 +62,8 @@ pub enum Action {
         #[arg(long, default_value = "")]
         description: String,
     },
-    /// Create or update a binding from a private JSON file.
+    /// Create or update a binding from a private JSON file. Updating an existing binding
+    /// (the file has `expected_revision`) invalidates older leases' authority, so it asks first.
     Bind {
         #[arg(long, help = PROJECT_HELP)]
         project: String,
@@ -70,6 +71,10 @@ pub enum Action {
         environment: String,
         #[arg(long)]
         file: PathBuf,
+        /// Confirm updating an existing binding (a file with `expected_revision`) without a
+        /// prompt (required without a terminal). A new binding does not ask.
+        #[arg(long)]
+        yes: bool,
     },
     /// List workload registrations.
     Workloads {
@@ -126,7 +131,7 @@ pub enum Action {
         yes: bool,
     },
     /// Update an environment's status, protection or expiry from a private JSON file.
-    /// A status change (enable or disable) asks first, as the dashboard does.
+    /// Every update carries a status that may enable or disable the environment, so it asks first.
     UpdateEnvironment {
         #[arg(long, help = PROJECT_HELP)]
         project: String,
@@ -134,7 +139,7 @@ pub enum Action {
         environment: String,
         #[arg(long)]
         file: PathBuf,
-        /// Confirm a status change without a prompt (required without a terminal)
+        /// Confirm without a prompt (required without a terminal)
         #[arg(long)]
         yes: bool,
     },
@@ -397,6 +402,35 @@ async fn environment_id(project: &str, environment: &str) -> Result<String> {
     let client = crate::auth_store::authenticated_cloud_client()?;
     super::secrets_cloud::environment_id(&client, project, environment).await
 }
+/// A binding file with a non-zero `expected_revision` updates an existing binding.
+fn updates_binding(body: &serde_json::Value) -> bool {
+    match &body["expected_revision"] {
+        serde_json::Value::Null => false,
+        serde_json::Value::Number(revision) => revision.as_f64() != Some(0.0),
+        // Not a number: the server refuses it, but treat it as an update and ask.
+        _ => true,
+    }
+}
+
+fn binding_prompt(environment: &str, body: &serde_json::Value) -> String {
+    let field = |key: &str| body[key].as_str().unwrap_or("?").to_string();
+    format!(
+        "Update the binding of {} for {} in {environment}? Saving invalidates authority held by older leases.",
+        field("consumer"),
+        field("requirement")
+    )
+}
+
+/// The dashboard's enable and disable wording; any other status names the change.
+fn environment_prompt(environment: &str, body: &serde_json::Value) -> String {
+    match body["status"].as_str() {
+        Some("disabled") => format!("Disable {environment}? Runtime consumption will be denied and affected leases invalidated. Values and audit history remain."),
+        Some("active") => format!("Update {environment} with status active? If it is disabled, this enables it: explicit grants and version pins still apply, and enabling does not restore revoked access."),
+        Some(status) => format!("Set the status of {environment} to {status}?"),
+        None => format!("Update {environment}?"),
+    }
+}
+
 pub async fn handle(action: &Action) -> Result<()> {
     match action {
         Action::Requirements { plan } => {
@@ -435,6 +469,7 @@ pub async fn handle(action: &Action) -> Result<()> {
             project,
             environment,
             file,
+            ..
         }
         | Action::RegisterWorkload {
             project,
@@ -452,6 +487,13 @@ pub async fn handle(action: &Action) -> Result<()> {
             file,
             ..
         } => {
+            // Every environment update carries a status (the API refuses one without), and
+            // whether it changes the stored status is known only to the server, so every update
+            // asks, as the dashboard's enable and disable do. Without a terminal and --yes it is
+            // refused here, before the file is read or anything is sent.
+            if let Action::UpdateEnvironment { yes, .. } = action {
+                super::auth::require_yes_or_terminal(*yes)?;
+            }
             let bytes = axiom_server::secret_runtime::read_private(
                 file.parent()
                     .filter(|path| !path.as_os_str().is_empty())
@@ -465,17 +507,17 @@ pub async fn handle(action: &Action) -> Result<()> {
             );
             let body: serde_json::Value = serde_json::from_slice(&bytes)
                 .map_err(|_| anyhow::anyhow!("AXSECRET_INVALID: invalid reference metadata"))?;
-            if let Action::UpdateEnvironment { yes, .. } = action {
-                // The dashboard asks before enabling or disabling an environment.
-                let prompt = match body["status"].as_str() {
-                    Some("disabled") => Some(format!("Disable {environment}? Runtime consumption will be denied and affected leases invalidated. Values and audit history remain.")),
-                    Some("active") => Some(format!("Enable {environment}? Explicit grants and version pins still apply. Enabling does not restore revoked access.")),
-                    Some(status) => Some(format!("Set the status of {environment} to {status}?")),
-                    None => None,
-                };
-                if let Some(prompt) = prompt {
-                    super::auth::confirm_yes(*yes, &prompt)?;
+            match action {
+                Action::UpdateEnvironment { yes, .. } => {
+                    super::auth::confirm_yes(*yes, &environment_prompt(environment, &body))?;
                 }
+                // A binding with an expected revision updates an existing one; the server then
+                // bumps its revision, which invalidates authority held by older leases. Asked
+                // first, as the dashboard's "Update this binding?". A new binding does not ask.
+                Action::Bind { yes, .. } if updates_binding(&body) => {
+                    super::auth::confirm_yes(*yes, &binding_prompt(environment, &body))?;
+                }
+                _ => {}
             }
             let environment = environment_id(project, environment).await?;
             let (part, method) = match action {

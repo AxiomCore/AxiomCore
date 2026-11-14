@@ -333,8 +333,8 @@ fn destructive_commands_without_a_terminal_need_yes_and_send_nothing() {
         log.lock().unwrap().clear();
         let output = axiom(&cloud, directory.path(), &args, None);
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(!output.status.success(), "{command:?} ran without --yes");
-        assert!(stderr.contains("pass --yes to confirm without a prompt"), "{command:?}: {stderr}");
+        assert_eq!(output.status.code(), Some(2), "{command:?} without --yes: {stderr}");
+        assert_eq!(stderr.trim_end(), "axiom secrets: pass --yes to confirm without a prompt", "{command:?}");
         assert!(calls(&log).is_empty(), "{command:?} sent {:?}", calls(&log));
 
         let args: Vec<&str> = args.into_iter().chain(["--yes"]).collect();
@@ -351,27 +351,30 @@ fn destructive_commands_without_a_terminal_need_yes_and_send_nothing() {
     log.lock().unwrap().clear();
     let output = axiom(&cloud, directory.path(), &["secrets", "rotate", "STRIPE_KEY", "--project", "shop", "--environment", "production", "--stdin"], Some(VALUE));
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(!output.status.success());
-    assert!(stderr.contains("pass --yes to confirm without a prompt") && !stderr.contains(VALUE), "{stderr}");
+    assert_eq!(output.status.code(), Some(2), "{stderr}");
+    assert_eq!(stderr.trim_end(), "axiom secrets: pass --yes to confirm without a prompt");
     assert!(calls(&log).is_empty(), "{:?}", calls(&log));
 }
 
-/// Enabling or disabling an environment asks first, as the dashboard does; a protection or
-/// expiry change alone does not.
+fn private_file(directory: &Path, name: &str, body: &str) -> String {
+    use std::os::unix::fs::PermissionsExt;
+    let path = directory.join(name);
+    std::fs::write(&path, body).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    path.to_string_lossy().into_owned()
+}
+
+/// Every environment update carries a status that may enable or disable the environment (the
+/// API refuses an update without one), so every update asks. Without a terminal and without
+/// --yes it exits 2 before the file is read or anything is sent: a missing file is not reported.
 #[test]
-fn update_environment_status_change_needs_yes_without_a_terminal() {
+fn update_environment_needs_yes_before_reading_the_file_or_sending() {
     let (cloud, log) = stub(route);
     let directory = tempfile::tempdir().unwrap();
     profile(directory.path());
-    let write = |name: &str, body: &str| {
-        use std::os::unix::fs::PermissionsExt;
-        let path = directory.path().join(name);
-        std::fs::write(&path, body).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
-        path.to_string_lossy().into_owned()
-    };
-    let disable = write("disable.json", r#"{"status":"disabled","protected":true,"expected_revision":2,"expires_at":null}"#);
-    let protect = write("protect.json", r#"{"protected":true,"expected_revision":2}"#);
+    let disable = private_file(directory.path(), "disable.json", r#"{"status":"disabled","protected":true,"expected_revision":2,"expires_at":null}"#);
+    let protect = private_file(directory.path(), "protect.json", r#"{"status":"active","protected":false,"expected_revision":2,"expires_at":null}"#);
+    let missing = directory.path().join("missing.json").to_string_lossy().into_owned();
     let run = |file: &str, yes: bool| {
         let mut args = vec!["secrets", "update-environment", "--project", "shop", "--environment", ENV, "--file", file];
         if yes {
@@ -379,14 +382,59 @@ fn update_environment_status_change_needs_yes_without_a_terminal() {
         }
         axiom(&cloud, directory.path(), &args, None)
     };
-    let output = run(&disable, false);
+    for file in [&disable, &protect, &missing] {
+        let output = run(file, false);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(2), "{file}: {stderr}");
+        assert_eq!(stderr.trim_end(), "axiom secrets: pass --yes to confirm without a prompt", "{file}");
+        assert!(calls(&log).is_empty(), "{file}: {:?}", calls(&log));
+    }
+    for file in [&disable, &protect] {
+        log.lock().unwrap().clear();
+        let _ = run(file, true);
+        assert_eq!(calls(&log), vec![("PATCH".to_string(), format!("{}/", scope()))], "{file}");
+    }
+}
+
+/// A binding file with `expected_revision` updates an existing binding, which invalidates
+/// authority held by older leases: it asks, and without a terminal and --yes it exits 2 with
+/// no request. A new binding (no revision, or 0) does not ask.
+#[test]
+fn updating_an_existing_binding_needs_yes_and_a_new_binding_does_not() {
+    let (cloud, log) = stub(route);
+    let directory = tempfile::tempdir().unwrap();
+    profile(directory.path());
+    let binding = |revision: &str| {
+        format!(
+            r#"{{"secret_id":"{SECRET}","requirement":"payment","consumer":"resource:payments","purpose":"authenticateHttp","plan_sha256":"{}","package_sha256":null,"version":null,"destination_policy":{{"origin":"https://payments.example.test","method":"POST","path_prefix":"/charge"}}{revision}}}"#,
+            "a".repeat(64)
+        )
+    };
+    let update = private_file(directory.path(), "update.json", &binding(r#","expected_revision":3"#));
+    let created = private_file(directory.path(), "new.json", &binding(""));
+    let zero = private_file(directory.path(), "zero.json", &binding(r#","expected_revision":0"#));
+    let run = |file: &str, yes: bool| {
+        let mut args = vec!["secrets", "bind", "--project", "shop", "--environment", ENV, "--file", file];
+        if yes {
+            args.push("--yes");
+        }
+        axiom(&cloud, directory.path(), &args, None)
+    };
+    let put = vec![("PUT".to_string(), format!("{}/secret-bindings", scope()))];
+
+    let output = run(&update, false);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(!output.status.success());
-    assert!(stderr.contains("pass --yes to confirm without a prompt"), "{stderr}");
+    assert_eq!(output.status.code(), Some(2), "{stderr}");
+    assert_eq!(stderr.trim_end(), "axiom secrets: pass --yes to confirm without a prompt");
     assert!(calls(&log).is_empty(), "{:?}", calls(&log));
-    let _ = run(&disable, true);
-    assert_eq!(calls(&log), vec![("PATCH".to_string(), format!("{}/", scope()))]);
-    log.lock().unwrap().clear();
-    let _ = run(&protect, false);
-    assert_eq!(calls(&log), vec![("PATCH".to_string(), format!("{}/", scope()))]);
+    let _ = run(&update, true);
+    assert_eq!(calls(&log), put);
+    let sent: serde_json::Value = serde_json::from_str(&log.lock().unwrap()[0].body).unwrap();
+    assert_eq!(sent["expected_revision"], 3);
+
+    for file in [&created, &zero] {
+        log.lock().unwrap().clear();
+        let _ = run(file, false);
+        assert_eq!(calls(&log), put, "{file}: a new binding is sent without --yes");
+    }
 }

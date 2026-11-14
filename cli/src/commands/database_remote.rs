@@ -764,7 +764,7 @@ pub(crate) async fn history_with(
         None => writeln!(out, "No applied migrations recorded.")?,
     }
     for release in &applied {
-        let captured = local.iter().find(|l| l.sha256 == release.sha256).and_then(super::database_capture::label);
+        let captured = local.iter().find(|l| l.sha256 == release.sha256).and_then(|l| super::database_capture::label(l, &releases));
         writeln!(
             out,
             "{}  {}  {}  {}{}",
@@ -937,6 +937,14 @@ pub(crate) async fn pull_with(h: &Hosted<'_>, args: &PullArgs, out: &mut dyn Wri
         )?;
         return Ok(());
     };
+    // Capture labels name the author by email from the release list when the server
+    // returns it (Owner, Maintainer); otherwise by the signed user id. A failed list read
+    // only costs the email.
+    let summaries = if added.iter().any(|(r, _)| r.revision.capture.is_some()) {
+        h.client.migration_releases(h.project, Some(&stream)).await.unwrap_or_default()
+    } else {
+        vec![]
+    };
     writeln!(
         out,
         "Hosted history for {stream} from {}/{}: {} release(s), head {} (generation {})",
@@ -954,7 +962,7 @@ pub(crate) async fn pull_with(h: &Hosted<'_>, args: &PullArgs, out: &mut dyn Wri
             release.revision.kind,
             short(&release.sha256),
             path.strip_prefix(&loaded.root).unwrap_or(path).display(),
-            super::database_capture::label(release).map(|l| format!("  {l}")).unwrap_or_default()
+            super::database_capture::label(release, &summaries).map(|l| format!("  {l}")).unwrap_or_default()
         )?;
     }
     if let Some((incoming, plan)) = &sources {
@@ -1016,6 +1024,10 @@ pub(crate) mod fake {
         pub reject: Option<String>,
         /// Method, path (with query) and body of every request.
         pub requests: Vec<(String, String, Vec<u8>)>,
+        /// `captured_by_email` the release list returns, by release digest.
+        pub capture_emails: BTreeMap<String, String>,
+        /// When set, the release list answers 500.
+        pub fail_release_list: bool,
     }
     impl Cloud {
         pub fn count(&self, method: &str, path: &str) -> usize {
@@ -1132,7 +1144,14 @@ pub(crate) mod fake {
                     }
                     (201, json!({"impact": {"release_sha256": sha, "public_key": "x", "uploaded_at": "2026-10-20T00:00:00Z"}}).to_string().into_bytes())
                 }
-                ("GET", "/migrations/releases") => ok(json!({"releases": self.releases.iter().rev().filter_map(|(_, b)| Self::summary(b)).collect::<Vec<_>>()})),
+                ("GET", "/migrations/releases") if self.fail_release_list => (500, br#"{"error":{"code":"AXRESOURCE_UNAVAILABLE"}}"#.to_vec()),
+                ("GET", "/migrations/releases") => ok(json!({"releases": self.releases.iter().rev().filter_map(|(sha, b)| {
+                    let mut summary = Self::summary(b)?;
+                    if let Some(email) = self.capture_emails.get(sha) {
+                        summary["captured_by_email"] = json!(email);
+                    }
+                    Some(summary)
+                }).collect::<Vec<_>>()})),
                 ("GET", r) if r.starts_with("/migrations/releases/") => {
                     let sha = &r["/migrations/releases/".len()..];
                     match self.releases.iter().find(|(s, _)| s == sha) {
@@ -1552,6 +1571,7 @@ mod tests {
         pull_with(&hosted(&client), &pull_args(root.path()), &mut out).await.unwrap();
         let out = text(out);
         assert!(out.contains("added 1.0.0") && out.contains("added 1.1.0") && out.contains("Nothing was executed."), "{out}");
+        assert_eq!(state.lock().unwrap().count("GET", "/api/v1/projects/acme/migrations/releases?"), 0, "no capture: no release list read");
         assert_eq!(db::read_release(&catalog(root.path(), "1.0.0")).unwrap().sha256, r1.sha256);
         assert_eq!(db::read_release(&catalog(root.path(), "1.1.0")).unwrap().sha256, r2.sha256);
         let modes = state.lock().unwrap().operations.iter().map(|o| o["mode"].as_str().unwrap().to_string()).collect::<Vec<_>>();
@@ -1650,6 +1670,9 @@ mod tests {
     // --- dashboard captures (data-tools/v1, "CLI: pull, migrate and version skew") ---------
     const FILL: &str = "evolution fill(from: Previous, to: Current, coordination: EvolutionCoordination.maintenanceFenced) { backfill(table: Current.Tables.main.tasks, key: Previous.Columns.main.tasks.id, column: Current.Columns.main.tasks.title, using: value(literal: \"filled\"), batchSize: 10, batchesPerRun: 1, maxRows: 10, catchUpRows: 10) }";
 
+    /// The user id the signed capture block names (the backend signs the id, not the email).
+    const CAPTURER_ID: &str = "0b9f3c5e-1d2a-4c6b-9e8f-7a6b5c4d3e2f";
+
     /// A capture on `parent` as the dashboard builds it (preview, then build with the
     /// receipt's block), signed by the test key.
     fn captured(parent: &Release, sql: &str) -> Release {
@@ -1663,7 +1686,7 @@ mod tests {
             parent_sha256: parent.sha256.clone(),
             sql_sha256: "0".repeat(64),
             statements_sha256: preview.statements_sha256.clone(),
-            captured_by: "owner@example.com".into(),
+            captured_by: CAPTURER_ID.into(),
             captured_at: "2026-10-28T10:00:00Z".into(),
             title: "Add notes".into(),
         };
@@ -1712,6 +1735,7 @@ mod tests {
         let c3 = captured(&r2, "CREATE TABLE notes (id TEXT PRIMARY KEY, body TEXT)");
         assert!(!c3.revision.sources.contains_key("migration.acore"));
         let (state, client) = pull_cloud(&[&r1, &r2, &c3], true).await;
+        state.lock().unwrap().capture_emails.insert(c3.sha256.clone(), "owner@example.com".into());
         // The developer's tree is at 1.1.0 with the typed intent, catalog r1 and r2.
         let root = tree(&r2);
         db::archive(root.path(), &r1).unwrap();
@@ -1720,6 +1744,7 @@ mod tests {
         pull_with(&hosted(&client), &pull_args(root.path()), &mut out).await.unwrap();
         let out = text(out);
         assert!(out.contains("captured in dashboard: Add notes by owner@example.com") && out.contains("dashboard region of schema main updated") && out.contains("Nothing was executed."), "{out}");
+        assert!(!out.contains(CAPTURER_ID), "the email, not the signed user id: {out}");
         let schema = std::fs::read_to_string(root.path().join("schema.acore")).unwrap();
         assert_eq!(schema, c3.revision.sources["schema.acore"], "local equals catalog: the incoming region and edits");
         assert!(!root.path().join("migration.acore").exists(), "no stale typed intent stays");
@@ -1733,6 +1758,76 @@ mod tests {
         migrate_with(&hosted(&client), &migrate_args(root.path(), false), &mut out).await.unwrap();
         let out = text(out);
         assert!(out.contains("Database is current") && out.contains(&c3.sha256), "{out}");
+    }
+
+    /// The capture label names the author by the release list's email and falls back to
+    /// the signed user id when the list has none (a Reader, an older server) or an unusable one.
+    #[test]
+    fn capture_label_names_the_author_by_email_and_falls_back_to_the_user_id() {
+        let r1 = release("1.0.0", TASKS, None);
+        let c2 = captured(&r1, "CREATE TABLE notes (id TEXT PRIMARY KEY)");
+        let summary = |email: Option<&str>| api::ReleaseSummary {
+            sha256: c2.sha256.clone(),
+            stream: NAME.into(),
+            version: c2.revision.identity.version.clone(),
+            parent: Some(r1.sha256.clone()),
+            kind: "migration".into(),
+            engine: "sqlite".into(),
+            public_key: c2.public_key.clone(),
+            uploaded_at: "2026-10-28T10:00:00Z".into(),
+            captured_by_email: email.map(Into::into),
+        };
+        let label = |list: &[api::ReleaseSummary]| crate::commands::database_capture::label(&c2, list).unwrap();
+        assert_eq!(label(&[summary(Some("owner@example.com"))]), "captured in dashboard: Add notes by owner@example.com");
+        let by_id = format!("captured in dashboard: Add notes by {CAPTURER_ID}");
+        let long = format!("{}@example.com", "a".repeat(250));
+        for list in [vec![], vec![summary(None)], vec![summary(Some(""))], vec![summary(Some("x\u{1b}[2J"))], vec![summary(Some("evil\u{202E}moc.elpmaxe@x"))], vec![summary(Some("a\u{200B}@example.com"))], vec![summary(Some("owner @example.com"))], vec![summary(Some(&long))]] {
+            assert_eq!(label(&list), by_id);
+        }
+        let mut other = summary(Some("other@example.com"));
+        other.sha256 = r1.sha256.clone();
+        assert_eq!(label(&[other]), by_id, "another release's email is never used");
+        assert_eq!(crate::commands::database_capture::label(&r1, &[]), None);
+    }
+
+    /// A failed release-list read costs only the email: pull still writes and prints the id.
+    #[tokio::test]
+    async fn pull_names_the_capture_author_by_id_when_the_release_list_fails() {
+        let r1 = release("1.0.0", TASKS, None);
+        let c2 = captured(&r1, "CREATE TABLE notes (id TEXT PRIMARY KEY)");
+        let (state, client) = pull_cloud(&[&r1, &c2], true).await;
+        {
+            let mut s = state.lock().unwrap();
+            s.capture_emails.insert(c2.sha256.clone(), "owner@example.com".into());
+            s.fail_release_list = true;
+        }
+        let root = tree(&r1);
+        db::archive(root.path(), &r1).unwrap();
+        let mut out = vec![];
+        pull_with(&hosted(&client), &pull_args(root.path()), &mut out).await.unwrap();
+        let out = text(out);
+        assert!(out.contains(&format!("captured in dashboard: Add notes by {CAPTURER_ID}")) && !out.contains("owner@example.com"), "{out}");
+        assert_eq!(state.lock().unwrap().count("GET", "/api/v1/projects/acme/migrations/releases?"), 1, "one list read, for the capture");
+        assert_eq!(db::read_release(&catalog(root.path(), &c2.revision.identity.version)).unwrap().sha256, c2.sha256);
+    }
+
+    #[tokio::test]
+    async fn history_names_the_capture_author_by_email() {
+        let r1 = release("1.0.0", TASKS, None);
+        let c2 = captured(&r1, "CREATE TABLE notes (id TEXT PRIMARY KEY)");
+        let (state, client) = pull_cloud(&[&r1, &c2], true).await;
+        {
+            let mut s = state.lock().unwrap();
+            s.capture_emails.insert(c2.sha256.clone(), "owner@example.com".into());
+            s.operations.push(serde_json::json!({"id": "00000000-0000-4000-8000-999999999998", "environment": "development", "mode": "migrate", "release": c2.sha256, "status": "succeeded", "outcome": "applied", "code": null, "targets": [{"project": NAME, "head": c2.sha256, "generation": 2, "public_key": c2.public_key}], "created_at": "2026-10-29T00:00:00Z", "finished_at": "2026-10-29T00:00:01Z"}));
+        }
+        let root = tree(&c2);
+        db::archive(root.path(), &r1).unwrap();
+        db::archive(root.path(), &c2).unwrap();
+        let mut out = vec![];
+        history_with(&hosted(&client), &root.path().join("schema.acore"), false, &mut out).await.unwrap();
+        let out = text(out);
+        assert!(out.contains("captured in dashboard: Add notes by owner@example.com") && !out.contains(CAPTURER_ID), "{out}");
     }
 
     #[tokio::test]

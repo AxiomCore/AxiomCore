@@ -331,7 +331,7 @@ fn mfa_set_names_how_a_confirmed_change_turns_on_or_weakens_protection() {
     let cases: [(&[&str], &str); 3] = [
         (&["mfa", "set", "--policy", "off", "--yes"], "the policy goes from optional to off"),
         (&["mfa", "set", "--factor", "passkey", "--yes"], "totp no longer allowed"),
-        (&["mfa", "set", "--step-up-minutes", "30", "--yes"], "the reauthentication window grows from 10 to 30 minutes"),
+        (&["mfa", "set", "--step-up-minutes", "30", "--yes"], "the reauthentication window grows from 10 minutes to 30 minutes"),
     ];
     for (args, message) in cases {
         let (url, log) = cloud(settings(), None, json!({}));

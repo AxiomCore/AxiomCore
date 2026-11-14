@@ -570,6 +570,21 @@ fn status_lines(r: &Value) -> Vec<String> {
     ]
 }
 
+/// `Some(yes)` for a command of this file that asks before it changes anything and whose
+/// question `main` checks before registration or any request: `disable`, and an `mfa set`
+/// that changes the policy, factors or reauthentication window. `None` otherwise.
+pub fn asks_first(args: &AuthArgs) -> Option<bool> {
+    match &args.action {
+        Action::Disable { yes } => Some(*yes),
+        Action::Mfa { action: advanced::MfaAction::Set { policy, factors, step_up_minutes, yes, .. } }
+            if policy.is_some() || !factors.is_empty() || step_up_minutes.is_some() =>
+        {
+            Some(*yes)
+        }
+        _ => None,
+    }
+}
+
 /// `enable` and `disable`: the dashboard's toggle, a settings write of `enabled` only.
 async fn set_enabled(args: &AuthArgs, enabled: bool, yes: bool) -> Result<()> {
     let environment = &args.environment;

@@ -154,7 +154,8 @@ pub enum MfaAction {
     /// Policy, enabled factors and how many users have factors (counts only)
     Status,
     /// Change the policy, factors, reauthentication window or passkey relying party (Owner).
-    /// Flags you omit keep their current value; turning MFA on from off asks for confirmation
+    /// Flags you omit keep their current value. Turning MFA on from off, or weakening it, asks
+    /// for confirmation; without a terminal a --policy, --factor or --step-up-minutes change needs --yes
     Set {
         /// off; optional (users may add a factor); required (users without a factor add one
         /// before they get a session)
@@ -927,7 +928,8 @@ pub fn mfa_weakening(settings: &Value, mfa: Option<&Value>, input: &Value) -> Ve
     let window = settings["step_up_seconds"].as_i64().unwrap_or(600);
     let step_up = input["step_up_seconds"].as_i64().unwrap_or(window);
     if policy != "off" && step_up > window {
-        weaker.push(format!("the reauthentication window grows from {} to {} minutes", window / 60, step_up / 60));
+        let minutes = |seconds: i64| if seconds % 60 == 0 { format!("{} minutes", seconds / 60) } else { format!("{seconds} seconds") };
+        weaker.push(format!("the reauthentication window grows from {} to {}", minutes(window), minutes(step_up)));
     }
     weaker
 }

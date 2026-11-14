@@ -422,11 +422,15 @@ fn updating_an_existing_binding_needs_yes_and_a_new_binding_does_not() {
     };
     let put = vec![("PUT".to_string(), format!("{}/secret-bindings", scope()))];
 
-    let output = run(&update, false);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_eq!(output.status.code(), Some(2), "{stderr}");
-    assert_eq!(stderr.trim_end(), "axiom secrets: pass --yes to confirm without a prompt");
-    assert!(calls(&log).is_empty(), "{:?}", calls(&log));
+    // The server decodes field names case-insensitively, so any spelling is an update.
+    let spelled = private_file(directory.path(), "spelled.json", &binding(r#","Expected_Revision":3"#));
+    for file in [&update, &spelled] {
+        let output = run(file, false);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(2), "{file}: {stderr}");
+        assert_eq!(stderr.trim_end(), "axiom secrets: pass --yes to confirm without a prompt", "{file}");
+        assert!(calls(&log).is_empty(), "{file}: {:?}", calls(&log));
+    }
     let _ = run(&update, true);
     assert_eq!(calls(&log), put);
     let sent: serde_json::Value = serde_json::from_str(&log.lock().unwrap()[0].body).unwrap();

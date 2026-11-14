@@ -63,7 +63,7 @@ pub enum Action {
         description: String,
     },
     /// Create or update a binding from a private JSON file. Updating an existing binding
-    /// (the file has `expected_revision`) invalidates older leases' authority, so it asks first.
+    /// (a non-zero `expected_revision`) invalidates older leases' authority, so it asks first.
     Bind {
         #[arg(long, help = PROJECT_HELP)]
         project: String,
@@ -71,7 +71,7 @@ pub enum Action {
         environment: String,
         #[arg(long)]
         file: PathBuf,
-        /// Confirm updating an existing binding (a file with `expected_revision`) without a
+        /// Confirm updating an existing binding (a non-zero `expected_revision`) without a
         /// prompt (required without a terminal). A new binding does not ask.
         #[arg(long)]
         yes: bool,
@@ -402,14 +402,16 @@ async fn environment_id(project: &str, environment: &str) -> Result<String> {
     let client = crate::auth_store::authenticated_cloud_client()?;
     super::secrets_cloud::environment_id(&client, project, environment).await
 }
-/// A binding file with a non-zero `expected_revision` updates an existing binding.
+/// A binding file with a non-zero `expected_revision` updates an existing binding. The server
+/// decodes field names case-insensitively, so any spelling of the key counts.
 fn updates_binding(body: &serde_json::Value) -> bool {
-    match &body["expected_revision"] {
+    let Some(fields) = body.as_object() else { return false };
+    fields.iter().filter(|(key, _)| key.eq_ignore_ascii_case("expected_revision")).any(|(_, value)| match value {
         serde_json::Value::Null => false,
         serde_json::Value::Number(revision) => revision.as_f64() != Some(0.0),
         // Not a number: the server refuses it, but treat it as an update and ask.
         _ => true,
-    }
+    })
 }
 
 fn binding_prompt(environment: &str, body: &serde_json::Value) -> String {

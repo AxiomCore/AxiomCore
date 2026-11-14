@@ -8,7 +8,11 @@ The `axiom data` command group uses the same project data endpoints as the dashb
 This source-build capability is **Experimental**. The current Cloud service requires
 browser sessions for writes, exports, and capture. Those commands return
 `AXDATA_FORBIDDEN` with CLI credentials until the service supports CLI authorization.
-Use the dashboard for those operations in the meantime.
+The refusal says: “This operation currently needs a dashboard browser session.”
+It includes a dashboard link and the selected project and environment, preserving
+the environment name or slug you supplied. The link uses the configured Cloud URL
+(`AXIOM_CLOUD_URL` for local development). Use the dashboard for those operations
+in the meantime. Other permission refusals remain permission errors.
 
 Sign in with `axiom login`. Every command requires `--project` and `--environment`;
 each accepts an ID, slug, or unambiguous display name. Add `--json` for machine output.
@@ -51,7 +55,18 @@ axiom data sql read --project demo --environment staging --file query.json --jso
 
 `axiom data saved-queries list`, `saved-queries delete ID`, and `capture settings get`
 do not require a file. Export returns an object with a `csv` string after validating
-the CSV completion marker.
+the CSV completion marker. Use `--out PATH` to save the validated CSV instead:
+
+```sh title="Save a CSV export when the service permits CLI exports"
+axiom data tables items export --project demo --environment staging --file filters.json --out items.csv
+```
+
+Create `filters.json` with `{"filters":[]}`. An existing output path is refused unless
+you add `--force` alongside `--out`. Symlink destinations are always refused, even
+with `--force`. On Unix, output files have mode `0600` (owner read and write only).
+The complete CSV is staged in the same directory and published atomically, so a
+failed write does not leave a partial export or truncate an existing file.
+Without `--out`, the response contains the `csv` string as before.
 
 ## Reviewing changes
 
@@ -68,7 +83,10 @@ A rejected or uncertain receipt is not reported as success.
 
 SQL and row writes, capture changes, and saved-query deletion prompt interactively;
 `--yes` accepts the displayed review in automation.
-SQL confirmation asks for both counts when present. Mutations that use idempotency
+SQL confirmation asks for both counts when present. For destructive capture
+creation, the interactive prompt requires you to type the version from the fresh
+preview exactly before accepting execution. A mismatch cancels execution. `--yes`
+accepts that review without typing the version; noninteractive use requires it. Mutations that use idempotency
 print their UUID to stderr. Pending writes retry at most three times with the same
 body and key. Preserve the UUID for investigating uncertain outcomes. SQL writes
 and capture creation reject a supplied `--idempotency-key`, because a new preview

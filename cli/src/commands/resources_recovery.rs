@@ -52,6 +52,7 @@ struct Session {
 
 pub struct Api {
     base: String,
+    data_environment: Option<String>,
     http: reqwest::Client,
     session: tokio::sync::Mutex<Session>,
     persist_session: bool,
@@ -90,6 +91,7 @@ impl Api {
     ) -> Result<Self> {
         Ok(Self {
             base: base.trim_end_matches('/').to_string(),
+            data_environment: None,
             http: reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
                 .timeout(Duration::from_secs(20))
@@ -100,6 +102,11 @@ impl Api {
             step_up_poll_floor: Duration::from_secs(1),
             wait_interval: Duration::from_secs(5),
         })
+    }
+
+    pub(crate) fn with_data_environment(mut self, environment: &str) -> Self {
+        self.data_environment = Some(environment.to_owned());
+        self
     }
 
     pub fn from_profile() -> Result<Self> {
@@ -342,7 +349,7 @@ impl Api {
                 self.send_session_as(method, url.clone(), body, key, ResponseKind::DataJson).await?
             };
         }
-        data_route_result(reply, method, segments)
+        data_route_result(reply, method, segments, &self.base, self.data_environment.as_deref())
     }
 
     /// Export through the same session refresh and bounded transport as JSON.
@@ -357,7 +364,7 @@ impl Api {
                 ResponseKind::Csv,
             )
             .await?;
-        let value = data_route_result(reply, &Method::POST, segments)?;
+        let value = data_route_result(reply, &Method::POST, segments, &self.base, self.data_environment.as_deref())?;
         let text = value
             .as_str()
             .context("AXDATA_INVALID_RESPONSE: expected CSV")?;
@@ -493,7 +500,7 @@ fn ensure_data(valid: bool, message: &str) -> Result<()> {
     Ok(())
 }
 
-fn data_route_result(reply: Reply, method: &Method, segments: &[&str]) -> Result<Value> {
+fn data_route_result(reply: Reply, method: &Method, segments: &[&str], cloud_url: &str, environment_label: Option<&str>) -> Result<Value> {
     if let ["projects", project, "data", "environments", environment, rest @ ..] = segments {
         let browser_only = (*method == Method::POST
             && matches!(rest, ["sql", "write", "preview" | "execute"]
@@ -507,7 +514,15 @@ fn data_route_result(reply: Reply, method: &Method, segments: &[&str]) -> Result
             && (reason.and_then(Value::as_str) == Some("browser_session")
                 || (reason.is_none() && browser_only))
         {
-            bail!("AXDATA_FORBIDDEN: This operation currently needs a dashboard browser session. Open https://app.axiomcore.dev/dashboard and select project {project}, environment {environment}, to do it.");
+            let environment = environment_label.unwrap_or(environment);
+            // The public API and dashboard have separate origins.
+            // Honor explicit local Cloud overrides.
+            let cloud_url = if cloud_url == axiom_cloud::AXIOM_CLOUD_URL {
+                "https://app.axiomcore.dev"
+            } else {
+                cloud_url
+            };
+            bail!("AXDATA_FORBIDDEN: This operation currently needs a dashboard browser session. Open {cloud_url}/dashboard and select project {project}, environment {environment}, to do it.");
         }
     }
     data_result(reply)

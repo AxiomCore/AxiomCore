@@ -219,7 +219,7 @@ async fn browser_only_refusals_explain_dashboard_and_preserve_role_refusals() {
     let mock = Mock::default();
     let base = mock.start().await;
     let dir = tempfile::tempdir().unwrap();
-    let api = api(&base, &dir);
+    let api = api(&base, &dir).with_data_environment("staging");
     for (method, suffix) in [
         (Method::POST, "sql/write/preview"),
         (Method::POST, "sql/write/execute"),
@@ -261,8 +261,8 @@ async fn browser_only_refusals_explain_dashboard_and_preserve_role_refusals() {
                 "{route}: {error}"
             );
             if expected {
-                assert!(error.contains("https://app.axiomcore.dev/dashboard"));
-                assert!(error.contains("project demo, environment env"));
+                assert!(error.contains(&format!("{base}/dashboard")));
+                assert!(error.contains("project demo, environment staging"));
             } else {
                 assert!(error.contains("data request refused (HTTP 403)"));
             }
@@ -271,4 +271,15 @@ async fn browser_only_refusals_explain_dashboard_and_preserve_role_refusals() {
         assert_eq!(mock.seen(&route).len(), 3);
     }
     assert!(mock.seen("POST /auth/device/start").is_empty());
+}
+
+#[test]
+fn browser_refusal_uses_production_dashboard_origin() {
+    let reply = Reply { status: 403, body: json!({"code":"AXDATA_FORBIDDEN"}), retry_after: None };
+    let error = data_route_result(reply, &Method::POST,
+        &["projects", "demo", "data", "environments", "uuid", "capture"],
+        axiom_cloud::AXIOM_CLOUD_URL, Some("staging")).unwrap_err().to_string();
+    assert!(error.contains("https://app.axiomcore.dev/dashboard"));
+    assert!(error.contains("environment staging"));
+    assert!(!error.contains("uuid"));
 }

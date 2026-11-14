@@ -111,6 +111,9 @@ pub enum Table {
         /// Save validated CSV to a file.
         #[arg(long)]
         out: Option<PathBuf>,
+        /// Atomically replace an existing regular file (never a symlink).
+        #[arg(long, requires = "out")]
+        force: bool,
     },
     Write(Write),
 }
@@ -155,6 +158,49 @@ fn input(input: &Input, max: usize) -> Result<Value> {
     ensure!(body.is_object(), "Expected a JSON request object");
     Ok(body)
 }
+/// Stage private bytes beside the destination, then publish only the complete file.
+fn write_export(
+    path: &std::path::Path,
+    force: bool,
+    write: impl FnOnce(&mut std::fs::File) -> Result<()>,
+) -> Result<()> {
+    fn check(path: &std::path::Path, force: bool) -> Result<()> {
+        match std::fs::symlink_metadata(path) {
+            Ok(meta) => {
+                ensure!(
+                    !meta.file_type().is_symlink(),
+                    "Export destination is a symlink; refusing it"
+                );
+                ensure!(meta.is_file(), "Export destination is not a regular file");
+                ensure!(
+                    force,
+                    "Export destination already exists; use --force to replace it"
+                );
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
+        Ok(())
+    }
+    check(path, force)?;
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(std::path::Path::new("."));
+    // NamedTempFile uses create_new and mode 0600 on Unix; Drop cleans up failures.
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+    write(temporary.as_file_mut())?;
+    temporary.as_file().sync_all()?;
+    check(path, force)?;
+    if force {
+        // Rename replaces the directory entry; it never opens/follows the destination.
+        temporary.persist(path)?;
+    } else {
+        // Do not clobber a path created concurrently after the existence check.
+        temporary.persist_noclobber(path)?;
+    }
+    Ok(())
+}
 fn capture_confirmation_version(preview: &Value) -> Option<&str> {
     (preview["preview"]["destructive"] == true)
         .then(|| preview["version"].as_str())
@@ -169,7 +215,29 @@ fn check_confirmation(answer: &str, expected: &str) -> Result<()> {
     Ok(())
 }
 
-fn confirm(preview: &Value, yes: bool) -> Result<()> {
+trait ConfirmationPrompt {
+    fn is_terminal(&self) -> bool;
+    fn input(&mut self, prompt: String) -> Result<String>;
+    fn accept(&mut self) -> Result<bool>;
+}
+struct TerminalPrompt;
+impl ConfirmationPrompt for TerminalPrompt {
+    fn is_terminal(&self) -> bool {
+        std::io::stdin().is_terminal()
+    }
+    fn input(&mut self, prompt: String) -> Result<String> {
+        Ok(dialoguer::Input::new()
+            .with_prompt(prompt)
+            .interact_text()?)
+    }
+    fn accept(&mut self) -> Result<bool> {
+        Ok(dialoguer::Confirm::new()
+            .with_prompt("Execute this change, including listed side effects?")
+            .default(false)
+            .interact()?)
+    }
+}
+fn confirm(preview: &Value, yes: bool, prompt: &mut impl ConfirmationPrompt) -> Result<()> {
     eprintln!(
         "Review the proposed change:\n{}",
         serde_json::to_string_pretty(preview)?
@@ -178,33 +246,23 @@ fn confirm(preview: &Value, yes: bool) -> Result<()> {
         return Ok(());
     }
     ensure!(
-        std::io::stdin().is_terminal(),
+        prompt.is_terminal(),
         "Use --yes to accept the preview in noninteractive use"
     );
     if let Some(version) = capture_confirmation_version(preview) {
-        let answer: String = dialoguer::Input::new()
-            .with_prompt(format!("Type {version} to confirm"))
-            .interact_text()?;
+        let answer: String = prompt.input(format!("Type {version} to confirm"))?;
         check_confirmation(&answer, version)?;
     }
     for field in ["affected", "total_changed"] {
         if let Some(n) = preview[field].as_u64() {
-            let answer: String = dialoguer::Input::new()
-                .with_prompt(format!("Type {field} ({n}) to confirm"))
-                .interact_text()?;
+            let answer: String = prompt.input(format!("Type {field} ({n}) to confirm"))?;
             ensure!(
                 answer.trim() == n.to_string(),
                 "Confirmation did not match; nothing executed"
             );
         }
     }
-    ensure!(
-        dialoguer::Confirm::new()
-            .with_prompt("Execute this change, including listed side effects?")
-            .default(false)
-            .interact()?,
-        "Cancelled; nothing executed"
-    );
+    ensure!(prompt.accept()?, "Cancelled; nothing executed");
     Ok(())
 }
 fn print(value: &Value, as_json: bool) -> Result<()> {
@@ -300,7 +358,7 @@ pub async fn handle(args: &DataArgs) -> Result<()> {
             .context("--environment is required")?,
     )
     .await?;
-    let api = Api::from_profile()?;
+    let api = Api::from_profile()?.with_data_environment(args.environment.as_deref().unwrap());
     let value = run(&api, &project, &environment, &args.action).await?;
     print(&value, args.json)
 }
@@ -375,7 +433,7 @@ async fn run(api: &Api, project: &str, environment: &str, action: &Action) -> Re
                     &preview,
                     overview["limits"]["confirm_max"].as_u64().unwrap_or(10000),
                 )?;
-                confirm(&preview, w.yes)?;
+                confirm(&preview, w.yes, &mut TerminalPrompt)?;
                 let result = t
                     .write("sql/write/execute", Method::POST, &execute, w)
                     .await?;
@@ -418,7 +476,11 @@ async fn run(api: &Api, project: &str, environment: &str, action: &Action) -> Re
                     )
                     .await
                 }
-                Table::Export { input: i, out } => {
+                Table::Export {
+                    input: i,
+                    out,
+                    force,
+                } => {
                     let csv = api
                         .data_export(
                             &t.path(&format!("tables/{table}/export")),
@@ -426,7 +488,12 @@ async fn run(api: &Api, project: &str, environment: &str, action: &Action) -> Re
                         )
                         .await?;
                     if let Some(path) = out {
-                        std::fs::write(path, &csv).context("Could not write CSV export")?;
+                        write_export(path, *force, |file| {
+                            use std::io::Write;
+                            file.write_all(csv.as_bytes())?;
+                            Ok(())
+                        })
+                        .context("Could not write CSV export")?;
                         Ok(json!({"out":path}))
                     } else {
                         Ok(json!({"csv":csv}))
@@ -439,6 +506,7 @@ async fn run(api: &Api, project: &str, environment: &str, action: &Action) -> Re
                     confirm(
                         &json!({"table":table,"operations":body["operations"],"catalog":catalog}),
                         w.yes,
+                        &mut TerminalPrompt,
                     )?;
                     receipt(
                         t.write(
@@ -464,7 +532,7 @@ async fn run(api: &Api, project: &str, environment: &str, action: &Action) -> Re
                     .await
             }
             Saved::Delete { id, yes } => {
-                confirm(&json!({"delete_saved_query":id}), *yes)?;
+                confirm(&json!({"delete_saved_query":id}), *yes, &mut TerminalPrompt)?;
                 t.call(Method::DELETE, &format!("saved-queries/{id}"), None, None)
                     .await
             }
@@ -491,7 +559,7 @@ async fn run(api: &Api, project: &str, environment: &str, action: &Action) -> Re
                     )
                     .await?;
                 let execute = capture_body(&body, &preview)?;
-                confirm(&preview, w.yes)?;
+                confirm(&preview, w.yes, &mut TerminalPrompt)?;
                 t.write("capture", Method::POST, &execute, w).await
             }
             Capture::Settings {
@@ -501,7 +569,7 @@ async fn run(api: &Api, project: &str, environment: &str, action: &Action) -> Re
                 action: Settings::Set(w),
             } => {
                 let body = input(&w.input, 262144)?;
-                confirm(&body, w.yes)?;
+                confirm(&body, w.yes, &mut TerminalPrompt)?;
                 t.write("capture/settings", Method::PUT, &body, w).await
             }
         },
@@ -566,6 +634,133 @@ mod tests {
             yes: true,
             idempotency_key: None,
         }
+    }
+    #[tokio::test]
+    async fn export_files_are_private_and_require_explicit_replacement() {
+        use axum::routing::post;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let app = axum::Router::new().route(
+            "/api/v1/projects/demo/data/environments/env/tables/items/export",
+            post(|| async { ([("content-type", "text/csv")], "id\n1\n# complete 1 rows\n") }),
+        );
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let api = Api::new(
+            &base,
+            "access".into(),
+            "refresh".into(),
+            false,
+            StepUpStore::at(dir.path().join("step")),
+        )
+        .unwrap();
+        let request = file(&dir, json!({"filters":[]}));
+        let out = dir.path().join("export.csv");
+        let command = |force: bool| {
+            let mut args = vec![
+                "axiom",
+                "data",
+                "tables",
+                "items",
+                "export",
+                "--file",
+                request.file.to_str().unwrap(),
+                "--out",
+                out.to_str().unwrap(),
+            ];
+            if force {
+                args.push("--force");
+            }
+            let crate::Commands::Data(args) = *crate::Cli::try_parse_from(args).unwrap().command
+            else {
+                panic!()
+            };
+            args.action
+        };
+        run(&api, "demo", "env", &command(false)).await.unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&out).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        std::fs::write(&out, "original").unwrap();
+        assert!(
+            run(&api, "demo", "env", &command(false)).await.is_err(),
+            "existing file must be refused"
+        );
+        assert_eq!(std::fs::read_to_string(&out).unwrap(), "original");
+        let old = std::fs::File::open(&out).unwrap();
+        run(&api, "demo", "env", &command(true)).await.unwrap();
+        assert!(std::fs::read_to_string(&out)
+            .unwrap()
+            .starts_with("id\n1\n"));
+        use std::io::Read;
+        let mut previous = String::new();
+        (&old).read_to_string(&mut previous).unwrap();
+        assert_eq!(
+            previous, "original",
+            "replace must publish a new inode atomically"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{symlink, PermissionsExt};
+            assert_eq!(
+                std::fs::metadata(&out).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+            std::fs::remove_file(&out).unwrap();
+            symlink(dir.path().join("missing"), &out).unwrap();
+            for force in [false, true] {
+                assert!(run(&api, "demo", "env", &command(force)).await.is_err());
+                assert!(std::fs::symlink_metadata(&out)
+                    .unwrap()
+                    .file_type()
+                    .is_symlink());
+                assert!(!dir.path().join("missing").exists());
+            }
+        }
+        server.abort();
+    }
+
+    #[test]
+    fn export_failure_never_publishes_partial_bytes_or_leaves_temporary_files() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("export.csv");
+        for existing in [false, true] {
+            if existing {
+                std::fs::write(&out, "original").unwrap();
+            }
+            assert!(write_export(&out, true, |file| {
+                file.write_all(b"partial")?;
+                bail!("injected disk failure")
+            })
+            .is_err());
+            if existing {
+                assert_eq!(std::fs::read_to_string(&out).unwrap(), "original");
+            } else {
+                assert!(!out.exists());
+            }
+            assert_eq!(
+                std::fs::read_dir(dir.path()).unwrap().count(),
+                usize::from(existing)
+            );
+        }
+        std::fs::remove_file(&out).unwrap();
+        // A destination appearing during the write cannot be clobbered without force.
+        assert!(write_export(&out, false, |file| {
+            file.write_all(b"complete")?;
+            std::fs::write(&out, "racing writer")?;
+            Ok(())
+        })
+        .is_err());
+        assert_eq!(std::fs::read_to_string(&out).unwrap(), "racing writer");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
     }
     #[test]
     fn command_tree_accepts_data_options() {
@@ -934,6 +1129,7 @@ mod tests {
                 action: Table::Export {
                     input: file(&dir, json!({"filters":[]})),
                     out: None,
+                    force: false,
                 },
             },
         )
@@ -950,6 +1146,7 @@ mod tests {
                 action: Table::Export {
                     input: file(&dir, json!({"filters":[]})),
                     out: Some(out.clone()),
+                    force: false,
                 },
             },
         )
@@ -962,16 +1159,54 @@ mod tests {
     }
     #[test]
     fn destructive_capture_requires_reviewed_version_unless_yes() {
+        struct Prompt {
+            answer: &'static str,
+            inputs: Vec<String>,
+            accepted: bool,
+        }
+        impl ConfirmationPrompt for Prompt {
+            fn is_terminal(&self) -> bool {
+                true
+            }
+            fn input(&mut self, prompt: String) -> Result<String> {
+                self.inputs.push(prompt);
+                Ok(self.answer.into())
+            }
+            fn accept(&mut self) -> Result<bool> {
+                self.accepted = true;
+                Ok(true)
+            }
+        }
         let preview = json!({"preview":{"destructive":true},"version":"v2"});
-        assert_eq!(capture_confirmation_version(&preview), Some("v2"));
-        assert!(check_confirmation("v1", "v2").is_err());
-        assert!(check_confirmation("yes", "v2").is_err());
-        assert!(check_confirmation("v2", "v2").is_ok());
-        assert!(confirm(&preview, true).is_ok());
-        assert_eq!(
-            capture_confirmation_version(&json!({"preview":{"destructive":false},"version":"v2"})),
-            None
-        );
+        for answer in ["v1", "yes", "v2"] {
+            let mut prompt = Prompt {
+                answer,
+                inputs: vec![],
+                accepted: false,
+            };
+            assert_eq!(
+                confirm(&preview, false, &mut prompt).is_ok(),
+                answer == "v2"
+            );
+            assert_eq!(prompt.inputs, ["Type v2 to confirm"]);
+            assert_eq!(prompt.accepted, answer == "v2");
+        }
+        let mut prompt = Prompt {
+            answer: "wrong",
+            inputs: vec![],
+            accepted: false,
+        };
+        confirm(&preview, true, &mut prompt).unwrap();
+        assert!(prompt.inputs.is_empty());
+        assert!(!prompt.accepted);
+        confirm(
+            &json!({"preview":{"destructive":false},"version":"v2"}),
+            false,
+            &mut prompt,
+        )
+        .unwrap();
+        assert!(prompt.inputs.is_empty());
+        assert!(prompt.accepted);
     }
     #[test]
     fn capture_hash_mismatch_refuses_execution() {

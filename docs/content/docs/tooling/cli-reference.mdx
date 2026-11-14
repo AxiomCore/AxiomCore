@@ -244,7 +244,7 @@ A project root is the nearest directory with an `AxiomDeps.toml`. Do not edit
 
 ## Terminal interfaces
 
-Some commands draw a keyboard interface when attached to a terminal. In CI, use
+Some commands draw a keyboard interface when attached to a terminal. In headless CI, use
 their headless or JSON alternatives.
 
 | Command | Interface | Keys |
@@ -254,7 +254,7 @@ their headless or JSON alternatives.
 | `axiom watch` | Contract changes after a pull. | `q` stops. |
 | `axiom cache ls` | Cache explorer. | `j`/`k` or arrows move, `x` deletes the entry, `q` or `Esc` exits. |
 | `axiom init` | Setup wizard. | Arrows and Enter; `Esc` or Ctrl+C leaves. |
-| `axiom login` | Device code and approval status. | Waits for the browser flow. |
+| `axiom login` | Device code and approval status. Uses plain text in headless CI, in a pipe, or when the terminal has no size; `--no-tui` forces plain text. | Waits for browser approval in both modes. |
 | `axiom project link`, `release` | Project picker and version prompt. | Pass `--project-id`, `--project` or `--version` in automation. |
 
 The contract inspector needs a terminal: without one it fails. For scripts, use

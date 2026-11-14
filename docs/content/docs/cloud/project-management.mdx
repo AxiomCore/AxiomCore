@@ -41,8 +41,12 @@ axiom login
 axiom project list
 ```
 
-`axiom login` is interactive and has no token option. Do not copy a browser
-cookie into the CLI, and never put a CLI token in an application contract.
+`axiom login` requires approval in a browser and has no token option. In
+headless CI, in a pipe, or when the terminal has no size, it prints the
+verification URL and code as plain text. Use `axiom login --no-tui` to force
+plain text on a terminal. Both modes wait for browser approval; plain text does
+not provide unattended authentication. Do not copy a browser cookie into the
+CLI, and never put a CLI token in an application contract.
 
 ## Manage the workspace
 

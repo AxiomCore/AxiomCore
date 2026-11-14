@@ -11,7 +11,10 @@ dashboard action, with your `axiom login` session and the same role checks.
 Every command accepts the global flags:
 
 - `--project`: the project slug, name or id (default: the project linked to
-  this directory).
+  this directory). The value is looked up in your project list: it is a slug or
+  id only if a project has it, otherwise a display name (any letter case). A
+  name that more than one project shares, or a value that matches no project,
+  exits with 2; pass the slug instead.
 - `--environment`: the environment name or id (default `development`).
 - `--json`: print the API answer as JSON instead of plain sentences.
 
@@ -455,11 +458,11 @@ Endpoint: `GET /api/v1/projects/{project}/auth/environments/{environment}/email/
 
 ### axiom auth email unsuppress
 
-Removes an address from this environment's suppression list, so it can receive email again. Permanent bounces recorded across Axiom are removed only by Axiom support; the command then reports that no suppression was found. The address is not printed.
+Removes an address from this environment's suppression list, so it can receive email again. Permanent bounces recorded across Axiom are removed only by Axiom support; the command then reports that no suppression was found. The address is not printed. Asks for confirmation unless `--yes`; without a terminal, `--yes` is required.
 
 ```text title="Usage"
-axiom auth email unsuppress ADDRESS
-axiom auth email unsuppress jane@example.com
+axiom auth email unsuppress ADDRESS [--yes]
+axiom auth email unsuppress jane@example.com --yes
 ```
 
 Endpoint: `POST /api/v1/projects/{project}/auth/environments/{environment}/email/suppressions/remove` with `{"email": "..."}`
@@ -527,7 +530,7 @@ Lists every template kind, whether it is customized, its revision and its custom
 Template kinds: `email_code`, `magic_link`, `signup`, `verify_email`, `password_reset`, `email_change_confirm`, `email_change_notice`, `invitation`.
 
 ```text title="Usage"
-axiom auth templates list [--json]
+axiom auth templates list [--reveal-text] [--json]
 ```
 
 Endpoint: `GET /api/v1/projects/{project}/auth/environments/{environment}/templates`
@@ -536,8 +539,10 @@ Endpoint: `GET /api/v1/projects/{project}/auth/environments/{environment}/templa
 
 Shows a template's subject, intro and outro. Fields that are not customized show Axiom's default text, marked `(default)`.
 
+Template text is printed with token-like values (Axiom tokens such as `axr1_…`, JWTs, and long runs that mix letters and digits, such as API keys) replaced by `[redacted]`, in plain and `--json` output. This applies to every `templates` command. Pass `--reveal-text` to print the text exactly as saved.
+
 ```text title="Usage"
-axiom auth templates show KIND
+axiom auth templates show KIND [--reveal-text]
 axiom auth templates show magic_link
 ```
 
@@ -545,28 +550,29 @@ Endpoint: `GET /api/v1/projects/{project}/auth/environments/{environment}/templa
 
 ### axiom auth templates set
 
-Customizes a template. A template has a subject, an intro (before the code or link) and an outro (after it). Fields you leave out keep their current text; an empty value (`--subject ""` or an empty file) uses the default text for that field. The command reads the current template first and sends its revision.
+Customizes a template. A template has a subject, an intro (before the code or link) and an outro (after it). Fields you leave out keep their current text; an empty file uses the default text for that field. Template text is never taken as a command argument: each field comes from a file, or from stdin when the path is `-` (one field at a time). The command reads the current template first and sends its revision.
 
 Template text is plain text: no HTML, links, web addresses or domain names (the message adds its own sign-in link). The variables `{{app_name}}`, `{{expires_minutes}}` and `{{recipient_email}}` are available, plus `{{new_email}}` in `email_change_notice`. The subject is one line of at most 600 bytes; the intro and outro are at most 2,000 bytes each, and a request is at most 64 KiB. These rules are checked before anything is sent.
 
 Flags:
 
-- `--subject TEXT`: subject line
+- `--subject-file PATH`: file with the subject line (trailing line breaks are dropped)
 - `--intro-file PATH`: file with the intro text (trailing line breaks are dropped)
 - `--outro-file PATH`: file with the outro text
+- `--reveal-text`: print the saved template without redacting token-like values
 
 ```bash title="Terminal"
-axiom auth templates set signup --subject "Welcome to {{app_name}}" --intro-file intro.txt
+echo 'Welcome to {{app_name}}' | axiom auth templates set signup --subject-file - --intro-file intro.txt
 ```
 
 Endpoint: `PUT /api/v1/projects/{project}/auth/environments/{environment}/templates/{kind}` with `{"subject", "intro", "outro", "revision"}`
 
 ### axiom auth templates preview
 
-Renders a template with sample values (code 123456, a placeholder link, your app name) and sends nothing. Without text flags it renders the saved template; with `--subject`, `--intro-file` or `--outro-file` it renders that text over the saved template, exactly as `templates set` would save it. Prints the subject and the plain-text part, or the HTML part with `--html`.
+Renders a template with sample values (code 123456, a placeholder link, your app name) and sends nothing. Without text flags it renders the saved template; with `--subject-file`, `--intro-file` or `--outro-file` it renders that text over the saved template, exactly as `templates set` would save it. Prints the subject and the plain-text part, or the HTML part with `--html`.
 
 ```text title="Usage"
-axiom auth templates preview KIND [--subject TEXT] [--intro-file PATH] [--outro-file PATH] [--html]
+axiom auth templates preview KIND [--subject-file PATH] [--intro-file PATH] [--outro-file PATH] [--html] [--reveal-text]
 axiom auth templates preview signup --intro-file intro.txt
 ```
 

@@ -1,0 +1,5 @@
+{
+  "component": "cli",
+  "type": "feature",
+  "summary": "Database access: axiom project resources grants, grant and revoke list, create and revoke workload grants for a database, as the dashboard's Database access section does."
+}

@@ -1,0 +1,5 @@
+{
+  "component": "cli",
+  "type": "feature",
+  "summary": "Workspace and project management: axiom workspace shows and renames a workspace, reads billing and usage, manages members, invitations and notification preferences and completes onboarding; axiom project environments lists, creates, inspects, connects to, resets and deletes sandboxes and hosted mocks; axiom contract releases lists, shows, analyzes, compares, imports and downloads hosted contract releases (downloads are checked against their SHA-256)."
+}

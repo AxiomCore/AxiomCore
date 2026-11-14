@@ -1,0 +1,5 @@
+{
+  "component": "cli",
+  "type": "fix",
+  "summary": "Hosted dry runs: axiom database migrate --dry-run against a hosted environment uploads the release as a candidate and checks it, instead of uploading it as a release, and writes nothing locally; conflicts name their cause (operation in progress, revoked key, reused idempotency key), and checks against older servers retry unspecified conflicts."
+}

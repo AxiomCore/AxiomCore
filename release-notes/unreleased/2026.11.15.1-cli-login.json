@@ -1,0 +1,5 @@
+{
+  "component": "cli",
+  "type": "fix",
+  "summary": "axiom login prints a plain-text device code when it is piped, in CI, with --no-tui or in a terminal too small for the full screen, instead of hanging; when Axiom Cloud sends a complete verification link it is shown and opened in the browser on an interactive terminal (not in CI or with AXIOM_NO_BROWSER)."
+}

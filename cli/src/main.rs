@@ -1548,7 +1548,65 @@ enum DeployTarget {
 
 #[derive(Subcommand)]
 enum ProjectAction {
-    List,
+    /// List the Cloud projects you can access
+    List {
+        /// List only your archived projects (hidden from the normal list)
+        #[arg(long)]
+        archived: bool,
+    },
+    /// Archive a project (Owner): snapshot every database, then delete it from its provider
+    ///
+    /// Hides the project from `axiom project list` at once. Each database gets an encrypted,
+    /// verified snapshot; only after its snapshot verifies is it deleted from the hosting
+    /// provider. Asks you to type `archive <project-slug>`; `--yes` confirms without the prompt
+    /// (required without a terminal). Needs a recent sign-in: the CLI steps up when asked.
+    Archive {
+        /// Project slug, name or ID (default: the project linked to this directory)
+        #[arg(value_name = "PROJECT")]
+        project: Option<String>,
+        /// The project, as an option instead of the positional argument
+        #[arg(long = "project", value_name = "PROJECT", conflicts_with = "project")]
+        project_option: Option<String>,
+        /// Confirm without the typed prompt (sends `archive <project-slug>`)
+        #[arg(long)]
+        yes: bool,
+        /// Poll every 3 seconds until the project is archived or the archive failed (up to 60 minutes)
+        #[arg(long)]
+        wait: bool,
+        /// Print the archive status as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Restore an archived project (Owner): list it again and bring its databases back
+    ///
+    /// The project is listed again at once; each database is rebuilt from its snapshot with
+    /// its data. Restore is not destructive and asks for no confirmation.
+    Restore {
+        /// Project slug, name or ID (default: the project linked to this directory)
+        #[arg(value_name = "PROJECT")]
+        project: Option<String>,
+        /// The project, as an option instead of the positional argument
+        #[arg(long = "project", value_name = "PROJECT", conflicts_with = "project")]
+        project_option: Option<String>,
+        /// Poll every 3 seconds until the project is restored or the restore failed (up to 60 minutes)
+        #[arg(long)]
+        wait: bool,
+        /// Print the archive status as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show a project's archive state, its databases and what would block an archive now
+    ArchiveStatus {
+        /// Project slug, name or ID (default: the project linked to this directory)
+        #[arg(value_name = "PROJECT")]
+        project: Option<String>,
+        /// The project, as an option instead of the positional argument
+        #[arg(long = "project", value_name = "PROJECT", conflicts_with = "project")]
+        project_option: Option<String>,
+        /// Print the archive status as JSON
+        #[arg(long)]
+        json: bool,
+    },
     Resources {
         #[arg(long)]
         project: String,
@@ -1818,7 +1876,7 @@ async fn main() -> anyhow::Result<()> {
 
 /// A confirmation that cannot be asked (no terminal, no `--yes`) exits 2 here, before
 /// registration, sign-in, telemetry or any request: `auth disable`, an `auth mfa set` that may
-/// weaken or turn on multi-factor, and `project resources revoke`. (`axiom secrets` is a local
+/// weaken or turn on multi-factor, `project resources revoke` and `project archive`. (`axiom secrets` is a local
 /// command with neither registration nor telemetry; it refuses in its own handler.)
 fn confirmation_preflight(command: &Commands) {
     let (name, yes) = match command {
@@ -1833,6 +1891,11 @@ fn confirmation_preflight(command: &Commands) {
                     ..
                 },
         } => ("project", *yes),
+        // The typed `archive <project-slug>` prompt needs a terminal; refused before the
+        // project lookup, sign-in or any request.
+        Commands::Project {
+            action: ProjectAction::Archive { yes, .. },
+        } => ("project archive", *yes),
         _ => return,
     };
     if let Err(error) = commands::auth::require_yes_or_terminal(yes) {
@@ -3162,7 +3225,17 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
         Commands::Intel(args) => commands::intel::handle(args).await,
         Commands::Workspace(args) => commands::workspace::handle(args).await,
         Commands::Project { action } => match action {
-            ProjectAction::List => commands::project::handle_project_list().await,
+            ProjectAction::List { archived: false } => commands::project::handle_project_list().await,
+            ProjectAction::List { archived: true } => commands::project_archive::handle_list_archived().await,
+            ProjectAction::Archive { project, project_option, yes, wait, json } => {
+                commands::project_archive::handle_archive(project.as_deref().or(project_option.as_deref()), *yes, *wait, *json).await
+            }
+            ProjectAction::Restore { project, project_option, wait, json } => {
+                commands::project_archive::handle_restore(project.as_deref().or(project_option.as_deref()), *wait, *json).await
+            }
+            ProjectAction::ArchiveStatus { project, project_option, json } => {
+                commands::project_archive::handle_status(project.as_deref().or(project_option.as_deref()), *json).await
+            }
             ProjectAction::Resources { project, action } => {
                 commands::resources::handle(&project, action.as_ref()).await
             }

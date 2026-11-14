@@ -2,6 +2,7 @@
 //! skew"; confirmation C-S6): pull's three-way region comparison and the two mechanical
 //! edits, written under the path rules (security S-5), and the label of capture releases.
 use anyhow::{bail, Context, Result};
+use axiom_cloud::migrations::ReleaseSummary;
 use axiom_database::capture::region::{self, Region};
 use axiom_database::developer::{capture::source_key, capture::migration_path, Release};
 use std::collections::{BTreeMap, BTreeSet};
@@ -11,9 +12,22 @@ use std::path::{Path, PathBuf};
 /// At most this many bytes are written by one pull (security S-5).
 const MAX_WRITE: usize = 8 * 1024 * 1024;
 
-/// `captured in dashboard: <title> by <capturedBy>`, for a capture release.
-pub(crate) fn label(release: &Release) -> Option<String> {
-    release.revision.capture.as_ref().map(|c| format!("captured in dashboard: {} by {}", c.title, c.captured_by))
+/// `captured in dashboard: <title> by <author>`, for a capture release. The signed block
+/// names the author by user id; the hosted release list (`releases`) carries the author's
+/// email for Owners and Maintainers, which is shown instead when present and printable.
+pub(crate) fn label(release: &Release, releases: &[ReleaseSummary]) -> Option<String> {
+    let email = releases
+        .iter()
+        .find(|r| r.sha256 == release.sha256)
+        .and_then(|r| r.captured_by_email.as_deref())
+        // Printable ASCII only (no control, bidi or zero-width characters), at most
+        // 254 bytes; anything else falls back to the signed id.
+        .filter(|e| !e.is_empty() && e.len() <= 254 && e.chars().all(|c| c.is_ascii_graphic()));
+    release
+        .revision
+        .capture
+        .as_ref()
+        .map(|c| format!("captured in dashboard: {} by {}", c.title, email.unwrap_or(&c.captured_by)))
 }
 
 /// The source edits pull applies to the working sources: new file texts (`Some`) and a

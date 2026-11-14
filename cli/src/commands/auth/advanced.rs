@@ -144,6 +144,71 @@ pub enum TrustedIssuersAction {
         #[arg(long)]
         token_file: PathBuf,
     },
+    /// Change a trusted issuer (Owner). Sessions exchanged under its earlier settings end at their next refresh.
+    /// The issuer URL and the preset never change; delete the issuer and add it again instead
+    Update {
+        /// The trusted issuer's UUID or its exact issuer URL
+        id: String,
+        /// Accepted audience; repeatable, replaces the list (1 to 4)
+        #[arg(long = "audience")]
+        audiences: Vec<String>,
+        /// The https URL of the issuer's JWKS
+        #[arg(long)]
+        jwks_uri: Option<String>,
+        /// Accepted signing algorithm; repeatable, replaces the list
+        #[arg(long = "algorithm", value_parser = ["RS256", "ES256", "EdDSA"])]
+        algorithms: Vec<String>,
+        /// The claim that identifies the user (default `sub`)
+        #[arg(long)]
+        subject_claim: Option<String>,
+        /// The claim that carries the user's email address
+        #[arg(long, conflicts_with = "no_email_claim")]
+        email_claim: Option<String>,
+        /// Stop reading an email address from the token
+        #[arg(long)]
+        no_email_claim: bool,
+        /// Claims every token must carry, as a JSON object (for example `{"role":"authenticated"}`); `{}` clears them
+        #[arg(long)]
+        required_claims: Option<String>,
+        /// Claims that make a token refused, as a JSON object; `{}` clears them
+        #[arg(long)]
+        forbidden_claims: Option<String>,
+        /// Exact origin accepted in `azp`; repeatable, replaces the list
+        #[arg(long = "authorized-party", conflicts_with = "clear_authorized_parties")]
+        authorized_parties: Vec<String>,
+        /// Accept tokens with any `azp`
+        #[arg(long)]
+        clear_authorized_parties: bool,
+        /// Upstream MFA mapping as JSON: a list of 1 or 2 rules such as `[{"claim":"amr","contains":"mfa"}]`; `null` clears it
+        #[arg(long)]
+        assurance_mapping: Option<String>,
+        /// Oldest accepted token age in seconds (60 to 86400)
+        #[arg(long, value_parser = clap::value_parser!(i64).range(60..=86_400))]
+        max_age_seconds: Option<i64>,
+        /// Lifetime of exchanged sessions in seconds (3600 to 604800)
+        #[arg(long, value_parser = clap::value_parser!(i64).range(3_600..=604_800))]
+        session_lifetime_seconds: Option<i64>,
+        /// Create a user on the first exchange of an unknown subject
+        #[arg(long, conflicts_with = "no_create_users")]
+        create_users: bool,
+        /// Exchange tokens only for users that already exist
+        #[arg(long)]
+        no_create_users: bool,
+        /// Use the issuer for exchanges (its JWKS is fetched to check it)
+        #[arg(long, conflicts_with = "disable")]
+        enable: bool,
+        /// Stop exchanging its tokens
+        #[arg(long)]
+        disable: bool,
+    },
+    /// Delete a trusted issuer; its tokens are no longer exchanged and exchanged sessions end at their next refresh
+    Remove {
+        /// The trusted issuer's UUID or its exact issuer URL
+        id: String,
+        /// Delete without asking for confirmation
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 /// Second factors an environment can offer (the dashboard's FACTOR_CHOICES).
@@ -461,6 +526,16 @@ pub fn duration_seconds(value: &str) -> Result<u64> {
     Ok(seconds)
 }
 
+/// The OAuth client id, if `confirm` is its typed phrase `delete client <id>`.
+pub(super) fn delete_client_phrase<'a>(id: &'a str, confirm: Option<&str>) -> Result<&'a str> {
+    let id = checked_id(id)?;
+    let phrase = format!("delete client {id}");
+    if confirm != Some(phrase.as_str()) {
+        return Err(usage(format!("deleting a client ends its grant sessions at their next refresh; repeat with --confirm \"{phrase}\" (disable it first)")));
+    }
+    Ok(id)
+}
+
 /// The preflight half of [`confirm_yes`]: without `--yes` and without a terminal the command
 /// is refused here, before sign-in, a project lookup, a file read or any request. The refusal
 /// exits 2 with `pass --yes to confirm without a prompt`, as the other `axiom auth` commands do.
@@ -646,11 +721,7 @@ pub(super) async fn oauth_apps_with(args: &AuthArgs, target: &Target, action: &O
             print(args, &saved, |_| vec![format!("Disabled {id}; new authorizations are refused.")])
         }
         OauthAppsAction::Delete { id, confirm } => {
-            let id = checked_id(id)?;
-            let phrase = format!("delete client {id}");
-            if confirm.as_deref() != Some(phrase.as_str()) {
-                return Err(usage(format!("deleting a client ends its grant sessions at their next refresh; repeat with --confirm \"{phrase}\" (disable it first)")));
-            }
+            let id = delete_client_phrase(id, confirm.as_deref())?;
             target.call(Method::DELETE, &format!("oauth-clients/{id}"), &[], None).await?;
             print(args, &json!({"deleted": id}), |_| vec![format!("Deleted {id}.")])
         }
@@ -806,7 +877,138 @@ pub async fn trusted_issuers(args: &AuthArgs, action: &TrustedIssuersAction) -> 
         TrustedIssuersAction::Test { token_file, .. } => Some(read_secret_file(token_file, "--token-file", 16 * 1024)?),
         _ => None,
     };
+    // Local checks first: no request is sent for a mistake.
+    match action {
+        TrustedIssuersAction::Update { id, .. } => {
+            issuer_selector(id)?;
+            trusted_issuer_patch(action, Value::Null)?;
+        }
+        TrustedIssuersAction::Remove { id, .. } => issuer_selector(id)?,
+        _ => {}
+    }
     let target = target(args).await?;
+    trusted_issuers_with(args, &target, action, token).await
+}
+
+/// A trusted issuer is named by its UUID or its exact https issuer URL.
+fn issuer_selector(given: &str) -> Result<()> {
+    if super::uuid_shaped(given) || given.starts_with("https://") {
+        Ok(())
+    } else {
+        Err(usage(format!("`{given}` is neither a lowercase UUID nor an https issuer URL")))
+    }
+}
+
+/// The trusted issuer row (with its `revision`) by UUID or exact issuer URL.
+async fn issuer_row(target: &Target, given: &str) -> Result<Value> {
+    let listed = target.call(Method::GET, "trusted-issuers", &[], None).await?;
+    listed["trusted_issuers"].as_array().into_iter().flatten().find(|i| i["id"].as_str() == Some(given) || i["issuer"].as_str() == Some(given)).cloned().ok_or_else(|| usage(format!("no trusted issuer {given}")))
+}
+
+fn json_flag(value: &str, flag: &str) -> Result<Value> {
+    serde_json::from_str(value).map_err(|_| usage(format!("{flag} is not valid JSON")))
+}
+
+fn object_flag(value: &str, flag: &str) -> Result<Value> {
+    let parsed = json_flag(value, flag)?;
+    if !parsed.is_object() {
+        return Err(usage(format!("{flag} must be a JSON object")));
+    }
+    Ok(parsed)
+}
+
+/// The `PATCH trusted-issuers/{id}` body of `update`: the revision plus only the fields given
+/// (the dashboard's issuer form fields; the issuer URL and preset never change).
+pub fn trusted_issuer_patch(action: &TrustedIssuersAction, revision: Value) -> Result<Value> {
+    let TrustedIssuersAction::Update {
+        audiences,
+        jwks_uri,
+        algorithms,
+        subject_claim,
+        email_claim,
+        no_email_claim,
+        required_claims,
+        forbidden_claims,
+        authorized_parties,
+        clear_authorized_parties,
+        assurance_mapping,
+        max_age_seconds,
+        session_lifetime_seconds,
+        create_users,
+        no_create_users,
+        enable,
+        disable,
+        ..
+    } = action
+    else {
+        return Err(usage("not a trusted-issuer update"));
+    };
+    let mut body = json!({"revision": revision});
+    if !audiences.is_empty() {
+        if audiences.len() > 4 {
+            return Err(usage("a trusted issuer accepts 1 to 4 audiences"));
+        }
+        body["audiences"] = json!(audiences);
+    }
+    if let Some(uri) = jwks_uri {
+        if !uri.starts_with("https://") {
+            return Err(usage("--jwks-uri must be an https URL"));
+        }
+        body["jwks_uri"] = json!(uri);
+    }
+    if !algorithms.is_empty() {
+        body["algorithms"] = json!(algorithms);
+    }
+    if let Some(claim) = subject_claim {
+        body["subject_claim"] = json!(claim);
+    }
+    if let Some(claim) = email_claim {
+        body["email_claim"] = json!(claim);
+    } else if *no_email_claim {
+        body["email_claim"] = json!("");
+    }
+    if let Some(claims) = required_claims {
+        body["required_claims"] = object_flag(claims, "--required-claims")?;
+    }
+    if let Some(claims) = forbidden_claims {
+        body["forbidden_claims"] = object_flag(claims, "--forbidden-claims")?;
+    }
+    if !authorized_parties.is_empty() {
+        body["authorized_parties"] = json!(authorized_parties);
+    } else if *clear_authorized_parties {
+        body["authorized_parties"] = json!([]);
+    }
+    if let Some(mapping) = assurance_mapping {
+        let mapping = json_flag(mapping, "--assurance-mapping")?;
+        let valid = match &mapping {
+            Value::Null => true,
+            Value::Array(rules) => (1..=2).contains(&rules.len()) && rules.iter().all(|r| r["claim"].is_string() && (r.get("equals").is_some() || r["contains"].is_string())),
+            _ => false,
+        };
+        if !valid {
+            return Err(usage("--assurance-mapping is null or a list of 1 or 2 rules: {\"claim\": name, \"equals\": value} or {\"claim\": name, \"contains\": text}"));
+        }
+        body["assurance_mapping"] = mapping;
+    }
+    if let Some(seconds) = max_age_seconds {
+        body["max_token_age_seconds"] = json!(seconds);
+    }
+    if let Some(seconds) = session_lifetime_seconds {
+        body["session_lifetime_seconds"] = json!(seconds);
+    }
+    if *create_users || *no_create_users {
+        body["create_users"] = json!(*create_users);
+    }
+    if *enable || *disable {
+        body["enabled"] = json!(*enable);
+    }
+    if body.as_object().is_some_and(|m| m.len() == 1) {
+        return Err(usage("nothing to change: pass at least one field flag (see --help)"));
+    }
+    Ok(body)
+}
+
+pub(super) async fn trusted_issuers_with(args: &AuthArgs, target: &Target, action: &TrustedIssuersAction, token: Option<Zeroizing<String>>) -> Result<()> {
     match action {
         TrustedIssuersAction::List => {
             let mut listed = target.call(Method::GET, "trusted-issuers", &[], None).await?;
@@ -854,6 +1056,23 @@ pub async fn trusted_issuers(args: &AuthArgs, action: &TrustedIssuersAction) -> 
                 }
                 lines
             })
+        }
+        TrustedIssuersAction::Update { id, .. } => {
+            let row = issuer_row(target, id).await?;
+            let id = checked_id(row["id"].as_str().unwrap_or_default())?.to_string();
+            if row["revision"].is_null() {
+                return Err(Exit { code: 5, message: "AXAUTH_UNAVAILABLE: the trusted issuer carries no revision".into() }.into());
+            }
+            let body = trusted_issuer_patch(action, row["revision"].clone())?;
+            let mut saved = target.call(Method::PATCH, &format!("trusted-issuers/{id}"), &[], Some(&body)).await?;
+            sanitize(&mut saved, true);
+            print(args, &saved, |i| vec![format!("Trusted issuer {} saved (revision {}, {}). Sessions exchanged under its earlier settings end at their next refresh.", text(i, "id"), text(i, "revision"), if i["enabled"] == true { "enabled" } else { "disabled" })])
+        }
+        TrustedIssuersAction::Remove { id, yes } => {
+            let id = if super::uuid_shaped(id) { id.clone() } else { checked_id(issuer_row(target, id).await?["id"].as_str().unwrap_or_default())?.to_string() };
+            confirm_yes(*yes, &format!("Delete trusted issuer {id}? Its tokens are no longer exchanged, and sessions exchanged with it end at their next refresh."))?;
+            target.call(Method::DELETE, &format!("trusted-issuers/{id}"), &[], None).await?;
+            print(args, &json!({"deleted": id}), |_| vec![format!("Trusted issuer {id} deleted.")])
         }
     }
 }

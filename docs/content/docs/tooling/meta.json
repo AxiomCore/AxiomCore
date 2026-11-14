@@ -13,6 +13,7 @@
     "cli-contracts",
     "cli-extensions",
     "cli-inspect",
+    "cli-auth-admin",
     "secrets-cli"
   ]
 }

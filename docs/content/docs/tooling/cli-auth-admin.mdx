@@ -1,0 +1,696 @@
+---
+title: axiom auth administration
+description: Reference for the axiom auth commands that administer roles, organizations, invitations, users, events, email delivery, providers, trusted issuers and policy releases.
+pageType: reference
+---
+
+These `axiom auth` commands administer one authentication environment from the
+terminal. Each command calls the same Cloud API endpoint as the matching
+dashboard action, with your `axiom login` session and the same role checks.
+
+Every command accepts the global flags:
+
+- `--project`: the project slug, name or id (default: the project linked to
+  this directory). The value is looked up in your project list (the projects of
+  your current organization): it is a slug or id only if a project has it,
+  otherwise a display name (any letter case). A name that more than one project
+  shares, or a value that matches no project, exits with 2; pass the slug
+  instead.
+- `--org`: the organization slug, for a project outside your current
+  organization. The Cloud API lists only the current organization's projects
+  and has no project list for other organizations, so with `--org` the
+  `--project` value must be the project's exact slug (names and ids are not
+  resolved). The CLI then looks the slug up directly, and the API checks that
+  you are a member of that project. The API does not report which organization
+  a project belongs to, so the CLI cannot check `--org` against the project.
+  `--org` needs `--project`. A slug that names no project, or a project you
+  are not a member of, exits with 2 (the API answers both the same way).
+- `--environment`: the environment name or id (default `development`).
+- `--json`: print the API answer as JSON instead of plain sentences.
+
+Email addresses are masked in the output unless a command offers
+`--reveal-email`. Secret values are never printed and never taken as command
+arguments. Commands that remove, revoke or suspend something ask for
+confirmation on a terminal; pass `--yes` in scripts. Without a terminal and
+without `--yes`, such a command exits with 2 (`pass --yes to confirm without a
+prompt`) before it signs in, looks up the project or sends any request.
+Template text is not printed unless you pass `--reveal-text` (see
+[templates](#axiom-auth-templates-show)). Failures exit with 2 (usage or refused request), 3 (your
+role does not allow it), 4 (conflict: refresh and retry) or 5 (unavailable).
+
+For the concepts behind these commands, see
+[Roles and permissions](/authentication/roles-permissions) and
+[Policy releases](/authentication/policy-releases).
+
+## Roles, permissions and assignments
+
+These commands manage role-based access for one environment, the same way as the Roles page in the dashboard. Roles and permissions can be named by name or by UUID. Users and organizations are named by UUID (find a user's ID with `axiom auth users list`). All commands accept the global `--project`, `--environment` and `--json` flags.
+
+Changes apply to each user's next access token. Tokens already issued keep their roles until they expire. If the environment uses reviewed policy releases, direct role and permission changes are refused; use `axiom auth policy` instead.
+
+Listing needs read access to the project; changes need the Owner or Maintainer role. Listing assignments also needs access to user data.
+
+### axiom auth roles list
+
+Lists the roles, their revision and the permissions each one grants.
+
+```text title="Usage"
+axiom auth roles list [--json]
+```
+
+Example: `axiom auth roles list --environment production`
+
+Endpoint: `GET /api/v1/projects/{project}/auth/environments/{environment}/roles`
+
+### axiom auth roles create
+
+Creates a role. With `--permission`, the role grants those permissions right away (a second request replaces the role's permission set).
+
+```text title="Usage"
+axiom auth roles create <name> [--description <text>] [--permission <name-or-id>]...
+```
+
+- `<name>`: starts with a lowercase letter, then lowercase letters, digits, `_` and `-` (at most 64 characters). The name cannot change later.
+- `--description`: what the role is for (at most 256 characters).
+- `--permission`: a permission name or UUID; repeat it for several. Unknown names are refused before anything is created.
+
+Example: `axiom auth roles create editor --description "Edits posts" --permission posts.read --permission posts.write`
+
+Endpoints: `POST /api/v1/projects/{project}/auth/environments/{environment}/roles`, then (with `--permission`) `PUT /api/v1/projects/{project}/auth/environments/{environment}/roles/{id}/permissions`
+
+### axiom auth roles update
+
+Changes a role's description. The command reads the role's current revision first, so a change made by someone else in the meantime is refused (exit code 4) instead of overwritten.
+
+```text title="Usage"
+axiom auth roles update <role> --description <text>
+```
+
+- `<role>`: role name or UUID.
+- `--description`: the new description; `""` clears it.
+
+Example: `axiom auth roles update editor --description "Edits and publishes posts"`
+
+Endpoint: `PATCH /api/v1/projects/{project}/auth/environments/{environment}/roles/{id}`
+
+### axiom auth roles set-permissions
+
+Replaces the full set of permissions a role grants. Permissions not listed are removed from the role. The command sends the role's current revision.
+
+```text title="Usage"
+axiom auth roles set-permissions <role> --permission <name-or-id>...
+axiom auth roles set-permissions <role> --none
+```
+
+- `--permission`: a permission name or UUID; repeat it for several.
+- `--none`: remove every permission from the role.
+
+Example: `axiom auth roles set-permissions editor --permission posts.read --permission posts.write`
+
+Endpoint: `PUT /api/v1/projects/{project}/auth/environments/{environment}/roles/{id}/permissions`
+
+### axiom auth roles delete
+
+Deletes a role. Deleting is refused while the role is assigned to anyone; remove its assignments first. Asks for confirmation unless `--yes` is given (without a terminal, `--yes` is required).
+
+```text title="Usage"
+axiom auth roles delete <role> [--yes]
+```
+
+Example: `axiom auth roles delete editor --yes`
+
+Endpoint: `DELETE /api/v1/projects/{project}/auth/environments/{environment}/roles/{id}`
+
+### axiom auth permissions list
+
+Lists the permission keys that roles can grant.
+
+```text title="Usage"
+axiom auth permissions list [--json]
+```
+
+Endpoint: `GET /api/v1/projects/{project}/auth/environments/{environment}/permissions`
+
+### axiom auth permissions create
+
+Creates a permission key. The name must equal the claim name your guards check.
+
+```text title="Usage"
+axiom auth permissions create <name> [--description <text>]
+```
+
+- `<name>`: starts with a lowercase letter, then lowercase letters, digits and `_ . : -` (at most 64 characters). Wildcards are not allowed.
+- `--description`: what the permission allows (at most 256 characters).
+
+Example: `axiom auth permissions create posts.write --description "Create and edit posts"`
+
+Endpoint: `POST /api/v1/projects/{project}/auth/environments/{environment}/permissions`
+
+### axiom auth permissions delete
+
+Deletes a permission. Deleting is refused while any role grants it. Asks for confirmation unless `--yes` is given.
+
+```text title="Usage"
+axiom auth permissions delete <permission> [--yes]
+```
+
+Example: `axiom auth permissions delete posts.write --yes`
+
+Endpoint: `DELETE /api/v1/projects/{project}/auth/environments/{environment}/permissions/{id}`
+
+### axiom auth assignments list
+
+Lists the roles assigned to one user, with each assignment's ID, scope (environment-wide or an organization) and end time.
+
+```text title="Usage"
+axiom auth assignments list --user <user-id>
+```
+
+Example: `axiom auth assignments list --user 4f5a6b7c-8d9e-4f0a-9b2c-3d4e5f6a7b82`
+
+Endpoint: `GET /api/v1/projects/{project}/auth/environments/{environment}/assignments?user_id=...`
+
+### axiom auth assignments add
+
+Assigns a role to a user, environment-wide or within one organization, optionally until a set time. Refused if the user would then hold more than 32 roles or 128 permissions.
+
+```text title="Usage"
+axiom auth assignments add --user <user-id> --role <name-or-id> [--organization <org-id>] [--valid-until <time>]
+```
+
+- `--user`: the user's UUID.
+- `--role`: role name or UUID.
+- `--organization`: the organization's UUID; without it the role applies environment-wide.
+- `--valid-until`: when the assignment ends, an RFC 3339 time in the future, for example `2027-01-31T00:00:00Z`.
+
+Example: `axiom auth assignments add --user 4f5a6b7c-8d9e-4f0a-9b2c-3d4e5f6a7b82 --role editor`
+
+Endpoint: `POST /api/v1/projects/{project}/auth/environments/{environment}/assignments`
+
+### axiom auth assignments remove
+
+Removes an assignment by its ID (shown by `axiom auth assignments list`). Asks for confirmation unless `--yes` is given.
+
+```text title="Usage"
+axiom auth assignments remove <assignment-id> [--yes]
+```
+
+Example: `axiom auth assignments remove 6b7c8d9e-0f1a-4b2c-9d4e-5f6a7b8c9da4 --yes`
+
+Endpoint: `DELETE /api/v1/projects/{project}/auth/environments/{environment}/assignments/{id}`
+
+## Organizations and invitations
+
+Organizations group the users of an environment. A membership has only a status, `active` or `suspended`. Roles within an organization are role assignments; grant them with `axiom auth assignments`. Organizations are named by UUID or by slug in every command below; a slug is looked up in the organization list.
+
+All commands take the global flags `--project`, `--environment` and `--json`. Listing needs the `users.read` capability; creating and changing organizations and members needs `rbac.write`; resending and revoking invitations needs `users.write`. Email addresses are masked in output unless you pass `--reveal-email`.
+
+The endpoints below are relative to `/api/v1/projects/{project}/auth/environments/{environment}`.
+
+### axiom auth organizations list
+
+Lists organizations, ordered by slug, 50 per page by default. When there are more, the last line prints the `--cursor` value for the next page.
+
+```text title="Usage"
+axiom auth organizations list [--limit 1-100] [--cursor CURSOR]
+```
+
+- `--limit`: page size, 1 to 100.
+- `--cursor`: continue from the cursor a previous page printed.
+
+```bash title="Terminal"
+axiom auth organizations list --limit 100
+```
+
+Calls `GET /organizations`.
+
+### axiom auth organizations create
+
+Creates an active organization. An environment has at most 10,000 organizations, and slugs are unique.
+
+```text title="Usage"
+axiom auth organizations create --slug SLUG --name NAME
+```
+
+- `--slug`: lowercase letters, digits and `-`, at most 63 characters, starting with a letter or digit.
+- `--name`: display name, 1 to 128 bytes.
+
+```bash title="Terminal"
+axiom auth organizations create --slug acme --name "Acme Inc"
+```
+
+Calls `POST /organizations` with `{"slug": "...", "name": "..."}`.
+
+### axiom auth organizations update
+
+Suspends or reactivates an organization. While it is suspended, roles assigned within it do not count. The command reads the current revision from the organization list first and sends it with the change. If something else changed the environment's access policy in the meantime, the request fails with exit code 4; run it again. Suspending asks for confirmation unless you pass `--yes`.
+
+```text title="Usage"
+axiom auth organizations update ORGANIZATION --status active|suspended [--yes]
+```
+
+- `ORGANIZATION`: organization UUID or slug.
+- `--status`: `active` or `suspended`.
+- `--yes`: suspend without the prompt (required when there is no terminal).
+
+```bash title="Terminal"
+axiom auth organizations update acme --status suspended --yes
+```
+
+Calls `GET /organizations` (to find the organization and its revision), then `PATCH /organizations/{id}` with `{"status": "...", "revision": N}`.
+
+### axiom auth organizations members
+
+Lists an organization's members: user IDs and membership status, ordered by user ID.
+
+```text title="Usage"
+axiom auth organizations members ORGANIZATION [--limit 1-100] [--cursor CURSOR]
+```
+
+```bash title="Terminal"
+axiom auth organizations members acme
+```
+
+Calls `GET /organizations/{id}/members`.
+
+### axiom auth organizations add-member
+
+Adds a user to an organization, or changes an existing member's status. The alias is `update-member`. A user belongs to at most 64 organizations. A suspended member's roles in the organization do not count.
+
+```text title="Usage"
+axiom auth organizations add-member ORGANIZATION USER_ID [--status active|suspended] [--yes]
+```
+
+- `USER_ID`: the user's UUID (see `axiom auth users list`).
+- `--status`: `active` (default) or `suspended`. With `active`, an existing suspended member is reactivated.
+- `--yes`: suspend without a confirmation prompt (required without a terminal).
+
+```bash title="Terminal"
+axiom auth organizations add-member acme 4b5c6d7e-8f9a-4b0c-9d1e-2f3a4b5c6d7e
+axiom auth organizations update-member acme 4b5c6d7e-8f9a-4b0c-9d1e-2f3a4b5c6d7e --status suspended --yes
+```
+
+Calls `PUT /organizations/{id}/members/{user_id}` with `{"status": "..."}`.
+
+### axiom auth organizations remove-member
+
+Removes a user from an organization. Asks for confirmation unless you pass `--yes`.
+
+```text title="Usage"
+axiom auth organizations remove-member ORGANIZATION USER_ID [--yes]
+```
+
+```bash title="Terminal"
+axiom auth organizations remove-member acme 4b5c6d7e-8f9a-4b0c-9d1e-2f3a4b5c6d7e --yes
+```
+
+Calls `DELETE /organizations/{id}/members/{user_id}`.
+
+### axiom auth invitations list
+
+Lists invitations, newest first, with status, delivery state, expiry and organization. To send a new invitation, use `axiom auth invite EMAIL [--role NAME] [--organization ORG_ID]`.
+
+```text title="Usage"
+axiom auth invitations list [--status pending|accepted|revoked] [--limit 1-100] [--cursor CURSOR] [--reveal-email]
+```
+
+- `--status`: only invitations with this status.
+- `--reveal-email`: show full addresses instead of masked ones.
+
+```bash title="Terminal"
+axiom auth invitations list --status pending
+```
+
+Calls `GET /invitations` (query `status`, `limit`, `cursor`).
+
+### axiom auth invitations resend
+
+Emails a pending, unexpired invitation again with a new link. The earlier link stops working. Each invitation can be resent once a minute.
+
+```text title="Usage"
+axiom auth invitations resend INVITATION_ID [--reveal-email]
+```
+
+```bash title="Terminal"
+axiom auth invitations resend 5c6d7e8f-9a0b-4c1d-8e2f-3a4b5c6d7e8f
+```
+
+Calls `POST /invitations/{id}/resend`.
+
+### axiom auth invitations revoke
+
+Revokes a pending invitation so its link stops working. Asks for confirmation unless you pass `--yes`.
+
+```text title="Usage"
+axiom auth invitations revoke INVITATION_ID [--yes] [--reveal-email]
+```
+
+```bash title="Terminal"
+axiom auth invitations revoke 5c6d7e8f-9a0b-4c1d-8e2f-3a4b5c6d7e8f --yes
+```
+
+Calls `POST /invitations/{id}/revoke`.
+
+## User lifecycle and audit trail
+
+These commands delete users, list their sessions, export their data, send verification emails, remove single factors and read the audit trail. Every command takes the global flags `--project`, `--environment` and `--json`. User and factor IDs are full lowercase UUIDs.
+
+### axiom auth users delete
+
+Signs the user out everywhere, refuses further sign-in and removes their authentication records (identities, sessions, credentials, roles, memberships, invitations). Activity entries keep the user ID until their retention ends. Axiom never changes your application's own tables: delete or anonymize rows keyed by this user ID yourself.
+
+If the command reports that deletion is pending, some records remain: run the same command again to continue. In an environment that has not finished its upgrade, the user is banned and signed out, and full removal waits for the upgrade.
+
+```text title="Usage"
+axiom auth users delete USER_ID [--yes]
+```
+
+- `--yes`: delete without a confirmation prompt (required without a terminal).
+
+```bash title="Terminal"
+axiom auth users delete 3e4f5a6b-7c8d-4e9f-8a0b-1c2d3e4f5a6b --yes
+```
+
+Endpoint: `DELETE /api/v1/projects/{project}/auth/environments/{environment}/users/{id}`
+
+### axiom auth users sessions
+
+Shows the user's active and ended sessions: status, sign-in method, creation time, and when each expires or why it ended. To end sessions, use `axiom auth users revoke`.
+
+```text title="Usage"
+axiom auth users sessions USER_ID
+```
+
+```bash title="Terminal"
+axiom auth users sessions 3e4f5a6b-7c8d-4e9f-8a0b-1c2d3e4f5a6b --json
+```
+
+Endpoint: `GET /api/v1/projects/{project}/auth/environments/{environment}/users/{id}/sessions`
+
+### axiom auth users export
+
+Exports everything Axiom stores about one user: account, profile, identities, sessions, roles, memberships, invitations and recent events. It never includes passwords, credentials or tokens. The export contains personal data, and each export is recorded in the audit trail.
+
+As in the dashboard, which saves the export as a file, the command writes it to a new file created with mode 0600. It never replaces an existing file. Without `--output`, the export is printed to standard output only when `--json` is given. If the export would be larger than 1 MiB, the oldest events are left out and the command says so.
+
+```text title="Usage"
+axiom auth users export USER_ID --output FILE
+axiom auth users export USER_ID --json
+```
+
+- `--output FILE`: write the export to this new file (mode 0600).
+
+```bash title="Terminal"
+axiom auth users export 3e4f5a6b-7c8d-4e9f-8a0b-1c2d3e4f5a6b --output user-export.json
+```
+
+Endpoint: `POST /api/v1/projects/{project}/auth/environments/{environment}/users/{id}/export`
+
+### axiom auth users send-verification
+
+Sends the user one email to verify their address. It counts against the environment's email budget when the platform sender is used. The request is refused (exit code 4) if the address is already verified, if the user is not an active email and password user, or if the address is suppressed. You cannot mark an address as verified without the user.
+
+```text title="Usage"
+axiom auth users send-verification USER_ID
+```
+
+```bash title="Terminal"
+axiom auth users send-verification 3e4f5a6b-7c8d-4e9f-8a0b-1c2d3e4f5a6b
+```
+
+Endpoint: `POST /api/v1/projects/{project}/auth/environments/{environment}/users/{id}/verification`
+
+### axiom auth users remove-factor
+
+Removes one factor (an authenticator app or a passkey) of a user. The user can no longer use it, and their sessions continue. If multi-factor authentication is required and this is the user's last factor, the removal is refused: use `axiom auth users reset-factors` instead. List factor IDs with `axiom auth users factors USER_ID`.
+
+```text title="Usage"
+axiom auth users remove-factor USER_ID FACTOR_ID [--yes]
+```
+
+- `--yes`: remove without a confirmation prompt (required without a terminal).
+
+```bash title="Terminal"
+axiom auth users remove-factor 3e4f5a6b-7c8d-4e9f-8a0b-1c2d3e4f5a6b 4f5a6b7c-8d9e-4f0a-9b1c-2d3e4f5a6b7c --yes
+```
+
+Endpoint: `DELETE /api/v1/projects/{project}/auth/environments/{environment}/users/{id}/factors/{id}`
+
+### axiom auth events list
+
+Lists authentication events (sign-ins, bans, role changes, deletions, exports and more), newest first. Event details do not contain personal data. When there are more events, the last line prints the `--cursor` value for the next page.
+
+```text title="Usage"
+axiom auth events list [--type TYPE] [--user USER_ID] [--limit N] [--cursor CURSOR]
+```
+
+- `--type TYPE`: only events of this type. One of `user_created`, `sign_in`, `exchange`, `password_changed`, `session_reuse_detected`, `sessions_revoked`, `user_banned`, `user_unbanned`, `role_changed`, `permission_changed`, `assignment_granted`, `assignment_revoked`, `organization_changed`, `membership_changed`, `email_verified`, `email_changed`, `password_reset`, `identity_linked`, `identity_unlinked`, `invitation_created`, `invitation_revoked`, `invitation_accepted`, `user_deleted`, `user_exported`, `authorization_code_replayed`.
+- `--user USER_ID`: only events about this user.
+- `--limit N`: events per page, 1 to 100 (default 50).
+- `--cursor CURSOR`: continue from the cursor printed by the previous page.
+
+```bash title="Terminal"
+axiom auth events list --type user_banned --limit 20
+```
+
+Endpoint: `GET /api/v1/projects/{project}/auth/environments/{environment}/events`
+
+## Email delivery, SMTP and templates
+
+These commands manage how authentication email is sent: the platform email usage, the suppression list, a custom SMTP server and the message templates. They call the same endpoints as the Email section of the Dashboard's Authentication Methods page. All of them accept the global `--project`, `--environment` and `--json` flags.
+
+### axiom auth email usage
+
+Shows this month's platform email usage (sent, budget, the share reserved for recovery email), the number sent with custom SMTP, today's sending shares and how many addresses are suppressed.
+
+```text title="Usage"
+axiom auth email usage [--json]
+axiom auth email usage --environment production
+```
+
+Endpoint: `GET /api/v1/projects/{project}/auth/environments/{environment}/email/usage`
+
+### axiom auth email unsuppress
+
+Removes an address from this environment's suppression list, so it can receive email again. Permanent bounces recorded across Axiom are removed only by Axiom support; the command then reports that no suppression was found. The address is not printed. Asks for confirmation unless `--yes`; without a terminal, `--yes` is required.
+
+```text title="Usage"
+axiom auth email unsuppress ADDRESS [--yes]
+axiom auth email unsuppress jane@example.com --yes
+```
+
+Endpoint: `POST /api/v1/projects/{project}/auth/environments/{environment}/email/suppressions/remove` with `{"email": "..."}`
+
+### axiom auth smtp get
+
+Shows the custom SMTP settings: host, port, user name, sender, revision and the last test result. The password is never shown, only whether it is set. The user name and from address are masked unless `--reveal-email`.
+
+```text title="Usage"
+axiom auth smtp get [--reveal-email] [--json]
+```
+
+Endpoint: `GET /api/v1/projects/{project}/auth/environments/{environment}/smtp`
+
+### axiom auth smtp set
+
+Creates or changes the custom SMTP settings (Owner only). Flags you leave out keep their current values; a new configuration needs `--host`, `--username`, `--from-address` and a password (the port defaults to 587). The command reads the current settings first and sends their revision, so a concurrent change is refused instead of overwritten. After any change to the host, port, user name or password, messages are sent with the platform sender until an Owner's test passes.
+
+The SMTP password is never taken as an argument: pass `--password-stdin` to read it from standard input, or `--password-prompt` for a masked prompt. Without either flag the stored password is kept.
+
+Flags:
+
+- `--host HOST`: SMTP host name or public IP address
+- `--port PORT`: 465, 587 or 2525
+- `--username NAME`: user name for signing in to the SMTP server
+- `--from-address ADDRESS`: sender address of authentication email
+- `--from-name NAME`: sender display name (at most 64 bytes, no `"`, `<`, `>`, `@` or web addresses)
+- `--clear-from-name`: remove the sender display name
+- `--password-stdin`: read the password from standard input
+- `--password-prompt`: ask for the password with a masked prompt
+
+```bash title="Terminal"
+printf '%s' "$SMTP_PASSWORD" | axiom auth smtp set --host smtp.example.net --port 587 \
+  --username mailer --from-address auth@example.net --from-name "Example" --password-stdin
+axiom auth smtp set --port 465
+```
+
+Endpoint: `PUT /api/v1/projects/{project}/auth/environments/{environment}/smtp`
+
+### axiom auth smtp test
+
+Sends one test message through the custom SMTP server (5 per hour per environment) and reports the result: delivered, TLS failed, sign-in failed, address refused or server unreachable. Only an Owner's passing test switches sending to custom SMTP.
+
+```text title="Usage"
+axiom auth smtp test --to ADDRESS
+axiom auth smtp test --to owner@example.com
+```
+
+Endpoint: `POST /api/v1/projects/{project}/auth/environments/{environment}/smtp/test` with `{"to": "..."}`
+
+### axiom auth smtp remove
+
+Deletes the custom SMTP settings: host, user name and password (Owner only). It is refused while the environment's email sender is SMTP; switch the sender to the platform first. Asks for confirmation unless `--yes`; without a terminal, `--yes` is required.
+
+```text title="Usage"
+axiom auth smtp remove [--yes]
+```
+
+Endpoint: `DELETE /api/v1/projects/{project}/auth/environments/{environment}/smtp`
+
+### axiom auth templates list
+
+Lists every template kind, whether it is customized, its revision and what its custom subject is like (not the subject itself; see below).
+
+Template kinds: `email_code`, `magic_link`, `signup`, `verify_email`, `password_reset`, `email_change_confirm`, `email_change_notice`, `invitation`.
+
+```text title="Usage"
+axiom auth templates list [--reveal-text] [--json]
+```
+
+Endpoint: `GET /api/v1/projects/{project}/auth/environments/{environment}/templates`
+
+### axiom auth templates show
+
+Shows a template's subject, intro and outro. Fields that are not customized show Axiom's default text, marked `(default)`.
+
+No `templates` command prints template text by default, in plain or `--json` output, because a credential pasted into a template cannot be told apart from ordinary text reliably. For each text field (subject, intro, outro, Axiom's defaults, and a preview's text and HTML) they print only whether it is set, its length in bytes, the supported `{{variables}}` it uses, how many other `{{…}}` placeholders it has (counted, never shown) and the SHA-256 of its text, so you can compare two templates without seeing them. In `--json` output each text field is an object such as `{"set": true, "bytes": 23, "variables": ["{{app_name}}"], "unsupported_placeholders": 0, "sha256": "…"}`, or `{"set": false}`. The only strings printed unchanged are each template's `kind` and `updated_at`, and only when they hold a template kind and a timestamp; every other string is printed as such an object. Fields the CLI does not know (for example ones added to the API later) are not printed at all; `unknown_fields` gives how many there were. Errors about template text name the field, never its text. Pass `--reveal-text` to print the text exactly as saved; the command then prints a one-line warning on stderr.
+
+```text title="Output"
+magic_link: customized (revision 3)
+Subject: set, 7 bytes, no variables, sha256 1b3c…
+Intro: default text (set, 14 bytes, no variables, sha256 9e2f…)
+Outro: default text (set, 20 bytes, no variables, sha256 47aa…)
+Template text is not shown; pass --reveal-text to print it.
+```
+
+```text title="Usage"
+axiom auth templates show KIND [--reveal-text]
+axiom auth templates show magic_link
+```
+
+Endpoint: `GET /api/v1/projects/{project}/auth/environments/{environment}/templates/{kind}`
+
+### axiom auth templates set
+
+Customizes a template. A template has a subject, an intro (before the code or link) and an outro (after it). Fields you leave out keep their current text; an empty file uses the default text for that field. Template text is never taken as a command argument: each field comes from a file, or from stdin when the path is `-` (one field at a time; empty stdin is refused, so use an empty file for the default text). The command reads the current template first and sends its revision.
+
+Template text is plain text: no HTML, links, web addresses or domain names (the message adds its own sign-in link). The variables `{{app_name}}`, `{{expires_minutes}}` and `{{recipient_email}}` are available, plus `{{new_email}}` in `email_change_notice`. The subject is one line of at most 600 bytes; the intro and outro are at most 2,000 bytes each, and a request is at most 64 KiB. These rules are checked before anything is sent; an error names the field and, for unsupported variables, how many there are (for example `the subject uses 2 unsupported placeholders`), but never shows the text.
+
+Flags:
+
+- `--subject-file PATH`: file with the subject line (trailing line breaks are dropped)
+- `--intro-file PATH`: file with the intro text (trailing line breaks are dropped)
+- `--outro-file PATH`: file with the outro text
+- `--reveal-text`: print the saved template's text (by default only its metadata is printed)
+
+```bash title="Terminal"
+echo 'Welcome to {{app_name}}' | axiom auth templates set signup --subject-file - --intro-file intro.txt
+```
+
+Endpoint: `PUT /api/v1/projects/{project}/auth/environments/{environment}/templates/{kind}` with `{"subject", "intro", "outro", "revision"}`
+
+### axiom auth templates preview
+
+Renders a template with sample values (code 123456, a placeholder link, your app name) and sends nothing. Without text flags it renders the saved template; with `--subject-file`, `--intro-file` or `--outro-file` it renders that text over the saved template, exactly as `templates set` would save it. Describes the subject and the plain-text part, or the HTML part with `--html`; `--reveal-text` prints them.
+
+```text title="Usage"
+axiom auth templates preview KIND [--subject-file PATH] [--intro-file PATH] [--outro-file PATH] [--html] [--reveal-text]
+axiom auth templates preview signup --intro-file intro.txt
+```
+
+Endpoint: `POST /api/v1/projects/{project}/auth/environments/{environment}/templates/{kind}/preview`
+
+### axiom auth templates reset
+
+Removes a template's customization so messages use Axiom's default text again. Asks for confirmation unless `--yes`; without a terminal, `--yes` is required.
+
+```text title="Usage"
+axiom auth templates reset KIND [--yes]
+axiom auth templates reset invitation --yes
+```
+
+Endpoint: `DELETE /api/v1/projects/{project}/auth/environments/{environment}/templates/{kind}`
+
+## Removing providers, editing trusted issuers and listing policy releases
+
+These commands use the same endpoints as the dashboard's Sign-in methods page (providers and trusted issuers) and the Policy releases section. They all accept the global `--project`, `--environment` and `--json` flags. Commands that delete something ask for confirmation on a terminal. Pass `--yes` to skip the prompt, which you need in scripts and CI because there is no terminal to answer it.
+
+### axiom auth providers remove
+
+Deletes a sign-in provider's configuration and client secret. Users who signed in with the provider keep their accounts and any other sign-in methods they have. You can only remove a provider after you disable it. The command refuses an enabled provider with exit code 4.
+
+Usage: `axiom auth providers remove PROVIDER [--yes]`
+
+- `PROVIDER`: `google`, `github`, `microsoft`, `apple`, `oidc-<slug>`, or the provider's UUID. The command finds the provider's id by listing the environment's providers.
+- `--yes`: delete without asking for confirmation.
+
+Example:
+
+```bash title="Terminal"
+axiom auth providers set oidc-okta --disable --project my-app --environment production
+axiom auth providers remove oidc-okta --yes --project my-app --environment production
+```
+
+Endpoint: `GET` and then `DELETE /api/v1/projects/{project}/auth/environments/{environment}/providers/{id}`.
+
+### axiom auth trusted-issuers update
+
+Changes a trusted issuer. Only the fields you pass are sent. The command reads the issuer's current revision first and sends it with the change, so it fails with exit code 4 if someone else changed the issuer in the meantime. Each change ends the sessions exchanged under the earlier settings at their next refresh. The issuer URL and the preset never change. To change either one, remove the issuer and add it again.
+
+Usage: `axiom auth trusted-issuers update ID [flags]`
+
+- `ID`: the trusted issuer's UUID or its exact issuer URL.
+- `--audience AUD`: an accepted audience. You can repeat it. The list you pass replaces the current list and must have 1 to 4 entries.
+- `--jwks-uri URL`: the https URL of the issuer's JWKS.
+- `--algorithm ALG`: an accepted signing algorithm (`RS256`, `ES256` or `EdDSA`). You can repeat it. The list you pass replaces the current list.
+- `--subject-claim NAME`: the claim that identifies the user.
+- `--email-claim NAME`: the claim that carries the user's email address. Use `--no-email-claim` to stop reading an email address.
+- `--required-claims JSON`: claims every token must carry, as a JSON object. `{}` clears them.
+- `--forbidden-claims JSON`: claims that cause a token to be refused, as a JSON object. `{}` clears them.
+- `--authorized-party ORIGIN`: an exact origin accepted in `azp`. You can repeat it. The list you pass replaces the current list. Use `--clear-authorized-parties` to accept any `azp`.
+- `--assurance-mapping JSON`: the upstream MFA mapping, a list of 1 or 2 rules such as `[{"claim":"amr","contains":"mfa"}]`. `null` clears it.
+- `--max-age-seconds N`: the oldest token age accepted, from 60 to 86400 seconds.
+- `--session-lifetime-seconds N`: how long exchanged sessions last, from 3600 to 604800 seconds.
+- `--create-users` or `--no-create-users`: whether the first exchange for an unknown subject creates a user.
+- `--enable` or `--disable`: whether the issuer is used for exchanges. Enabling it fetches its JWKS to check it. Disabling it is always allowed, even for a preset issuer whose preset is switched off.
+
+Example:
+
+```bash title="Terminal"
+axiom auth trusted-issuers update https://tenant.example.auth0.com/ --audience api://orders --session-lifetime-seconds 28800
+axiom auth trusted-issuers update 4f5a6b7c-8d9e-4fa0-b1c2-3d4e5f6a7b81 --disable
+```
+
+Endpoint: `GET` and then `PATCH /api/v1/projects/{project}/auth/environments/{environment}/trusted-issuers/{id}`. The request body has the current `revision` plus the fields you changed.
+
+### axiom auth trusted-issuers remove
+
+Deletes a trusted issuer. Its tokens stop being exchanged, and sessions already exchanged with it end at their next refresh. Users keep their accounts.
+
+Usage: `axiom auth trusted-issuers remove ID [--yes]`
+
+- `ID`: the trusted issuer's UUID or its exact issuer URL. With a URL, the command finds the id by listing the trusted issuers.
+- `--yes`: delete without asking for confirmation.
+
+Example:
+
+```bash title="Terminal"
+axiom auth trusted-issuers remove https://project.supabase.co/auth/v1 --yes
+```
+
+Endpoint: `DELETE /api/v1/projects/{project}/auth/environments/{environment}/trusted-issuers/{id}`.
+
+### axiom auth policy releases
+
+Lists the signed auth policy releases uploaded to the project, newest first, up to 100. For each release it shows the release SHA-256, the policy digest, the parent release, and the upload time. Releases belong to the project, not to one environment. Pass a listed SHA-256 to `axiom auth policy plan --release` or `axiom auth policy apply --release`.
+
+Usage: `axiom auth policy releases`
+
+Example:
+
+```bash title="Terminal"
+axiom auth policy releases --project my-app --json
+```
+
+Endpoint: `GET /api/v1/projects/{project}/auth/policy/releases`.
+

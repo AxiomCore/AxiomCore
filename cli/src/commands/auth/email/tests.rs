@@ -42,13 +42,20 @@ async fn email_usage_and_unsuppress_call_their_routes() {
     assert_eq!(seen[0].query, None);
 
     mock.script(&admin_route("POST", "email/suppressions/remove"), 200, json!({"removed": true}));
-    email_with(&args(), &target, &EmailAction::Unsuppress { email: "bounced@example.com".into() }).await.unwrap();
+    // Removing a suppression is confirmed: without a terminal it needs --yes, and nothing is sent.
+    if !std::io::stdin().is_terminal() {
+        let unconfirmed = email_with(&args(), &target, &EmailAction::Unsuppress { email: "bounced@example.com".into(), yes: false }).await.unwrap_err();
+        assert_eq!(unconfirmed.downcast_ref::<crate::commands::auth::Exit>().unwrap().code, 2);
+        assert!(unconfirmed.to_string().contains("--yes"));
+        assert!(mock.seen(&admin_route("POST", "email/suppressions/remove")).is_empty());
+    }
+    email_with(&args(), &target, &EmailAction::Unsuppress { email: "bounced@example.com".into(), yes: true }).await.unwrap();
     let seen = mock.seen(&admin_route("POST", "email/suppressions/remove"));
     assert_eq!(seen.len(), 1);
     assert_eq!(seen[0].body, json!({"email": "bounced@example.com"}));
 
     // Not an address: refused locally, nothing sent.
-    assert!(email_with(&args(), &target, &EmailAction::Unsuppress { email: "not-an-address".into() }).await.is_err());
+    assert!(email_with(&args(), &target, &EmailAction::Unsuppress { email: "not-an-address".into(), yes: true }).await.is_err());
     assert_eq!(mock.seen(&admin_route("POST", "email/suppressions/remove")).len(), 1);
 }
 
@@ -153,18 +160,18 @@ async fn smtp_test_and_remove_call_their_routes() {
 async fn templates_list_show_and_reset() {
     let (mock, target) = fixture().await;
     mock.script(&admin_route("GET", "templates"), 200, json!({"templates": [{"kind": "email_code", "overridden": false, "subject": null, "revision": 0, "updated_at": null}]}));
-    templates_with(&args(), &target, &TemplatesAction::List).await.unwrap();
+    templates_with(&args(), &target, &TemplatesAction::List { reveal_text: false }).await.unwrap();
     assert_eq!(mock.seen(&admin_route("GET", "templates")).len(), 1);
 
     let view = json!({"kind": "magic_link", "overridden": true, "subject": "Sign in", "intro": null, "outro": null, "revision": 3, "updated_at": "2026-11-01T00:00:00Z",
         "defaults": {"subject": "Your sign-in link", "intro": "Use this link.", "outro": "Ignore it otherwise."}});
     mock.script(&admin_route("GET", "templates/magic_link"), 200, view.clone());
-    templates_with(&args(), &target, &TemplatesAction::Show { kind: "magic_link".into() }).await.unwrap();
+    templates_with(&args(), &target, &TemplatesAction::Show { kind: "magic_link".into(), reveal_text: false }).await.unwrap();
     assert_eq!(mock.seen(&admin_route("GET", "templates/magic_link")).len(), 1);
     assert_eq!(template_lines(&view)[2], "Intro: (default) Use this link.");
 
     // An unknown kind is a usage error; nothing is sent.
-    assert!(templates_with(&args(), &target, &TemplatesAction::Show { kind: "welcome".into() }).await.is_err());
+    assert!(templates_with(&args(), &target, &TemplatesAction::Show { kind: "welcome".into(), reveal_text: false }).await.is_err());
     assert!(mock.seen(&admin_route("GET", "templates/welcome")).is_empty());
 
     mock.script(&admin_route("DELETE", "templates/invitation"), 200, json!({"deleted": true}));
@@ -183,9 +190,15 @@ async fn templates_set_merges_with_the_current_text_and_sends_its_revision() {
     let dir = tempfile::tempdir().unwrap();
     let outro = dir.path().join("outro.txt");
     std::fs::write(&outro, "Sent to {{recipient_email}}.\n").unwrap();
+    let subject = dir.path().join("subject.txt");
+    std::fs::write(&subject, "Welcome to {{app_name}}\n").unwrap();
+    let empty = dir.path().join("empty.txt");
+    std::fs::write(&empty, "").unwrap();
+    let link = dir.path().join("link.txt");
+    std::fs::write(&link, "Go to https://evil.example").unwrap();
     mock.script(&admin_route("GET", "templates/signup"), 200, json!({"kind": "signup", "overridden": true, "subject": "Old", "intro": "Old intro", "outro": null, "revision": 2, "defaults": {}}));
     mock.script(&admin_route("PUT", "templates/signup"), 200, json!({"kind": "signup", "overridden": true, "subject": "Welcome to {{app_name}}", "intro": "Old intro", "outro": "Sent to {{recipient_email}}.", "revision": 3, "defaults": {}}));
-    let action = TemplatesAction::Set { kind: "signup".into(), subject: Some("Welcome to {{app_name}}".into()), intro_file: None, outro_file: Some(outro.clone()) };
+    let action = TemplatesAction::Set { kind: "signup".into(), subject_file: Some(subject), intro_file: None, outro_file: Some(outro.clone()), reveal_text: false };
     templates_with(&args(), &target, &action).await.unwrap();
     let seen = mock.seen(&admin_route("PUT", "templates/signup"));
     assert_eq!(seen.len(), 1);
@@ -194,14 +207,14 @@ async fn templates_set_merges_with_the_current_text_and_sends_its_revision() {
     // A first customization is created with revision 0; an empty subject means the default.
     mock.script(&admin_route("GET", "templates/email_code"), 200, json!({"kind": "email_code", "overridden": false, "subject": null, "intro": null, "outro": null, "revision": 0, "defaults": {}}));
     mock.script(&admin_route("PUT", "templates/email_code"), 200, json!({"kind": "email_code", "overridden": true, "revision": 1, "defaults": {}}));
-    let first = TemplatesAction::Set { kind: "email_code".into(), subject: Some(String::new()), intro_file: None, outro_file: Some(outro) };
+    let first = TemplatesAction::Set { kind: "email_code".into(), subject_file: Some(empty), intro_file: None, outro_file: Some(outro), reveal_text: false };
     templates_with(&args(), &target, &first).await.unwrap();
     assert_eq!(mock.seen(&admin_route("PUT", "templates/email_code"))[0].body, json!({"subject": null, "intro": null, "outro": "Sent to {{recipient_email}}.", "revision": 0}));
 
     // Nothing to change, or text the backend refuses: no PUT.
-    let nothing = TemplatesAction::Set { kind: "signup".into(), subject: None, intro_file: None, outro_file: None };
+    let nothing = TemplatesAction::Set { kind: "signup".into(), subject_file: None, intro_file: None, outro_file: None, reveal_text: false };
     assert!(templates_with(&args(), &target, &nothing).await.is_err());
-    let link = TemplatesAction::Set { kind: "signup".into(), subject: Some("Go to https://evil.example".into()), intro_file: None, outro_file: None };
+    let link = TemplatesAction::Set { kind: "signup".into(), subject_file: Some(link), intro_file: None, outro_file: None, reveal_text: false };
     assert!(templates_with(&args(), &target, &link).await.is_err());
     assert_eq!(mock.seen(&admin_route("PUT", "templates/signup")).len(), 1);
 }
@@ -210,7 +223,7 @@ async fn templates_set_merges_with_the_current_text_and_sends_its_revision() {
 async fn templates_preview_sends_the_text_to_try_or_nothing() {
     let (mock, target) = fixture().await;
     mock.script(&admin_route("POST", "templates/email_code/preview"), 200, json!({"subject": "Your code", "text": "123456", "html": "<p>123456</p>"}));
-    let saved = TemplatesAction::Preview { kind: "email_code".into(), subject: None, intro_file: None, outro_file: None, html: false };
+    let saved = TemplatesAction::Preview { kind: "email_code".into(), subject_file: None, intro_file: None, outro_file: None, html: false, reveal_text: false };
     templates_with(&args(), &target, &saved).await.unwrap();
     assert_eq!(mock.seen(&admin_route("POST", "templates/email_code/preview"))[0].body, json!({}));
     assert!(mock.seen(&admin_route("GET", "templates/email_code")).is_empty());
@@ -219,7 +232,7 @@ async fn templates_preview_sends_the_text_to_try_or_nothing() {
     let intro = dir.path().join("intro.txt");
     std::fs::write(&intro, "Hello from {{app_name}}.\n\nYour code expires in {{expires_minutes}} minutes.").unwrap();
     mock.script(&admin_route("GET", "templates/email_code"), 200, json!({"kind": "email_code", "overridden": true, "subject": "Code", "intro": "Old", "outro": "Bye", "revision": 5, "defaults": {}}));
-    let trial = TemplatesAction::Preview { kind: "email_code".into(), subject: None, intro_file: Some(intro), outro_file: None, html: true };
+    let trial = TemplatesAction::Preview { kind: "email_code".into(), subject_file: None, intro_file: Some(intro), outro_file: None, html: true, reveal_text: false };
     templates_with(&args(), &target, &trial).await.unwrap();
     assert_eq!(
         mock.seen(&admin_route("POST", "templates/email_code/preview"))[1].body,
@@ -250,4 +263,67 @@ fn template_text_follows_the_backend_rules() {
     let long = dir.path().join("long.txt");
     std::fs::write(&long, "a".repeat(2001)).unwrap();
     assert!(template_body("signup", &json!({}), None, Some(&long), None).is_err());
+}
+
+#[test]
+fn token_like_template_text_is_redacted_and_ordinary_text_kept() {
+    use crate::commands::auth::{redact_token_text, redact_tokens};
+    for token in ["axr1_SYNTHETICREFRESHCANARY01", "axg1_0123456789abcdef", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.c2lnbmF0dXJl", "sk_live_51SYNTHETICcanary0000", "ghp_SYNTHETIC0123456789abcdefCANARY", "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b"] {
+        let shown = redact_token_text(&format!("Your key {token} expires"));
+        assert_eq!(shown, "Your key [redacted] expires", "{token}");
+    }
+    for kept in [
+        "Welcome to {{app_name}}, {{recipient_email}}",
+        "Your code is 123456 and expires in {{expires_minutes}} minutes.",
+        "Authentication administration for internationalization",
+        "Request 6a0c1f8e-3b2d-4c5e-9f70-1a2b3c4d5e6f",
+        "Open #axiom_link=preview",
+    ] {
+        assert_eq!(redact_token_text(kept), kept);
+    }
+    let mut view = json!({"kind": "email_change_confirm", "revision": 3, "subject": "Code axr1_SYNTHETICREFRESHCANARY01", "intro": null,
+        "defaults": {"outro": "token ghp_SYNTHETIC0123456789abcdefCANARY"}, "templates": [{"subject": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.sig"}]});
+    redact_tokens(&mut view);
+    let text = view.to_string();
+    for canary in ["axr1_", "ghp_", "eyJ"] {
+        assert!(!text.contains(canary), "{canary} in {text}");
+    }
+    assert_eq!(view["kind"], "email_change_confirm");
+    assert_eq!(view["subject"], "Code [redacted]");
+}
+
+#[tokio::test]
+async fn templates_text_with_tokens_is_redacted_unless_revealed() {
+    let (mock, target) = fixture().await;
+    let token = "axr1_SYNTHETICREFRESHCANARY01";
+    let view = json!({"kind": "signup", "overridden": true, "subject": format!("Hi {token}"), "intro": null, "outro": null, "revision": 1, "defaults": {}});
+    mock.script(&admin_route("GET", "templates/signup"), 200, view);
+    templates_with(&args(), &target, &TemplatesAction::Show { kind: "signup".into(), reveal_text: false }).await.unwrap();
+    templates_with(&args(), &target, &TemplatesAction::Show { kind: "signup".into(), reveal_text: true }).await.unwrap();
+    assert_eq!(mock.seen(&admin_route("GET", "templates/signup")).len(), 2);
+
+    // Two text flags cannot both read stdin; nothing is sent.
+    let both = TemplatesAction::Set { kind: "signup".into(), subject_file: Some("-".into()), intro_file: Some("-".into()), outro_file: None, reveal_text: false };
+    assert!(templates_with(&args(), &target, &both).await.is_err());
+    assert!(mock.seen(&admin_route("PUT", "templates/signup")).is_empty());
+}
+
+#[test]
+fn template_subjects_are_never_argv() {
+    use clap::Parser;
+    #[derive(clap::Parser)]
+    struct Harness {
+        #[command(subcommand)]
+        action: TemplatesAction,
+    }
+    assert!(Harness::try_parse_from(["t", "set", "signup", "--subject", "Welcome"]).is_err());
+    assert!(Harness::try_parse_from(["t", "preview", "signup", "--subject", "Welcome"]).is_err());
+    assert!(Harness::try_parse_from(["t", "set", "signup", "--subject-file", "-"]).is_ok());
+    assert!(Harness::try_parse_from(["t", "show", "signup", "--reveal-text"]).is_ok());
+    #[derive(clap::Parser)]
+    struct EmailHarness {
+        #[command(subcommand)]
+        action: EmailAction,
+    }
+    assert!(EmailHarness::try_parse_from(["t", "unsuppress", "a@example.com", "--yes"]).is_ok());
 }

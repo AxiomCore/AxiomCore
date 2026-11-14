@@ -10,6 +10,22 @@ use std::{
 const DEV: &str = "0b5e2c1a-9f3d-4c7e-8a21-5d6f7e8a9b0c";
 const PROD: &str = "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f";
 const USER: &str = "7d1c2b3a-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+const SHOP_ID: &str = "6a0c1f8e-3b2d-4c5e-9f70-1a2b3c4d5e6f";
+/// A credential-shaped canary that must never be echoed by template output.
+const TOKEN: &str = "axr1_SYNTHETICTEMPLATECANARY0123";
+
+/// `GET /api/v1/projects`: "storefront" is a lowercase display name whose slug differs,
+/// and two projects share the name "twin".
+fn projects() -> String {
+    let project = |id: &str, name: &str, slug: &str| format!(r#"{{"id":"{id}","name":"{name}","slug":"{slug}","visibility":"private","created_at":"","updated_at":""}}"#);
+    format!(
+        "[{},{},{},{}]",
+        project(SHOP_ID, "Web Shop", "shop"),
+        project("2b3c4d5e-6f70-4a1b-8c2d-3e4f5a6b7c8d", "storefront", "shop-eu"),
+        project("3c4d5e6f-7081-4b2c-9d3e-4f5a6b7c8d9e", "twin", "twin-a"),
+        project("4d5e6f70-8192-4c3d-8e4f-5a6b7c8d9e0f", "Twin", "twin-b")
+    )
+}
 
 type Log = Arc<Mutex<Vec<(String, String, String)>>>;
 
@@ -91,7 +107,8 @@ fn route(method: &str, path: &str, body: &str) -> (u16, String) {
     let base = "/api/v1/projects/shop";
     let env = |e: &str| format!("{base}/auth/environments/{e}");
     match (method, path) {
-        ("GET", p) if p == format!("{base}/configuration-environments") => (
+        ("GET", "/api/v1/projects") => (200, projects()),
+        ("GET", p) if p.ends_with("/configuration-environments") && p.starts_with("/api/v1/projects/shop") => (
             200,
             format!(r#"[{{"id":"{DEV}","slug":"development","kind":"development"}},{{"id":"{PROD}","slug":"production","kind":"production"}}]"#),
         ),
@@ -103,6 +120,19 @@ fn route(method: &str, path: &str, body: &str) -> (u16, String) {
         ("POST", p) if p == format!("{}/users/{USER}/ban", env(PROD)) => (409, r#"{"error":{"code":"AXAUTH_CONFLICT"}}"#.into()),
         ("GET", p) if p == format!("{}/settings", env(DEV)) => (403, r#"{"error":{"code":"AXAUTH_FORBIDDEN"}}"#.into()),
         ("GET", p) if p == format!("{}/providers", env(DEV)) => (200, r#"{"providers":[]}"#.into()),
+        ("GET", "/api/v1/projects/shop-eu/auth/environments/0b5e2c1a-9f3d-4c7e-8a21-5d6f7e8a9b0c/email/usage") => (200, r#"{"sent":1,"budget":10,"suppressions":{}}"#.into()),
+        ("POST", p) if p == format!("{}/email/suppressions/remove", env(DEV)) => (200, r#"{"removed":true}"#.into()),
+        ("GET", p) if p == format!("{}/templates/signup", env(DEV)) => (
+            200,
+            format!(r#"{{"kind":"signup","overridden":true,"subject":"Code {TOKEN}","intro":"Use {TOKEN} now","outro":null,"revision":2,"defaults":{{"outro":"Bye"}}}}"#),
+        ),
+        ("PUT", p) if p == format!("{}/templates/signup", env(DEV)) => {
+            let mut saved: serde_json::Value = serde_json::from_str(body).unwrap();
+            saved["kind"] = "signup".into();
+            saved["overridden"] = true.into();
+            saved["revision"] = 3.into();
+            (200, saved.to_string())
+        }
         ("POST", p) if p == format!("{}/providers", env(DEV)) => {
             let request: serde_json::Value = serde_json::from_str(body).unwrap();
             (201, format!(r#"{{"id":"{USER}","kind":"google","client_id":{},"client_secret_set":true,"enabled":false,"revision":1}}"#, request["client_id"]))
@@ -123,8 +153,9 @@ fn users_list_resolves_the_environment_and_prints_golden_masked_json() {
     );
     assert_eq!(String::from_utf8_lossy(&output.stdout), golden);
     let requests = log.lock().unwrap().clone();
-    assert_eq!(requests[0].1, "/api/v1/projects/shop/configuration-environments");
-    assert_eq!(requests[1].1, format!("/api/v1/projects/shop/auth/environments/{PROD}/users?status=active&limit=10"));
+    assert_eq!(requests[0].1, "/api/v1/projects");
+    assert_eq!(requests[1].1, "/api/v1/projects/shop/configuration-environments");
+    assert_eq!(requests[2].1, format!("/api/v1/projects/shop/auth/environments/{PROD}/users?status=active&limit=10"));
     // An email search never puts the address in a URL.
     let output = axiom(&cloud, directory.path(), &["auth", "--project", "shop", "--environment", PROD, "users", "list", "--search", "jane@"], None);
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
@@ -178,4 +209,93 @@ fn provider_secrets_come_from_stdin_and_are_never_printed() {
     // No prompt is possible without a terminal and no secret was piped.
     let refused = axiom(&cloud, directory.path(), &["auth", "--project", "shop", "providers", "set", "google", "--client-id", "x"], None);
     assert_eq!(refused.status.code(), Some(2));
+}
+
+fn admin_requests(log: &Log) -> Vec<(String, String, String)> {
+    log.lock().unwrap().iter().filter(|(_, p, _)| p.contains("/auth/environments/")).cloned().collect()
+}
+
+#[test]
+fn projects_resolve_by_name_slug_or_id_through_the_project_list() {
+    let (cloud, log) = stub(route);
+    let directory = tempfile::tempdir().unwrap();
+    profile(directory.path());
+    // A lowercase display name that differs from its slug resolves to that slug.
+    let named = axiom(&cloud, directory.path(), &["auth", "--project", "storefront", "--environment", DEV, "email", "usage", "--json"], None);
+    assert!(named.status.success(), "{}", String::from_utf8_lossy(&named.stderr));
+    assert_eq!(admin_requests(&log).last().unwrap().1, format!("/api/v1/projects/shop-eu/auth/environments/{DEV}/email/usage"));
+    // Slugs and ids still resolve.
+    for given in ["shop", SHOP_ID, "web shop"] {
+        let output = axiom(&cloud, directory.path(), &["auth", "--project", given, "--environment", "production", "users", "list", "--limit", "1"], None);
+        assert!(output.status.success(), "{given}: {}", String::from_utf8_lossy(&output.stderr));
+        assert!(admin_requests(&log).last().unwrap().1.starts_with("/api/v1/projects/shop/"), "{given}");
+    }
+    // A name two projects share, and an unknown slug-shaped value: exit 2, nothing sent to a project.
+    let before = log.lock().unwrap().len();
+    let ambiguous = axiom(&cloud, directory.path(), &["auth", "--project", "twin", "--environment", DEV, "email", "usage"], None);
+    assert_eq!(ambiguous.status.code(), Some(2), "{}", String::from_utf8_lossy(&ambiguous.stderr));
+    assert!(String::from_utf8_lossy(&ambiguous.stderr).contains("more than one project"));
+    let unknown = axiom(&cloud, directory.path(), &["auth", "--project", "no-such-project", "--environment", DEV, "email", "usage"], None);
+    assert_eq!(unknown.status.code(), Some(2), "{}", String::from_utf8_lossy(&unknown.stderr));
+    let after: Vec<_> = log.lock().unwrap()[before..].to_vec();
+    assert!(after.iter().all(|(m, p, _)| m == "GET" && p == "/api/v1/projects"), "{after:?}");
+}
+
+#[test]
+fn email_unsuppress_needs_yes_without_a_terminal() {
+    let (cloud, log) = stub(route);
+    let directory = tempfile::tempdir().unwrap();
+    profile(directory.path());
+    let unconfirmed = axiom(&cloud, directory.path(), &["auth", "--project", "shop", "--environment", DEV, "email", "unsuppress", "bounced@example.com"], None);
+    assert_eq!(unconfirmed.status.code(), Some(2), "{}", String::from_utf8_lossy(&unconfirmed.stderr));
+    assert!(String::from_utf8_lossy(&unconfirmed.stderr).contains("--yes"));
+    assert!(!log.lock().unwrap().iter().any(|(m, p, _)| m == "POST" && p.ends_with("/email/suppressions/remove")));
+    let confirmed = axiom(&cloud, directory.path(), &["auth", "--project", "shop", "--environment", DEV, "email", "unsuppress", "bounced@example.com", "--yes"], None);
+    assert!(confirmed.status.success(), "{}", String::from_utf8_lossy(&confirmed.stderr));
+    let requests = log.lock().unwrap().clone();
+    let removed: Vec<_> = requests.iter().filter(|(m, p, _)| m == "POST" && p.ends_with("/email/suppressions/remove")).collect();
+    assert_eq!(removed.len(), 1);
+    assert_eq!(removed[0].2, r#"{"email":"bounced@example.com"}"#);
+}
+
+#[test]
+fn template_text_comes_from_files_or_stdin_and_tokens_are_redacted_in_output() {
+    let (cloud, log) = stub(route);
+    let directory = tempfile::tempdir().unwrap();
+    profile(directory.path());
+    // Template text is never argv.
+    let argv = axiom(&cloud, directory.path(), &["auth", "--project", "shop", "--environment", DEV, "templates", "set", "signup", "--subject", "Welcome"], None);
+    assert_eq!(argv.status.code(), Some(2), "{}", String::from_utf8_lossy(&argv.stderr));
+    assert!(!log.lock().unwrap().iter().any(|(m, _, _)| m == "PUT"));
+
+    // Shown text: token-like values are redacted in human and JSON output, unless --reveal-text.
+    for json in [false, true] {
+        let mut args = vec!["auth", "--project", "shop", "--environment", DEV, "templates", "show", "signup"];
+        if json {
+            args.push("--json");
+        }
+        let shown = axiom(&cloud, directory.path(), &args, None);
+        assert!(shown.status.success(), "{}", String::from_utf8_lossy(&shown.stderr));
+        let stdout = String::from_utf8_lossy(&shown.stdout);
+        assert!(!stdout.contains(TOKEN) && !stdout.contains("axr1_"), "{stdout}");
+        assert!(stdout.contains("[redacted]"), "{stdout}");
+    }
+    let revealed = axiom(&cloud, directory.path(), &["auth", "--project", "shop", "--environment", DEV, "templates", "show", "signup", "--reveal-text"], None);
+    assert!(String::from_utf8_lossy(&revealed.stdout).contains(TOKEN));
+
+    // The subject from stdin is sent as given; the saved template echoed back is redacted.
+    let set = axiom(
+        &cloud,
+        directory.path(),
+        &["auth", "--project", "shop", "--environment", DEV, "templates", "set", "signup", "--subject-file", "-", "--json"],
+        Some(&format!("Welcome {TOKEN}\n")),
+    );
+    assert!(set.status.success(), "{}", String::from_utf8_lossy(&set.stderr));
+    let stdout = String::from_utf8_lossy(&set.stdout);
+    assert!(!stdout.contains(TOKEN), "{stdout}");
+    let requests = log.lock().unwrap().clone();
+    let put = requests.iter().find(|(m, _, _)| m == "PUT").unwrap();
+    let body: serde_json::Value = serde_json::from_str(&put.2).unwrap();
+    assert_eq!(body["subject"], format!("Welcome {TOKEN}"));
+    assert_eq!(body["revision"], 2);
 }

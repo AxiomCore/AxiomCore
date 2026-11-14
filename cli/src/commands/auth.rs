@@ -394,8 +394,8 @@ async fn project_target(args: &AuthArgs) -> Result<Target> {
         .map_err(|_| Exit { code: 3, message: "AXAUTH_UNAUTHENTICATED: run `axiom login` first".into() })?;
     let unavailable = || Exit { code: 5, message: "AXAUTH_UNAVAILABLE: could not list projects".into() };
     let slug = match &args.project {
-        // A slug addresses the project directly; only an id or a display name needs the list.
-        Some(given) if slug_shaped(given) => given.clone(),
+        // Slugs, ids and display names all go through the project list, so a lowercase
+        // name is never mistaken for a slug and an ambiguous name always exits 2.
         Some(given) => pick_project(&client.list_projects().await.map_err(|_| unavailable())?, given)?,
         None => {
             let directory = std::env::current_dir()?;
@@ -412,25 +412,17 @@ async fn project_target(args: &AuthArgs) -> Result<Target> {
     Ok(Target { client, slug, environment: String::new() })
 }
 
-/// Lowercase letters, digits and inner hyphens, and not a UUID.
-fn slug_shaped(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 64
-        && !uuid_shaped(value)
-        && !value.starts_with('-')
-        && !value.ends_with('-')
-        && value.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-}
-
-/// `--project` given as an id or a display name (case-insensitive; it must be unique).
+/// `--project` given as a slug, an id or a display name. A value is a slug or id only if a
+/// listed project has it; otherwise it is a display name (case-insensitive), which must
+/// name exactly one project. Unknown and ambiguous values are usage errors (exit 2).
 pub fn pick_project(projects: &[axiom_cloud::project::Project], given: &str) -> Result<String> {
-    if let Some(p) = projects.iter().find(|p| p.id == given || p.slug == given) {
+    if let Some(p) = projects.iter().find(|p| p.slug == given).or_else(|| projects.iter().find(|p| p.id == given)) {
         return Ok(p.slug.clone());
     }
     let named: Vec<_> = projects.iter().filter(|p| p.name.eq_ignore_ascii_case(given.trim())).collect();
     match named.as_slice() {
         [p] => Ok(p.slug.clone()),
-        [] => Err(usage(format!("no project with the id or name `{given}`; pass its slug (see `axiom project list`)"))),
+        [] => Err(usage(format!("no project with the slug, id or name `{given}` (see `axiom project list`)"))),
         _ => Err(usage(format!("more than one project is named `{given}`; pass its slug"))),
     }
 }
@@ -499,6 +491,46 @@ pub fn sanitize(value: &mut Value, reveal: bool) {
         }
         Value::Array(items) => items.iter_mut().for_each(|v| sanitize(v, reveal)),
         Value::String(text) if !reveal && looks_like_email(text) => *text = mask_email(text),
+        _ => {}
+    }
+}
+
+/// Free-text fields (template subject, intro and outro, rendered previews) whose
+/// token-like values are redacted unless the command's `--reveal-text` is given.
+const TEXT_KEYS: [&str; 5] = ["subject", "intro", "outro", "text", "html"];
+
+/// Replace token-like values in free text with `[redacted]`: Axiom token prefixes
+/// (`axr1_…`), JWTs, and runs of 20 or more letters, digits, `_` or `-` that mix
+/// letters and digits (API keys, hex and base64url secrets). UUIDs, `{{variables}}`
+/// and ordinary words are kept. Key-based `sanitize` cannot see a credential pasted
+/// into template text, so the text itself is checked.
+pub fn redact_token_text(text: &str) -> String {
+    use std::sync::LazyLock;
+    static JWT: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"eyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}(?:\.[A-Za-z0-9_-]*)?").expect("static regex"));
+    static PREFIXED: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"\bax[a-z]{0,4}[0-9]?_[A-Za-z0-9_-]{8,}").expect("static regex"));
+    static RUN: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"[A-Za-z0-9_-]{20,}").expect("static regex"));
+    let text = JWT.replace_all(text, "[redacted]");
+    let text = PREFIXED.replace_all(&text, |c: &regex::Captures| if c[0].starts_with("axiom_") { c[0].to_string() } else { "[redacted]".into() });
+    RUN.replace_all(&text, |c: &regex::Captures| {
+        let run = &c[0];
+        let mixed = run.bytes().any(|b| b.is_ascii_digit()) && run.bytes().any(|b| b.is_ascii_alphabetic());
+        if mixed && !uuid_shaped(&run.to_ascii_lowercase()) { "[redacted]".into() } else { run.to_string() }
+    })
+    .into_owned()
+}
+
+/// Apply `redact_token_text` to every free-text field (`TEXT_KEYS`) of a response.
+pub fn redact_tokens(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            for (key, value) in map.iter_mut() {
+                match value {
+                    Value::String(text) if TEXT_KEYS.contains(&key.as_str()) => *text = redact_token_text(text),
+                    _ => redact_tokens(value),
+                }
+            }
+        }
+        Value::Array(items) => items.iter_mut().for_each(redact_tokens),
         _ => {}
     }
 }
@@ -1471,10 +1503,13 @@ mod tests {
             updated_at: String::new(),
         };
         let id = "6a0c1f8e-3b2d-4c5e-9f70-1a2b3c4d5e6f";
-        let projects = [project(id, "Web Shop", "shop"), project("p2", "Twin", "twin-a"), project("p3", "twin", "twin-b")];
-        assert!(slug_shaped("shop") && slug_shaped("web-shop-2"));
-        assert!(!slug_shaped("Web Shop") && !slug_shaped(id) && !slug_shaped("-x") && !slug_shaped(""));
+        let projects = [project(id, "Web Shop", "shop"), project("p2", "Twin", "twin-a"), project("p3", "twin", "twin-b"), project("p4", "storefront", "shop-eu")];
+        assert_eq!(pick_project(&projects, "shop").unwrap(), "shop");
         assert_eq!(pick_project(&projects, id).unwrap(), "shop");
+        // A lowercase display name that differs from its slug is a name, not a slug.
+        assert_eq!(pick_project(&projects, "storefront").unwrap(), "shop-eu");
+        assert_eq!(pick_project(&projects, "twin").unwrap_err().downcast_ref::<Exit>().unwrap().code, 2);
+        assert_eq!(pick_project(&projects, "no-such-slug").unwrap_err().downcast_ref::<Exit>().unwrap().code, 2);
         assert_eq!(pick_project(&projects, "web shop").unwrap(), "shop");
         let ambiguous = pick_project(&projects, "Twin").unwrap_err();
         assert_eq!(ambiguous.downcast_ref::<Exit>().unwrap().code, 2);

@@ -175,7 +175,7 @@ fn data_error_code_cannot_inject_arbitrary_server_text() {
         let error = data_result(Reply {
             status: 400,
             body: json!({"error":{"code":code}}),
-            retry_after: None,
+            retry_after: None, text: None,
         })
         .unwrap_err()
         .to_string();
@@ -275,7 +275,7 @@ async fn browser_only_refusals_explain_dashboard_and_preserve_role_refusals() {
 
 #[test]
 fn browser_refusal_uses_production_dashboard_origin() {
-    let reply = Reply { status: 403, body: json!({"code":"AXDATA_FORBIDDEN"}), retry_after: None };
+    let reply = Reply { status: 403, body: json!({"code":"AXDATA_FORBIDDEN"}), retry_after: None, text: None };
     let error = data_route_result(reply, &Method::POST,
         &["projects", "demo", "data", "environments", "uuid", "capture"],
         axiom_cloud::AXIOM_CLOUD_URL, Some("staging")).unwrap_err().to_string();

@@ -220,7 +220,7 @@ fn activate_without_revision_sends_the_listed_revision() {
     let (cloud, log) = stub(route);
     let directory = tempfile::tempdir().unwrap();
     profile(directory.path());
-    let output = axiom(&cloud, directory.path(), &["secrets", "activate", "STRIPE_KEY", "v2", "--project", "shop", "--environment", "production"], None);
+    let output = axiom(&cloud, directory.path(), &["secrets", "activate", "STRIPE_KEY", "v2", "--project", "shop", "--environment", "production", "--yes"], None);
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     let requests = log.lock().unwrap().clone();
     let activate = requests.last().unwrap();
@@ -230,7 +230,7 @@ fn activate_without_revision_sends_the_listed_revision() {
 
     // With UUIDs and an explicit revision, nothing is looked up.
     log.lock().unwrap().clear();
-    let output = axiom(&cloud, directory.path(), &["secrets", "revoke", SECRET, V1, "--project", "shop", "--environment", ENV, "--revision", "3"], None);
+    let output = axiom(&cloud, directory.path(), &["secrets", "revoke", SECRET, V1, "--project", "shop", "--environment", ENV, "--revision", "3", "--yes"], None);
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     let requests = log.lock().unwrap().clone();
     assert_eq!(requests.len(), 1, "{requests:?}");
@@ -246,7 +246,7 @@ fn upper_case_uuids_match_the_listed_ids() {
     let directory = tempfile::tempdir().unwrap();
     profile(directory.path());
     let upper = SECRET.to_ascii_uppercase();
-    let output = axiom(&cloud, directory.path(), &["secrets", "activate", &upper, &V2.to_ascii_uppercase(), "--project", "shop", "--environment", &ENV.to_ascii_uppercase()], None);
+    let output = axiom(&cloud, directory.path(), &["secrets", "activate", &upper, &V2.to_ascii_uppercase(), "--project", "shop", "--environment", &ENV.to_ascii_uppercase(), "--yes"], None);
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     let requests = log.lock().unwrap().clone();
     let activate = requests.last().unwrap();
@@ -259,7 +259,7 @@ fn rotate_writes_then_activates_with_the_current_revision() {
     let (cloud, log) = stub(route);
     let directory = tempfile::tempdir().unwrap();
     profile(directory.path());
-    let output = axiom(&cloud, directory.path(), &["secrets", "rotate", "STRIPE_KEY", "--project", "shop", "--environment", "production", "--stdin"], Some(VALUE));
+    let output = axiom(&cloud, directory.path(), &["secrets", "rotate", "STRIPE_KEY", "--project", "shop", "--environment", "production", "--stdin", "--yes"], Some(VALUE));
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "{stderr}");
@@ -283,7 +283,7 @@ fn rotate_whose_activation_fails_prints_the_follow_up_command() {
     let (cloud, log) = stub(conflicting);
     let directory = tempfile::tempdir().unwrap();
     profile(directory.path());
-    let output = axiom(&cloud, directory.path(), &["secrets", "rotate", "STRIPE_KEY", "--project", "shop", "--environment", "production", "--stdin"], Some(VALUE));
+    let output = axiom(&cloud, directory.path(), &["secrets", "rotate", "STRIPE_KEY", "--project", "shop", "--environment", "production", "--stdin", "--yes"], Some(VALUE));
     assert!(!output.status.success());
     let all = format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
     assert!(!all.contains(VALUE));
@@ -306,4 +306,46 @@ fn unknown_environment_name_errors_without_secret_requests() {
     let output = axiom(&cloud, directory.path(), &["secrets", "versions", "NOPE", "--project", "shop", "--environment", ENV], None);
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains(r#"unknown secret "NOPE""#));
+}
+
+/// Every version action, grant revocation, workload disable and rotate asks first, as the
+/// dashboard does. Without a terminal (stdin is a pipe here) and without --yes, the command
+/// refuses before any request; with --yes it sends.
+#[test]
+fn destructive_commands_without_a_terminal_need_yes_and_send_nothing() {
+    let (cloud, log) = stub(route);
+    let directory = tempfile::tempdir().unwrap();
+    profile(directory.path());
+    const GRANT: &str = "1d2e3f4a-5b6c-4d7e-8f9a-0b1c2d3e4f5a";
+    let scoped = ["--project", "shop", "--environment", ENV];
+    let commands: Vec<(Vec<&str>, String)> = vec![
+        (vec!["secrets", "revoke", SECRET, V1, "--revision", "3"], format!("{}/secrets/{SECRET}/versions/{V1}/disable", scope())),
+        (vec!["secrets", "destroy", SECRET, V1, "--revision", "3"], format!("{}/secrets/{SECRET}/versions/{V1}/destroy", scope())),
+        (vec!["secrets", "activate", SECRET, V2, "--revision", "3"], format!("{}/secrets/{SECRET}/versions/{V2}/activate", scope())),
+        (vec!["secrets", "rewrap", SECRET, V2, "--revision", "3"], format!("{}/secrets/{SECRET}/versions/{V2}/rewrap", scope())),
+        (vec!["secrets", "revoke-grant", GRANT], format!("{}/secret-grants/{GRANT}/revoke", scope())),
+        (vec!["secrets", "disable-workload", GRANT], format!("{}/secret-workloads/{GRANT}/disable", scope())),
+    ];
+    for (command, path) in &commands {
+        let args: Vec<&str> = command.iter().chain(scoped.iter()).copied().collect();
+        log.lock().unwrap().clear();
+        let output = axiom(&cloud, directory.path(), &args, None);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "{command:?} ran without --yes");
+        assert!(stderr.contains("pass --yes to confirm without a prompt"), "{command:?}: {stderr}");
+        assert!(calls(&log).is_empty(), "{command:?} sent {:?}", calls(&log));
+
+        let args: Vec<&str> = args.into_iter().chain(["--yes"]).collect();
+        let _ = axiom(&cloud, directory.path(), &args, None);
+        let requests = calls(&log);
+        assert_eq!(requests.last(), Some(&("POST".to_string(), path.clone())), "{command:?}: {requests:?}");
+    }
+
+    // rotate refuses before reading the value or sending anything.
+    log.lock().unwrap().clear();
+    let output = axiom(&cloud, directory.path(), &["secrets", "rotate", "STRIPE_KEY", "--project", "shop", "--environment", "production", "--stdin"], Some(VALUE));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(stderr.contains("pass --yes to confirm without a prompt") && !stderr.contains(VALUE), "{stderr}");
+    assert!(calls(&log).is_empty(), "{:?}", calls(&log));
 }

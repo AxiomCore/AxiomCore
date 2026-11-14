@@ -16,7 +16,7 @@ use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use zeroize::Zeroizing;
 
-mod advanced;
+pub(crate) mod advanced;
 mod config;
 mod emulate;
 mod policy;

@@ -460,7 +460,10 @@ pub fn duration_seconds(value: &str) -> Result<u64> {
     Ok(seconds)
 }
 
-fn confirm_yes(yes: bool, prompt: &str) -> Result<()> {
+/// Ask before a destructive change: `--yes` skips the question; without a terminal and
+/// without `--yes` it refuses (exit 2) before anything is sent. Shared by `axiom secrets` and
+/// `axiom project resources revoke`.
+pub(crate) fn confirm_yes(yes: bool, prompt: &str) -> Result<()> {
     if yes {
         return Ok(());
     }

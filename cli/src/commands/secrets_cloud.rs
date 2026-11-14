@@ -172,8 +172,20 @@ pub(crate) async fn show_versions(secret: &str, project: &str, environment: &str
     Ok(())
 }
 
+/// The question the dashboard asks before a version action (`confirmVersion`).
+fn version_prompt(operation: &str, secret: &str, version: &str, environment: &str) -> String {
+    match operation {
+        "activate" => format!("Activate {version} of {secret} in {environment}? Bindings that follow the active version switch to it; explicit pins and running generations do not switch automatically."),
+        "disable" => format!("Disable {version} of {secret} in {environment}? New resolution is denied and affected leases are invalidated. Retire the credential at its upstream provider separately."),
+        "rewrap" => format!("Rewrap the encryption key of {version} of {secret} in {environment} with the current KMS key? The value and version number do not change."),
+        _ => format!("Permanently destroy the retained encrypted value of {version} of {secret} in {environment}? Audit history remains."),
+    }
+}
+
 /// activate, disable (`revoke`), rewrap and destroy. Without `--revision`
-/// the current revision is read from the environment inventory.
+/// the current revision is read from the environment inventory. Like the
+/// dashboard, each asks first: a terminal prompts, otherwise `--yes` is
+/// required and nothing is sent without it.
 pub(crate) async fn version_action(
     operation: &str,
     secret: &str,
@@ -181,7 +193,9 @@ pub(crate) async fn version_action(
     project: &str,
     environment: &str,
     revision: Option<u64>,
+    yes: bool,
 ) -> Result<()> {
+    super::auth::advanced::confirm_yes(yes, &version_prompt(operation, secret, version, environment))?;
     let client = crate::auth_store::authenticated_cloud_client()?;
     let environment_id = environment_id(&client, project, environment).await?;
     let secret_id = secret_id(&client, project, secret).await?;
@@ -238,14 +252,21 @@ pub(crate) async fn set(secret: &str, project: &str, environment: &str, material
     Ok(())
 }
 
-/// `axiom secrets rotate`: save a candidate, then activate it.
+/// `axiom secrets rotate`: save a candidate, then activate it. Activation is
+/// confirmed first, as the dashboard confirms it: a terminal prompts,
+/// otherwise `--yes` is required and nothing is read or sent without it.
 pub(crate) async fn rotate(
     secret: &str,
     project: &str,
     environment: &str,
     read: impl FnOnce() -> Result<Zeroizing<Vec<u8>>>,
     as_json: bool,
+    yes: bool,
 ) -> Result<()> {
+    super::auth::advanced::confirm_yes(
+        yes,
+        &format!("Save a new value for {secret} in {environment} and make it the active version? Bindings that follow the active version switch to it; explicit pins and running generations do not switch automatically."),
+    )?;
     let client = crate::auth_store::authenticated_cloud_client()?;
     // Resolve names before asking for a value, so a typo costs no input.
     let environment_id = environment_id(&client, project, environment).await?;

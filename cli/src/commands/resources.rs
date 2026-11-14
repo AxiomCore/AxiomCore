@@ -224,6 +224,9 @@ pub enum Action {
         /// Print the revoked grant as JSON
         #[arg(long)]
         json: bool,
+        /// Confirm without a prompt (required without a terminal)
+        #[arg(long)]
+        yes: bool,
     },
     /// Show currently configured databases and location admission
     Catalog,
@@ -238,8 +241,8 @@ pub async fn handle(project: &str, action: Option<&Action>) -> Result<()> {
             let input = access::GrantInput { requirement, workload, expires_days: *expires_days, expires_at: expires_at.as_deref() };
             return access::handle_grant(project, select, &input, operation_id.as_deref(), *json).await;
         }
-        Some(Action::Revoke { grant_id, select, operation_id, json }) => {
-            return access::handle_revoke(project, select, grant_id, operation_id.as_deref(), *json).await;
+        Some(Action::Revoke { grant_id, select, operation_id, json, yes }) => {
+            return access::handle_revoke(project, select, grant_id, operation_id.as_deref(), *json, *yes).await;
         }
         Some(Action::Connect { provider, select, organization, group, database, token_stdin, fence_mode, acknowledge_split_store, acknowledge_rotate, reclaim, operation_id, json }) => {
             let input = placement::ConnectInput {

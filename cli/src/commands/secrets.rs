@@ -94,6 +94,9 @@ pub enum Action {
         project: String,
         #[arg(long, help = ENVIRONMENT_HELP)]
         environment: String,
+        /// Confirm without a prompt (required without a terminal)
+        #[arg(long)]
+        yes: bool,
     },
     /// List grants.
     Grants {
@@ -118,6 +121,9 @@ pub enum Action {
         project: String,
         #[arg(long, help = ENVIRONMENT_HELP)]
         environment: String,
+        /// Confirm without a prompt (required without a terminal)
+        #[arg(long)]
+        yes: bool,
     },
     /// Update an environment's status, protection or expiry from a private JSON file.
     UpdateEnvironment {
@@ -153,6 +159,9 @@ pub enum Action {
         /// Expected environment-secret revision. Defaults to the current one.
         #[arg(long)]
         revision: Option<u64>,
+        /// Confirm without a prompt (required without a terminal)
+        #[arg(long)]
+        yes: bool,
     },
     /// Show a compiled private plan's secret requirements.
     Requirements {
@@ -184,6 +193,9 @@ pub enum Action {
         /// Print the result as JSON.
         #[arg(long)]
         json: bool,
+        /// Confirm without a prompt (required without a terminal)
+        #[arg(long)]
+        yes: bool,
     },
     /// List project-wide secret definitions.
     List {
@@ -217,6 +229,9 @@ pub enum Action {
         /// Expected environment-secret revision. Defaults to the current one.
         #[arg(long)]
         revision: Option<u64>,
+        /// Confirm without a prompt (required without a terminal)
+        #[arg(long)]
+        yes: bool,
     },
     /// Rewrap an encrypted version with the configured KMS primary key.
     Rewrap {
@@ -231,6 +246,9 @@ pub enum Action {
         /// Expected environment-secret revision. Defaults to the current one.
         #[arg(long)]
         revision: Option<u64>,
+        /// Confirm without a prompt (required without a terminal)
+        #[arg(long)]
+        yes: bool,
     },
     /// Disable a version. Different from revoking a grant.
     Revoke {
@@ -245,6 +263,9 @@ pub enum Action {
         /// Expected environment-secret revision. Defaults to the current one.
         #[arg(long)]
         revision: Option<u64>,
+        /// Confirm without a prompt (required without a terminal)
+        #[arg(long)]
+        yes: bool,
     },
 }
 pub async fn runtime(
@@ -480,17 +501,21 @@ pub async fn handle(action: &Action) -> Result<()> {
             id,
             project,
             environment,
+            yes,
         }
         | Action::RevokeGrant {
             id,
             project,
             environment,
+            yes,
         } => {
-            let (part, operation) = if matches!(action, Action::DisableWorkload { .. }) {
-                ("secret-workloads", "disable")
+            // The dashboard asks before both; a terminal prompts, otherwise --yes is required.
+            let (part, operation, prompt) = if matches!(action, Action::DisableWorkload { .. }) {
+                ("secret-workloads", "disable", format!("Disable workload {id} in {environment}? It no longer receives secrets or new database credentials, and its Cloud leases are invalidated."))
             } else {
-                ("secret-grants", "revoke")
+                ("secret-grants", "revoke", format!("Revoke grant {id} in {environment}? Affected Cloud leases are invalidated."))
             };
+            super::auth::advanced::confirm_yes(*yes, &prompt)?;
             let environment = environment_id(project, environment).await?;
             metadata(
                 project,
@@ -518,8 +543,9 @@ pub async fn handle(action: &Action) -> Result<()> {
             project,
             environment,
             revision,
+            yes,
         } => {
-            super::secrets_cloud::version_action("destroy", secret, version, project, environment, *revision)
+            super::secrets_cloud::version_action("destroy", secret, version, project, environment, *revision, *yes)
                 .await?
         }
         Action::Init { root } => {
@@ -579,6 +605,7 @@ pub async fn handle(action: &Action) -> Result<()> {
             environment,
             stdin,
             json,
+            yes,
         } => {
             super::secrets_cloud::rotate(
                 secret,
@@ -586,6 +613,7 @@ pub async fn handle(action: &Action) -> Result<()> {
                 environment,
                 || super::secrets_cloud::read_material(*stdin),
                 *json,
+                *yes,
             )
             .await?
         }
@@ -628,6 +656,7 @@ pub async fn handle(action: &Action) -> Result<()> {
             project,
             environment,
             revision,
+            yes,
         }
         | Action::Rewrap {
             secret,
@@ -635,6 +664,7 @@ pub async fn handle(action: &Action) -> Result<()> {
             project,
             environment,
             revision,
+            yes,
         }
         | Action::Revoke {
             secret,
@@ -642,6 +672,7 @@ pub async fn handle(action: &Action) -> Result<()> {
             project,
             environment,
             revision,
+            yes,
         } => {
             let operation = if matches!(action, Action::Activate { .. }) {
                 "activate"
@@ -650,7 +681,7 @@ pub async fn handle(action: &Action) -> Result<()> {
             } else {
                 "disable"
             };
-            super::secrets_cloud::version_action(operation, secret, version, project, environment, *revision)
+            super::secrets_cloud::version_action(operation, secret, version, project, environment, *revision, *yes)
                 .await?;
         }
     }

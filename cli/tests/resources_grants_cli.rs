@@ -311,7 +311,7 @@ fn revoke_posts_an_empty_body_and_prints_the_revocation_bound() {
     let (cloud, log) = stub(route);
     let directory = tempfile::tempdir().unwrap();
     profile(directory.path());
-    let output = axiom(&cloud, directory.path(), &["revoke", GRANT, "--environment", "production"]);
+    let output = axiom(&cloud, directory.path(), &["revoke", GRANT, "--environment", "production", "--yes"]);
     assert!(output.status.success(), "{}", stderr(&output));
     let posts = posts(&log);
     assert_eq!(posts.len(), 1);
@@ -323,11 +323,26 @@ fn revoke_posts_an_empty_body_and_prints_the_revocation_bound() {
         "Grant for tasks revoked in production. The workload can't get new credentials. A credential it already holds keeps working until it expires, at most 15 minutes."
     );
     let operation = "7a6b5c4d-3e2f-4a1b-9c8d-7e6f5a4b3c2d";
-    let output = axiom(&cloud, directory.path(), &["revoke", GRANT, "--resource", RESOURCE, "--operation-id", operation, "--json"]);
+    let output = axiom(&cloud, directory.path(), &["revoke", GRANT, "--resource", RESOURCE, "--operation-id", operation, "--json", "--yes"]);
     assert!(output.status.success(), "{}", stderr(&output));
     assert_eq!(self::posts(&log)[1].headers["idempotency-key"], operation);
     let value: Value = serde_json::from_str(&stdout(&output)).unwrap();
     assert_eq!(value["grant"]["id"], GRANT);
+}
+
+#[test]
+fn revoke_without_a_terminal_needs_yes_and_sends_nothing() {
+    // The dashboard asks before revoking; without a terminal --yes stands in for that answer.
+    let (cloud, log) = stub(route);
+    let directory = tempfile::tempdir().unwrap();
+    profile(directory.path());
+    let output = axiom(&cloud, directory.path(), &["revoke", GRANT, "--environment", "production"]);
+    assert!(!output.status.success(), "{}", stdout(&output));
+    assert!(stderr(&output).contains("pass --yes to confirm without a prompt"), "{}", stderr(&output));
+    assert!(log.lock().unwrap().is_empty(), "no request without confirmation: {:?}", log.lock().unwrap());
+    let output = axiom(&cloud, directory.path(), &["revoke", GRANT, "--environment", "production", "--yes"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(posts(&log).len(), 1);
 }
 
 #[test]
@@ -340,7 +355,7 @@ fn conflicts_map_to_the_dashboard_messages() {
     let text = stderr(&output);
     assert!(text.contains("AXRESOURCE_CONFLICT: This workload already has an active grant for this requirement, or the request changed. Refresh and review the grants."), "{text}");
     assert!(!text.contains("conflicts with the current state"), "server text is never echoed: {text}");
-    let output = axiom(&cloud, directory.path(), &["revoke", MISSING, "--environment", "production"]);
+    let output = axiom(&cloud, directory.path(), &["revoke", MISSING, "--environment", "production", "--yes"]);
     assert!(!output.status.success());
     assert!(stderr(&output).contains("AXRESOURCE_CONFLICT: The grant changed. Refresh and review it."), "{}", stderr(&output));
     let output = axiom(&cloud, directory.path(), &["grants", "--environment", "staging"]);

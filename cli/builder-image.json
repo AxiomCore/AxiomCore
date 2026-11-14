@@ -1,0 +1,10 @@
+{
+  "format": "axiom-builder-pin/v1",
+  "repository": "ghcr.io/axiomcore/axiom-server-host",
+  "runtimeVersion": "0.1.0",
+  "images": {
+    "container-amd64": null,
+    "container-arm64": null
+  },
+  "cosignPublicKey": null
+}

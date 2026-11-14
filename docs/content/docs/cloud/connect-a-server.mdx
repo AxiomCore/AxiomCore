@@ -66,8 +66,10 @@ cannot be granted to a sandbox.
 - An Acore backend whose database resource uses the same contract version.
   Before its first query on each credential, the server checks that the
   applied schema matches its plan.
-- An Axiom CLI build with `axiom server package --environment`, and the
-  matching AxiomCore runtime source for container packaging. See
+- An Axiom CLI build with `axiom server package --environment`. Until a CLI
+  release pins the published builder image (**Coming soon**), container
+  packaging also needs the matching AxiomCore runtime source
+  (`--runtime-source`). See
   [deployment targets](/backend/deployment#linux-containers).
 - A Google Cloud project with Cloud Run and Artifact Registry, the `gcloud`
   CLI and Docker with `buildx`.
@@ -221,7 +223,8 @@ docker buildx build --platform linux/amd64 \
 record, so the container needs no secrets file at run time. It is refused for
 targets other than containers. Without `--secret-root`, the CLI reads
 `AxiomSecrets.toml` from the contract's directory. For an arm64 image, use
-`container-arm64` and `linux/arm64`.
+`container-arm64` and `linux/arm64`. Once a CLI release pins the published
+builder image (**Coming soon**), `--runtime-source` can be left out.
 
 ## 8. Deploy to Cloud Run
 

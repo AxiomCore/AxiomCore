@@ -183,6 +183,9 @@ axiom project resources --project my-project grant --environment production \
 axiom project resources --project my-project revoke GRANT_ID --environment production
 ```
 
+`revoke` asks you to confirm, as the dashboard does. Without a terminal, pass
+`--yes`; without it nothing is sent.
+
 `grants` lists the requirement, the workload's Google subject (its ID when the
 workload is no longer in the environment's list), the state (**Active**,
 **Expired** or **Revoked**), the expiry and the grant ID. `--json` prints the

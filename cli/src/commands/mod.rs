@@ -46,6 +46,7 @@ pub mod release;
 pub mod run;
 pub mod scenario;
 pub mod secrets;
+mod secrets_cloud;
 pub mod security;
 pub mod serve;
 pub mod server;
@@ -64,6 +65,7 @@ mod editor_schema_parity;
 pub mod secret_development;
 
 pub mod resources;
+pub mod resources_access;
 pub mod resources_placement;
 pub mod resources_recovery;
 #[cfg(test)]

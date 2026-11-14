@@ -1615,6 +1615,7 @@ async fn main() -> anyhow::Result<()> {
     }));
 
     let cli = Cli::parse();
+    confirmation_preflight(&cli.command);
     let start_time = Instant::now();
     // Mode/input errors must precede cloud credentials, registration and I/O.
     match &*cli.command {
@@ -1787,7 +1788,40 @@ async fn main() -> anyhow::Result<()> {
         .await;
     }
 
+    // A refused or cancelled confirmation (`axiom secrets`, `axiom project resources revoke`)
+    // exits 2 with its message, as `axiom auth` does.
+    if let Err(error) = &result {
+        if let Some(exit) = error.downcast_ref::<commands::auth::Exit>() {
+            eprintln!("axiom {cmd_name}: {}", exit.message);
+            std::process::exit(exit.code);
+        }
+    }
     result
+}
+
+/// A confirmation that cannot be asked (no terminal, no `--yes`) exits 2 here, before
+/// registration, sign-in, telemetry or any request: `auth disable`, an `auth mfa set` that may
+/// weaken or turn on multi-factor, and `project resources revoke`. (`axiom secrets` is a local
+/// command with neither registration nor telemetry; it refuses in its own handler.)
+fn confirmation_preflight(command: &Commands) {
+    let (name, yes) = match command {
+        Commands::Auth(args) => match commands::auth::asks_first(args) {
+            Some(yes) => ("auth", yes),
+            None => return,
+        },
+        Commands::Project {
+            action:
+                ProjectAction::Resources {
+                    action: Some(commands::resources::Action::Revoke { yes, .. }),
+                    ..
+                },
+        } => ("project", *yes),
+        _ => return,
+    };
+    if let Err(error) = commands::auth::require_yes_or_terminal(yes) {
+        eprintln!("axiom {name}: {error}");
+        std::process::exit(2);
+    }
 }
 
 // Helper to route commands (Refactored from original main)

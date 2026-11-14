@@ -169,3 +169,74 @@ fn oidc_report_checks_metadata_and_keys() {
     assert_eq!(oidc_report(issuer, &other, &jwks, Some(&epoch))["ok"], false);
     assert_eq!(oidc_report(issuer, &discovery, &jwks, Some(&json!({"keys_rev": 5})))["ok"], false);
 }
+
+#[test]
+fn mfa_input_keeps_omitted_values_and_applies_the_dashboard_rules() {
+    let settings = json!({"mfa_policy": "optional", "mfa_factors": ["totp", "recovery_code"], "step_up_seconds": 630, "webauthn_rp_id": " Shop.Example.com ",
+        "webauthn_rp_name": "Shop", "webauthn_origins": ["https://shop.example.com"], "allowed_origins": ["https://shop.example.com", "http://localhost:5173"]});
+    let kept = mfa_input(&settings, None, &MfaChange::default()).unwrap();
+    assert_eq!(kept, json!({"mfa_policy": "optional", "mfa_factors": ["totp"], "step_up_seconds": 630, "webauthn_rp_id": "shop.example.com",
+        "webauthn_rp_name": "Shop", "webauthn_origins": ["https://shop.example.com"]}));
+    let factors = ["passkey".to_string(), "passkey".to_string(), "totp".to_string()];
+    let changed = mfa_input(&settings, None, &MfaChange { policy: Some("required"), factors: Some(&factors), step_up_minutes: Some(2), rp_name: Some("  "), ..Default::default() }).unwrap();
+    assert_eq!(changed["mfa_factors"], json!(["passkey", "totp"]));
+    assert_eq!(changed["step_up_seconds"], 120);
+    assert_eq!(changed["webauthn_rp_name"], Value::Null);
+    // Without W8 settings the policy and factors come from GET mfa.
+    let mfa = json!({"policy": "required", "factors": [{"type": "totp"}, {"type": "sms"}]});
+    let fallback = mfa_input(&json!({}), Some(&mfa), &MfaChange::default()).unwrap();
+    assert_eq!((fallback["mfa_policy"].clone(), fallback["mfa_factors"].clone(), fallback["step_up_seconds"].clone()), (json!("required"), json!(["totp", "sms"]), json!(600)));
+    assert_eq!(current_policy(&json!({}), None), "off");
+    let localhost = ["http://localhost:5173".to_string()];
+    let local = mfa_input(&settings, None, &MfaChange { rp_id: Some("localhost"), origins: Some(&localhost), ..Default::default() }).unwrap();
+    assert_eq!(local["webauthn_rp_id"], "localhost");
+
+    let problem = |change: MfaChange| mfa_input(&settings, None, &change).unwrap_err().join(" ");
+    assert!(problem(MfaChange { step_up_minutes: Some(61), ..Default::default() }).contains("2 to 60 minutes"));
+    for bad in ["axiomcore.dev", "auth.axiomcore.dev", "x.axiomcore.dev", "https://shop.example.com", "shop", "-a.example.com"] {
+        assert!(problem(MfaChange { rp_id: Some(bad), origins: Some(&[]), ..Default::default() }).contains("never an axiomcore.dev name"), "{bad}");
+    }
+    let long = "n".repeat(65);
+    assert!(problem(MfaChange { rp_name: Some(&long), ..Default::default() }).contains("at most 64 bytes"));
+    let nine = (0..9).map(|i| format!("https://a{i}.shop.example.com")).collect::<Vec<_>>();
+    assert!(problem(MfaChange { origins: Some(&nine), ..Default::default() }).contains("at most 8"));
+    let elsewhere = ["https://other.example.com".to_string()];
+    assert!(problem(MfaChange { origins: Some(&elsewhere), ..Default::default() }).contains("not an allowed origin"));
+    let outside = ["http://localhost:5173".to_string()];
+    assert!(problem(MfaChange { origins: Some(&outside), ..Default::default() }).contains("subdomain"));
+    let passkey = ["passkey".to_string()];
+    assert!(problem(MfaChange { rp_id: Some(""), origins: Some(&[]), factors: Some(&passkey), ..Default::default() }).contains("need a relying party ID"));
+    // With the policy off a passkey factor needs no relying party yet.
+    assert!(mfa_input(&settings, None, &MfaChange { policy: Some("off"), rp_id: Some(""), origins: Some(&[]), factors: Some(&passkey), ..Default::default() }).is_ok());
+    assert!(problem(MfaChange { rp_id: Some(""), ..Default::default() }).contains("Passkey origins need a relying party ID"));
+}
+
+#[test]
+fn enrollable_follows_the_dashboard() {
+    let all = ["totp".to_string(), "passkey".to_string(), "sms".to_string()];
+    assert_eq!(enrollable(&all, None, false), ["totp"]);
+    assert_eq!(enrollable(&all[1..], Some("example.com"), true), ["passkey", "sms"]);
+    assert!(enrollable(&all[1..], Some(""), false).is_empty());
+}
+
+#[test]
+fn mfa_refusals_use_the_dashboard_wording() {
+    use axiom_cloud::auth_admin::classify;
+    let message = |status: u16, body: &str| {
+        let error = mfa_refusal(classify(status, body.as_bytes()));
+        let exit = error.downcast_ref::<Exit>().unwrap();
+        (exit.code, exit.message.clone())
+    };
+    let (code, text) = message(400, r#"{"error":{"code":"AXAUTH_INVALID_REQUEST"}}"#);
+    assert_eq!(code, 2);
+    assert!(text.contains("does not accept these multi-factor settings yet"));
+    let (code, text) = message(400, "not json");
+    assert_eq!(code, 2);
+    assert!(text.contains("does not accept"), "{text}");
+    let (code, text) = message(403, r#"{"error":{"code":"AXAUTH_FEATURE_DISABLED"}}"#);
+    assert_eq!(code, 3);
+    assert!(text.starts_with("AXAUTH_FEATURE_DISABLED: multi-factor is not available"));
+    let (code, text) = message(409, r#"{"error":{"code":"AXAUTH_CONFLICT"}}"#);
+    assert_eq!(code, 4);
+    assert!(text.starts_with("AXAUTH_CONFLICT"));
+}

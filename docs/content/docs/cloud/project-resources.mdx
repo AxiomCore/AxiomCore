@@ -174,6 +174,46 @@ applied migration, a registered workload and a database grant, and are
 per environment and is **Alpha**.
 [Hosted migrations](/cloud/hosted-migrations) are **Alpha**.
 
+## Database access
+
+A server workload gets credentials for a database only through a grant: one
+requirement of your app, one enabled workload registered for database access in
+the database's environment, its compiled backend plan, and an expiry of 7, 30
+or 90 days. Only owners can list, create and revoke grants. The **Database
+access** section of **Resources** and these CLI commands do the same:
+
+```bash title="Terminal: grant and revoke database access"
+axiom project resources --project my-project grants --environment production
+axiom project resources --project my-project grant --environment production \
+  --requirement tasks --workload 104200000000000000001 --expires-days 30
+axiom project resources --project my-project revoke GRANT_ID --environment production
+```
+
+`revoke` asks you to confirm, as the dashboard does. Without a terminal, pass
+`--yes`; without it nothing is sent.
+
+`grants` lists the requirement, the workload's Google subject (its ID when the
+workload is no longer in the environment's list), the state (**Active**,
+**Expired** or **Revoked**), the expiry and the grant ID. `--json` prints the
+list with `state` and `workload_subject` added to each grant.
+
+`grant` takes the workload ID or its Google subject. It checks the requirement
+name, the workload (enabled, registered for database access, with a plan) and
+the expiry before it sends anything. The 90-day expiry ends five minutes before
+the 90-day limit. Every write carries an idempotency key, printed on standard
+error, and `--operation-id` sets it. If the result of `grant` is lost, the
+command prints how to repeat it with the same `--operation-id` and
+`--expires-at`: the repeat returns the same grant. The same `--operation-id`
+with other details is refused with `AXRESOURCE_CONFLICT`. A workload holds at most one
+active grant per requirement, so no repeat creates a second one. A repeat
+works while the first attempt's expiry is still in the future; otherwise, run
+`grants` to check what was saved.
+
+`revoke` stops new credentials at once. A credential the workload already holds
+keeps working for a bounded time: on SQLite until it expires, at most 15
+minutes; on PostgreSQL its open connections end within about 10 minutes. See
+[Connect a server](/cloud/connect-a-server) for the whole setup.
+
 ## Usage
 
 Work totals show the budget reserved this month. Storage measurements appear

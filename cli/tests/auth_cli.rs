@@ -547,7 +547,6 @@ fn org_selects_a_project_outside_the_current_organization_by_exact_slug() {
     assert_eq!(after, ["GET /api/v1/projects/5e6f7081-92a3-4d4e-8f5a-6b7c8d9e0f1a", "GET /api/v1/projects/not-mine"], "{after:?}");
 }
 
-
 #[test]
 fn unsupported_variables_are_counted_and_never_echoed() {
     let (cloud, log) = stub(route);
@@ -580,7 +579,8 @@ fn unsupported_variables_are_counted_and_never_echoed() {
             assert_eq!(value["subject"]["unsupported_placeholders"], 1);
             assert_eq!(value["subject"]["sha256"], sha256(PROBE_SUBJECT));
             assert_eq!(value["intro"]["variables"], serde_json::json!(["{{app_name}}"]));
-            assert_eq!(value["new_field"]["kind"]["set"], true);
+            assert_eq!(value["new_field"], serde_json::Value::Null);
+            assert_eq!(value["unknown_fields"], 1);
             assert_eq!(value["kind"], "invitation");
             assert_eq!(value["updated_at"], "2026-11-01T00:00:00Z");
         } else {
@@ -589,13 +589,24 @@ fn unsupported_variables_are_counted_and_never_echoed() {
     }
 }
 
-
 /// Every path to a string in `value`, as JSON pointers.
 fn string_paths(value: &serde_json::Value, at: String, out: &mut Vec<String>) {
     match value {
         serde_json::Value::String(_) => out.push(at),
         serde_json::Value::Object(map) => map.iter().for_each(|(k, v)| string_paths(v, format!("{at}/{k}"), out)),
         serde_json::Value::Array(items) => items.iter().enumerate().for_each(|(i, v)| string_paths(v, format!("{at}/{i}"), out)),
+        _ => {}
+    }
+}
+
+/// Every path to an object in `value`, as JSON pointers (the root is "").
+fn object_paths(value: &serde_json::Value, at: String, out: &mut Vec<String>) {
+    match value {
+        serde_json::Value::Object(map) => {
+            out.push(at.clone());
+            map.iter().for_each(|(k, v)| object_paths(v, format!("{at}/{k}"), out));
+        }
+        serde_json::Value::Array(items) => items.iter().enumerate().for_each(|(i, v)| object_paths(v, format!("{at}/{i}"), out)),
         _ => {}
     }
 }
@@ -614,20 +625,36 @@ fn a_marker_in_any_string_of_a_templates_response_is_never_printed_by_default() 
         (&view, vec![&["show", "signup"], set]),
         (&preview, vec![&["preview", "signup"], &["preview", "signup", "--html"]]),
     ];
-    // A marker alone, as an unsupported variable, and inside text.
+    // A marker alone, as an unsupported variable, and inside text; in every string, and
+    // as a key added to every object (`email/tests.rs` has more forms).
     let markers = ["QzMarker0123456789Zq", "{{qzmarkerzq}}", "Hi {{qzmarkerzq}} QzMarker0123456789Zq"];
     let mut jobs = Vec::new();
     for (sample, commands) in &samples {
+        let mut probes = Vec::new();
         let mut paths = Vec::new();
         string_paths(sample, String::new(), &mut paths);
-        for path in paths {
-            for marker in markers {
+        let mut objects = Vec::new();
+        object_paths(sample, String::new(), &mut objects);
+        for marker in markers {
+            for path in &paths {
                 let mut probe = (*sample).clone();
-                *probe.pointer_mut(&path).unwrap() = marker.into();
-                for command in commands {
-                    for json in [false, true] {
-                        jobs.push((format!("{command:?} json={json} {path} = {marker:?}"), probe.to_string(), *command, json));
-                    }
+                *probe.pointer_mut(path).unwrap() = marker.into();
+                probes.push((format!("{path} = {marker:?}"), probe, marker));
+            }
+        }
+        for path in &objects {
+            let mut probe = (*sample).clone();
+            probe.pointer_mut(path).unwrap()[markers[0]] = serde_json::json!({markers[2]: markers[0]});
+            probes.push((format!("{path}/{:?} key", markers[0]), probe, markers[0]));
+        }
+        for (label, probe, marker) in probes {
+            for command in commands {
+                for json in [false, true] {
+                    jobs.push((format!("{command:?} json={json} {label}"), probe.to_string(), *command, json, false));
+                }
+                // Positive control: with --reveal-text the marker is printed (unless the text is refused).
+                if marker == markers[0] {
+                    jobs.push((format!("{command:?} reveal {label}"), probe.to_string(), *command, true, true));
                 }
             }
         }
@@ -635,8 +662,8 @@ fn a_marker_in_any_string_of_a_templates_response_is_never_printed_by_default() 
     assert!(jobs.len() > 300, "{}", jobs.len());
     // Four stubs (each answers every templates route with the current probe) in parallel.
     let chunk = jobs.len().div_ceil(4);
-    let succeeded = std::sync::atomic::AtomicUsize::new(0);
-    let succeeded = &succeeded;
+    let (hidden_ok, revealed) = (std::sync::atomic::AtomicUsize::new(0), std::sync::atomic::AtomicUsize::new(0));
+    let counts = (&hidden_ok, &revealed);
     std::thread::scope(|scope| {
         for part in jobs.chunks(chunk) {
             scope.spawn(move || {
@@ -646,18 +673,34 @@ fn a_marker_in_any_string_of_a_templates_response_is_never_printed_by_default() 
                 let directory = tempfile::tempdir().unwrap();
                 profile(directory.path());
                 std::fs::write(directory.path().join("intro.txt"), "Welcome aboard.\n").unwrap();
-                for (label, probe, command, json) in part {
+                for (label, probe, command, json, reveal) in part {
                     *response.lock().unwrap() = probe.clone();
-                    let shown = templates(&cloud, directory.path(), command, if *json { &["--json"] } else { &[] });
+                    let extra: &[&str] = match (json, reveal) {
+                        (_, true) => &["--json", "--reveal-text"],
+                        (true, false) => &["--json"],
+                        (false, false) => &[],
+                    };
+                    let shown = templates(&cloud, directory.path(), command, extra);
                     let printed = format!("{}{}", String::from_utf8_lossy(&shown.stdout), String::from_utf8_lossy(&shown.stderr)).to_lowercase();
-                    assert!(!printed.contains("qzmarker"), "{label}: {printed}");
-                    if shown.status.success() {
-                        succeeded.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let ordering = std::sync::atomic::Ordering::Relaxed;
+                    if *reveal {
+                        if shown.status.success() {
+                            assert!(printed.contains("qzmarker"), "{label}: {printed}");
+                            counts.1.fetch_add(1, ordering);
+                        }
+                    } else {
+                        assert!(!printed.contains("qzmarker"), "{label}: {printed}");
+                        if shown.status.success() {
+                            counts.0.fetch_add(1, ordering);
+                        }
                     }
                 }
             });
         }
     });
     // Most probes print a summary; the rest are refused before sending (a marker in text a `set` keeps).
-    assert!(succeeded.load(std::sync::atomic::Ordering::Relaxed) * 10 > jobs.len() * 8, "{succeeded:?} of {}", jobs.len());
+    let ordering = std::sync::atomic::Ordering::Relaxed;
+    let hidden_jobs = jobs.iter().filter(|j| !j.4).count();
+    assert!(hidden_ok.load(ordering) * 10 > hidden_jobs * 8, "{hidden_ok:?} of {hidden_jobs}");
+    assert!(revealed.load(ordering) * 10 > (jobs.len() - hidden_jobs) * 8, "{revealed:?} of {}", jobs.len() - hidden_jobs);
 }

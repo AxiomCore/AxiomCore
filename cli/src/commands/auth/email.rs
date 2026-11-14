@@ -431,14 +431,13 @@ pub fn template_problem(kind: &str, field: &str, value: &str, max: usize) -> Opt
     }
     let allowed = template_variables(kind);
     let mut masked = value.to_string();
-    let mut unsupported = 0;
     for found in VARIABLE.find_iter(value) {
         if allowed.contains(&found.as_str()) {
             masked = masked.replacen(found.as_str(), "", 1);
-        } else {
-            unsupported += 1;
         }
     }
+    // Any `{{…}}` left is unsupported (the backend refuses any `{{` or `}}` left).
+    let unsupported = PLACEHOLDER.find_iter(&masked).count();
     if unsupported > 0 {
         return Some(format!("{field} uses {}; use {}", unsupported_count(unsupported), allowed.join(", ")));
     }
@@ -524,16 +523,18 @@ async fn template_view(target: &Target, kind: &str) -> Result<Value> {
 }
 
 /// What is printed instead of one template text field: whether it is set, its length in
-/// bytes, the supported `{{variables}}` it uses (`SUPPORTED_VARIABLES`, in order, once
-/// each), how many other `{{…}}` placeholders it has (counted, never named) and the
-/// SHA-256 of its UTF-8 bytes, so two outputs can be compared without showing the text.
-pub fn text_summary(value: &Value) -> Value {
+/// bytes, the `{{variables}}` it uses that the kind supports (`template_variables`, or
+/// any of `SUPPORTED_VARIABLES` if the kind is not known; in order, once each), how many
+/// other `{{…}}` placeholders it has (counted, never named) and the SHA-256 of its UTF-8
+/// bytes, so two outputs can be compared without showing the text.
+pub fn text_summary(value: &Value, kind: Option<&str>) -> Value {
+    let allowed = kind.map(template_variables).unwrap_or_else(|| SUPPORTED_VARIABLES.to_vec());
     match value.as_str() {
         Some(text) if !text.is_empty() => {
             let mut variables: Vec<&str> = Vec::new();
             let mut unsupported = 0;
             for found in PLACEHOLDER.find_iter(text) {
-                match SUPPORTED_VARIABLES.iter().find(|v| **v == found.as_str()) {
+                match allowed.iter().find(|v| **v == found.as_str()) {
                     Some(v) if !variables.contains(v) => variables.push(v),
                     Some(_) => {}
                     None => unsupported += 1,
@@ -548,6 +549,23 @@ pub fn text_summary(value: &Value) -> Value {
 /// One step of a path into a response: an object key, or any array element.
 type Step = Option<String>;
 
+fn steps(path: &[Step]) -> Vec<Option<&str>> {
+    path.iter().map(Option::as_deref).collect()
+}
+
+/// The keys of each object of the documented templates responses, by position: GET
+/// templates (`templates`), GET and PUT templates/{kind} (and their `defaults`) and
+/// POST templates/{kind}/preview (`subject`, `text`, `html`). Any other key, and every
+/// key of an object anywhere else, is unknown: it is not printed, only counted.
+fn documented_keys(path: &[Step]) -> &'static [&'static str] {
+    match steps(path).as_slice() {
+        [] => &["templates", "kind", "overridden", "subject", "intro", "outro", "revision", "updated_at", "defaults", "text", "html"],
+        [Some("defaults")] => &["subject", "intro", "outro"],
+        [Some("templates"), None] => &["kind", "overridden", "subject", "revision", "updated_at"],
+        _ => &[],
+    }
+}
+
 /// The only strings of a templates response printed without `--reveal-text`, by their
 /// position in the documented response (not by key name alone), and only when the value
 /// has the expected form:
@@ -555,47 +573,57 @@ type Step = Option<String>;
 /// - `/updated_at` and `/templates/*/updated_at`: an RFC 3339 timestamp.
 ///
 /// The template responses have no other string metadata (`revision` is a number and
-/// `overridden` a boolean); every other string, at any depth and under any key, known
-/// or not, is replaced by its `text_summary`.
+/// `overridden` a boolean); every other string, at any depth, is replaced by its
+/// `text_summary`.
 fn shown_metadata(path: &[Step], value: &str) -> bool {
-    let path: Vec<Option<&str>> = path.iter().map(Option::as_deref).collect();
-    match path.as_slice() {
+    match steps(path).as_slice() {
         [Some("kind")] | [Some("templates"), None, Some("kind")] => TEMPLATE_KINDS.contains(&value),
         [Some("updated_at")] | [Some("templates"), None, Some("updated_at")] => TIMESTAMP.is_match(value),
         _ => false,
     }
 }
 
-/// Replace every string of a templates response with its `text_summary`, except the
-/// metadata of `shown_metadata`; numbers, booleans, keys and structure are kept, and a
-/// null text field (`TEXT_FIELDS`) becomes `{"set": false}`.
-pub fn hide_text(value: &mut Value) {
-    hide_at(value, &mut Vec::new());
+/// Hide the text of a templates response of `kind` (`None` for a list): every string
+/// is replaced by its `text_summary` except the metadata of `shown_metadata`, and a null
+/// text field (`TEXT_FIELDS`) becomes `{"set": false}`. Only `documented_keys` are kept;
+/// the others (whatever their names and values) are removed and counted in
+/// `unknown_fields`. Numbers, booleans and the documented structure are kept.
+pub fn hide_text(value: &mut Value, kind: Option<&str>) {
+    hide_at(value, &mut Vec::new(), kind);
 }
 
-fn hide_at(value: &mut Value, path: &mut Vec<Step>) {
+fn hide_at(value: &mut Value, path: &mut Vec<Step>, kind: Option<&str>) {
     match value {
         Value::Object(map) => {
+            let keys = documented_keys(path);
+            let unknown = map.keys().filter(|key| !keys.contains(&key.as_str())).count();
+            map.retain(|key, _| keys.contains(&key.as_str()));
+            // A list entry's own kind selects its variables.
+            let own = map.get("kind").and_then(Value::as_str).and_then(|k| TEMPLATE_KINDS.iter().copied().find(|t| *t == k));
+            let kind = own.or(kind);
             for (key, item) in map.iter_mut() {
                 path.push(Some(key.clone()));
                 if item.is_null() && TEXT_FIELDS.contains(&key.as_str()) {
-                    *item = text_summary(item);
+                    *item = text_summary(item, kind);
                 } else {
-                    hide_at(item, path);
+                    hide_at(item, path, kind);
                 }
                 path.pop();
+            }
+            if unknown > 0 {
+                map.insert("unknown_fields".into(), json!(unknown));
             }
         }
         Value::Array(items) => {
             for item in items {
                 path.push(None);
-                hide_at(item, path);
+                hide_at(item, path, kind);
                 path.pop();
             }
         }
         Value::String(_) => {
             if !value.as_str().is_some_and(|text| shown_metadata(path, text)) {
-                *value = text_summary(value);
+                *value = text_summary(value, kind);
             }
         }
         _ => {}
@@ -689,12 +717,12 @@ fn preview_lines(r: &Value, html: bool, reveal: bool) -> Vec<String> {
 
 /// Print a templates response: the text itself with `--reveal-text` (after a warning on
 /// stderr), otherwise only its metadata.
-fn print_templates(args: &AuthArgs, mut value: Value, reveal: bool, human: impl FnOnce(&Value) -> Vec<String>) -> Result<()> {
+fn print_templates(args: &AuthArgs, mut value: Value, kind: Option<&str>, reveal: bool, human: impl FnOnce(&Value) -> Vec<String>) -> Result<()> {
     sanitize(&mut value, true);
     if reveal {
         warn_revealed();
     } else {
-        hide_text(&mut value);
+        hide_text(&mut value, kind);
     }
     print(args, &value, human)
 }
@@ -704,11 +732,12 @@ pub(super) async fn templates_with(args: &AuthArgs, target: &Target, action: &Te
         TemplatesAction::List { reveal_text } => {
             let listed = target.call(Method::GET, "templates", &[], None).await?;
             let reveal = *reveal_text;
-            print_templates(args, listed, reveal, |l| list_lines(l, reveal))
+            print_templates(args, listed, None, reveal, |l| list_lines(l, reveal))
         }
         TemplatesAction::Show { kind, reveal_text } => {
-            let view = template_view(target, template_kind(kind)?).await?;
-            print_templates(args, view, *reveal_text, |t| template_lines(t, *reveal_text))
+            let kind = template_kind(kind)?;
+            let view = template_view(target, kind).await?;
+            print_templates(args, view, Some(kind), *reveal_text, |t| template_lines(t, *reveal_text))
         }
         TemplatesAction::Set { kind, subject_file, intro_file, outro_file, reveal_text } => {
             let kind = template_kind(kind)?;
@@ -724,7 +753,7 @@ pub(super) async fn templates_with(args: &AuthArgs, target: &Target, action: &Te
             // The revision of the current override (0 creates one).
             body["revision"] = json!(current["revision"].as_i64().unwrap_or(0));
             let saved = target.call(Method::PUT, &format!("templates/{kind}"), &[], Some(&body)).await?;
-            print_templates(args, saved, *reveal_text, |t| {
+            print_templates(args, saved, Some(kind), *reveal_text, |t| {
                 let mut lines = template_lines(t, *reveal_text);
                 lines.insert(0, "Template saved.".into());
                 lines
@@ -747,7 +776,7 @@ pub(super) async fn templates_with(args: &AuthArgs, target: &Target, action: &Te
             };
             let rendered = target.call(Method::POST, &format!("templates/{kind}/preview"), &[], Some(&body)).await?;
             let reveal = *reveal_text;
-            print_templates(args, rendered, reveal, |r| preview_lines(r, *html, reveal))
+            print_templates(args, rendered, Some(kind), reveal, |r| preview_lines(r, *html, reveal))
         }
     }
 }

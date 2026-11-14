@@ -4,6 +4,8 @@
 The script walks `axiom --help` recursively (hidden commands and `help` are
 skipped), then reads every page under `content/docs` and collects each
 `axiom ...` invocation written in a fenced code block or an inline code span.
+Command suffix tables with an explicit prefix are expanded before matching.
+Uppercase positional placeholders in reference syntax are skipped.
 A command path counts as documented when some invocation reaches it, so
 `axiom auth users list` documents `auth`, `auth users` and `auth users list`.
 Options between command words are skipped, for example
@@ -117,6 +119,47 @@ def code_fragments(text: str) -> list[str]:
     return fragments
 
 
+def suffix_fragments(text: str) -> list[str]:
+    """Expand command cells only when the table explicitly declares its prefix.
+
+    A prefix can be in its heading (Command following `axiom data`) or in an
+    "Each row starts with" sentence in the same section (Command suffix).
+    Fenced examples and unrelated tables cannot establish suffix coverage.
+    """
+    fragments: list[str] = []
+    section_prefix = None
+    table_prefix = None
+    fence = None
+    for line in text.splitlines():
+        marker = FENCE.match(line)
+        if marker:
+            if fence is None:
+                fence = marker.group(2)
+            elif marker.group(2).startswith(fence[0]) and len(marker.group(2)) >= len(fence):
+                fence = None
+            continue
+        if fence is not None:
+            continue
+        if re.match(r"^\s*#", line):
+            section_prefix = None
+        declaration = re.search(r"Each row starts with `(axiom [a-z0-9 -]+)`", line)
+        if declaration:
+            section_prefix = declaration.group(1)
+        if not line.strip().startswith('|'):
+            table_prefix = None
+            continue
+        cell = line.strip().split('|')[1].strip()
+        heading = re.fullmatch(r"Command following `(axiom [a-z0-9 -]+)`", cell)
+        if heading:
+            table_prefix = heading.group(1)
+        elif cell == 'Command suffix':
+            table_prefix = section_prefix
+        elif table_prefix:
+            for match in INLINE_CODE.finditer(cell):
+                fragments.append(f"{table_prefix} {match.group(2)}")
+    return fragments
+
+
 def invocations(fragment: str) -> list[list[str]]:
     """Token lists that follow each `axiom` word in a code fragment."""
     fragment = re.sub(r"\\\r?\n\s*", " ", fragment)  # shell line continuations
@@ -151,6 +194,10 @@ def resolve(tree: dict[tuple[str, ...], list[str]], tokens: list[str]) -> tuple[
             path += (token,)
             after_option = False
             continue
+        if re.fullmatch(r"[A-Z][A-Z0-9_]*", token):
+            # Reference tables use uppercase positional placeholders, e.g. TABLE.
+            after_option = False
+            continue
         if after_option:
             after_option = False
             continue
@@ -168,7 +215,8 @@ def scan_docs(docs: pathlib.Path, tree: dict[tuple[str, ...], list[str]]):
     unknown: dict[str, set[str]] = {}
     for page in sorted(list(docs.rglob("*.mdx")) + list(docs.rglob("*.md"))):
         rel = page.relative_to(docs).as_posix()
-        for fragment in code_fragments(page.read_text(encoding="utf-8")):
+        text = page.read_text(encoding="utf-8")
+        for fragment in code_fragments(text) + suffix_fragments(text):
             for tokens in invocations(fragment):
                 path, word = resolve(tree, tokens)
                 for depth in range(1, len(path) + 1):

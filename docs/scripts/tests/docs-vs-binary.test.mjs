@@ -78,3 +78,31 @@ test('fails with status 2 when the binary cannot run', () => {
   assert.equal(result.status, 2);
   assert.match(result.stderr, /docs-vs-binary/);
 });
+
+
+test('reads explicitly scoped suffix tables and skips positional placeholders', () => {
+  const { status, report } = run({
+    'a.mdx': [
+      'Each row starts with `axiom auth`.', '',
+      '| Command suffix | Description |', '| --- | --- |',
+      '| `users USER list`, `users USER ban` | Users |', '',
+      '| Command following `axiom auth` | Result |', '| --- | --- |',
+      '| `status` | Status |', '', 'Run `axiom init`.',
+    ].join('\n'),
+  });
+  assert.equal(status, 0);
+  assert.deepEqual(report.undocumented, []);
+});
+
+test('does not infer suffixes from unrelated tables or previous sections', () => {
+  const { report } = run({
+    'a.mdx': [
+      'Each row starts with `axiom auth`.', '',
+      '| Command suffix | Result |', '| --- | --- |', '| `status` | Status |', '',
+      '## Other', '', '| Command suffix | Result |', '| --- | --- |',
+      '| `users ban` | Unscoped |', '',
+      '| Option | Description |', '| --- | --- |', '| `users list` | Not commands |',
+    ].join('\n'),
+  });
+  assert.deepEqual(report.undocumented, ['auth users', 'auth users ban', 'auth users list', 'init']);
+});

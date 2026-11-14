@@ -189,11 +189,11 @@ fn data_error_code_cannot_inject_arbitrary_server_text() {
 async fn data_explicit_step_up_challenge_reuses_body_and_key() {
     let mock = Mock::default();
     mock.script(
-        "POST /api/v1/data",
+        "POST /api/v1/projects/demo/data/environments/env/tables/items/rows:write",
         403,
         json!({"code":"AXRESOURCE_REAUTH_REQUIRED"}),
     );
-    mock.script("POST /api/v1/data", 200, json!({"ok":true}));
+    mock.script("POST /api/v1/projects/demo/data/environments/env/tables/items/rows:write", 200, json!({"ok":true}));
     mock.script("POST /auth/device/start", 200, json!({"device_code":"device", "user_code":"TEST", "verification_uri":"https://example.invalid/approve", "interval":0, "expires_in":60}));
     mock.script(
         "POST /auth/device/poll",
@@ -204,10 +204,10 @@ async fn data_explicit_step_up_challenge_reuses_body_and_key() {
     let dir = tempfile::tempdir().unwrap();
     let body = json!({"operations": [{"op":"delete","key":{"id":{"t":"integer","v":1}},"original":{"id":{"t":"integer","v":1}}}]});
     api(&base, &dir)
-        .data_request(&Method::POST, &["data"], Some(&body), Some("key"), &[])
+        .data_request(&Method::POST, &["projects", "demo", "data", "environments", "env", "tables", "items", "rows:write"], Some(&body), Some("key"), &[])
         .await
         .unwrap();
-    let seen = mock.seen("POST /api/v1/data");
+    let seen = mock.seen("POST /api/v1/projects/demo/data/environments/env/tables/items/rows:write");
     assert_eq!(seen.len(), 2);
     assert_eq!(seen[0].body, seen[1].body);
     assert_eq!(seen[0].key, seen[1].key);
@@ -283,4 +283,56 @@ fn browser_refusal_uses_production_dashboard_origin() {
     assert!(error.contains("https://app.axiomcore.dev/dashboard"));
     assert!(error.contains("environment staging"));
     assert!(!error.contains("uuid"));
+}
+
+#[tokio::test]
+async fn data_writes_reuse_stored_step_up_but_reads_and_capture_do_not() {
+    let mock = Mock::default();
+    let base = mock.start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let client = api(&base, &dir);
+    client.step_up.save("stored-step-up", 900).unwrap();
+    for (rest, token) in [
+        (vec!["sql", "write", "preview"], "stored-step-up"),
+        (vec!["sql", "write", "execute"], "stored-step-up"),
+        (vec!["tables", "items", "rows:write"], "stored-step-up"),
+        (vec!["sql", "read"], "session-token"),
+        (vec!["capture", "preview"], "session-token"),
+    ] {
+        let mut path = vec!["projects", "demo", "data", "environments", "env"];
+        path.extend(rest);
+        let route = format!("POST /api/v1/{}", path.join("/"));
+        mock.script(&route, 200, json!({"ok":true}));
+        client.data_request(&Method::POST, &path, Some(&json!({})), Some("key"), &[]).await.unwrap();
+        assert_eq!(mock.seen(&route)[0].bearer.as_deref(), Some(token));
+    }
+    assert!(mock.seen("POST /auth/device/start").is_empty());
+}
+
+#[tokio::test]
+async fn data_stale_step_up_reauthenticates_once_without_refresh() {
+    let mock = Mock::default();
+    let route = "POST /api/v1/projects/demo/data/environments/env/sql/write/execute";
+    mock.script(route, 401, json!({}));
+    mock.script(route, 403, json!({"code":"AXRESOURCE_REAUTH_REQUIRED"}));
+    mock.script("POST /auth/device/start", 200, json!({"device_code":"device", "user_code":"TEST", "verification_uri":"https://example.invalid/approve", "interval":0, "expires_in":60}));
+    mock.script("POST /auth/device/poll", 200, json!({"access_token":"new-step-up", "expires_in":900, "scope":"resources:recovery"}));
+    let base = mock.start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let client = api(&base, &dir);
+    client.step_up.save("revoked-step-up", 900).unwrap();
+    let body = json!({"sql":"delete from items", "confirmed_affected":1});
+    let error = client.data_request(&Method::POST,
+        &["projects","demo","data","environments","env","sql","write","execute"],
+        Some(&body), Some("stable-key"), &[]).await.unwrap_err();
+    assert!(error.to_string().contains("AXRESOURCE_REAUTH_REQUIRED"));
+    let seen = mock.seen(route);
+    assert_eq!(seen.len(), 2);
+    assert_eq!(seen[0].bearer.as_deref(), Some("revoked-step-up"));
+    assert_eq!(seen[1].bearer.as_deref(), Some("new-step-up"));
+    assert_eq!(seen[0].body, seen[1].body);
+    assert_eq!(seen[0].key, seen[1].key);
+    assert_eq!(mock.seen("POST /auth/device/start").len(), 1);
+    assert_eq!(mock.seen("POST /auth/device/poll").len(), 1);
+    assert!(mock.seen("POST /auth/token/refresh").is_empty());
 }

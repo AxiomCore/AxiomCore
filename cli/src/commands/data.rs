@@ -348,6 +348,26 @@ fn execute_body(body: &Value, preview: &Value, limit: u64) -> Result<Value> {
     result["head"] = preview["head"].clone();
     Ok(result)
 }
+// V5 writes can initiate step-up: confirmation must precede the access gate.
+// The later preview still requires count/head confirmation on a terminal.
+pub fn write_preflight_or_exit(args: &DataArgs) {
+    use std::io::IsTerminal;
+    let (write, command) = match &args.action {
+        Action::Sql { action: Sql::Write(write) } => (write, "data sql write"),
+        Action::Tables { action: Table::Write(write), .. } => (write, "data tables write"),
+        _ => return,
+    };
+    if write.yes { return; }
+    if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
+        eprintln!("axiom {command}: pass --yes to confirm without a prompt");
+        std::process::exit(2);
+    }
+    if !dialoguer::Confirm::new().with_prompt("Continue with this data write?").default(false).interact().unwrap_or(false) {
+        eprintln!("axiom {command}: cancelled");
+        std::process::exit(2);
+    }
+}
+
 pub async fn handle(args: &DataArgs) -> Result<()> {
     let client = crate::auth_store::authenticated_cloud_client()?;
     let (project, environment) = super::data_metadata::resolve(

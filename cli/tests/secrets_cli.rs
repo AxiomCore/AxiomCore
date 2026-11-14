@@ -107,7 +107,8 @@ fn axiom(cloud: &str, profile: &Path, args: &[&str], stdin: Option<&str>) -> Out
         .spawn()
         .unwrap();
     if let Some(input) = stdin {
-        child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+        // A command that refuses exits without reading stdin; a broken pipe is fine then.
+        let _ = child.stdin.take().unwrap().write_all(input.as_bytes());
     }
     drop(child.stdin.take());
     child.wait_with_output().unwrap()
@@ -288,7 +289,8 @@ fn rotate_whose_activation_fails_prints_the_follow_up_command() {
     let all = format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
     assert!(!all.contains(VALUE));
     assert!(all.contains("candidate was saved"), "{all}");
-    assert!(all.contains("axiom secrets activate STRIPE_KEY v3 --project shop --environment production"), "{all}");
+    // rotate ran with --yes, so the follow-up runs headless too.
+    assert!(all.contains("axiom secrets activate STRIPE_KEY v3 --project shop --environment production --yes"), "{all}");
     assert!(log.lock().unwrap().iter().any(|r| r.path.ends_with("/activate")));
 }
 
@@ -336,7 +338,11 @@ fn destructive_commands_without_a_terminal_need_yes_and_send_nothing() {
         assert!(calls(&log).is_empty(), "{command:?} sent {:?}", calls(&log));
 
         let args: Vec<&str> = args.into_iter().chain(["--yes"]).collect();
-        let _ = axiom(&cloud, directory.path(), &args, None);
+        let output = axiom(&cloud, directory.path(), &args, None);
+        // The stub answers version actions; grant and workload routes are not stubbed (404).
+        if path.contains("/versions/") {
+            assert!(output.status.success(), "{command:?}: {}", String::from_utf8_lossy(&output.stderr));
+        }
         let requests = calls(&log);
         assert_eq!(requests.last(), Some(&("POST".to_string(), path.clone())), "{command:?}: {requests:?}");
     }
@@ -348,4 +354,39 @@ fn destructive_commands_without_a_terminal_need_yes_and_send_nothing() {
     assert!(!output.status.success());
     assert!(stderr.contains("pass --yes to confirm without a prompt") && !stderr.contains(VALUE), "{stderr}");
     assert!(calls(&log).is_empty(), "{:?}", calls(&log));
+}
+
+/// Enabling or disabling an environment asks first, as the dashboard does; a protection or
+/// expiry change alone does not.
+#[test]
+fn update_environment_status_change_needs_yes_without_a_terminal() {
+    let (cloud, log) = stub(route);
+    let directory = tempfile::tempdir().unwrap();
+    profile(directory.path());
+    let write = |name: &str, body: &str| {
+        use std::os::unix::fs::PermissionsExt;
+        let path = directory.path().join(name);
+        std::fs::write(&path, body).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        path.to_string_lossy().into_owned()
+    };
+    let disable = write("disable.json", r#"{"status":"disabled","protected":true,"expected_revision":2,"expires_at":null}"#);
+    let protect = write("protect.json", r#"{"protected":true,"expected_revision":2}"#);
+    let run = |file: &str, yes: bool| {
+        let mut args = vec!["secrets", "update-environment", "--project", "shop", "--environment", ENV, "--file", file];
+        if yes {
+            args.push("--yes");
+        }
+        axiom(&cloud, directory.path(), &args, None)
+    };
+    let output = run(&disable, false);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(stderr.contains("pass --yes to confirm without a prompt"), "{stderr}");
+    assert!(calls(&log).is_empty(), "{:?}", calls(&log));
+    let _ = run(&disable, true);
+    assert_eq!(calls(&log), vec![("PATCH".to_string(), format!("{}/", scope()))]);
+    log.lock().unwrap().clear();
+    let _ = run(&protect, false);
+    assert_eq!(calls(&log), vec![("PATCH".to_string(), format!("{}/", scope()))]);
 }

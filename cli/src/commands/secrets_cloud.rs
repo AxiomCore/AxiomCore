@@ -174,11 +174,13 @@ pub(crate) async fn show_versions(secret: &str, project: &str, environment: &str
 
 /// The question the dashboard asks before a version action (`confirmVersion`).
 fn version_prompt(operation: &str, secret: &str, version: &str, environment: &str) -> String {
+    let version = version_number(version).map_or_else(|| version.to_string(), |n| format!("v{n}"));
     match operation {
         "activate" => format!("Activate {version} of {secret} in {environment}? Bindings that follow the active version switch to it; explicit pins and running generations do not switch automatically."),
         "disable" => format!("Disable {version} of {secret} in {environment}? New resolution is denied and affected leases are invalidated. Retire the credential at its upstream provider separately."),
         "rewrap" => format!("Rewrap the encryption key of {version} of {secret} in {environment} with the current KMS key? The value and version number do not change."),
-        _ => format!("Permanently destroy the retained encrypted value of {version} of {secret} in {environment}? Audit history remains."),
+        "destroy" => format!("Permanently destroy the retained encrypted value of {version} of {secret} in {environment}? Audit history remains; backup retention follows the recovery policy."),
+        _ => format!("Run {operation} on {version} of {secret} in {environment}?"),
     }
 }
 
@@ -195,7 +197,7 @@ pub(crate) async fn version_action(
     revision: Option<u64>,
     yes: bool,
 ) -> Result<()> {
-    super::auth::advanced::confirm_yes(yes, &version_prompt(operation, secret, version, environment))?;
+    super::auth::confirm_yes(yes, &version_prompt(operation, secret, version, environment))?;
     let client = crate::auth_store::authenticated_cloud_client()?;
     let environment_id = environment_id(&client, project, environment).await?;
     let secret_id = secret_id(&client, project, secret).await?;
@@ -263,7 +265,7 @@ pub(crate) async fn rotate(
     as_json: bool,
     yes: bool,
 ) -> Result<()> {
-    super::auth::advanced::confirm_yes(
+    super::auth::confirm_yes(
         yes,
         &format!("Save a new value for {secret} in {environment} and make it the active version? Bindings that follow the active version switch to it; explicit pins and running generations do not switch automatically."),
     )?;
@@ -308,7 +310,8 @@ pub(crate) async fn rotate(
         Ok(revision) => revision,
         Err(error) => bail!(
             "The candidate was saved as {label} ({candidate}), but it could not be activated: {error}\n\
-             Finish with: axiom secrets activate {secret} {label} --project {project} --environment {environment}"
+             Finish with: axiom secrets activate {secret} {label} --project {project} --environment {environment}{}",
+            if yes { " --yes" } else { "" }
         ),
     };
     if as_json {

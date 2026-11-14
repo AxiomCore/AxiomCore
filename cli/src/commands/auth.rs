@@ -15,8 +15,9 @@ use serde_json::{json, Map, Value};
 use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use zeroize::Zeroizing;
+pub(crate) use advanced::confirm_yes;
 
-pub(crate) mod advanced;
+mod advanced;
 mod config;
 mod emulate;
 mod policy;

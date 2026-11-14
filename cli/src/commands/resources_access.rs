@@ -435,7 +435,7 @@ pub async fn handle_grant(project: &str, select: &Select, input: &GrantInput<'_>
 pub async fn handle_revoke(project: &str, select: &Select, grant: &str, operation_id: Option<&str>, json: bool, yes: bool) -> Result<()> {
     uuid::Uuid::parse_str(grant).map_err(|_| anyhow!("The grant ID must be a UUID; `axiom project resources --project {project} grants` lists them."))?;
     let key = operation_key(operation_id)?;
-    super::auth::advanced::confirm_yes(
+    super::auth::confirm_yes(
         yes,
         &format!("Revoke database access grant {grant} in {project}? New credentials are refused at once; a credential already held keeps working for the engine's bound (SQLite: at most 15 minutes; PostgreSQL: open connections end within about 10 minutes)."),
     )?;

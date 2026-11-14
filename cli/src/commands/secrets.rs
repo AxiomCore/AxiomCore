@@ -126,6 +126,7 @@ pub enum Action {
         yes: bool,
     },
     /// Update an environment's status, protection or expiry from a private JSON file.
+    /// A status change (enable or disable) asks first, as the dashboard does.
     UpdateEnvironment {
         #[arg(long, help = PROJECT_HELP)]
         project: String,
@@ -133,6 +134,9 @@ pub enum Action {
         environment: String,
         #[arg(long)]
         file: PathBuf,
+        /// Confirm a status change without a prompt (required without a terminal)
+        #[arg(long)]
+        yes: bool,
     },
     /// List a secret's versions with the current revision and active version.
     Versions {
@@ -446,6 +450,7 @@ pub async fn handle(action: &Action) -> Result<()> {
             project,
             environment,
             file,
+            ..
         } => {
             let bytes = axiom_server::secret_runtime::read_private(
                 file.parent()
@@ -458,8 +463,20 @@ pub async fn handle(action: &Action) -> Result<()> {
                 bytes.len() <= 32768,
                 "AXSECRET_INVALID: metadata input exceeds bounds"
             );
-            let body = serde_json::from_slice(&bytes)
+            let body: serde_json::Value = serde_json::from_slice(&bytes)
                 .map_err(|_| anyhow::anyhow!("AXSECRET_INVALID: invalid reference metadata"))?;
+            if let Action::UpdateEnvironment { yes, .. } = action {
+                // The dashboard asks before enabling or disabling an environment.
+                let prompt = match body["status"].as_str() {
+                    Some("disabled") => Some(format!("Disable {environment}? Runtime consumption will be denied and affected leases invalidated. Values and audit history remain.")),
+                    Some("active") => Some(format!("Enable {environment}? Explicit grants and version pins still apply. Enabling does not restore revoked access.")),
+                    Some(status) => Some(format!("Set the status of {environment} to {status}?")),
+                    None => None,
+                };
+                if let Some(prompt) = prompt {
+                    super::auth::confirm_yes(*yes, &prompt)?;
+                }
+            }
             let environment = environment_id(project, environment).await?;
             let (part, method) = match action {
                 Action::Bind { .. } => ("secret-bindings", reqwest::Method::PUT),
@@ -511,11 +528,11 @@ pub async fn handle(action: &Action) -> Result<()> {
         } => {
             // The dashboard asks before both; a terminal prompts, otherwise --yes is required.
             let (part, operation, prompt) = if matches!(action, Action::DisableWorkload { .. }) {
-                ("secret-workloads", "disable", format!("Disable workload {id} in {environment}? It no longer receives secrets or new database credentials, and its Cloud leases are invalidated."))
+                ("secret-workloads", "disable", format!("Disable workload {id} in {environment}? It gets no new secrets or database credentials and its Cloud leases are invalidated. A database credential it already holds keeps working for the engine's bound (SQLite: at most 15 minutes; PostgreSQL: open connections end within about 10 minutes)."))
             } else {
                 ("secret-grants", "revoke", format!("Revoke grant {id} in {environment}? Affected Cloud leases are invalidated."))
             };
-            super::auth::advanced::confirm_yes(*yes, &prompt)?;
+            super::auth::confirm_yes(*yes, &prompt)?;
             let environment = environment_id(project, environment).await?;
             metadata(
                 project,

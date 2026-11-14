@@ -1,0 +1,267 @@
+---
+title: Contract release commands
+description: Reference for the axiom contract releases commands that list and inspect the hosted contract releases of a Cloud project, read their semantic analysis, compare releases, import a release from a URL and download a release artifact.
+pageType: reference
+---
+
+`axiom contract releases` does from the terminal what the dashboard's contract
+pages do: list the hosted releases of a Cloud project, show one release, read
+the semantic analysis the release worker stored for it (manifest, verification,
+semantic view, routes and models, endpoints and entities), compare a release
+with an earlier one, queue analysis of older releases, import a release from an
+HTTPS URL and download a release artifact. Each command calls the same Axiom
+Cloud endpoint as the dashboard. These commands need CLI 0.152.0 or later.
+
+These commands work on releases stored in Axiom Cloud. `axiom contract verify`,
+`axiom contract diff` and `axiom contract resolve` work on local lock files and
+are described in [Contract commands](/tooling/cli-contracts). To publish a new
+release from a local build, use `axiom release`.
+
+All of these commands need network access and a prior `axiom login`. Cloud
+projects are **Alpha** and require their configured services.
+
+## Project and output
+
+Three options apply to every command:
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--project` | slug, name or id | the project linked to this directory | Cloud project to act on. A name or id is resolved to the slug through `GET /api/v1/projects`. |
+| `--json` | flag | off | Print the server's reply as pretty JSON instead of plain lines. |
+| `--show-source-url` | flag | off | Show release source URLs in full. See [Source URLs](#source-urls). |
+
+`VERSION` is a release version such as `1.4.0`, or `latest` for the release
+currently active on the project's `latest` channel. The server looks releases
+up by version only; a contract id is not accepted in its place.
+
+Plain output shows at most 50 item lines per list and then says how many more
+there are; `--json` always prints the complete reply.
+
+### Source URLs
+
+A release imported from a URL keeps that URL as its source URL, and a URL can
+carry credentials (`https://user:password@host/...`) or a signed-URL token in
+its query. The commands therefore redact every `source_url` they print, in
+plain output and in `--json` output: the user name becomes `REDACTED`, the
+password and fragment are removed or replaced, and every query value becomes
+`REDACTED` (the parameter names stay). When a query parameter has no value, as
+with a bare token after `?`, the whole query becomes `REDACTED`. The path is
+shown as it is. A value that is not a URL is hidden completely. Pass `--show-source-url` to print the URL as the server returns it.
+
+Any project member can run the read commands. `import` and `backfill` need the
+**Owner** or **Maintainer** role; the server checks it.
+
+## Releases
+
+### axiom contract releases list
+
+List every hosted release of the project, one line each: version, signing
+status (`signed` or `unsigned`), creation time, size and source (`upload` or
+`url`).
+
+```text title="Usage"
+axiom contract releases list [--project PROJECT] [--json]
+```
+
+Calls `GET /api/v1/projects/{project_slug}/contracts`.
+
+### axiom contract releases show
+
+Show one release: id, version, creation time, size, SHA-256, signing key id,
+source and source URL. `signed` proves the artifact's provenance and integrity
+only; use `verification` for the semantic check.
+
+```text title="Usage"
+axiom contract releases show VERSION [--project PROJECT] [--json]
+```
+
+Calls `GET /api/v1/projects/{project_slug}/contracts/{version}`.
+
+### axiom contract releases import
+
+Import a contract artifact from a public HTTPS URL as a new release. The server
+fetches it (port 443, no redirects, at most 20 MB), stores it and signs it with
+the project key.
+
+```text title="Usage"
+axiom contract releases import [--url URL | --url-stdin | --url-file FILE] [--version VERSION] [--rebuild] [--project PROJECT] [--json]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--url` | HTTPS URL | none | Address of the `.axiom` artifact, as an argument. Use it only for a URL without credentials or a token. |
+| `--url-stdin` | flag | off | Read the URL from standard input. On a terminal, the CLI asks for it without echo instead. |
+| `--url-file` | path | none | Read the URL from this file. |
+| `--version` | version | the version inside the artifact | Release version to store. |
+| `--rebuild` | flag | off | When `--version` differs from the artifact's own version, rebuild the artifact with the new version instead of refusing. |
+
+Give at most one of `--url`, `--url-stdin` and `--url-file`. Command arguments
+are visible to other local processes and kept in shell history, so pass a URL
+that carries credentials or a signed token with `--url-stdin` or `--url-file`.
+Without any of the three, the CLI asks for the URL without echo on a terminal
+and fails otherwise.
+
+Calls `POST /api/v1/projects/{project_slug}/contracts/import` with
+`{"url", "version", "rebuild"}`; `version` is empty without `--version`.
+
+### axiom contract releases download
+
+Download a release artifact to a file. The command first reads the release
+record, downloads the artifact and checks its SHA-256 against the record; on a
+mismatch nothing is written. If the record has no valid SHA-256 (64 hex digits;
+some older uploads have none), the command refuses before downloading anything,
+unless you pass `--allow-unverified`. With that flag it writes the file and says
+that it was not checked; a SHA-256 that the record does carry is still checked.
+It never replaces an existing file unless you pass `--force`; with `--force` the new file is written
+next to the old one and renamed over it, so a failed download keeps the old
+file. It prints the size and SHA-256 of what it wrote.
+
+```text title="Usage"
+axiom contract releases download VERSION [--output FILE] [--force] [--allow-unverified] [--project PROJECT] [--json]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--output`, `-o` | path | `VERSION.axiom` in the current directory | File to write. With `latest`, the default name uses the resolved version. |
+| `--force` | flag | off | Replace the file if it exists. |
+| `--allow-unverified` | flag | off | Write the artifact even when the release record has no valid SHA-256 to check it against. A mismatching SHA-256 is still refused. |
+
+Calls `GET /api/v1/projects/{project_slug}/contracts/{version}` for the record,
+then `GET /api/v1/projects/{project_slug}/contracts/{version}/pull` for the
+artifact bytes.
+
+## Semantic analysis
+
+The release worker extracts the analysis of a signed release shortly after it
+is stored. Until it has, these commands fail with HTTP 409 and say so. Releases
+signed before analysis existed need `backfill` once.
+
+### axiom contract releases manifest
+
+Show the counts and hashes of the release's semantic manifest: endpoints
+(and how many stream), entities, schema hash, manifest hash, artifact SHA-256
+and the extractor version. `--json` includes the full manifest document.
+
+```text title="Usage"
+axiom contract releases manifest VERSION [--project PROJECT] [--json]
+```
+
+Calls `GET /api/v1/projects/{project_slug}/contracts/{version}/manifest`.
+
+### axiom contract releases verification
+
+Show the verification record: status, whether the signature verified, when
+and by which verifier version, the manifest hash and any failure code and
+message.
+
+```text title="Usage"
+axiom contract releases verification VERSION [--project PROJECT] [--json]
+```
+
+Calls `GET /api/v1/projects/{project_slug}/contracts/{version}/verification`.
+
+### axiom contract releases semantic-view
+
+Show the compact semantic view meant for agents and developer tools: service
+name, endpoint count, whether the signature verified, domain entity,
+relationship and invariant counts, and one line per endpoint.
+
+```text title="Usage"
+axiom contract releases semantic-view VERSION [--project PROJECT] [--json]
+```
+
+Calls `GET /api/v1/projects/{project_slug}/contracts/{version}/semantic-view`.
+
+### axiom contract releases semantic-items
+
+Show one page of the release's routes or models, with the total and the cursor
+of the next page.
+
+```text title="Usage"
+axiom contract releases semantic-items VERSION --kind KIND [--cursor N] [--limit N] [--project PROJECT] [--json]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--kind` | `routes` or `models` | required | Collection to page through. |
+| `--cursor` | integer | start | Start of the page: the `next_cursor` printed for the previous page. |
+| `--limit` | 1 to 100 | 50 | Items per page. |
+
+Calls `GET /api/v1/projects/{project_slug}/contracts/{version}/semantic-items?kind=KIND&limit=N[&cursor=N]`.
+
+### axiom contract releases endpoints
+
+List the endpoints declared by the release artifact: method, path, name, and
+whether authentication and validation are on.
+
+```text title="Usage"
+axiom contract releases endpoints VERSION [--project PROJECT] [--json]
+```
+
+Calls `GET /api/v1/projects/{project_slug}/contracts/{version}/endpoints`.
+
+### axiom contract releases entities
+
+List the entities (models) declared by the release artifact, with their kind
+and field count.
+
+```text title="Usage"
+axiom contract releases entities VERSION [--project PROJECT] [--json]
+```
+
+Calls `GET /api/v1/projects/{project_slug}/contracts/{version}/entities`.
+
+### axiom contract releases backfill
+
+Queue semantic analysis of a release that was signed before analysis existed
+(Owner or Maintainer). The command returns at once; the release worker does the
+work. It says whether the request was queued or already queued.
+
+```text title="Usage"
+axiom contract releases backfill VERSION [--project PROJECT] [--json]
+```
+
+Calls `POST /api/v1/projects/{project_slug}/contracts/{version}/semantic-backfill`
+with no body, like the dashboard.
+
+## Compare releases
+
+Both commands compare `VERSION` with an earlier release. Without `--against`
+they compare with `baseline` (nothing), as the dashboard does: an earlier
+release is never chosen implicitly, because an unverified or legacy upload
+must not look like a trustworthy comparison source, and a release that
+predates the semantic analysis would answer HTTP 409. Pass `--against` with an
+earlier release whose signature verified (see
+`axiom contract releases verification`).
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--against` | version or `baseline` | `baseline` | Earlier release to compare with. It must be older than `VERSION`. |
+
+### axiom contract releases diff
+
+Show the compatibility summary: from and to versions, compatibility and
+status, the number of breaking, risky and compatible changes, whether any change
+is breaking, and the first ordered changes (severity, operation, path,
+summary). The server always returns this bounded summary; the complete,
+cursor-paged change evidence is in the native contract review (pull requests).
+
+```text title="Usage"
+axiom contract releases diff VERSION [--against VERSION] [--project PROJECT] [--json]
+```
+
+Calls `GET /api/v1/projects/{project_slug}/contracts/{version}/diff?against=VERSION&summary=true`,
+like the dashboard.
+
+### axiom contract releases impact
+
+Show who and what a change affects: affected routes, observed consumers and
+event counts from telemetry of the earlier release, and the domain entities,
+relationships, invariants and endpoints on the dependency path. No observed
+consumers means there is no telemetry, not that the change is safe.
+
+```text title="Usage"
+axiom contract releases impact VERSION [--against VERSION] [--project PROJECT] [--json]
+```
+
+Calls `GET /api/v1/projects/{project_slug}/contracts/{version}/impact?against=VERSION`.

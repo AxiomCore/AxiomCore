@@ -52,9 +52,10 @@ candidates without adding those requirements and testing their enforcement.
 
 ## Prerequisites
 
-- [Axiom CLI 0.149.1](/getting-started/installation) on macOS arm64.
-- Web UI host 0.6.12:
-  `axiom ui host install --target web --version 0.6.12 --non-interactive`.
+- [Axiom CLI 0.151.0](/getting-started/installation) on macOS arm64.
+- Web UI host 0.8.0:
+  `axiom ui host install --target web --version 0.8.0 --non-interactive`.
+  With CLI 0.149.1, use host 0.6.12.
 - `git`, a browser and two terminals, with ports 8082 and 5174 free.
 
 No PostgreSQL server or extractor is needed.
@@ -295,7 +296,7 @@ prove it.
 | Symptom | Check |
 | --- | --- |
 | Questions do not load | Backend process, key, the manifest's `baseUrl`, and the allowed frontend origin |
-| Incompatible host | Install web UI host 0.6.12 |
+| Incompatible host | Install the web UI host for your CLI: 0.8.0 for CLI 0.151.0, 0.6.12 for CLI 0.149.1 |
 | Attempt already submitted | Use a new ID; a duplicate never creates another row |
 | UI no longer compiles after a backend edit | Rebuild the backend entry file; check the selected operations and projections |
 

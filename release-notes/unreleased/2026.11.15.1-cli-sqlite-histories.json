@@ -1,0 +1,6 @@
+{
+  "component": "cli",
+  "type": "breaking",
+  "summary": "SQLite captures that add a table keep the database's unrelated indexes, and CLI 0.152.0 validates stored histories with the matching index rendering. CLI 0.152.0 reads histories written by older releases, but CLI 0.151.0 and older, and fleet runners built from them, reject SQLite histories written by 0.152.0 or by the current capture executor with ADB734.",
+  "migration": "Upgrade every CLI and fleet runner that plans, applies or signs a project's SQLite migrations to 0.152.0 together, before anyone plans with 0.152.0."
+}

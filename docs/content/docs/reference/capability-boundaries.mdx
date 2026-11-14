@@ -302,39 +302,41 @@ For managed project databases, you select SQLite or PostgreSQL; allocation
 depends on location, capacity, and entitlement.
 [Hosted migrations](/cloud/hosted-migrations) for managed SQLite and
 PostgreSQL are **Alpha**, checked on October 20, 2026 with a source build of
-the CLI; a released CLI with those commands is **Coming soon**. On managed
+the CLI; the commands need CLI 0.151.0 or later. On managed
 SQLite, a change to an existing table's columns or constraints is refused
 (`ADB1132`). [Hosted runtime connections](/cloud/connect-a-server) from Cloud Run servers
 to managed SQLite and PostgreSQL are **Alpha**, checked on October 24 and 25,
-2026 with source builds of the CLI and runtime; a released CLI with those
-commands is **Coming soon**. Managed PostgreSQL schemas support no row-level
+2026 with source builds of the CLI and runtime; the commands need CLI
+0.151.0 or later. Managed PostgreSQL schemas support no row-level
 security policy yet; tenant isolation comes from the runtime's tenant filter.
 [Managed application authentication](/authentication) (signup, password
 sign-in, sessions, token exchange, roles and permissions) is **Alpha**,
 checked on October 25, 2026 on managed SQLite and PostgreSQL. Verifying its
-tokens in a deployed Axiom server (`axiomAuth`) needs a CLI and runtime
-release; a released CLI with these commands is **Coming soon**. Dashboard
-pages for administering authentication are **Coming soon**.
+tokens in a deployed Axiom server (`axiomAuth`) needs a runtime release and
+is **Coming soon**. The `axiom auth` commands need CLI 0.151.0 or later, and
+the Dashboard **Authentication** page administers authentication.
 Axiom Cloud signup is invite-only, so these **Alpha** capabilities are
 available to invited accounts. Advanced authentication, preview branches,
-SQLite to PostgreSQL conversion, database moves and your own Turso database are
+SQLite to PostgreSQL conversion, database moves and your own Turso database
+each have their own status, from **Alpha** for selected projects to
 **Coming soon**; see the
 [support matrix](/introduction/support-matrix#advanced-authentication-and-placement).
 Public paid checkout is **Coming soon**. The
-new resource-management CLI commands are source-only.
+`axiom project resources` commands need CLI 0.151.0 or later.
 
 ### Project secrets
 
 - **Management (Alpha):** deployed write-only environment, version, binding,
-  grant, and audit views.
+  grant, and audit views in the Cloud Dashboard. The `axiom secrets` commands
+  in CLI 0.151.0 and later are **Experimental**.
 - **Protected consumption (Experimental):** the matching source preview
   qualifies macOS arm64 native ActionHost and server WASM. The source web
   frontend delegates to backend operations.
-- **Not qualified:** published CLI 0.149.0 and 0.149.1, host 0.6.12, mounted
-  mobile, containers, and Workers.
+- **Not qualified:** published CLI 0.149.0, 0.149.1 and 0.151.0, hosts 0.6.12
+  and 0.8.0, mounted mobile, containers, and Workers.
 
 See [Secrets at runtime](/backend/runtime-secrets), [Cloud secrets](/cloud/secrets),
-and the [Secrets commands (source preview)](/tooling/secrets-cli).
+and the [Secrets commands](/tooling/secrets-cli).
 
 ## Database developer workflow
 

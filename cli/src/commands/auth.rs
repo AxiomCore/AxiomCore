@@ -15,17 +15,27 @@ use serde_json::{json, Map, Value};
 use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use zeroize::Zeroizing;
+pub(crate) use advanced::{confirm_yes, require_yes_or_terminal};
 
 mod advanced;
 mod config;
+mod email;
 mod emulate;
+mod orgs;
 mod policy;
+mod rbac;
+mod users_admin;
 
 #[derive(Args, Debug)]
 pub struct AuthArgs {
-    /// Cloud project slug (default: the project linked to this directory)
+    /// Cloud project slug, name or id (default: the project linked to this directory)
     #[arg(long, global = true)]
     pub project: Option<String>,
+    /// Organization of a `--project` outside your current organization. The project list
+    /// covers only the current organization, so with `--org` the `--project` value must
+    /// be the project's exact slug
+    #[arg(long, global = true, value_name = "ORGANIZATION_SLUG")]
+    pub org: Option<String>,
     /// Environment name or UUID
     #[arg(long, global = true, default_value = "development")]
     pub environment: String,
@@ -40,6 +50,16 @@ pub struct AuthArgs {
 pub enum Action {
     /// Show whether authentication is enabled and ready, and the issuer epoch
     Status,
+    /// Turn authentication on: creates the environment's first signing key and installs the
+    /// authentication tables in its database, then prints the status
+    Enable,
+    /// Turn authentication off: signup, sign-in, token exchange and refresh are refused until it
+    /// is turned on again (users, sessions and settings are kept)
+    Disable {
+        /// Confirm without a prompt (required without a terminal)
+        #[arg(long)]
+        yes: bool,
+    },
     /// Read or replace the environment's authentication settings
     Settings {
         #[command(subcommand)]
@@ -117,6 +137,51 @@ pub enum Action {
         #[command(subcommand)]
         action: advanced::SmsAction,
     },
+    /// Roles and the permissions each role grants
+    Roles {
+        #[command(subcommand)]
+        action: rbac::RolesAction,
+    },
+    /// Permission keys that roles grant
+    Permissions {
+        #[command(subcommand)]
+        action: rbac::PermissionsAction,
+    },
+    /// Role assignments of users (environment-wide or in an organization)
+    Assignments {
+        #[command(subcommand)]
+        action: rbac::AssignmentsAction,
+    },
+    /// Organizations and their members
+    Organizations {
+        #[command(subcommand)]
+        action: orgs::OrganizationsAction,
+    },
+    /// Pending, accepted and revoked invitations
+    Invitations {
+        #[command(subcommand)]
+        action: orgs::InvitationsAction,
+    },
+    /// The authentication audit trail
+    Events {
+        #[command(subcommand)]
+        action: users_admin::EventsAction,
+    },
+    /// Email delivery usage and suppressed addresses
+    Email {
+        #[command(subcommand)]
+        action: email::EmailAction,
+    },
+    /// Custom SMTP server for authentication email (Owner)
+    Smtp {
+        #[command(subcommand)]
+        action: email::SmtpAction,
+    },
+    /// Authentication email templates
+    Templates {
+        #[command(subcommand)]
+        action: email::TemplatesAction,
+    },
     /// Local auth emulation: a loopback issuer on a disposable SQLite store with the hosted
     /// auth stream, a mail viewer and a mock OIDC issuer (no network, no hosted database)
     Emulate(emulate::EmulateArgs),
@@ -188,6 +253,14 @@ pub enum ProvidersAction {
     },
     /// Check the provider's credentials without signing anyone in
     Test { provider: String },
+    /// Delete a disabled provider's configuration and client secret; users keep their accounts
+    Remove {
+        /// `google`, `github`, `microsoft`, `apple`, `oidc-<slug>` or the provider's UUID
+        provider: String,
+        /// Delete without asking for confirmation
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -243,6 +316,8 @@ pub enum UsersAction {
         #[arg(long)]
         yes: bool,
     },
+    #[command(flatten)]
+    Admin(users_admin::UsersAdminAction),
 }
 
 #[derive(Subcommand, Debug)]
@@ -294,15 +369,25 @@ fn admin(error: AuthAdminError) -> anyhow::Error {
 pub async fn handle(args: &AuthArgs) -> Result<()> {
     match run(args).await {
         Ok(()) => Ok(()),
-        Err(error) => {
-            let (code, message) = match error.downcast_ref::<Exit>() {
-                Some(exit) => (exit.code, exit.message.clone()),
-                None => (5, format!("{error:#}")),
-            };
-            eprintln!("axiom auth: {message}");
-            std::process::exit(code)
-        }
+        Err(error) => exit_on(error),
     }
+}
+
+/// The checks of `preflight`, run by `main` before the access gate (which can register
+/// this machine with Cloud) and before any request; failures exit with the documented code.
+pub fn preflight_or_exit(args: &AuthArgs) {
+    if let Err(error) = preflight(args) {
+        exit_on(error)
+    }
+}
+
+fn exit_on(error: anyhow::Error) -> ! {
+    let (code, message) = match error.downcast_ref::<Exit>() {
+        Some(exit) => (exit.code, exit.message.clone()),
+        None => (5, format!("{error:#}")),
+    };
+    eprintln!("axiom auth: {message}");
+    std::process::exit(code)
 }
 
 struct Target {
@@ -323,15 +408,28 @@ fn uuid_shaped(value: &str) -> bool {
 }
 
 async fn target(args: &AuthArgs) -> Result<Target> {
+    let mut target = project_target(args).await?;
+    target.environment = resolve_environment(&target.client, &target.slug, &args.environment).await?;
+    Ok(target)
+}
+
+/// The signed-in client and project slug only, for project-wide routes such as policy
+/// releases (`environment` is left empty and never sent).
+async fn project_target(args: &AuthArgs) -> Result<Target> {
     let client = crate::auth_store::authenticated_cloud_client()
         .map_err(|_| Exit { code: 3, message: "AXAUTH_UNAUTHENTICATED: run `axiom login` first".into() })?;
-    let slug = match &args.project {
-        Some(slug) => slug.clone(),
-        None => {
+    let unavailable = || Exit { code: 5, message: "AXAUTH_UNAVAILABLE: could not list projects".into() };
+    let slug = match (&args.project, &args.org) {
+        (None, Some(_)) => return Err(usage("--org needs --project <project-slug>")),
+        (Some(given), Some(org)) => project_in_org(&client, given, org).await?,
+        // Slugs, ids and display names all go through the project list, so a lowercase
+        // name is never mistaken for a slug and an ambiguous name always exits 2.
+        (Some(given), None) => pick_project(&client.list_projects().await.map_err(|_| unavailable())?, given)?,
+        (None, None) => {
             let directory = std::env::current_dir()?;
             let linked = crate::auth_store::get_project_id(&directory)?
                 .ok_or_else(|| usage("no project: pass --project <slug> or link this directory with `axiom project link`"))?;
-            let projects = client.list_projects().await.map_err(|_| Exit { code: 5, message: "AXAUTH_UNAVAILABLE: could not list projects".into() })?;
+            let projects = client.list_projects().await.map_err(|_| unavailable())?;
             projects
                 .into_iter()
                 .find(|p| p.id == linked || p.slug == linked)
@@ -339,8 +437,58 @@ async fn target(args: &AuthArgs) -> Result<Target> {
                 .ok_or_else(|| usage("the linked project is not available; pass --project <slug>"))?
         }
     };
-    let environment = resolve_environment(&client, &slug, &args.environment).await?;
-    Ok(Target { client, slug, environment })
+    Ok(Target { client, slug, environment: String::new() })
+}
+
+/// `--project` given as a slug, an id or a display name. A value is a slug or id only if a
+/// listed project has it; otherwise it is a display name (case-insensitive), which must
+/// name exactly one project. Unknown and ambiguous values are usage errors (exit 2).
+pub fn pick_project(projects: &[axiom_cloud::project::Project], given: &str) -> Result<String> {
+    if let Some(p) = projects.iter().find(|p| p.slug == given).or_else(|| projects.iter().find(|p| p.id.eq_ignore_ascii_case(given))) {
+        return Ok(p.slug.clone());
+    }
+    let named: Vec<_> = projects.iter().filter(|p| p.name.eq_ignore_ascii_case(given.trim())).collect();
+    match named.as_slice() {
+        [p] => Ok(p.slug.clone()),
+        [] => Err(usage(format!(
+            "no project with the slug, id or name `{given}` in your current organization (see `axiom project list`); for a project in another organization pass --org <organization-slug> with the project's exact slug"
+        ))),
+        _ => Err(usage(format!("more than one project is named `{given}`; pass its slug"))),
+    }
+}
+
+/// `--project <slug> --org <organization>`: a project outside the current organization.
+/// The Cloud API lists projects of the current organization only and has no list per
+/// organization, so the value must be the project's exact slug (slugs are unique across
+/// Axiom); `GET /api/v1/projects/<slug>` confirms it exists and that you may use it.
+/// Names and ids are not resolved here. The API does not say which organization a
+/// project belongs to, so `--org` cannot be checked against it.
+async fn project_in_org(client: &CloudClient, given: &str, org: &str) -> Result<String> {
+    check_org_flags(Some(given), org)?;
+    match client.project_auth_request(Method::GET, given, "", None, None).await {
+        Ok(project) if project["slug"].as_str() == Some(given) => Ok(given.to_string()),
+        // The project route answers 403 both for a project that does not exist and for
+        // one you are not a member of; 401 (after a refresh) means signed out.
+        Err(AuthAdminError::Forbidden { status: 401, .. }) => Err(Exit { code: 3, message: "AXAUTH_UNAUTHENTICATED: run `axiom login` first".into() }.into()),
+        Ok(_) | Err(AuthAdminError::Forbidden { .. } | AuthAdminError::Invalid { .. }) => Err(usage(format!(
+            "no project with the slug `{given}` that you can use (looked it up for organization `{org}`; with --org, --project must be the project's exact slug)"
+        ))),
+        Err(error) => Err(admin(error)),
+    }
+}
+
+/// The backend's slug patterns: projects `^[a-z0-9]+(?:-[a-z0-9]+)*$`, organizations
+/// (workspaces) `^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$`.
+fn project_slug_shaped(value: &str) -> bool {
+    value.len() <= 255 && !value.is_empty() && value.split('-').all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()))
+}
+
+fn org_slug_shaped(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    (3..=63).contains(&bytes.len())
+        && bytes.iter().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'-')
+        && bytes[0] != b'-'
+        && bytes[bytes.len() - 1] != b'-'
 }
 
 /// A name resolves through `configuration-environments`; a UUID passes through.
@@ -364,10 +512,12 @@ pub fn pick_environment(environments: &[Value], name: &str) -> Result<String> {
 
 impl Target {
     async fn call(&self, method: Method, rest: &str, query: &[(&str, String)], body: Option<&Value>) -> Result<Value> {
-        self.client
-            .auth_admin_request(method, &self.slug, &self.environment, rest, query, body)
-            .await
-            .map_err(admin)
+        self.call_raw(method, rest, query, body).await.map_err(admin)
+    }
+
+    /// `call` without the exit-code mapping, for commands that word some refusals themselves.
+    async fn call_raw(&self, method: Method, rest: &str, query: &[(&str, String)], body: Option<&Value>) -> std::result::Result<Value, AuthAdminError> {
+        self.client.auth_admin_request(method, &self.slug, &self.environment, rest, query, body).await
     }
 }
 
@@ -430,7 +580,73 @@ fn text(value: &Value, key: &str) -> String {
     }
 }
 
+/// Refusal of a confirmation that cannot be asked: there is no terminal and no `--yes`.
+pub(crate) const NEEDS_YES: &str = "pass --yes to confirm without a prompt";
+
+/// `Some(yes)` for a command that asks before it changes or removes something
+/// (`yes` is its `--yes`); `None` for every other command.
+fn confirmation(action: &Action) -> Option<bool> {
+    use advanced::{HooksAction, SmsAction, TrustedIssuersAction, WebhooksAction};
+    use email::{EmailAction, SmtpAction, TemplatesAction};
+    use orgs::{InvitationsAction, OrganizationsAction};
+    use rbac::{AssignmentsAction, PermissionsAction, RolesAction};
+    use users_admin::UsersAdminAction;
+    let yes = match action {
+        Action::Providers { action: ProvidersAction::Remove { yes, .. } }
+        | Action::Users { action: UsersAction::ResetFactors { yes, .. } | UsersAction::RevokeConsent { yes, .. } | UsersAction::Revoke { yes, .. } }
+        | Action::Users { action: UsersAction::Admin(UsersAdminAction::Delete { yes, .. } | UsersAdminAction::RemoveFactor { yes, .. }) }
+        | Action::Organizations { action: OrganizationsAction::RemoveMember { yes, .. } }
+        | Action::Invitations { action: InvitationsAction::Revoke { yes, .. } }
+        | Action::Roles { action: RolesAction::Delete { yes, .. } }
+        | Action::Permissions { action: PermissionsAction::Delete { yes, .. } }
+        | Action::Assignments { action: AssignmentsAction::Remove { yes, .. } }
+        | Action::Email { action: EmailAction::Unsuppress { yes, .. } }
+        | Action::Smtp { action: SmtpAction::Remove { yes } }
+        | Action::Templates { action: TemplatesAction::Reset { yes, .. } }
+        | Action::TrustedIssuers { action: TrustedIssuersAction::Remove { yes, .. } }
+        | Action::Webhooks { action: WebhooksAction::Delete { yes, .. } }
+        | Action::Hooks { action: HooksAction::Remove { yes, .. } }
+        | Action::Sms { action: SmsAction::Remove { yes, .. } } => yes,
+        // Suspending asks; reactivating does not.
+        Action::Organizations { action: OrganizationsAction::Update { status, yes, .. } | OrganizationsAction::AddMember { status, yes, .. } } if status == "suspended" => yes,
+        _ => return None,
+    };
+    Some(*yes)
+}
+
+/// Before signing in, resolving the project or sending anything: a confirmation that
+/// cannot be asked is refused (exit 2), as is an OAuth client delete without its
+/// typed `--confirm` phrase. The terminal prompt itself comes later, next to the change.
+fn preflight(args: &AuthArgs) -> Result<()> {
+    let action = &args.action;
+    if confirmation(action) == Some(false) && !std::io::stdin().is_terminal() {
+        return Err(usage(NEEDS_YES));
+    }
+    if let Action::OauthApps { action: advanced::OauthAppsAction::Delete { id, confirm } } = action {
+        advanced::delete_client_phrase(id, confirm.as_deref())?;
+    }
+    if let Some(org) = &args.org {
+        check_org_flags(args.project.as_deref(), org)?;
+    }
+    Ok(())
+}
+
+/// `--org` needs `--project` with the project's exact slug, and an organization slug.
+fn check_org_flags(project: Option<&str>, org: &str) -> Result<()> {
+    let Some(given) = project else {
+        return Err(usage("--org needs --project <project-slug>"));
+    };
+    if !org_slug_shaped(org) {
+        return Err(usage(format!("--org `{org}` is not an organization slug")));
+    }
+    if !project_slug_shaped(given) {
+        return Err(usage(format!("with --org, --project must be the project's exact slug; `{given}` is not a slug")));
+    }
+    Ok(())
+}
+
 async fn run(args: &AuthArgs) -> Result<()> {
+    preflight(args)?;
     match &args.action {
         Action::Jwks { issuer, check } => jwks(args, issuer.as_deref(), *check).await,
         Action::Check { manifest, deployment, backend } => check(args, manifest, deployment.as_deref(), backend.as_deref()).await,
@@ -440,32 +656,11 @@ async fn run(args: &AuthArgs) -> Result<()> {
         Action::Emulate(emulate) => emulate::run(args, emulate).await,
         Action::Status => {
             let target = target(args).await?;
-            let mut overview = target.call(Method::GET, "overview", &[], None).await?;
-            sanitize(&mut overview, false);
-            let epoch = match overview["issuer"].as_str() {
-                Some(issuer) if valid_issuer(issuer) => public_issuer_get(issuer, "/epoch").await.ok(),
-                _ => None,
-            };
-            let report = json!({
-                "enabled": overview["enabled"],
-                "auth_status": overview["auth_status"],
-                "stream_version": overview["stream_version"],
-                "upgrade_pending": overview["upgrade_pending"],
-                "issuer": overview["issuer"],
-                "users_count": overview["users_count"],
-                "viewer": overview["viewer"],
-                "epoch": epoch,
-            });
-            print(args, &report, |r| {
-                vec![
-                    format!("Authentication: {} ({})", if r["enabled"] == true { "enabled" } else { "disabled" }, text(r, "auth_status")),
-                    format!("Stream version: {}{}", text(r, "stream_version"), if r["upgrade_pending"] == true { " (upgrade pending)" } else { "" }),
-                    format!("Issuer: {}", text(r, "issuer")),
-                    format!("Users: {}", text(r, "users_count")),
-                    format!("Epoch: {}", r["epoch"]["epoch"].as_i64().map_or("unavailable".to_string(), |e| format!("{e} (keys_rev {})", r["epoch"]["keys_rev"]))),
-                ]
-            })
+            let report = status_report(&target).await?;
+            print(args, &report, status_lines)
         }
+        Action::Enable => set_enabled(args, true, false).await,
+        Action::Disable { yes } => set_enabled(args, false, *yes).await,
         Action::Settings { action: SettingsAction::Get { output } } => {
             let target = target(args).await?;
             let mut settings = target.call(Method::GET, "settings", &[], None).await?;
@@ -505,7 +700,17 @@ async fn run(args: &AuthArgs) -> Result<()> {
         Action::Users { action: UsersAction::ResetFactors { user_id, reason, yes } } => advanced::reset_factors(args, user_id, reason, *yes).await,
         Action::Users { action: UsersAction::Consents { user_id } } => advanced::user_consents(args, user_id).await,
         Action::Users { action: UsersAction::RevokeConsent { user_id, consent_id, yes } } => advanced::revoke_consent(args, user_id, consent_id, *yes).await,
+        Action::Users { action: UsersAction::Admin(action) } => users_admin::users(args, action).await,
         Action::Users { action } => users(args, action).await,
+        Action::Roles { action } => rbac::roles(args, action).await,
+        Action::Permissions { action } => rbac::permissions(args, action).await,
+        Action::Assignments { action } => rbac::assignments(args, action).await,
+        Action::Organizations { action } => orgs::organizations(args, action).await,
+        Action::Invitations { action } => orgs::invitations(args, action).await,
+        Action::Events { action } => users_admin::events(args, action).await,
+        Action::Email { action } => email::email(args, action).await,
+        Action::Smtp { action } => email::smtp(args, action).await,
+        Action::Templates { action } => email::templates(args, action).await,
         Action::OauthApps { action } => advanced::oauth_apps(args, action).await,
         Action::Oidc { action } => advanced::oidc(args, action).await,
         Action::TrustedIssuers { action } => advanced::trusted_issuers(args, action).await,
@@ -546,6 +751,124 @@ async fn run(args: &AuthArgs) -> Result<()> {
             print(args, &invitation, |i| vec![format!("Invitation {} sent to {} ({}), expires {}.", text(i, "id"), text(i, "email"), text(i, "delivery_state"), text(i, "expires_at"))])
         }
     }
+}
+
+/// The overview `axiom auth status` prints (the epoch is read from the public issuer).
+async fn status_report(target: &Target) -> Result<Value> {
+    let mut overview = target.call(Method::GET, "overview", &[], None).await?;
+    sanitize(&mut overview, false);
+    let epoch = match overview["issuer"].as_str() {
+        Some(issuer) if valid_issuer(issuer) => public_issuer_get(issuer, "/epoch").await.ok(),
+        _ => None,
+    };
+    Ok(json!({
+        "enabled": overview["enabled"],
+        "auth_status": overview["auth_status"],
+        "stream_version": overview["stream_version"],
+        "upgrade_pending": overview["upgrade_pending"],
+        "issuer": overview["issuer"],
+        "users_count": overview["users_count"],
+        "viewer": overview["viewer"],
+        "epoch": epoch,
+    }))
+}
+
+fn status_lines(r: &Value) -> Vec<String> {
+    vec![
+        format!("Authentication: {} ({})", if r["enabled"] == true { "enabled" } else { "disabled" }, text(r, "auth_status")),
+        format!("Stream version: {}{}", text(r, "stream_version"), if r["upgrade_pending"] == true { " (upgrade pending)" } else { "" }),
+        format!("Issuer: {}", text(r, "issuer")),
+        format!("Users: {}", text(r, "users_count")),
+        format!("Epoch: {}", r["epoch"]["epoch"].as_i64().map_or("unavailable".to_string(), |e| format!("{e} (keys_rev {})", r["epoch"]["keys_rev"]))),
+    ]
+}
+
+/// `Some(yes)` for a command of this file that asks before it changes anything and whose
+/// question `main` checks before registration or any request: `disable`, and an `mfa set`
+/// that changes the policy, factors or reauthentication window. `None` otherwise.
+pub fn asks_first(args: &AuthArgs) -> Option<bool> {
+    match &args.action {
+        Action::Disable { yes } => Some(*yes),
+        Action::Mfa { action: advanced::MfaAction::Set { policy, factors, step_up_minutes, yes, .. } }
+            if policy.is_some() || !factors.is_empty() || step_up_minutes.is_some() =>
+        {
+            Some(*yes)
+        }
+        _ => None,
+    }
+}
+
+/// `enable` and `disable`: the dashboard's toggle, a settings write of `enabled` only.
+async fn set_enabled(args: &AuthArgs, enabled: bool, yes: bool) -> Result<()> {
+    let environment = &args.environment;
+    // Turning off asks before sign-in, the project lookup or the settings read, so a refusal
+    // sends nothing. It asks even when authentication may turn out to be off already.
+    if !enabled && !yes {
+        advanced::require_yes_or_terminal(yes)?;
+        eprintln!("While it is off, signup, sign-in, token exchange and refresh are refused. Logout still works. Access tokens already issued stay valid until they expire (at most 15 minutes). Users, sessions and settings are kept.");
+        if !dialoguer::Confirm::new().with_prompt(format!("Turn off authentication in {environment}?")).default(false).interact()? {
+            return Err(usage("cancelled"));
+        }
+    }
+    let target = target(args).await?;
+    let current = target.call(Method::GET, "settings", &[], None).await?;
+    let word = if enabled { "on" } else { "off" };
+    if current["enabled"] == enabled {
+        let report = json!({"enabled": enabled, "changed": false, "status": status_report(&target).await?});
+        return print(args, &report, |r| {
+            let mut lines = vec![format!("Authentication is already {word} in {environment}; nothing changed.")];
+            lines.extend(status_lines(&r["status"]));
+            lines
+        });
+    }
+    if enabled && !args.json {
+        let signup = match current["signup_policy"].as_str() {
+            Some("open") => "Open",
+            Some("invite_only") => "Invite only",
+            _ => "Closed",
+        };
+        eprintln!(
+            "Turning on authentication in {environment}. This creates the environment's first signing key and installs the authentication tables in this environment's database. Users can then sign in with the enabled methods. Signup stays {signup} until you change it with `axiom auth settings set`."
+        );
+    }
+    let body = settings_put_body(&current, &json!({"enabled": enabled}));
+    let saved = target.call(Method::PUT, "settings", &[], Some(&body)).await?;
+    // The change is saved; like the dashboard, a failed re-read does not turn it into a failure.
+    let status = match status_report(&target).await {
+        Ok(status) => status,
+        Err(error) => {
+            eprintln!("axiom auth: the change is saved, but the status could not be read ({error:#}); run `axiom auth status`");
+            Value::Null
+        }
+    };
+    let report = json!({"enabled": enabled, "changed": true, "revision": saved["revision"], "status": status});
+    print(args, &report, |r| {
+        let mut lines = vec![if enabled { "Authentication is turned on. Setup continues in the background.".to_string() } else { "Authentication is turned off.".to_string() }];
+        if !r["status"].is_null() {
+            lines.extend(status_lines(&r["status"]));
+        }
+        lines
+    })
+}
+
+/// Fields `PUT settings` accepts, as the dashboard's `settingsBody` sends them
+/// (auth-admin-client.js `SETTINGS_INPUT` and `SETTINGS_W8_INPUT`, `revision` included).
+pub const SETTINGS_INPUT: [&str; 28] = [
+    "enabled", "signup_policy", "access_ttl_seconds", "session_absolute_seconds", "session_idle_seconds", "audiences", "allowed_origins",
+    "enabled_methods", "require_verified_email", "password_min_length", "redirect_urls", "logout_urls", "default_redirect_url", "email_sender",
+    "email_from_name", "app_name", "invitation_ttl_seconds", "captcha", "turnstile_site_key", "rate_limits", "revision",
+    "mfa_policy", "mfa_factors", "step_up_seconds", "webauthn_rp_id", "webauthn_rp_name", "webauthn_origins", "policy_mode",
+];
+
+/// The PUT body of a settings change: the accepted keys of `{...current, ...changes}`
+/// (the dashboard's `settingsBody`). Read-only fields of the GET view are never sent back.
+pub fn settings_put_body(current: &Value, changes: &Value) -> Value {
+    let mut merged = current.as_object().cloned().unwrap_or_default();
+    for (key, value) in changes.as_object().into_iter().flatten() {
+        merged.insert(key.clone(), value.clone());
+    }
+    let body = SETTINGS_INPUT.iter().filter_map(|key| merged.get(*key).map(|value| (key.to_string(), value.clone()))).collect::<Map<_, _>>();
+    Value::Object(body)
 }
 
 /// Fields `GET settings` returns that `PUT settings` does not accept.
@@ -589,6 +912,11 @@ pub fn settings_body(file: &Path) -> Result<Value> {
     if let Value::Object(map) = &mut body {
         for key in READ_ONLY_SETTINGS {
             map.remove(key);
+        }
+        // GET reports when factors were last reset; PUT accepts only "now" (the incident
+        // reset), so the timestamp of a `settings get` file is not sent back.
+        if map.get("factor_reset_at").is_some_and(|v| v.as_str() != Some("now")) {
+            map.remove("factor_reset_at");
         }
     }
     Ok(body)
@@ -645,7 +973,16 @@ fn read_secret(stdin: bool) -> Result<Zeroizing<String>> {
 }
 
 async fn providers(args: &AuthArgs, action: &ProvidersAction) -> Result<()> {
+    if let ProvidersAction::Remove { provider, .. } = action {
+        if !uuid_shaped(provider) {
+            provider_selector(provider)?;
+        }
+    }
     let target = target(args).await?;
+    providers_with(args, &target, action).await
+}
+
+async fn providers_with(args: &AuthArgs, target: &Target, action: &ProvidersAction) -> Result<()> {
     match action {
         ProvidersAction::List => {
             let mut listed = target.call(Method::GET, "providers", &[], None).await?;
@@ -785,6 +1122,23 @@ async fn providers(args: &AuthArgs, action: &ProvidersAction) -> Result<()> {
                 }]
             })
         }
+        ProvidersAction::Remove { provider, yes } => {
+            let listed = target.call(Method::GET, "providers", &[], None).await?;
+            let found = if uuid_shaped(provider) {
+                listed["providers"].as_array().into_iter().flatten().find(|p| p["id"].as_str() == Some(provider.as_str()))
+            } else {
+                let (kind, slug) = provider_selector(provider)?;
+                find_provider(&listed, kind, slug.as_deref())
+            };
+            let found = found.ok_or_else(|| usage(format!("provider {provider} is not configured")))?;
+            if found["enabled"] == true {
+                return Err(Exit { code: 4, message: format!("AXAUTH_CONFLICT: provider {provider} is enabled; disable it first with `axiom auth providers set {provider} --disable`") }.into());
+            }
+            let id = checked_id(found["id"].as_str().unwrap_or_default())?.to_string();
+            advanced::confirm_yes(*yes, &format!("Delete provider {provider}? Its configuration and client secret are removed; users who signed in with it keep their accounts."))?;
+            target.call(Method::DELETE, &format!("providers/{id}"), &[], None).await?;
+            print(args, &json!({"deleted": id, "provider": provider}), |_| vec![format!("Provider {provider} deleted.")])
+        }
     }
 }
 
@@ -880,12 +1234,12 @@ async fn users(args: &AuthArgs, action: &UsersAction) -> Result<()> {
             sanitize(&mut user, false);
             print(args, &user, |u| vec![format!("Unbanned {}.", text(u, "id"))])
         }
-        UsersAction::Factors { .. } | UsersAction::ResetFactors { .. } | UsersAction::Consents { .. } | UsersAction::RevokeConsent { .. } => unreachable!("dispatched in run"),
+        UsersAction::Factors { .. } | UsersAction::ResetFactors { .. } | UsersAction::Consents { .. } | UsersAction::RevokeConsent { .. } | UsersAction::Admin(..) => unreachable!("dispatched in run"),
         UsersAction::Revoke { user_id, session, yes } => {
             let user_id = checked_id(user_id)?;
             if !yes {
                 if !std::io::stdin().is_terminal() {
-                    return Err(usage("pass --yes to revoke without a prompt"));
+                    return Err(usage(NEEDS_YES));
                 }
                 let what = session.as_ref().map_or("every session".to_string(), |s| format!("session {s}"));
                 if !dialoguer::Confirm::new().with_prompt(format!("End {what} of user {user_id}?")).default(false).interact()? {
@@ -1224,7 +1578,7 @@ mod tests {
         assert!(arguments.contains(&"client-secret-stdin".to_string()));
         // Secret input is stdin or a file; one-time secrets go to a file; the rest name
         // identifiers, never values (auth-advanced/v1 17.3).
-        let allowed = ["client-secret-stdin", "auth-token-stdin", "api-key-secret-stdin", "private-key-file", "token-file", "output-secret", "key-id", "api-key-sid", "idempotency-key", "signing-key-file"];
+        let allowed = ["client-secret-stdin", "auth-token-stdin", "api-key-secret-stdin", "private-key-file", "token-file", "output-secret", "key-id", "api-key-sid", "idempotency-key", "signing-key-file", "password-stdin", "password-prompt"];
         for argument in &arguments {
             let secretish = ["secret", "password", "token", "key"].iter().any(|word| argument.contains(word));
             assert!(!secretish || allowed.contains(&argument.as_str()), "secret-bearing flag --{argument}");
@@ -1234,6 +1588,7 @@ mod tests {
             &["t", "sms", "set", "--auth-token", "t"],
             &["t", "trusted-issuers", "test", "x", "--token", "t"],
             &["t", "providers", "set", "apple", "--private-key", "k"],
+            &["t", "smtp", "set", "--password", "p"],
         ] {
             assert!(Harness::try_parse_from(refused).is_err(), "{refused:?}");
         }
@@ -1308,6 +1663,20 @@ mod tests {
         for absent in READ_ONLY_SETTINGS {
             assert!(body.get(absent).is_none(), "{absent}");
         }
+        // The GET timestamp of the last factor reset is not sent back; "now" still is.
+        for (value, kept) in [(json!("2026-10-30T00:00:00Z"), false), (Value::Null, false), (json!("now"), true)] {
+            std::fs::write(&path, json!({"revision": 4, "factor_reset_at": value}).to_string()).unwrap();
+            assert_eq!(settings_body(&path).unwrap().get("factor_reset_at").is_some(), kept, "{value}");
+        }
+    }
+
+    #[test]
+    fn settings_writes_send_the_dashboard_keys_of_current_and_changes() {
+        let current = json!({"revision": 9, "enabled": false, "signup_policy": "open", "default_redirect_url": null, "rate_limits": {"smtp-env-hour": 10},
+            "updated_at": "x", "turnstile_secret_set": true, "stream_version": 3, "upgrade_pending": false, "factor_reset_at": "2026-10-30T00:00:00Z",
+            "hosted_sessions": true, "mfa_policy": "off"});
+        let body = settings_put_body(&current, &json!({"enabled": true, "mfa_policy": "optional"}));
+        assert_eq!(body, json!({"revision": 9, "enabled": true, "signup_policy": "open", "default_redirect_url": null, "rate_limits": {"smtp-env-hour": 10}, "mfa_policy": "optional"}));
     }
 
     #[test]
@@ -1328,6 +1697,32 @@ mod tests {
         assert_eq!(status(503), 5);
         assert_eq!(status(400), 2);
         assert_eq!(exit_code(&AuthAdminError::Unauthenticated), 3);
+    }
+
+    #[test]
+    fn projects_resolve_by_slug_id_or_unique_name() {
+        let project = |id: &str, name: &str, slug: &str| axiom_cloud::project::Project {
+            id: id.into(),
+            name: name.into(),
+            slug: slug.into(),
+            visibility: "private".into(),
+            description: String::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        let id = "6a0c1f8e-3b2d-4c5e-9f70-1a2b3c4d5e6f";
+        let projects = [project(id, "Web Shop", "shop"), project("p2", "Twin", "twin-a"), project("p3", "twin", "twin-b"), project("p4", "storefront", "shop-eu")];
+        assert_eq!(pick_project(&projects, "shop").unwrap(), "shop");
+        assert_eq!(pick_project(&projects, id).unwrap(), "shop");
+        // A lowercase display name that differs from its slug is a name, not a slug.
+        assert_eq!(pick_project(&projects, "storefront").unwrap(), "shop-eu");
+        assert_eq!(pick_project(&projects, "twin").unwrap_err().downcast_ref::<Exit>().unwrap().code, 2);
+        assert_eq!(pick_project(&projects, "no-such-slug").unwrap_err().downcast_ref::<Exit>().unwrap().code, 2);
+        assert_eq!(pick_project(&projects, "web shop").unwrap(), "shop");
+        let ambiguous = pick_project(&projects, "Twin").unwrap_err();
+        assert_eq!(ambiguous.downcast_ref::<Exit>().unwrap().code, 2);
+        assert!(ambiguous.to_string().contains("more than one"));
+        assert_eq!(pick_project(&projects, "Nope").unwrap_err().downcast_ref::<Exit>().unwrap().code, 2);
     }
 
     #[test]

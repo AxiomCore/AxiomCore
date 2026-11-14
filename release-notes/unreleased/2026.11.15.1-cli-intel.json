@@ -1,0 +1,5 @@
+{
+  "component": "cli",
+  "type": "feature",
+  "summary": "Project intelligence (Experimental): axiom intel reads activity, alerts, logs, traces, traffic, speed insights, observability, pipeline and test runs, pull requests, security posture and the release channel, and changes alert policies, observability settings and sources, pull requests and project settings. OTLP credentials are printed only with --show-secrets."
+}

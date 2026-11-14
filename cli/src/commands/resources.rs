@@ -168,13 +168,82 @@ pub enum Action {
         #[arg(long)]
         json: bool,
     },
+    /// List the database access grants of one database (Owner)
+    ///
+    /// Newest first: requirement, workload subject (or ID), state (Active, Expired or Revoked),
+    /// expiry and grant ID.
+    Grants {
+        #[command(flatten)]
+        select: crate::commands::resources_placement::Select,
+        /// Print the grants as JSON, each with `state` and `workload_subject` added
+        #[arg(long)]
+        json: bool,
+    },
+    /// Grant a server workload credentials for one database requirement (Owner)
+    ///
+    /// The workload must be enabled and registered for database access in the database's
+    /// environment; its compiled backend plan is used. Nothing is sent when the requirement,
+    /// workload or expiry is refused. A workload holds at most one active grant per requirement.
+    Grant {
+        #[command(flatten)]
+        select: crate::commands::resources_placement::Select,
+        /// The `connectDatabase` requirement name in your app: a lowercase letter, then up to
+        /// 63 letters or digits
+        #[arg(long)]
+        requirement: String,
+        /// The workload ID or its Google workload subject (`axiom secrets workloads` lists them)
+        #[arg(long)]
+        workload: String,
+        /// Days until the grant expires: 7, 30 or 90 (90 ends five minutes before the API's limit)
+        #[arg(long, default_value_t = 30)]
+        expires_days: u32,
+        /// Exact expiry (RFC 3339), at most 90 days ahead. Pass the value an unconfirmed grant
+        /// printed, with its --operation-id, to repeat it without creating a second grant
+        #[arg(long, conflicts_with = "expires_days")]
+        expires_at: Option<String>,
+        /// Idempotency key (UUID); reuse it with the same details to repeat a lost request
+        #[arg(long)]
+        operation_id: Option<String>,
+        /// Print the created grant as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Revoke a database access grant (Owner)
+    ///
+    /// New credentials are refused at once. A credential already held keeps working for the
+    /// engine's bound: on SQLite until it expires, at most 15 minutes; on PostgreSQL open
+    /// connections end within about 10 minutes.
+    Revoke {
+        /// The grant ID (`grants` lists them)
+        grant_id: String,
+        #[command(flatten)]
+        select: crate::commands::resources_placement::Select,
+        /// Idempotency key (UUID); reuse it to repeat a lost request
+        #[arg(long)]
+        operation_id: Option<String>,
+        /// Print the revoked grant as JSON
+        #[arg(long)]
+        json: bool,
+        /// Confirm without a prompt (required without a terminal)
+        #[arg(long)]
+        yes: bool,
+    },
     /// Show currently configured databases and location admission
     Catalog,
 }
 pub async fn handle(project: &str, action: Option<&Action>) -> Result<()> {
     use crate::commands::resources_placement as placement;
     use crate::commands::resources_recovery as recovery;
+    use crate::commands::resources_access as access;
     match action {
+        Some(Action::Grants { select, json }) => return access::handle_grants(project, select, *json).await,
+        Some(Action::Grant { select, requirement, workload, expires_days, expires_at, operation_id, json }) => {
+            let input = access::GrantInput { requirement, workload, expires_days: *expires_days, expires_at: expires_at.as_deref() };
+            return access::handle_grant(project, select, &input, operation_id.as_deref(), *json).await;
+        }
+        Some(Action::Revoke { grant_id, select, operation_id, json, yes }) => {
+            return access::handle_revoke(project, select, grant_id, operation_id.as_deref(), *json, *yes).await;
+        }
         Some(Action::Connect { provider, select, organization, group, database, token_stdin, fence_mode, acknowledge_split_store, acknowledge_rotate, reclaim, operation_id, json }) => {
             let input = placement::ConnectInput {
                 provider: provider.clone(),
@@ -273,7 +342,7 @@ pub async fn handle(project: &str, action: Option<&Action>) -> Result<()> {
                 )
                 .await?
         }
-        Some(Action::Recovery { .. } | Action::Connect { .. } | Action::Connection { .. } | Action::Disconnect { .. } | Action::Placement { .. } | Action::RelocationConsent { .. } | Action::Receipt { .. }) => unreachable!("handled above"),
+        Some(Action::Grants { .. } | Action::Grant { .. } | Action::Revoke { .. } | Action::Recovery { .. } | Action::Connect { .. } | Action::Connection { .. } | Action::Disconnect { .. } | Action::Placement { .. } | Action::RelocationConsent { .. } | Action::Receipt { .. }) => unreachable!("handled above"),
         Some(Action::Catalog) => {
             client
                 .resource_request(Method::GET, &["resource-catalog"], None, None)

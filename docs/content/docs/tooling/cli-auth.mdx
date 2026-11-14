@@ -1,0 +1,785 @@
+---
+title: Authentication commands
+description: Reference for axiom auth in Axiom CLI 0.151.0, covering environment status, settings, sign-in providers, users, invitations, signing keys, manifest configuration, OAuth applications, trusted issuers, policy releases, webhooks, claim hooks, SMS and local emulation.
+pageType: reference
+---
+
+<StatusNote status="alpha" title="axiom auth">
+  The `axiom auth` commands need Axiom CLI 0.151.0 or later. They administer
+  [managed authentication](/authentication), which is **Alpha** for invited
+  accounts (Axiom Cloud signup is invite-only). Some commands configure
+  features that are built but switched off and are **Coming soon**: SMS,
+  Microsoft and Apple sign-in, and the Supabase, Auth0 and Clerk presets.
+  Each topic page linked below states the status of its feature.
+</StatusNote>
+
+`axiom auth` reads and changes the authentication of one Axiom Cloud project
+environment: its settings, sign-in providers, users, signing keys, OAuth
+applications, trusted issuers, roles and permissions, webhooks, claim hooks
+and SMS. It also writes the issuer configuration into a frontend
+`AxiomDeps.toml`, compares that manifest with the environment, and runs a
+local issuer for development. This page covers Axiom CLI 0.151.0.
+
+| Group | Purpose | Guide |
+| --- | --- | --- |
+| [`status`](#axiom-auth-status), [`check`](#axiom-auth-check) | Readiness of an environment; manifest, settings and deployment comparison | [Managed authentication](/authentication) |
+| [`settings`](#axiom-auth-settings) | Read or replace the environment settings | [MFA](/authentication/mfa#configure-the-environment) |
+| [`providers`](#axiom-auth-providers) | Google, GitHub, Microsoft, Apple and OIDC sign-in | [Microsoft and Apple](/authentication/social) |
+| [`users`](#axiom-auth-users), [`invite`](#axiom-auth-invite) | List, inspect, ban and sign out users; invite an address | [Sessions and tokens](/authentication/sessions) |
+| [`jwks`](#axiom-auth-jwks) | Public signing keys and epoch | [Discovery, JWKS and epoch](/authentication/sessions#discovery-jwks-and-epoch) |
+| [`config`](#axiom-auth-config) | Manifest block; export, diff and push of settings | [Develop sign-in locally](/authentication/local-emulation#promote-the-settings-to-cloud) |
+| [`oauth-apps`](#axiom-auth-oauth-apps), [`oidc`](#axiom-auth-oidc) | OAuth applications and the OpenID Connect issuer | [OAuth applications](/authentication/oidc) |
+| [`trusted-issuers`](#axiom-auth-trusted-issuers) | External issuers whose tokens are exchanged for sessions | [Third-party identity](/authentication/third-party) |
+| [`policy`](#axiom-auth-policy) | Signed roles and permissions releases | [Policy releases](/authentication/policy-releases) |
+| [`mfa`](#axiom-auth-mfa) | Multi-factor status | [MFA and passkeys](/authentication/mfa) |
+| [`webhooks`](#axiom-auth-webhooks), [`hooks`](#axiom-auth-hooks) | Signed event webhooks and claim hooks | [Webhooks and claim hooks](/authentication/hooks) |
+| [`sms`](#axiom-auth-sms) | Twilio SMS for phone verification and the SMS factor | [Phone verification](/authentication/phone) |
+| [`emulate`](#axiom-auth-emulate) | A local issuer for development | [Develop sign-in locally](/authentication/local-emulation) |
+
+## Shared options
+
+Every `axiom auth` command accepts these options. They are global, so you can
+place them before or after the subcommand.
+
+```text title="Usage"
+axiom auth [OPTIONS] <COMMAND>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--project` | slug | the project linked to this directory | Cloud project slug. Without it, the CLI uses the link that [`axiom project link`](/tooling/cli-project) saved and fails when the directory has none. For `emulate`, the name of the local project in the issuer URL. |
+| `--environment` | name or UUID | `development` | Environment to administer. A name is looked up among the project's configured environments; a lowercase UUID is used as is. An unknown name exits 2. |
+| `--json` | flag | off | Print stable machine-readable JSON instead of text. |
+
+```bash title="Terminal"
+axiom auth --project shop --environment production users list --json
+axiom auth users list --project shop --environment production --json
+```
+
+**Sign-in.** Commands that call the project's administration API need a prior
+[`axiom login`](/tooling/cli-project#axiom-login). Without a session they exit 3 with `AXAUTH_UNAUTHENTICATED`. These
+need no sign-in: `jwks --issuer`, `oidc check --issuer`,
+`settings set --dry-run`, `config export --from local`, and `emulate` with its
+subcommands. Like other Cloud commands, `axiom auth` passes the one-time
+[Cloud access check](/tooling/cli-reference#cloud-access-and-telemetry) first.
+
+**Roles.** The help marks `webhooks`, `hooks` and `oauth-apps create` as
+**Owner** commands, and `sms` as **Owner** on a **Pro** environment. For any
+command, the server decides what your project role allows; a refused request
+exits 3.
+
+**Secrets.** No option takes a secret value. Client secrets, Twilio
+credentials and test tokens come from standard input, a masked prompt or a
+file. A secret that the server returns once (a new OAuth client secret, a
+webhook or hook signing secret) goes to a new file named by
+`--output-secret`, created with mode `0600`, or is shown once on a terminal
+with a warning. It is never part of `--json` output. When stdout is not a
+terminal, or with `--json`, `--output-secret` is required and the command
+stops before it changes anything. `--output-secret` never replaces an existing
+file.
+
+**Output.** Fields that hold secrets, passwords, tokens or hashes are removed
+from every output, including `--json`. Email addresses in user, invitation,
+factor and consent output are masked as `j***@e***.com`; `users list` and
+`users show` print them in full with `--reveal-email`.
+
+**Confirmations.** Commands that end sessions or remove configuration ask for
+confirmation on a terminal. Pass `--yes` to run them in scripts; without a
+terminal and without `--yes` they exit 2. `oauth-apps delete` never prompts:
+it always needs `--confirm "delete client <id>"`.
+
+### Exit codes
+
+Failures print `axiom auth: ` and a message on stderr.
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Success. |
+| `2` | Invalid usage or input, or the server rejected the request as invalid (HTTP 400). |
+| `3` | Not signed in, or forbidden for your role (HTTP 403). |
+| `4` | Conflict (HTTP 409). |
+| `5` | Unavailable, a stale or failed check, or another failure. |
+| `6`, `7`, `8`, `9` | Gate results of [`config push`](#axiom-auth-config) and [`policy check`](#axiom-auth-policy). |
+
+## Environment readiness
+
+### axiom auth status
+
+Show whether authentication is enabled and ready, the user count and the
+issuer epoch.
+
+```text title="Usage"
+axiom auth status [OPTIONS]
+```
+
+Only the shared options apply. The text output has five lines:
+`Authentication` (enabled or disabled, with the status), `Stream version`
+(with `(upgrade pending)` when an upgrade waits), `Issuer`, `Users` and
+`Epoch` (the epoch and its `keys_rev`, or `unavailable` when the public epoch
+document cannot be read). `--json` returns `enabled`, `auth_status`,
+`stream_version`, `upgrade_pending`, `issuer`, `users_count`, `viewer` and
+`epoch`.
+
+```bash title="Terminal"
+axiom auth status --environment production
+```
+
+### axiom auth check
+
+Compare a frontend manifest's `[auth.environments.<name>]` entry with the
+environment settings and, optionally, a backend deployment and Acore source.
+The command is read-only.
+
+```text title="Usage"
+axiom auth check [OPTIONS]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--manifest` | path | `AxiomDeps.toml` | Frontend manifest. It must have an `[auth]` block. |
+| `--deployment` | path | none | Backend deployment JSON. Its `authentication` provider must be `axiomAuth` with the manifest's issuer and audience. |
+| `--backend` | path | none | Backend `.acore` source. Endpoints with a guard but no `auth(...)` clause are reported, because the web client does not attach the access token to them. |
+
+The entry for `--environment` is checked against the settings: the issuer,
+the audience (in `audiences`), the redirect URI (in `redirect_urls`), the
+redirect origin (in `allowed_origins`), the logout URI (in `logout_urls`) and,
+when passkeys are enabled, the redirect origin in `webauthn_origins`. Each
+mismatch prints a `warning:` line; with none it prints
+`Manifest, settings and deployment agree.` `--json` returns `environment`,
+`warnings` and `consistent`. Warnings do not change the exit code, so test
+`consistent` in CI.
+
+```bash title="Terminal"
+axiom auth check --environment production --deployment deployment.json --backend axiom.acore --json
+```
+
+## axiom auth settings
+
+Read or replace the environment's authentication settings, such as signup
+policy, token lifetimes, allowed origins, redirect URLs and MFA policy.
+
+### axiom auth settings get
+
+```text title="Usage"
+axiom auth settings get [OPTIONS]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--output` | path | stdout | Write the settings JSON to this file. |
+
+The settings are always printed as JSON, with secret fields removed. With
+`--output`, the command prints `Settings written to FILE (revision N).`
+unless `--json` is set. The file includes the `revision` that
+`settings set` needs.
+
+### axiom auth settings set
+
+```text title="Usage"
+axiom auth settings set [OPTIONS] --file <FILE>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--file` | path | required | Settings JSON object, at most 32 KiB, with the current `revision`. `turnstile_secret` can only be set here. |
+| `--dry-run` | flag | off | Print the request that would be sent, with `turnstile_secret` shown as `(set from file)`, and send nothing. Needs no sign-in. |
+
+The file is refused (exit 2) without a numeric `revision` or when any field,
+at any depth, is a provider or SMTP secret: `secret`, a name ending in
+`_secret` other than `turnstile_secret`, `password`, a name ending in
+`_password`, `smtp` or `providers`. Those have their own commands. The
+read-only fields `updated_at`, `turnstile_secret_set`, `stream_version` and
+`upgrade_pending` from `settings get` are dropped, so you can edit the
+output of `settings get` and send it back.
+
+```bash title="Terminal"
+axiom auth settings get --environment production --output settings.json
+axiom auth settings set --environment production --file settings.json --dry-run
+axiom auth settings set --environment production --file settings.json
+```
+
+## axiom auth providers
+
+Configure social and OIDC sign-in providers.
+
+```text title="Usage"
+axiom auth providers list [OPTIONS]
+axiom auth providers set [OPTIONS] <PROVIDER>
+axiom auth providers test [OPTIONS] <PROVIDER>
+```
+
+`list` prints one line per provider: its name, enabled or disabled, the
+client ID, whether a client secret is configured, and the last test result
+(or `untested`). With none, it prints `No providers configured.`
+
+`set` creates or updates `google`, `github`, `microsoft`, `apple` or
+`oidc-<slug>`. `test` checks the provider's credentials without signing
+anyone in.
+
+| `providers set` option | Meaning |
+| --- | --- |
+| `--client-id` | Client ID. Required for a new provider. |
+| `--issuer` | OIDC issuer, for `oidc-<slug>` only. Required for a new OIDC provider; it cannot change later. |
+| `--scopes` | Comma-separated scopes. |
+| `--enable`, `--disable` | Turn the provider on or off. |
+| `--client-secret-stdin` | Read the client secret from stdin. Otherwise a masked prompt asks when a secret is needed. |
+| `--tenant`, `--allowed-tenant` | Microsoft: `common`, `organizations`, `consumers` or a tenant GUID; allowed tenant GUIDs (repeatable). |
+| `--team-id`, `--key-id`, `--private-key-file` | Apple: Team ID, Key ID and the AuthKey `.p8` file. |
+
+See [Sign in with Microsoft and Apple](/authentication/social) and
+[Third-party identity](/authentication/third-party) for the provider setup.
+
+```bash title="Terminal"
+axiom auth providers list --environment production
+```
+
+## axiom auth users
+
+List, inspect, ban, unban and sign out the users of an environment. Every
+`USER_ID` is a lowercase UUID; another value exits 2 before any request.
+
+| Command | Purpose |
+| --- | --- |
+| [`users list`](#axiom-auth-users-list) | List or search users. |
+| [`users show`](#axiom-auth-users-show) | One user and their linked identities. |
+| [`users ban`](#axiom-auth-users-ban), [`users unban`](#axiom-auth-users-unban) | Block or restore a user. |
+| [`users revoke`](#axiom-auth-users-revoke) | End a user's sessions. |
+| `users factors`, `users reset-factors` | A user's factors; remove them all for account recovery. See [MFA](/authentication/mfa#manage-factors-and-recover-accounts). |
+| `users consents`, `users revoke-consent` | A user's OAuth consents. See [Consent and single sign-on](/authentication/oidc#consent-and-single-sign-on). |
+
+### axiom auth users list
+
+```text title="Usage"
+axiom auth users list [OPTIONS]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--search` | email prefix or UUID | none | A UUID finds that user; any other value searches by email prefix. |
+| `--status` | `active`, `banned`, `deleted`, `unverified` | all | Only users with this status. |
+| `--limit` | 1 to 100 | server default | Page size. |
+| `--cursor` | cursor | none | Continue from a previous page. |
+| `--reveal-email` | flag | off | Show full email addresses instead of masked ones. |
+
+Each line shows the user ID, email, status, kind and number of active
+sessions. When more results exist, the last line is `More: --cursor CURSOR`;
+pass that value to read the next page.
+
+```bash title="Terminal"
+axiom auth users list --environment production --search jane@ --status active --limit 20
+```
+
+### axiom auth users show
+
+```text title="Usage"
+axiom auth users show [OPTIONS] <USER_ID>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<USER_ID>` | UUID | required | The user. |
+| `--reveal-email` | flag | off | Show full email addresses. |
+
+Prints the user line and one `identity PROVIDER EMAIL` line per linked
+identity.
+
+### axiom auth users ban
+
+```text title="Usage"
+axiom auth users ban [OPTIONS] --reason <REASON> <USER_ID>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<USER_ID>` | UUID | required | The user to ban. |
+| `--reason` | text | required | Why. An empty reason exits 2. |
+
+The user's sessions end at their next refresh. See
+[Revocation bounds](/authentication/sessions#revocation-bounds) for how long
+an issued access token keeps working.
+
+### axiom auth users unban
+
+```text title="Usage"
+axiom auth users unban [OPTIONS] <USER_ID>
+```
+
+Restores a banned user. Only the shared options apply.
+
+### axiom auth users revoke
+
+```text title="Usage"
+axiom auth users revoke [OPTIONS] <USER_ID>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<USER_ID>` | UUID | required | The user. |
+| `--session` | UUID | every session | End only this session. |
+| `--yes` | flag | off | Skip the confirmation prompt. Required without a terminal. |
+
+```bash title="Terminal"
+axiom auth users ban USER_ID --reason "Chargeback fraud" --environment production
+axiom auth users revoke USER_ID --environment production --yes
+```
+
+### Factors and consents
+
+```text title="Usage"
+axiom auth users factors [OPTIONS] <USER_ID>
+axiom auth users reset-factors [OPTIONS] --reason <REASON> <USER_ID>
+axiom auth users consents [OPTIONS] <USER_ID>
+axiom auth users revoke-consent [OPTIONS] <USER_ID> <CONSENT_ID>
+```
+
+`factors` lists types and labels only, and the recovery codes remaining.
+`reset-factors` removes every factor and recovery code; its `--reason` is 1
+to 256 characters, and `--yes` skips the prompt. `revoke-consent` ends the
+application's sessions for that user; `--yes` skips the prompt.
+
+## axiom auth invite
+
+Invite an address to the environment. One invitation email is sent.
+
+```text title="Usage"
+axiom auth invite [OPTIONS] <EMAIL>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<EMAIL>` | address | required | Who to invite. |
+| `--role` | role name | none | Role for the invited user. Repeatable. An unknown role name exits 2. |
+| `--organization` | organization ID | none | Organization the invitation is for. |
+
+Prints the invitation ID, the masked address, the delivery state and the
+expiry time. See [Roles and permissions](/authentication/roles-permissions).
+
+```bash title="Terminal"
+axiom auth invite jane@example.com --role member --environment production
+```
+
+## axiom auth jwks
+
+Read the issuer's public JWKS and epoch documents and report the key IDs and
+key revisions.
+
+```text title="Usage"
+axiom auth jwks [OPTIONS]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--issuer` | URL | the environment's issuer | Issuer to read. With it, the command reads only the public documents and needs no sign-in. |
+| `--check` | flag | off | Fail when the published JWKS is behind the epoch. |
+
+A hosted issuer has the form
+`https://auth.axiomcore.dev/<project_id>/<environment_id>`; a URL that is not
+an Axiom issuer exits 2. The output shows the issuer, the key IDs, and the JWKS `axiom_keys_rev`
+next to the epoch and its `keys_rev`. Without `--issuer`, `--json` also
+includes the environment's key list when it can be read. With
+`--check`, the result is consistent when `axiom_keys_rev` is at least the
+epoch's `keys_rev`; otherwise the command exits 5 with `AXAUTH_KEYS_STALE`.
+
+```bash title="Terminal"
+axiom auth jwks --environment production --check
+```
+
+## axiom auth config
+
+Write the environment's issuer configuration into a frontend manifest, or
+move settings between environments as an `axiom-auth-config/v1` file.
+
+### axiom auth config pull
+
+```text title="Usage"
+axiom auth config pull [OPTIONS]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--manifest` | path | `AxiomDeps.toml` | Frontend manifest to read and, with `--write`, update. |
+| `--write` | flag | off | Replace `[auth.environments.<environment>]` in the manifest. Without it, the block is printed. |
+
+The block is named after the `--environment` value and holds:
+
+| Key | Value |
+| --- | --- |
+| `issuer` | The environment's issuer. |
+| `audience` | The first audience, only when it is not `<issuer>/api`. |
+| `redirectOrigin` | The origin of a redirect URL whose path is the manifest's `callbackPath` (default `/auth/callback`), preferring one in `allowed_origins`. |
+| `logoutUri` | The first logout URL, when there is one. |
+| `webauthnRpId` | The passkey relying party ID, when passkeys are enabled. |
+| `oauthDiscovery` | `<issuer>/.well-known/openid-configuration`, when the issuer serves OpenID discovery. |
+
+When no redirect URL ends with the callback path, the command exits 2 and
+asks you to add `<origin>/auth/callback` (or your `callbackPath`) to
+`redirect_urls`. `--write` keeps the rest of the file and its comments, adds
+an `[auth]` table with `provider = "axiom"` and
+`callbackPath = "/auth/callback"` when the manifest has none, and refuses to
+write a manifest that would not validate. `--json` returns `environment`,
+`block` and `written`.
+
+```bash title="Terminal"
+axiom auth config pull --environment production
+axiom auth config pull --environment production --write
+```
+
+### Export, diff and push
+
+```text title="Usage"
+axiom auth config export [OPTIONS]
+axiom auth config diff [OPTIONS] --from <FROM> --to <TO>
+axiom auth config push [OPTIONS] --from <FROM> --to <TO>
+```
+
+| Option | Commands | Meaning |
+| --- | --- | --- |
+| `--from` | `export` | `local` exports the emulated configuration of this directory; without it the environment is exported. |
+| `--from` | `diff`, `push` | An `axiom-auth-config/v1` file, or `local`. |
+| `--to` | `diff`, `push` | `env:<environment>`. It selects the environment instead of `--environment`. |
+| `--output` | `export` | Write the file here instead of stdout. |
+| `--approvals` | `push` | Approvals file. Default `auth/config.approvals.json`. |
+| `--policy-release` | `push` | A policy release already uploaded with `axiom auth policy release` whose policy equals the file's. |
+
+Secrets are exported only as references. `push` exits 6 when a widening or
+credential item is not approved and 8 when the approvals were made for
+another base revision. The workflow is in
+[Promote the settings to Cloud](/authentication/local-emulation#promote-the-settings-to-cloud).
+
+## axiom auth oauth-apps
+
+OAuth applications that sign users in with this environment's issuer. Every
+`ID` is the application's lowercase UUID.
+
+```text title="Usage"
+axiom auth oauth-apps list [OPTIONS]
+axiom auth oauth-apps show [OPTIONS] <ID>
+axiom auth oauth-apps create [OPTIONS] --name <NAME> --type <CLIENT_TYPE> --redirect-uri <REDIRECT_URIS>
+axiom auth oauth-apps update [OPTIONS] <ID>
+axiom auth oauth-apps rotate-secret [OPTIONS] <ID>
+axiom auth oauth-apps disable [OPTIONS] <ID>
+axiom auth oauth-apps delete [OPTIONS] <ID>
+```
+
+`create` (**Owner**) registers a `public` or `confidential` client; a
+confidential client's secret is returned once. `rotate-secret` keeps the
+previous secret valid for `--previous-valid` (0 to `7d`, default `24h`).
+`delete` removes a disabled client and needs
+`--confirm "delete client <id>"`. Registration options, scopes and limits are
+in [Register a client](/authentication/oidc#register-a-client).
+
+### axiom auth oauth-apps show
+
+```text title="Usage"
+axiom auth oauth-apps show [OPTIONS] <ID>
+```
+
+Prints the application's ID, client ID, name, type, enabled or disabled and
+`first-party` when set, then its redirect URIs, its allowed scopes and whether
+a secret is set. Only the shared options apply.
+
+### axiom auth oauth-apps update
+
+```text title="Usage"
+axiom auth oauth-apps update [OPTIONS] <ID>
+```
+
+| Option | Value | Meaning |
+| --- | --- | --- |
+| `--name` | text | New display name. |
+| `--redirect-uri` | URI | Redirect URIs. Repeatable. |
+| `--post-logout-redirect-uri` | URI | Post-logout redirect URIs. Repeatable. |
+| `--web-origin` | origin | Browser origins allowed to call the token endpoint. Repeatable. |
+| `--scope` | scope | Allowed scopes. Repeatable. |
+| `--audience` | audience | Audiences. Repeatable. |
+| `--permission` | permission | Permission ceiling. Repeatable. |
+| `--role` | role | Role ceiling. Repeatable. |
+| `--enable`, `--disable` | flag | Turn the application on or off. |
+
+The command reads the application's current revision, then sends only the
+fields you pass. A list option sends the complete list for its field, so
+repeat it for every value to keep. With no change option it exits 2 with
+`nothing to change`. `update` has no options for the client type, the
+token endpoint authentication method, `--first-party` or `--can-introspect`.
+
+```bash title="Terminal"
+axiom auth oauth-apps update APP_ID --environment production \
+  --redirect-uri https://app.example.com/callback \
+  --redirect-uri https://app.example.com/oauth/callback
+```
+
+## axiom auth oidc
+
+```text title="Usage"
+axiom auth oidc check [OPTIONS]
+```
+
+`oidc check` validates the issuer's public OpenID discovery document and JWKS.
+`--issuer URL` checks that issuer without signing in. A failed check exits 5.
+See [Discovery](/authentication/oidc#discovery).
+
+## axiom auth trusted-issuers
+
+External token issuers whose tokens are exchanged for environment sessions.
+
+```text title="Usage"
+axiom auth trusted-issuers list [OPTIONS]
+axiom auth trusted-issuers add [OPTIONS] --issuer <ISSUER> --audience <AUDIENCES>
+axiom auth trusted-issuers test [OPTIONS] --token-file <TOKEN_FILE> <ID>
+```
+
+`list` prints one line per issuer: its ID, issuer URL, preset and enabled or
+disabled, or `No trusted issuers.` Only the shared options apply.
+
+`add` takes `--preset` (`custom`, `supabase`, `auth0` or `clerk`; default
+`custom`), an `https` `--issuer`, one or more `--audience`, an optional
+`--jwks-uri`, `--authorized-party` origins (Clerk needs at least one) and
+`--enable`. `test` runs the diagnostic exchange with a real token read from
+`--token-file` and creates nothing. See
+[Presets](/authentication/third-party#presets) and
+[Test a token](/authentication/third-party#test-a-token).
+
+```bash title="Terminal"
+axiom auth trusted-issuers list --environment production
+```
+
+## axiom auth policy
+
+Roles and permissions as signed policy releases.
+
+```text title="Usage"
+axiom auth policy pull [OPTIONS]
+axiom auth policy diff [OPTIONS] --base <BASE>
+axiom auth policy check [OPTIONS] --base <BASE>
+axiom auth policy release [OPTIONS]
+axiom auth policy plan [OPTIONS] --release <RELEASE>
+axiom auth policy apply [OPTIONS] --release <RELEASE>
+```
+
+| Option | Commands | Meaning |
+| --- | --- | --- |
+| `--write` | `pull` | Write the policy here instead of printing it. |
+| `--policy` | `diff`, `check`, `release` | Policy file. Default `auth/policy.json`. |
+| `--base` | `diff`, `check`, `release` | A file or `env:<environment>`. |
+| `--plan`, `--base-plan` | `check`, `release` | Backend server plans after and before the change. |
+| `--approvals`, `--require-complete`, `--report` | `check` | Approvals file; exit 9 on partial coverage; write the report to a file. |
+| `--schema`, `--parent` | `release` | Database contract whose local signing key signs; parent release SHA-256. |
+| `--release` | `plan`, `apply` | The release. |
+| `--acknowledge-from` | `apply` | Acknowledge exactly the items approved in this approvals file. |
+
+`policy check` exits 0 when clean, 6 for an unacknowledged widening item, 7
+for an unacknowledged narrowing item, 8 for stale approvals and 9 for partial
+coverage with `--require-complete`. See
+[Auth policy releases and impact](/authentication/policy-releases).
+
+## axiom auth mfa
+
+```text title="Usage"
+axiom auth mfa status [OPTIONS]
+```
+
+`mfa status` prints the MFA policy, the enabled factors and how many users
+have factors (counts only). See
+[Multi-factor authentication and passkeys](/authentication/mfa).
+
+## axiom auth webhooks
+
+Signed event webhooks. The help marks this group **Owner**. Every `ID` is the
+endpoint's lowercase UUID.
+
+```text title="Usage"
+axiom auth webhooks list [OPTIONS]
+axiom auth webhooks create [OPTIONS] --url <URL> --event <EVENTS>
+axiom auth webhooks update [OPTIONS] <ID>
+axiom auth webhooks rotate-secret [OPTIONS] <ID>
+axiom auth webhooks test [OPTIONS] <ID>
+axiom auth webhooks deliveries [OPTIONS] <ID>
+axiom auth webhooks replay [OPTIONS] <ID> <DELIVERY_ID>
+axiom auth webhooks delete [OPTIONS] <ID>
+```
+
+`create` returns the signing secret once (`--output-secret`, `--enable`,
+`--idempotency-key`). `rotate-secret` returns a new secret once. `test` sends a
+ping event (10 per hour). `deliveries` lists deliveries with `--state`
+(`pending`, `delivered`, `failed`, `dead`), `--limit` (1 to 100) and
+`--cursor`; `replay` queues one again. Event types, payloads and signature
+verification are in [Event webhooks](/authentication/hooks#event-webhooks).
+
+### axiom auth webhooks list
+
+```text title="Usage"
+axiom auth webhooks list [OPTIONS]
+```
+
+Prints one line per endpoint: its ID, URL, enabled or disabled, event types
+and consecutive failures, or `No webhooks.` Only the shared options apply.
+
+### axiom auth webhooks update
+
+```text title="Usage"
+axiom auth webhooks update [OPTIONS] <ID>
+```
+
+| Option | Value | Meaning |
+| --- | --- | --- |
+| `--url` | URL | New endpoint. It must be `https://host/path` without credentials. |
+| `--event` | event type | The endpoint's event types. Repeatable; the command sends the complete list, so repeat it for every type to keep. |
+| `--enable`, `--disable` | flag | Turn the endpoint on or off. |
+
+The command reads the endpoint's revision first; an unknown `ID` exits 2.
+With no change option it exits 2 with `nothing to change`.
+
+### axiom auth webhooks delete
+
+```text title="Usage"
+axiom auth webhooks delete [OPTIONS] <ID>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<ID>` | UUID | required | The endpoint. |
+| `--yes` | flag | off | Skip the prompt `Delete webhook ID? Pending deliveries are dropped.` Required without a terminal. |
+
+```bash title="Terminal"
+axiom auth webhooks list --environment production
+axiom auth webhooks update WEBHOOK_ID --environment production --event user.created --event user.deleted
+axiom auth webhooks delete WEBHOOK_ID --environment production --yes
+```
+
+## axiom auth hooks
+
+Claim hooks. The help marks this group **Owner**. `KIND` is
+`before_user_create` or `token_claims`.
+
+```text title="Usage"
+axiom auth hooks get [OPTIONS] [KIND]
+axiom auth hooks set [OPTIONS] --url <URL> --policy <POLICY> <KIND>
+axiom auth hooks test [OPTIONS] <KIND>
+axiom auth hooks rotate-secret [OPTIONS] <KIND>
+axiom auth hooks remove [OPTIONS] <KIND>
+```
+
+`set` configures a hook with `--url`, `--policy` (`deny` or `continue` when the
+hook fails or times out), `--timeout-ms` (100 to 10000), `--grantable-role`
+(repeatable), `--include-email`, `--enable` or `--disable`; the first save
+returns the signing secret once, so it needs `--output-secret` or a terminal.
+`test` calls the hook with a synthetic user (`--sample new_user` or
+`sign_in`; default `new_user`). The request and response rules are in
+[Claim hooks](/authentication/hooks#claim-hooks).
+
+### axiom auth hooks get
+
+```text title="Usage"
+axiom auth hooks get [OPTIONS] [KIND]
+```
+
+Without `KIND`, shows every configured hook; with it, only that kind. Each
+line shows the kind, URL, failure policy, timeout in milliseconds and enabled
+or disabled, or `No hooks.`
+
+### axiom auth hooks rotate-secret
+
+```text title="Usage"
+axiom auth hooks rotate-secret [OPTIONS] <KIND>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<KIND>` | `before_user_create`, `token_claims` | required | The hook. |
+| `--output-secret` | path | terminal | New file (mode `0600`) for the new signing secret. Required with `--json` or when stdout is not a terminal. |
+
+The new secret is returned once. The command prints
+`Signing secret rotated.`
+
+### axiom auth hooks remove
+
+```text title="Usage"
+axiom auth hooks remove [OPTIONS] <KIND>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<KIND>` | `before_user_create`, `token_claims` | required | The hook to remove. |
+| `--yes` | flag | off | Skip the prompt `Remove the KIND hook?` Required without a terminal. |
+
+```bash title="Terminal"
+axiom auth hooks get token_claims --environment production
+axiom auth hooks rotate-secret token_claims --environment production --output-secret ./hook-secret.txt
+axiom auth hooks remove token_claims --environment production --yes
+```
+
+## axiom auth sms
+
+Twilio SMS for phone verification and the SMS factor. The help marks this
+group **Owner** and **Pro**. SMS is **Coming soon**: these commands cannot turn
+it on for an environment yet.
+
+```text title="Usage"
+axiom auth sms get [OPTIONS]
+axiom auth sms set [OPTIONS] --account-sid <ACCOUNT_SID> --country <COUNTRIES> --monthly-cap <MONTHLY_CAP>
+axiom auth sms test [OPTIONS] --to <TO>
+axiom auth sms remove [OPTIONS]
+```
+
+`set` reads the Twilio Auth Token (`--auth-token-stdin`) or API key secret
+(`--api-key-sid` with `--api-key-secret-stdin`) from stdin, and takes a
+sender (`--messaging-service` or `--from-number`), allowed `--country` codes,
+`--monthly-cap` and optional `--daily-cap` and `--hourly-cap`, and `--enable`
+or `--disable`. `test` sends one message to an allowlisted E.164 number (5 per
+day). See [Set up Twilio](/authentication/phone#set-up-twilio).
+
+### axiom auth sms get
+
+```text title="Usage"
+axiom auth sms get [OPTIONS]
+```
+
+Prints the account SID, the credential kind, enabled or disabled, the
+country allowlist and the monthly, daily and hourly caps. The secret is never
+shown. Only the shared options apply.
+
+### axiom auth sms remove
+
+```text title="Usage"
+axiom auth sms remove [OPTIONS]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--yes` | flag | off | Skip the prompt `Remove the SMS configuration? SMS factors stop working.` Required without a terminal. |
+
+```bash title="Terminal"
+axiom auth sms get --environment production
+axiom auth sms remove --environment production --yes
+```
+
+## axiom auth emulate
+
+Run a local issuer on a loopback port with a disposable SQLite store, a mail
+viewer and a mock OIDC issuer. It uses no network and no hosted database.
+
+```text title="Usage"
+axiom auth emulate [OPTIONS]
+axiom auth emulate reset [OPTIONS]
+axiom auth emulate deployment [OPTIONS] <DEPLOYMENT>
+```
+
+| Option | Commands | Default | Meaning |
+| --- | --- | --- | --- |
+| `--dir` | all | `.` | Project directory. State lives in `<dir>/.axiom/auth-local`. |
+| `--port` | `emulate` | `0` (a free port) | Loopback port. |
+| `--identity` | `emulate` | none | A synthetic email the mock OIDC issuer offers. Repeatable. |
+| `--audience` | `emulate` | `api` | Access-token audience. |
+| `--config` | `emulate` | `auth/config.local.json` when present | `axiom-auth-config/v1` file with the local settings. |
+
+`reset` deletes the local store, keys, captured mail and settings, and refuses
+while the emulator runs. `deployment` points a server deployment JSON file at
+the running emulator with a `jwt` EdDSA provider whose key comes from
+`AXIOM_AUTH_LOCAL_PUBLIC_KEY`. See
+[Develop sign-in locally](/authentication/local-emulation).
+
+## Next steps
+
+- [Managed and external authentication](/authentication)
+- [Sessions and tokens](/authentication/sessions)
+- [CLI overview](/tooling/cli-reference)

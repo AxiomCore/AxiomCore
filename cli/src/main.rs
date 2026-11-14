@@ -15,7 +15,7 @@ use crate::components::inspect::endpoint_list::render_endpoint_list;
 use crate::components::inspect::model_browser::render_model_browser;
 use crate::state::InspectTab;
 use crate::telemetry::Telemetry;
-use axiom_cloud::{uses_local_cloud, CloudClient};
+use axiom_cloud::uses_local_cloud;
 use clap::{Parser, Subcommand};
 use crossterm::event::KeyCode;
 use ratatui::prelude::*;
@@ -38,6 +38,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Inspect and edit Cloud database data.
+    Data(commands::data::DataArgs),
     /// Runtime secret sources and Cloud metadata; values never enter compilation.
     Secrets {
         #[command(subcommand)]
@@ -107,6 +109,11 @@ enum Commands {
         /// within the last 15 minutes. Your normal session is kept.
         #[arg(long)]
         step_up: bool,
+        /// Print the sign-in link and code as plain text instead of the full-screen view.
+        /// This is automatic when output is not a terminal (CI, a pipe) or the terminal
+        /// reports no size.
+        #[arg(long)]
+        no_tui: bool,
     },
     /// Join the waitlist if you don't have a referral code
     Join {
@@ -307,6 +314,8 @@ enum Commands {
         #[arg(long, requires = "build")]
         variant: Option<String>,
     },
+    /// Inspect and administer Cloud project intelligence.
+    Intel(commands::intel::IntelArgs),
     Project {
         #[command(subcommand)]
         action: ProjectAction,
@@ -315,6 +324,8 @@ enum Commands {
     Auth(commands::auth::AuthArgs),
     /// Short-lived branch environments of a hosted database: create, review, delete
     Branch(commands::branch::BranchArgs),
+    /// Workspace settings, members, invitations, notifications, billing and onboarding
+    Workspace(commands::workspace::WorkspaceArgs),
     Deploy {
         #[command(subcommand)]
         target: DeployTarget,
@@ -476,6 +487,8 @@ enum SecurityAction {
 
 #[derive(Subcommand)]
 enum ContractAction {
+    /// Hosted contract releases of a Cloud project: list, inspect, compare, import, download
+    Releases(commands::contract_releases::ReleasesArgs),
     /// Resolve AxiomDeps.toml contract artifacts into a deterministic lockfile
     Resolve {
         #[arg(long, default_value = "AxiomDeps.toml")]
@@ -760,6 +773,7 @@ impl DatabaseAction {
             DatabaseAction::Diff { project, .. } => project.is_some(),
             DatabaseAction::Pull(_) => true,
             DatabaseAction::Convert { .. } => true,
+            DatabaseAction::Impact { action: commands::database_impact::ImpactAction::Get(_) } => true,
             _ => false,
         }
     }
@@ -1546,6 +1560,8 @@ enum ProjectAction {
         #[command(subcommand)]
         action: commands::signers::Action,
     },
+    /// Managed sandbox and hosted-mock environments: list, create, connect, reset, delete
+    Environments(commands::sandbox_environments::EnvironmentsArgs),
     Create {
         #[arg(long)]
         name: Option<String>,
@@ -1610,9 +1626,13 @@ async fn main() -> anyhow::Result<()> {
     }));
 
     let cli = Cli::parse();
+    confirmation_preflight(&cli.command);
     let start_time = Instant::now();
     // Mode/input errors must precede cloud credentials, registration and I/O.
     match &*cli.command {
+        // A confirmation that cannot be asked, or a malformed --org, exits 2 before
+        // registration or any request.
+        Commands::Auth(args) => commands::auth::preflight_or_exit(args),
         Commands::Serve(input) => {
             input.resolve(&std::env::current_dir()?)?;
         }
@@ -1675,7 +1695,7 @@ async fn main() -> anyhow::Result<()> {
     } else {
         uses_local_cloud()?
     };
-    let is_first_login = matches!(&*cli.command, Commands::Login { step_up: false });
+    let is_first_login = matches!(&*cli.command, Commands::Login { step_up: false, .. });
     let mut active_config = if local_cloud
         || local_application_command
         || matches!(
@@ -1723,6 +1743,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Extract command name for logging
     let cmd_name = match &*cli.command {
+        Commands::Data(_) => "data",
         Commands::Secrets { .. } => "secrets",
         Commands::Editor { .. } => "editor",
         Commands::Init { .. } => "init",
@@ -1739,9 +1760,11 @@ async fn main() -> anyhow::Result<()> {
         Commands::Release { .. } => "release",
         Commands::Pull { .. } => "pull",
         Commands::Watch { .. } => "watch",
+        Commands::Intel(..) => "intel",
         Commands::Project { .. } => "project",
         Commands::Auth(..) => "auth",
         Commands::Branch(..) => "branch",
+        Commands::Workspace(..) => "workspace",
         Commands::Diff { .. } => "diff",
         Commands::Contract { .. } => "contract",
         Commands::Packages { .. } => "packages",
@@ -1782,7 +1805,40 @@ async fn main() -> anyhow::Result<()> {
         .await;
     }
 
+    // A refused or cancelled confirmation (`axiom secrets`, `axiom project resources revoke`)
+    // exits 2 with its message, as `axiom auth` does.
+    if let Err(error) = &result {
+        if let Some(exit) = error.downcast_ref::<commands::auth::Exit>() {
+            eprintln!("axiom {cmd_name}: {}", exit.message);
+            std::process::exit(exit.code);
+        }
+    }
     result
+}
+
+/// A confirmation that cannot be asked (no terminal, no `--yes`) exits 2 here, before
+/// registration, sign-in, telemetry or any request: `auth disable`, an `auth mfa set` that may
+/// weaken or turn on multi-factor, and `project resources revoke`. (`axiom secrets` is a local
+/// command with neither registration nor telemetry; it refuses in its own handler.)
+fn confirmation_preflight(command: &Commands) {
+    let (name, yes) = match command {
+        Commands::Auth(args) => match commands::auth::asks_first(args) {
+            Some(yes) => ("auth", yes),
+            None => return,
+        },
+        Commands::Project {
+            action:
+                ProjectAction::Resources {
+                    action: Some(commands::resources::Action::Revoke { yes, .. }),
+                    ..
+                },
+        } => ("project", *yes),
+        _ => return,
+    };
+    if let Err(error) = commands::auth::require_yes_or_terminal(yes) {
+        eprintln!("axiom {name}: {error}");
+        std::process::exit(2);
+    }
 }
 
 // Helper to route commands (Refactored from original main)
@@ -1790,6 +1846,7 @@ async fn main() -> anyhow::Result<()> {
 /// that publish or retrieve cloud data retain their existing access checks.
 fn is_local_command(command: &Commands) -> bool {
     match command {
+        Commands::Data(_) => true,
         Commands::Secrets { .. } => true,
         Commands::Editor { .. } => true,
         Commands::Scenario { .. } => true,
@@ -1801,7 +1858,6 @@ fn is_local_command(command: &Commands) -> bool {
         | Commands::Explain { .. }
         | Commands::Migrate { .. }
         | Commands::Server { .. }
-        | Commands::Contract { .. }
         | Commands::Init { .. }
         | Commands::Domain { .. }
         | Commands::Security { .. }
@@ -1815,6 +1871,7 @@ fn is_local_command(command: &Commands) -> bool {
         | Commands::Serve(..)
         | Commands::Watch { build: true, .. } => true,
         Commands::Database { action } => !action.hosted(),
+        Commands::Contract { action } => !matches!(action, ContractAction::Releases(..)),
         Commands::Mock(input) => !input.cloud,
         Commands::Pull {
             source,
@@ -1835,6 +1892,7 @@ fn is_local_command(command: &Commands) -> bool {
 
 async fn execute_command(command: &Commands) -> anyhow::Result<()> {
     match command {
+        Commands::Data(args) => commands::data::handle(args).await,
         Commands::Secrets { action } => commands::secrets::handle(action).await,
         Commands::Editor { action } => commands::editor::handle(action),
         Commands::Check {
@@ -1914,6 +1972,7 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             }
         },
         Commands::Contract { action } => match action {
+            ContractAction::Releases(args) => commands::contract_releases::handle(args).await,
             ContractAction::Resolve { deps, lock } => {
                 commands::contract::handle_resolve(deps.clone(), lock.clone()).await
             }
@@ -2348,6 +2407,7 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             DatabaseAction::Pull(args) => commands::database_remote::pull(args).await,
             DatabaseAction::Convert { action } => commands::database_convert::run(action).await,
             DatabaseAction::Runtime { command } => commands::database_runtime::run(command),
+            DatabaseAction::Impact { action: commands::database_impact::ImpactAction::Get(args) } => commands::data_metadata::handle_impact(args).await,
             DatabaseAction::Impact { action } => commands::database_impact::run_check(action),
             DatabaseAction::Sqlite { command } => commands::database_sqlite::run(command),
             DatabaseAction::Fleet { command } => commands::database_fleet::run(command).await,
@@ -3099,12 +3159,15 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
         }
         Commands::Auth(args) => commands::auth::handle(args).await,
         Commands::Branch(args) => commands::branch::handle(args).await,
+        Commands::Intel(args) => commands::intel::handle(args).await,
+        Commands::Workspace(args) => commands::workspace::handle(args).await,
         Commands::Project { action } => match action {
             ProjectAction::List => commands::project::handle_project_list().await,
             ProjectAction::Resources { project, action } => {
                 commands::resources::handle(&project, action.as_ref()).await
             }
             ProjectAction::Signers { action } => commands::signers::handle(action).await,
+            ProjectAction::Environments(args) => commands::sandbox_environments::handle(args).await,
             ProjectAction::Create {
                 name,
                 slug,
@@ -3187,8 +3250,11 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
         Commands::Init { entrypoint, module } => {
             crate::commands::init::handle_init(entrypoint.clone(), module.clone()).await
         }
-        Commands::Login { step_up: true } => commands::step_up::handle_login_step_up().await,
-        Commands::Login { step_up: false } => handle_login_tui().await,
+        Commands::Login { step_up: true, .. } => commands::step_up::handle_login_step_up().await,
+        Commands::Login {
+            step_up: false,
+            no_tui,
+        } => commands::login::handle_login(*no_tui).await,
         Commands::Join { email } => crate::commands::join::handle_join(email.clone()).await,
         Commands::Cache { action } => {
             let mut cache_dir = crate::auth_store::get_config_dir()?;
@@ -3210,88 +3276,6 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
 // =========================================================================================
 //  EXISTING HELPERS (Kept exactly as original to ensure full file correctness)
 // =========================================================================================
-
-async fn handle_login_tui() -> anyhow::Result<()> {
-    // Do not enter raw/alternate-screen mode until the device flow is ready. If the
-    // authentication service rejects or rate-limits the request, the developer gets
-    // a normal shell error and no detached TUI task is left running.
-    let auth_info = CloudClient::start_login().await?;
-
-    let mut state = crate::state::State::new();
-    let mut tui = crate::tui::Tui::new().map_err(|e| anyhow::anyhow!(e))?;
-    tui.enter().map_err(|e| anyhow::anyhow!(e))?;
-
-    // Put the device-flow details into the TUI state.
-    state.login_context.status = crate::state::LoginStatus::WaitingForUser {
-        code: auth_info.user_code.clone(),
-        url: auth_info.verification_uri.clone(),
-    };
-
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-    let d_code = auth_info.device_code.clone();
-    let d_interval = auth_info.interval;
-
-    // STEP 3: Start polling in background
-    let login_task = tokio::spawn(async move {
-        let result = CloudClient::wait_for_login(&d_code, d_interval).await;
-        let _ = tx.send(result);
-    });
-
-    let loop_result = async {
-        loop {
-            if let Ok(res) = rx.try_recv() {
-                match res {
-                    Ok(token_json) => {
-                        // Only update state to Success when we actually have the token
-                        let val: serde_json::Value = serde_json::from_str(&token_json)?;
-                        crate::auth_store::save_tokens(
-                            val["access_token"].as_str().unwrap_or_default(),
-                            val["refresh_token"].as_str().unwrap_or_default(),
-                            val["expires_in"].as_u64().unwrap_or_default(),
-                        )?;
-                        commands::step_up::StepUpStore::forget_for_profile();
-                        state.login_context.status = crate::state::LoginStatus::Success;
-                    }
-                    Err(e) => {
-                        state.login_context.status =
-                            crate::state::LoginStatus::Error(e.to_string());
-                    }
-                }
-            }
-
-            tui.draw(|f| {
-                crate::components::login_screen::render_login_screen(f, f.size(), &state)
-            })?;
-
-            if let Some(crate::tui::Event::Key(key)) = tui.event_rx.recv().await {
-                match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => {
-                        login_task.abort();
-                        if let crate::state::LoginStatus::Error(message) =
-                            &state.login_context.status
-                        {
-                            return Err(anyhow::anyhow!(message.clone()));
-                        }
-                        return Ok(());
-                    }
-                    KeyCode::Enter
-                        if matches!(
-                            state.login_context.status,
-                            crate::state::LoginStatus::Success
-                        ) =>
-                    {
-                        return Ok(());
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-    .await;
-
-    tui.exit().map_err(|e| anyhow::anyhow!(e))?;
-    loop_result
-}
 
 fn normalize_validator_yaml(raw_spec: &str) -> String {
     if let Ok(value) = serde_json::from_str::<serde_json::Value>(raw_spec) {

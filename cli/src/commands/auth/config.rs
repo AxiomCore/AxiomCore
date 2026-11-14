@@ -389,7 +389,7 @@ pub enum ConfigCommand {
 }
 
 fn scoped(args: &AuthArgs, environment: &str) -> AuthArgs {
-    AuthArgs { project: args.project.clone(), environment: environment.to_string(), json: args.json, action: super::Action::Status }
+    AuthArgs { project: args.project.clone(), org: args.org.clone(), environment: environment.to_string(), json: args.json, action: super::Action::Status }
 }
 
 fn env_of(to: &str) -> Result<&str> {

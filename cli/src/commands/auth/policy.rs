@@ -3,7 +3,7 @@
 //! exits 0 clean, 6 unacknowledged widening, 7 unacknowledged narrowing, 8 stale approvals,
 //! 9 partial coverage with `--require-complete`, 2 usage. Releases are signed with an enrolled
 //! migration signer key and carry the impact sidecar.
-use super::{admin, print, target, text, usage, AuthArgs, Exit, Target};
+use super::{admin, print, project_target, target, text, usage, AuthArgs, Exit, Target};
 use anyhow::{Context, Result};
 use axiom_database::developer as db;
 use axiom_lib::auth_impact::{self as ai, Approvals, Policy, Report, Subject};
@@ -69,6 +69,8 @@ pub enum PolicyAction {
         #[arg(long)]
         base_plan: Option<PathBuf>,
     },
+    /// List the signed policy releases uploaded to the project, newest first
+    Releases,
     /// Ask the server for the change items of a release against the environment
     Plan {
         #[arg(long)]
@@ -114,7 +116,7 @@ pub async fn environment_policy(target: &Target) -> Result<(Policy, Value)> {
 async fn base_policy(args: &AuthArgs, base: &str) -> Result<Policy> {
     match base.strip_prefix("env:") {
         Some(environment) => {
-            let scoped = AuthArgs { project: args.project.clone(), environment: environment.to_string(), json: args.json, action: super::Action::Status };
+            let scoped = AuthArgs { project: args.project.clone(), org: args.org.clone(), environment: environment.to_string(), json: args.json, action: super::Action::Status };
             let target = target(&scoped).await?;
             Ok(environment_policy(&target).await?.0)
         }
@@ -242,6 +244,11 @@ pub async fn run(args: &AuthArgs, action: &PolicyAction) -> Result<()> {
             Ok(())
         }
         PolicyAction::Release { policy, schema, parent, base, plan, base_plan } => release(args, policy, schema.as_deref(), parent.as_deref(), base.as_deref(), plan.as_deref(), base_plan.as_deref()).await,
+        PolicyAction::Releases => {
+            // Releases are project-wide: --environment is not resolved.
+            let target = project_target(args).await?;
+            releases(args, &target).await
+        }
         PolicyAction::Plan { release } => {
             hex64(release)?;
             let target = target(args).await?;
@@ -267,6 +274,19 @@ pub async fn run(args: &AuthArgs, action: &PolicyAction) -> Result<()> {
             print(args, &applied, |a| vec![format!("Applied {} item(s); policy {} revision {}.", text(a, "items"), text(a, "sha256"), text(a, "revision"))])
         }
     }
+}
+
+/// `GET /api/v1/projects/{project}/auth/policy/releases` (project-wide, newest first).
+async fn releases(args: &AuthArgs, target: &Target) -> Result<()> {
+    let listed = target.client.project_auth_request(Method::GET, &target.slug, "auth/policy/releases", None, None).await.map_err(admin)?;
+    print(args, &listed, |l| {
+        let short = |v: &Value| v.as_str().map(|s| s.chars().take(12).collect::<String>()).unwrap_or_else(|| "-".into());
+        let mut lines = l["releases"].as_array().into_iter().flatten().map(|r| format!("{}  policy {}  parent {}  uploaded {}", text(r, "sha256"), short(&r["policy_sha256"]), short(&r["parent_sha256"]), text(r, "uploaded_at"))).collect::<Vec<_>>();
+        if lines.is_empty() {
+            lines.push("No policy releases.".into());
+        }
+        lines
+    })
 }
 
 fn hex64(value: &str) -> Result<()> {
@@ -406,5 +426,29 @@ mod tests {
         assert_eq!(check_report(&report, Some(&path), true).unwrap().exit, 9);
         std::fs::write(&path, b"{}").unwrap();
         assert_eq!(check_report(&report, Some(&path), false).unwrap_err().downcast_ref::<Exit>().unwrap().code, 2);
+    }
+
+    #[tokio::test]
+    async fn releases_lists_the_project_releases() {
+        let mock = crate::commands::cloud_mock::Mock::default();
+        let base = mock.start().await;
+        let environment = "0b5e2c1a-9f3d-4c7e-8a21-5d6f7e8a9b0c";
+        let target = Target { client: axiom_cloud::CloudClient::for_loopback(&base, "access".into(), "refresh".into()).unwrap(), slug: "demo".into(), environment: environment.into() };
+        let args = AuthArgs { project: Some("demo".into()), org: None, environment: environment.into(), json: false, action: super::super::Action::Status };
+        let route = "GET /api/v1/projects/demo/auth/policy/releases";
+        mock.script(route, 200, json!({"releases": [{"sha256": "a".repeat(64), "policy_sha256": "b".repeat(64), "parent_sha256": null, "public_key": "k", "uploaded_at": "2026-11-01T00:00:00Z"}]}));
+        releases(&args, &target).await.unwrap();
+        let seen = mock.seen(route);
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].query, None);
+        assert_eq!(seen[0].body, Value::Null);
+        assert_eq!(seen[0].bearer.as_deref(), Some("access"));
+        // A refusal keeps its exit code (3 forbidden).
+        let mock = crate::commands::cloud_mock::Mock::default();
+        let base = mock.start().await;
+        let target = Target { client: axiom_cloud::CloudClient::for_loopback(&base, "access".into(), "refresh".into()).unwrap(), slug: "demo".into(), environment: environment.into() };
+        mock.script(route, 403, json!({"code": "AXRESOURCE_DENIED"}));
+        let error = releases(&args, &target).await.unwrap_err();
+        assert_eq!(error.downcast_ref::<Exit>().unwrap().code, 3);
     }
 }

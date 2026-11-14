@@ -1,0 +1,5 @@
+{
+  "component": "cli",
+  "type": "feature",
+  "summary": "Container packaging without runtime source: axiom server package --output-input writes only the data-only container input, and --builder-image builds a container context on a pinned axiom-server-host builder image (digest references only; a mirror must match the pinned digest). This release pins no builder image, so container packaging still needs --runtime-source or --builder-image."
+}

@@ -7,7 +7,8 @@ pageType: guide
 <StatusNote status="alpha" title="Factors, passkeys and step-up">
   Authenticator apps (TOTP), passkeys, recovery codes and reauthentication are
   **Alpha** for invited accounts (Axiom Cloud signup is invite-only). An Owner
-  turns them on per environment; `axiom auth mfa` needs CLI 0.151.0 or later.
+  turns them on per environment; `axiom auth mfa` needs CLI 0.151.0 or later
+  and `axiom auth mfa set` CLI 0.152.0 or later.
   Assurance guards need an `axiomAuth` provider in a deployed Axiom server and
   are **Coming soon**. `@axiomcore/auth-web` 0.2.0, which adds the methods below, is not yet
   published. Passkeys are checked only in web browsers; iOS and Android are not
@@ -41,8 +42,8 @@ reauthentication cannot refresh the freshness of an `aal2` session.
 
 ## Configure the environment
 
-An Owner sets these in the dashboard's **Multi-factor** page or with
-`axiom auth settings set`:
+An Owner sets these in the dashboard's **Multi-factor** page, with
+`axiom auth mfa set` or with `axiom auth settings set`:
 
 | Setting | Values | Effect |
 | --- | --- | --- |
@@ -54,10 +55,36 @@ An Owner sets these in the dashboard's **Multi-factor** page or with
 
 ```bash title="Terminal"
 axiom auth mfa status --environment production
+axiom auth mfa set --environment production --policy optional \
+  --factor totp --factor passkey --step-up-minutes 10 \
+  --rp-id example.com --rp-name "Example" --origin https://app.example.com --yes
 ```
 
 `mfa status` shows the policy, the allowed factors and how many users have
-factors (counts only).
+factors (counts only). `mfa set` changes only the flags you pass; the others
+keep their current value. `--factor` and `--origin` replace their lists
+(`--clear-origins` empties the origins), and `--rp-id ""` or `--rp-name ""`
+clears the value. It checks the values before it sends anything:
+
+- `--step-up-minutes` is 2 to 60 (stored as `step_up_seconds`).
+- `--rp-id` is your registrable domain or `localhost`, never an
+  `axiomcore.dev` name; `--rp-name` is at most 64 bytes.
+- Each `--origin` (at most 8) is an exact origin that is also in the
+  environment's `allowed_origins`, on the relying party ID or a subdomain.
+- A passkey factor with a policy other than `off` needs `--rp-id`.
+- `required` needs a factor that can be added now: TOTP, a passkey with a
+  relying party ID, or SMS with enabled Twilio settings.
+
+Turning the policy on from `off` prints the SDK warning below and asks for
+confirmation. So does a change that weakens protection: a lower policy
+(`required` to `optional` or `off`, `optional` to `off`), a factor type
+removed from the allowed list, or a longer `--step-up-minutes` window. Whether
+a change does that depends on the stored settings, so without a terminal any
+`--policy`, `--factor` or `--step-up-minutes` change needs `--yes`; without it
+the command exits 2 before it signs in or reads anything. A refusal from the service
+changes nothing: `AXAUTH_INVALID_REQUEST` means the service does not accept
+these settings yet or a value is out of bounds, and `AXAUTH_FEATURE_DISABLED`
+means multi-factor is not available for the environment yet.
 
 <Callout type="warn">
 Upgrade your application to `@axiomcore/auth-web` 0.2.0 before you set

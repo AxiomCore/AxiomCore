@@ -1,0 +1,5 @@
+{
+  "component": "cli",
+  "type": "feature",
+  "summary": "Cloud data (Experimental): axiom data reads a database environment's overview, catalog, history, events and saved queries, prepares reviewed SQL and table write requests, and axiom data tables export writes CSV to a private file written atomically (--force replaces it, symlinks are refused). Writes, exports and capture currently need a dashboard browser session; the CLI explains the refusal and prints the dashboard link. axiom database impact get reads a release's stored migration impact report."
+}

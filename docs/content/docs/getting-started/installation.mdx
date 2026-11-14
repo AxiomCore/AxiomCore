@@ -1,6 +1,6 @@
 ---
 title: Install the Axiom CLI
-description: Install Axiom CLI 0.149.1, check your environment with axiom doctor and axiom onboard, and add the host, extractor or editor support your path needs.
+description: Install Axiom CLI 0.151.0, check your environment with axiom doctor and axiom onboard, and add the host, extractor or editor support your path needs.
 pageType: guide
 ---
 
@@ -12,7 +12,7 @@ Cloud account.
 
 ## Supported platforms
 
-| Platform | CLI 0.149.1 status | Install with |
+| Platform | CLI 0.151.0 status | Install with |
 | --- | --- | --- |
 | macOS arm64 (Apple silicon) | **Alpha** | Installer script, Homebrew or manual download |
 | Linux amd64 and arm64, glibc 2.36 or newer | **Experimental** | Installer script |
@@ -46,11 +46,11 @@ Set these variables for the `bash` process to change the defaults:
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `INSTALL_DIR` | `/usr/local/bin` | Install directory. It must already exist. |
-| `VERSION` | Newest release | Exact version: `0.149.1`, `v0.149.1` or `cli-v0.149.1` |
+| `VERSION` | Newest release | Exact version: `0.151.0`, `v0.151.0` or `cli-v0.151.0` |
 
 ```bash title="Terminal: pinned version, no sudo"
 mkdir -p "$HOME/.local/bin"
-curl -fsSL https://axiomcore.dev/install | VERSION=0.149.1 INSTALL_DIR="$HOME/.local/bin" bash
+curl -fsSL https://axiomcore.dev/install | VERSION=0.151.0 INSTALL_DIR="$HOME/.local/bin" bash
 ```
 
 If the install directory is not on your `PATH`, the script prints the
@@ -59,7 +59,7 @@ If the install directory is not on your `PATH`, the script prints the
 </Tab>
 <Tab value="Homebrew">
 
-The Homebrew formula supports macOS arm64 only and installs 0.149.1.
+The Homebrew formula supports macOS arm64 only and installs 0.151.0.
 
 ```bash title="Terminal"
 brew install AxiomCore/tap/axiom
@@ -73,8 +73,8 @@ Download and verify the macOS arm64 archive:
 ```bash title="Terminal"
 mkdir axiom-install
 cd axiom-install
-curl -fL https://github.com/AxiomCore/AxiomCore/releases/download/cli-v0.149.1/axiom-macos-arm64.tar.gz -o axiom.tar.gz
-echo '6747941bb3ff5917baac691b8d26391e34ad31d8c1fbffd688b358eb3463e50d  axiom.tar.gz' | shasum -a 256 -c -
+curl -fL https://github.com/AxiomCore/AxiomCore/releases/download/cli-v0.151.0/axiom-macos-arm64.tar.gz -o axiom.tar.gz
+echo 'd2437e295226da8680d1058860b5d2e7d9e4414d578664711ce385215a6a5f3b  axiom.tar.gz' | shasum -a 256 -c -
 tar -xzf axiom.tar.gz
 mkdir -p "$HOME/.local/bin"
 install -m 755 axiom "$HOME/.local/bin/axiom"
@@ -87,9 +87,9 @@ the bundled PostgreSQL validator.
 
 | Archive | SHA-256 |
 | --- | --- |
-| `axiom-macos-arm64.tar.gz` | `6747941bb3ff5917baac691b8d26391e34ad31d8c1fbffd688b358eb3463e50d` |
-| `axiom-linux-amd64.tar.gz` | `3577ebc92722269ce7ddbc9770b9dfa4d62b99d63409d5af3ce02ef496ac193f` |
-| `axiom-linux-arm64.tar.gz` | `09928a0c3169d94faeaa9c1dc79d60bb22399358de33c71b64861ea32064ad20` |
+| `axiom-macos-arm64.tar.gz` | `d2437e295226da8680d1058860b5d2e7d9e4414d578664711ce385215a6a5f3b` |
+| `axiom-linux-amd64.tar.gz` | `55074f280441f3855309acec0c0a1fdbeaf8072b85cf0dd6223752726c547726` |
+| `axiom-linux-arm64.tar.gz` | `2e578582f0c27cd0da21a3350b782884eb000839f5fced2084183421c85fb66b` |
 
 </Tab>
 </Tabs>
@@ -101,7 +101,7 @@ axiom --version
 ```
 
 ```text title="Expected output"
-axiom 0.149.1
+axiom 0.151.0
 ```
 
 ## 2. Check your environment
@@ -176,7 +176,7 @@ axiom build --release --out backend.axiom
 | Path | Add |
 | --- | --- |
 | Acore backend or SQLite database | Nothing else |
-| Acore UI in a browser | Web UI host 0.6.12 |
+| Acore UI in a browser | Web UI host 0.8.0 |
 | Existing FastAPI backend | The FastAPI extractor, plus your Python dependencies to run the service |
 | Existing Go backend | A Go toolchain and the Go extractor |
 | Web or React client | `atmx-cli` 0.146.7 as a project dev dependency; see [Web](/sdks/web) |
@@ -185,11 +185,11 @@ axiom build --release --out backend.axiom
 ### Web UI host
 
 ```bash title="Terminal"
-axiom ui host install --target web --version 0.6.12 --non-interactive
+axiom ui host install --target web --version 0.8.0 --non-interactive
 ```
 
 ```text title="Expected output"
-Verified and installed Axiom UI Host 0.6.12 (browser) for web.
+Verified and installed Axiom UI Host 0.8.0 (browser) for web.
 ```
 
 Always pass `--target web`: `axiom ui host` commands default to `ios`. Check
@@ -209,9 +209,9 @@ migrations, worker startup and production connections. Read
 
 The CLI looks for extractors at `~/.acore/bin/axiom-fastapi-extractor` and
 `~/.acore/bin/axiom-go-extractor`, or at the paths in `AXIOM_FASTAPI_EXTRACTOR`
-and `AXIOM_GO_EXTRACTOR`. Published builds are macOS arm64 only. In CLI 0.149.1,
-`axiom install <extractor> --module` does not find these builds, so install
-them directly:
+and `AXIOM_GO_EXTRACTOR`. Published builds are macOS arm64 only. In CLI
+0.149.1 and 0.151.0, `axiom install <extractor> --module` does not find these
+builds, so install them directly:
 
 <Tabs items={['FastAPI extractor 0.1.4', 'Go extractor 2026.10.14.2']}>
 <Tab value="FastAPI extractor 0.1.4">
@@ -293,7 +293,7 @@ axiom join you@yourcompany.com
 | `python3 is required but not installed` | Install Python 3; the installer uses it to verify the archive. |
 | `axiom: command not found` | Add the install directory to `PATH`. |
 | `MISSING_EXTRACTOR: ...` | Install the extractor as shown above, or set its path variable. |
-| UI host is missing or incompatible | Run the host install command with `--target web --version 0.6.12`. |
+| UI host is missing or incompatible | Run the host install command with `--target web --version 0.8.0`. |
 | Unexpected referral code prompt | The command uses Cloud. Use a local command, or get a code with `axiom join`. |
 
 ## Next steps

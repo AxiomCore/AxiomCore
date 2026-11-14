@@ -122,10 +122,7 @@ pub(crate) fn engine_error(error: axiom_database::Error) -> anyhow::Error {
 
 /// Requests an operation and waits for it to finish.
 async fn run_operation(h: &Hosted<'_>, mode: Mode, release: Option<&str>) -> Result<Operation> {
-    let operation = h
-        .client
-        .request_migration_operation(h.project, h.environment, mode, release, &idempotency_key())
-        .await?;
+    let operation = request_operation(h, mode, release, std::time::Duration::from_secs(10)).await?;
     if operation.finished() {
         return Ok(operation);
     }
@@ -133,6 +130,38 @@ async fn run_operation(h: &Hosted<'_>, mode: Mode, release: Option<&str>) -> Res
         .wait_migration_operation(h.project, &operation.id, h.wait)
         .await
 }
+// Current servers queue read-only admission and return a specific conflict reason.
+// Retry only legacy, unspecified 409s here; a reason-bearing response already
+// waited server-side or is a permanent refusal. Keep one key across retries.
+async fn request_operation(
+    h: &Hosted<'_>,
+    mode: Mode,
+    release: Option<&str>,
+    retry_budget: std::time::Duration,
+) -> Result<Operation> {
+    use std::time::Duration;
+    let deadline = tokio::time::Instant::now() + retry_budget;
+    let mut delay = Duration::from_millis(100);
+    let key = idempotency_key();
+    loop {
+        match h.client.request_migration_operation(h.project, h.environment, mode, release, &key).await {
+            Ok(operation) => return Ok(operation),
+            Err(error) => {
+                let message = error.to_string();
+                let legacy_conflict = message.starts_with("AXRESOURCE_CONFLICT:") && message.ends_with("(HTTP 409)");
+                if mode == Mode::Migrate || !legacy_conflict || tokio::time::Instant::now() >= deadline {
+                    return Err(error);
+                }
+                tokio::time::sleep(delay.min(deadline.saturating_duration_since(tokio::time::Instant::now()))).await;
+                if tokio::time::Instant::now() >= deadline {
+                    return Err(error);
+                }
+                delay = (delay * 2).min(Duration::from_secs(1));
+            }
+        }
+    }
+}
+
 fn outcome_word(operation: &Operation) -> &'static str {
     match operation.outcome.as_deref() {
         Some("validated") => "validated",
@@ -331,6 +360,15 @@ pub(crate) async fn upload(h: &Hosted<'_>, release: &Release) -> Result<()> {
     Ok(())
 }
 
+async fn upload_for_check(h: &Hosted<'_>, release: &Release, dry_run: bool) -> Result<()> {
+    if !dry_run {
+        return upload(h, release).await;
+    }
+    let body = axiom_database::canonical_bytes(release).map_err(engine_error)?;
+    h.client.upload_migration_candidate(h.project, &body, &idempotency_key()).await?;
+    Ok(())
+}
+
 /// Attaches the release's signed impact sidecar, when the catalog holds a valid one
 /// (`data-tools/v1`, "Storage: signed sidecar"). Never fails the migration: the sidecar
 /// is re-attachable, and a refusal is reported on standard error outside JSON mode.
@@ -497,7 +535,7 @@ pub(crate) async fn migrate_with(
                 dev::save_input(&loaded.root, &original, &loaded.input)?;
             }
         }
-        upload(h, candidate).await?;
+        upload_for_check(h, candidate, dry_run).await?;
         if !dry_run {
             upload_impact(h, &loaded.root, candidate, json).await;
         }
@@ -558,7 +596,7 @@ pub(crate) async fn rollback_with(
     if !dry_run {
         db::archive(&loaded.root, &release).map_err(engine_error)?;
     }
-    upload(h, &release).await?;
+    upload_for_check(h, &release, dry_run).await?;
     let mode = if dry_run { Mode::Check } else { Mode::Migrate };
     let operation = run_operation(h, mode, Some(&release.sha256)).await?;
     report(out, &operation, &release, &stream, json)?;
@@ -726,7 +764,7 @@ pub(crate) async fn history_with(
         None => writeln!(out, "No applied migrations recorded.")?,
     }
     for release in &applied {
-        let captured = local.iter().find(|l| l.sha256 == release.sha256).and_then(super::database_capture::label);
+        let captured = local.iter().find(|l| l.sha256 == release.sha256).and_then(|l| super::database_capture::label(l, &releases));
         writeln!(
             out,
             "{}  {}  {}  {}{}",
@@ -899,6 +937,14 @@ pub(crate) async fn pull_with(h: &Hosted<'_>, args: &PullArgs, out: &mut dyn Wri
         )?;
         return Ok(());
     };
+    // Capture labels name the author by email from the release list when the server
+    // returns it (Owner, Maintainer); otherwise by the signed user id. A failed list read
+    // only costs the email.
+    let summaries = if added.iter().any(|(r, _)| r.revision.capture.is_some()) {
+        h.client.migration_releases(h.project, Some(&stream)).await.unwrap_or_default()
+    } else {
+        vec![]
+    };
     writeln!(
         out,
         "Hosted history for {stream} from {}/{}: {} release(s), head {} (generation {})",
@@ -916,7 +962,7 @@ pub(crate) async fn pull_with(h: &Hosted<'_>, args: &PullArgs, out: &mut dyn Wri
             release.revision.kind,
             short(&release.sha256),
             path.strip_prefix(&loaded.root).unwrap_or(path).display(),
-            super::database_capture::label(release).map(|l| format!("  {l}")).unwrap_or_default()
+            super::database_capture::label(release, &summaries).map(|l| format!("  {l}")).unwrap_or_default()
         )?;
     }
     if let Some((incoming, plan)) = &sources {
@@ -964,6 +1010,11 @@ pub(crate) mod fake {
     pub struct Cloud {
         pub signers: Vec<Value>,
         pub releases: Vec<(String, Vec<u8>)>,
+        pub candidates: Vec<(String, Vec<u8>)>,
+        pub legacy_server: bool,
+        pub operation_conflicts: usize,
+        pub operation_keys: Vec<String>,
+        pub conflict_reason: Option<String>,
         /// (head, generation, public key) of the one ledger stream.
         pub head: Option<(String, u64, String)>,
         pub stream: String,
@@ -973,6 +1024,10 @@ pub(crate) mod fake {
         pub reject: Option<String>,
         /// Method, path (with query) and body of every request.
         pub requests: Vec<(String, String, Vec<u8>)>,
+        /// `captured_by_email` the release list returns, by release digest.
+        pub capture_emails: BTreeMap<String, String>,
+        /// When set, the release list answers 500.
+        pub fail_release_list: bool,
     }
     impl Cloud {
         pub fn count(&self, method: &str, path: &str) -> usize {
@@ -1006,7 +1061,7 @@ pub(crate) mod fake {
             let release = op["release"].as_str().map(str::to_string);
             let parent_ok = |cloud: &Cloud| -> Option<Value> {
                 let sha = release.clone()?;
-                let (_, body) = cloud.releases.iter().find(|(s, _)| *s == sha)?;
+                let (_, body) = cloud.releases.iter().chain(&cloud.candidates).find(|(s, _)| *s == sha)?;
                 let v: Value = serde_json::from_slice(body).ok()?;
                 let parent = v["revision"]["parent"].as_str().map(str::to_string);
                 (parent == cloud.head.as_ref().map(|h| h.0.clone())).then_some(v)
@@ -1073,10 +1128,13 @@ pub(crate) mod fake {
                         return (400, br#"{"error":{"code":"AXRESOURCE_INVALID"}}"#.to_vec());
                     };
                     let sha = summary["sha256"].as_str().unwrap().to_string();
-                    let created = !self.releases.iter().any(|(s, _)| *s == sha);
+                    let candidate = !self.legacy_server && path.ends_with("?candidate=true");
+                    let releases = if candidate { &mut self.candidates } else { &mut self.releases };
+                    let created = !releases.iter().any(|(s, _)| *s == sha);
                     if created {
-                        self.releases.push((sha, body.to_vec()));
+                        releases.push((sha.clone(), body.to_vec()));
                     }
+                    if !candidate { self.candidates.retain(|(s, _)| *s != sha); }
                     (if created { 201 } else { 200 }, json!({"release": summary}).to_string().into_bytes())
                 }
                 ("PUT", r) if r.starts_with("/migrations/releases/") && r.ends_with("/impact") => {
@@ -1086,7 +1144,14 @@ pub(crate) mod fake {
                     }
                     (201, json!({"impact": {"release_sha256": sha, "public_key": "x", "uploaded_at": "2026-10-20T00:00:00Z"}}).to_string().into_bytes())
                 }
-                ("GET", "/migrations/releases") => ok(json!({"releases": self.releases.iter().rev().filter_map(|(_, b)| Self::summary(b)).collect::<Vec<_>>()})),
+                ("GET", "/migrations/releases") if self.fail_release_list => (500, br#"{"error":{"code":"AXRESOURCE_UNAVAILABLE"}}"#.to_vec()),
+                ("GET", "/migrations/releases") => ok(json!({"releases": self.releases.iter().rev().filter_map(|(sha, b)| {
+                    let mut summary = Self::summary(b)?;
+                    if let Some(email) = self.capture_emails.get(sha) {
+                        summary["captured_by_email"] = json!(email);
+                    }
+                    Some(summary)
+                }).collect::<Vec<_>>()})),
                 ("GET", r) if r.starts_with("/migrations/releases/") => {
                     let sha = &r["/migrations/releases/".len()..];
                     match self.releases.iter().find(|(s, _)| s == sha) {
@@ -1095,6 +1160,10 @@ pub(crate) mod fake {
                     }
                 }
                 ("POST", "/migrations/operations") => {
+                    if self.operation_conflicts > 0 {
+                        self.operation_conflicts -= 1;
+                        return (409, json!({"error": {"code": "AXRESOURCE_CONFLICT", "reason": self.conflict_reason}}).to_string().into_bytes());
+                    }
                     let v: Value = serde_json::from_slice(body).unwrap();
                     let id = format!("00000000-0000-4000-8000-{:012}", self.operations.len() + 1);
                     let op = json!({"id": id, "environment": v["environment"], "mode": v["mode"], "release": v.get("release").cloned().unwrap_or(Value::Null), "status": "pending", "outcome": null, "code": null, "targets": [], "created_at": format!("2026-10-20T00:00:{:02}Z", self.operations.len()), "finished_at": null});
@@ -1158,6 +1227,12 @@ pub(crate) mod fake {
                             break;
                         }
                         body.extend_from_slice(&chunk[..n]);
+                    }
+                    if method == "POST" && path.ends_with("/migrations/operations") {
+                        let key = head.lines().filter_map(|line| line.split_once(':'))
+                            .find(|(name, _)| name.eq_ignore_ascii_case("idempotency-key"))
+                            .map(|(_, value)| value.trim().to_string()).unwrap_or_default();
+                        cloud.lock().unwrap().operation_keys.push(key);
                     }
                     let (status, text) = cloud.lock().unwrap().handle(&method, &path, &body);
                     let mut response = format!(
@@ -1328,18 +1403,117 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dry_run_uploads_then_checks_and_writes_nothing_locally() {
+    async fn dry_run_uploads_candidate_then_checks_and_writes_nothing_locally() {
         let (state, client) = cloud(true).await;
         let root = project("1.0.0", TASKS);
         let mut out = vec![];
         migrate_with(&hosted(&client), &migrate_args(root.path(), true), &mut out).await.unwrap();
         assert!(text(out).contains("Hosted check passed for migration 1.0.0; nothing was changed"));
         let state = state.lock().unwrap();
-        assert_eq!(state.releases.len(), 1);
+        assert_eq!(state.releases.len(), 0);
+        assert_eq!(state.candidates.len(), 1);
         let modes = state.operations.iter().map(|o| o["mode"].as_str().unwrap().to_string()).collect::<Vec<_>>();
         assert_eq!(modes, ["status", "check"]);
         assert!(state.head.is_none());
         assert!(!catalog(root.path(), "1.0.0").exists());
+    }
+
+    #[tokio::test]
+    async fn two_dry_runs_then_migrate_publish_only_the_real_version() {
+        let (state, client) = cloud(true).await;
+        let root = project("1.0.0", TASKS);
+        migrate_with(&hosted(&client), &migrate_args(root.path(), false), &mut Vec::new()).await.unwrap();
+        std::fs::write(root.path().join("schema.acore"), schema("1.1.0", &format!("{TASKS} {NOTES}"))).unwrap();
+        for _ in 0..2 {
+            migrate_with(&hosted(&client), &migrate_args(root.path(), true), &mut Vec::new()).await.unwrap();
+        }
+        assert_eq!(state.lock().unwrap().releases.len(), 1);
+        migrate_with(&hosted(&client), &migrate_args(root.path(), false), &mut Vec::new()).await.unwrap();
+        let state = state.lock().unwrap();
+        assert_eq!(state.releases.len(), 2);
+        assert!(state.candidates.is_empty());
+        let release: Release = serde_json::from_slice(&state.releases[1].1).unwrap();
+        assert_eq!(release.revision.identity.version, "1.1.0");
+    }
+
+    #[tokio::test]
+    async fn rollback_dry_runs_do_not_publish_or_reserve_a_version() {
+        let (state, client) = cloud(true).await;
+        let root = project("1.0.0", TASKS);
+        migrate_with(&hosted(&client), &migrate_args(root.path(), false), &mut Vec::new()).await.unwrap();
+        let args = RollbackArgs {
+            source: root.path().join("schema.acore"), connection: Default::default(),
+            remote: migrate_args(root.path(), true).remote,
+            policy: dev::Policy { dry_run: true, non_interactive: true, ..Default::default() },
+            steps: Some(1), to: None,
+        };
+        for _ in 0..2 { rollback_with(&hosted(&client), &args, &mut Vec::new()).await.unwrap(); }
+        assert_eq!(state.lock().unwrap().releases.len(), 1);
+        let mut real = args;
+        real.policy.dry_run = false;
+        real.policy.allow_destructive = true;
+        real.policy.auto_version = true;
+        rollback_with(&hosted(&client), &real, &mut Vec::new()).await.unwrap();
+        let state = state.lock().unwrap();
+        assert_eq!(state.releases.len(), 2);
+        let release: Release = serde_json::from_slice(&state.releases[1].1).unwrap();
+        assert_eq!(release.revision.identity.version, "2.0.0");
+    }
+
+    #[tokio::test]
+    async fn candidate_upload_falls_back_on_a_legacy_server() {
+        let (state, client) = cloud(true).await;
+        state.lock().unwrap().legacy_server = true;
+        let root = project("1.0.0", TASKS);
+        migrate_with(&hosted(&client), &migrate_args(root.path(), true), &mut Vec::new()).await.unwrap();
+        let state = state.lock().unwrap();
+        assert_eq!(state.releases.len(), 1);
+        assert!(state.head.is_none());
+    }
+
+    #[tokio::test]
+    async fn read_only_operations_retry_legacy_conflicts() {
+        let (state, client) = cloud(true).await;
+        state.lock().unwrap().operation_conflicts = 2;
+        run_operation(&hosted(&client), Mode::Status, None).await.unwrap();
+        let state = state.lock().unwrap();
+        assert_eq!(state.count("POST", "/api/v1/projects/acme/migrations/operations"), 3);
+        assert_eq!(state.operation_keys.len(), 3);
+        assert!(api::is_uuid(&state.operation_keys[0]));
+        assert!(state.operation_keys.iter().all(|key| key == &state.operation_keys[0]));
+    }
+
+    #[tokio::test]
+    async fn legacy_conflicts_stop_at_the_retry_budget() {
+        let (state, client) = cloud(true).await;
+        state.lock().unwrap().operation_conflicts = usize::MAX;
+        let started = tokio::time::Instant::now();
+        let error = request_operation(&hosted(&client), Mode::Status, None, Duration::from_millis(250)).await.unwrap_err();
+        assert!(error.to_string().starts_with("AXRESOURCE_CONFLICT:"));
+        assert!(started.elapsed() >= Duration::from_millis(250));
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(state.lock().unwrap().count("POST", "/api/v1/projects/acme/migrations/operations") <= 2);
+    }
+
+    #[tokio::test]
+    async fn writes_and_specific_conflicts_are_not_retried() {
+        for (mode, reason) in [(Mode::Migrate, None), (Mode::Status, Some("key_revoked")), (Mode::Check, Some("idempotency_key_reused")), (Mode::Check, Some("operation_in_progress"))] {
+            let (state, client) = cloud(true).await;
+            state.lock().unwrap().operation_conflicts = 2;
+            state.lock().unwrap().conflict_reason = reason.map(str::to_string);
+            let release = "a".repeat(64);
+            assert!(run_operation(&hosted(&client), mode, if mode == Mode::Status { None } else { Some(&release) }).await.is_err());
+            assert_eq!(state.lock().unwrap().count("POST", "/api/v1/projects/acme/migrations/operations"), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn sqlite_existing_table_error_snapshot() {
+        let (state, client) = cloud(true).await;
+        let root = project("1.0.0", TASKS);
+        state.lock().unwrap().reject = Some("ADB1132".into());
+        let error = migrate_with(&hosted(&client), &migrate_args(root.path(), true), &mut Vec::new()).await.unwrap_err().to_string();
+        assert_eq!(error, "ADB1132: Hosted SQLite cannot alter an existing table's columns this way. Add a new table or use PostgreSQL. Hosted operation 00000000-0000-4000-8000-000000000002 rejected.");
     }
 
     #[tokio::test]
@@ -1397,6 +1571,7 @@ mod tests {
         pull_with(&hosted(&client), &pull_args(root.path()), &mut out).await.unwrap();
         let out = text(out);
         assert!(out.contains("added 1.0.0") && out.contains("added 1.1.0") && out.contains("Nothing was executed."), "{out}");
+        assert_eq!(state.lock().unwrap().count("GET", "/api/v1/projects/acme/migrations/releases?"), 0, "no capture: no release list read");
         assert_eq!(db::read_release(&catalog(root.path(), "1.0.0")).unwrap().sha256, r1.sha256);
         assert_eq!(db::read_release(&catalog(root.path(), "1.1.0")).unwrap().sha256, r2.sha256);
         let modes = state.lock().unwrap().operations.iter().map(|o| o["mode"].as_str().unwrap().to_string()).collect::<Vec<_>>();
@@ -1495,6 +1670,9 @@ mod tests {
     // --- dashboard captures (data-tools/v1, "CLI: pull, migrate and version skew") ---------
     const FILL: &str = "evolution fill(from: Previous, to: Current, coordination: EvolutionCoordination.maintenanceFenced) { backfill(table: Current.Tables.main.tasks, key: Previous.Columns.main.tasks.id, column: Current.Columns.main.tasks.title, using: value(literal: \"filled\"), batchSize: 10, batchesPerRun: 1, maxRows: 10, catchUpRows: 10) }";
 
+    /// The user id the signed capture block names (the backend signs the id, not the email).
+    const CAPTURER_ID: &str = "0b9f3c5e-1d2a-4c6b-9e8f-7a6b5c4d3e2f";
+
     /// A capture on `parent` as the dashboard builds it (preview, then build with the
     /// receipt's block), signed by the test key.
     fn captured(parent: &Release, sql: &str) -> Release {
@@ -1508,7 +1686,7 @@ mod tests {
             parent_sha256: parent.sha256.clone(),
             sql_sha256: "0".repeat(64),
             statements_sha256: preview.statements_sha256.clone(),
-            captured_by: "owner@example.com".into(),
+            captured_by: CAPTURER_ID.into(),
             captured_at: "2026-10-28T10:00:00Z".into(),
             title: "Add notes".into(),
         };
@@ -1557,6 +1735,7 @@ mod tests {
         let c3 = captured(&r2, "CREATE TABLE notes (id TEXT PRIMARY KEY, body TEXT)");
         assert!(!c3.revision.sources.contains_key("migration.acore"));
         let (state, client) = pull_cloud(&[&r1, &r2, &c3], true).await;
+        state.lock().unwrap().capture_emails.insert(c3.sha256.clone(), "owner@example.com".into());
         // The developer's tree is at 1.1.0 with the typed intent, catalog r1 and r2.
         let root = tree(&r2);
         db::archive(root.path(), &r1).unwrap();
@@ -1565,6 +1744,7 @@ mod tests {
         pull_with(&hosted(&client), &pull_args(root.path()), &mut out).await.unwrap();
         let out = text(out);
         assert!(out.contains("captured in dashboard: Add notes by owner@example.com") && out.contains("dashboard region of schema main updated") && out.contains("Nothing was executed."), "{out}");
+        assert!(!out.contains(CAPTURER_ID), "the email, not the signed user id: {out}");
         let schema = std::fs::read_to_string(root.path().join("schema.acore")).unwrap();
         assert_eq!(schema, c3.revision.sources["schema.acore"], "local equals catalog: the incoming region and edits");
         assert!(!root.path().join("migration.acore").exists(), "no stale typed intent stays");
@@ -1578,6 +1758,76 @@ mod tests {
         migrate_with(&hosted(&client), &migrate_args(root.path(), false), &mut out).await.unwrap();
         let out = text(out);
         assert!(out.contains("Database is current") && out.contains(&c3.sha256), "{out}");
+    }
+
+    /// The capture label names the author by the release list's email and falls back to
+    /// the signed user id when the list has none (a Reader, an older server) or an unusable one.
+    #[test]
+    fn capture_label_names_the_author_by_email_and_falls_back_to_the_user_id() {
+        let r1 = release("1.0.0", TASKS, None);
+        let c2 = captured(&r1, "CREATE TABLE notes (id TEXT PRIMARY KEY)");
+        let summary = |email: Option<&str>| api::ReleaseSummary {
+            sha256: c2.sha256.clone(),
+            stream: NAME.into(),
+            version: c2.revision.identity.version.clone(),
+            parent: Some(r1.sha256.clone()),
+            kind: "migration".into(),
+            engine: "sqlite".into(),
+            public_key: c2.public_key.clone(),
+            uploaded_at: "2026-10-28T10:00:00Z".into(),
+            captured_by_email: email.map(Into::into),
+        };
+        let label = |list: &[api::ReleaseSummary]| crate::commands::database_capture::label(&c2, list).unwrap();
+        assert_eq!(label(&[summary(Some("owner@example.com"))]), "captured in dashboard: Add notes by owner@example.com");
+        let by_id = format!("captured in dashboard: Add notes by {CAPTURER_ID}");
+        let long = format!("{}@example.com", "a".repeat(250));
+        for list in [vec![], vec![summary(None)], vec![summary(Some(""))], vec![summary(Some("x\u{1b}[2J"))], vec![summary(Some("evil\u{202E}moc.elpmaxe@x"))], vec![summary(Some("a\u{200B}@example.com"))], vec![summary(Some("owner @example.com"))], vec![summary(Some(&long))]] {
+            assert_eq!(label(&list), by_id);
+        }
+        let mut other = summary(Some("other@example.com"));
+        other.sha256 = r1.sha256.clone();
+        assert_eq!(label(&[other]), by_id, "another release's email is never used");
+        assert_eq!(crate::commands::database_capture::label(&r1, &[]), None);
+    }
+
+    /// A failed release-list read costs only the email: pull still writes and prints the id.
+    #[tokio::test]
+    async fn pull_names_the_capture_author_by_id_when_the_release_list_fails() {
+        let r1 = release("1.0.0", TASKS, None);
+        let c2 = captured(&r1, "CREATE TABLE notes (id TEXT PRIMARY KEY)");
+        let (state, client) = pull_cloud(&[&r1, &c2], true).await;
+        {
+            let mut s = state.lock().unwrap();
+            s.capture_emails.insert(c2.sha256.clone(), "owner@example.com".into());
+            s.fail_release_list = true;
+        }
+        let root = tree(&r1);
+        db::archive(root.path(), &r1).unwrap();
+        let mut out = vec![];
+        pull_with(&hosted(&client), &pull_args(root.path()), &mut out).await.unwrap();
+        let out = text(out);
+        assert!(out.contains(&format!("captured in dashboard: Add notes by {CAPTURER_ID}")) && !out.contains("owner@example.com"), "{out}");
+        assert_eq!(state.lock().unwrap().count("GET", "/api/v1/projects/acme/migrations/releases?"), 1, "one list read, for the capture");
+        assert_eq!(db::read_release(&catalog(root.path(), &c2.revision.identity.version)).unwrap().sha256, c2.sha256);
+    }
+
+    #[tokio::test]
+    async fn history_names_the_capture_author_by_email() {
+        let r1 = release("1.0.0", TASKS, None);
+        let c2 = captured(&r1, "CREATE TABLE notes (id TEXT PRIMARY KEY)");
+        let (state, client) = pull_cloud(&[&r1, &c2], true).await;
+        {
+            let mut s = state.lock().unwrap();
+            s.capture_emails.insert(c2.sha256.clone(), "owner@example.com".into());
+            s.operations.push(serde_json::json!({"id": "00000000-0000-4000-8000-999999999998", "environment": "development", "mode": "migrate", "release": c2.sha256, "status": "succeeded", "outcome": "applied", "code": null, "targets": [{"project": NAME, "head": c2.sha256, "generation": 2, "public_key": c2.public_key}], "created_at": "2026-10-29T00:00:00Z", "finished_at": "2026-10-29T00:00:01Z"}));
+        }
+        let root = tree(&c2);
+        db::archive(root.path(), &r1).unwrap();
+        db::archive(root.path(), &c2).unwrap();
+        let mut out = vec![];
+        history_with(&hosted(&client), &root.path().join("schema.acore"), false, &mut out).await.unwrap();
+        let out = text(out);
+        assert!(out.contains("captured in dashboard: Add notes by owner@example.com") && !out.contains(CAPTURER_ID), "{out}");
     }
 
     #[tokio::test]

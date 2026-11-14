@@ -6,35 +6,47 @@ use axiom_server::{
     secret_runtime::RuntimeSecrets,
 };
 use clap::Subcommand;
-use std::{
-    io::Read,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 use zeroize::Zeroizing;
+
+/// Help for `--project` on Cloud subcommands.
+const PROJECT_HELP: &str = "Project slug, such as `payments-api`";
+/// Help for a Cloud `--environment`: a name or UUID, resolved before the request.
+const ENVIRONMENT_HELP: &str = "Cloud configuration environment: a name such as `staging` or its UUID";
 
 #[derive(Clone, Debug, Subcommand)]
 pub enum Action {
+    /// Inspect environment-scoped secret metadata
+    Environment {
+        #[command(subcommand)]
+        action: crate::commands::data_metadata::SecretsAction,
+    },
+    /// Create a reference-only AxiomSecrets.toml scaffold.
     Init {
         #[arg(default_value = ".")]
         root: PathBuf,
     },
+    /// Validate a local profile; `--resolve` also checks local sources.
     Check {
         #[arg(default_value = ".")]
         root: PathBuf,
+        /// Profile name in AxiomSecrets.toml, such as `development`.
         #[arg(long)]
         environment: String,
         #[arg(long)]
         resolve: bool,
     },
+    /// Show a local profile's references (never values).
     Inspect {
         #[arg(default_value = ".")]
         root: PathBuf,
+        /// Profile name in AxiomSecrets.toml, such as `development`.
         #[arg(long)]
         environment: String,
     },
     /// Create an isolated logical scope; production scopes must be protected.
     CreateEnvironment {
-        #[arg(long)]
+        #[arg(long, help = PROJECT_HELP)]
         project: String,
         #[arg(long)]
         slug: String,
@@ -48,146 +60,226 @@ pub enum Action {
     /// Define a name and purpose. No secret value is accepted here.
     Define {
         name: String,
-        #[arg(long)]
+        #[arg(long, help = PROJECT_HELP)]
         project: String,
         #[arg(long)]
         purpose: String,
         #[arg(long, default_value = "")]
         description: String,
     },
+    /// Create or update a binding from a private JSON file. Updating an existing binding
+    /// (a non-zero `expected_revision`) invalidates older leases' authority, so it asks first.
     Bind {
-        #[arg(long)]
+        #[arg(long, help = PROJECT_HELP)]
         project: String,
-        #[arg(long)]
+        #[arg(long, help = ENVIRONMENT_HELP)]
         environment: String,
         #[arg(long)]
         file: PathBuf,
+        /// Confirm updating an existing binding (a non-zero `expected_revision`) without a
+        /// prompt (required without a terminal). A new binding does not ask.
+        #[arg(long)]
+        yes: bool,
     },
+    /// List workload registrations.
     Workloads {
-        #[arg(long)]
+        #[arg(long, help = PROJECT_HELP)]
         project: String,
-        #[arg(long)]
+        #[arg(long, help = ENVIRONMENT_HELP)]
         environment: String,
     },
+    /// Register an exact workload identity and plan from a private JSON file.
     RegisterWorkload {
-        #[arg(long)]
+        #[arg(long, help = PROJECT_HELP)]
         project: String,
-        #[arg(long)]
+        #[arg(long, help = ENVIRONMENT_HELP)]
         environment: String,
         #[arg(long)]
         file: PathBuf,
     },
+    /// Disable a workload registration and invalidate its leases.
     DisableWorkload {
         id: String,
-        #[arg(long)]
+        #[arg(long, help = PROJECT_HELP)]
         project: String,
-        #[arg(long)]
+        #[arg(long, help = ENVIRONMENT_HELP)]
         environment: String,
+        /// Confirm without a prompt (required without a terminal)
+        #[arg(long)]
+        yes: bool,
     },
+    /// List grants.
     Grants {
-        #[arg(long)]
+        #[arg(long, help = PROJECT_HELP)]
         project: String,
-        #[arg(long)]
+        #[arg(long, help = ENVIRONMENT_HELP)]
         environment: String,
     },
+    /// Grant a member or workload access from a private JSON file.
     Grant {
-        #[arg(long)]
+        #[arg(long, help = PROJECT_HELP)]
         project: String,
-        #[arg(long)]
+        #[arg(long, help = ENVIRONMENT_HELP)]
         environment: String,
         #[arg(long)]
         file: PathBuf,
     },
+    /// Revoke a grant and its affected leases.
     RevokeGrant {
         id: String,
-        #[arg(long)]
+        #[arg(long, help = PROJECT_HELP)]
         project: String,
-        #[arg(long)]
+        #[arg(long, help = ENVIRONMENT_HELP)]
         environment: String,
+        /// Confirm without a prompt (required without a terminal)
+        #[arg(long)]
+        yes: bool,
     },
+    /// Update an environment's status, protection or expiry from a private JSON file.
+    /// Every update carries a status that may enable or disable the environment, so it asks first.
     UpdateEnvironment {
-        #[arg(long)]
+        #[arg(long, help = PROJECT_HELP)]
         project: String,
-        #[arg(long)]
+        #[arg(long, help = ENVIRONMENT_HELP)]
         environment: String,
         #[arg(long)]
         file: PathBuf,
+        /// Confirm without a prompt (required without a terminal)
+        #[arg(long)]
+        yes: bool,
     },
+    /// List a secret's versions with the current revision and active version.
     Versions {
+        /// Secret name, such as `payments/api-key`, or its UUID.
         secret: String,
-        #[arg(long)]
+        #[arg(long, help = PROJECT_HELP)]
         project: String,
-        #[arg(long)]
+        #[arg(long, help = ENVIRONMENT_HELP)]
         environment: String,
+        /// Print JSON: secret, environment, revision, active_version_id and versions.
+        #[arg(long)]
+        json: bool,
     },
+    /// Permanently destroy an eligible disabled version after retention.
     Destroy {
+        /// Secret name or UUID.
         secret: String,
+        /// Version: `v3`, `3` or a version UUID.
         version: String,
-        #[arg(long)]
+        #[arg(long, help = PROJECT_HELP)]
         project: String,
-        #[arg(long)]
+        #[arg(long, help = ENVIRONMENT_HELP)]
         environment: String,
+        /// Expected environment-secret revision. Defaults to the current one.
         #[arg(long)]
-        revision: u64,
+        revision: Option<u64>,
+        /// Confirm without a prompt (required without a terminal)
+        #[arg(long)]
+        yes: bool,
     },
+    /// Show a compiled private plan's secret requirements.
     Requirements {
         plan: PathBuf,
     },
+    /// Save a candidate value from a masked prompt or stdin. Does not activate it.
     Set {
+        /// Secret name or UUID.
         secret: String,
-        #[arg(long)]
+        #[arg(long, help = PROJECT_HELP)]
         project: String,
-        #[arg(long)]
+        #[arg(long, help = ENVIRONMENT_HELP)]
         environment: String,
+        /// Read one raw value (1..65536 bytes, every byte kept) from stdin.
         #[arg(long)]
         stdin: bool,
     },
+    /// Save a new value and activate it (set, then activate).
+    Rotate {
+        /// Secret name or UUID.
+        secret: String,
+        #[arg(long, help = PROJECT_HELP)]
+        project: String,
+        #[arg(long, help = ENVIRONMENT_HELP)]
+        environment: String,
+        /// Read one raw value (1..65536 bytes, every byte kept) from stdin.
+        #[arg(long)]
+        stdin: bool,
+        /// Print the result as JSON.
+        #[arg(long)]
+        json: bool,
+        /// Confirm without a prompt (required without a terminal)
+        #[arg(long)]
+        yes: bool,
+    },
+    /// List project-wide secret definitions.
     List {
-        #[arg(long)]
+        #[arg(long, help = PROJECT_HELP)]
         project: String,
     },
+    /// List configuration environments with IDs, names and revisions.
     Environments {
-        #[arg(long)]
+        #[arg(long, help = PROJECT_HELP)]
         project: String,
     },
+    /// List up to 100 audit events.
     Audit {
-        #[arg(long)]
+        #[arg(long, help = PROJECT_HELP)]
         project: String,
-        #[arg(long)]
+        #[arg(long, help = ENVIRONMENT_HELP)]
         environment: String,
         #[arg(long)]
         before: Option<u64>,
     },
+    /// Make a candidate version the active one.
     Activate {
+        /// Secret name or UUID.
         secret: String,
+        /// Version: `v3`, `3` or a version UUID.
         version: String,
-        #[arg(long)]
+        #[arg(long, help = PROJECT_HELP)]
         project: String,
-        #[arg(long)]
+        #[arg(long, help = ENVIRONMENT_HELP)]
         environment: String,
+        /// Expected environment-secret revision. Defaults to the current one.
         #[arg(long)]
-        revision: u64,
+        revision: Option<u64>,
+        /// Confirm without a prompt (required without a terminal)
+        #[arg(long)]
+        yes: bool,
     },
     /// Rewrap an encrypted version with the configured KMS primary key.
     Rewrap {
+        /// Secret name or UUID.
         secret: String,
+        /// Version: `v3`, `3` or a version UUID.
         version: String,
-        #[arg(long)]
+        #[arg(long, help = PROJECT_HELP)]
         project: String,
-        #[arg(long)]
+        #[arg(long, help = ENVIRONMENT_HELP)]
         environment: String,
+        /// Expected environment-secret revision. Defaults to the current one.
         #[arg(long)]
-        revision: u64,
+        revision: Option<u64>,
+        /// Confirm without a prompt (required without a terminal)
+        #[arg(long)]
+        yes: bool,
     },
+    /// Disable a version. Different from revoking a grant.
     Revoke {
+        /// Secret name or UUID.
         secret: String,
+        /// Version: `v3`, `3` or a version UUID.
         version: String,
-        #[arg(long)]
+        #[arg(long, help = PROJECT_HELP)]
         project: String,
-        #[arg(long)]
+        #[arg(long, help = ENVIRONMENT_HELP)]
         environment: String,
+        /// Expected environment-secret revision. Defaults to the current one.
         #[arg(long)]
-        revision: u64,
+        revision: Option<u64>,
+        /// Confirm without a prompt (required without a terminal)
+        #[arg(long)]
+        yes: bool,
     },
 }
 pub async fn runtime(
@@ -310,8 +402,45 @@ async fn metadata(
     );
     Ok(())
 }
+/// Resolve a Cloud `--environment` name to the UUID the routes need.
+async fn environment_id(project: &str, environment: &str) -> Result<String> {
+    let client = crate::auth_store::authenticated_cloud_client()?;
+    super::secrets_cloud::environment_id(&client, project, environment).await
+}
+/// A binding file with a non-zero `expected_revision` updates an existing binding. The server
+/// decodes field names case-insensitively, so any spelling of the key counts.
+fn updates_binding(body: &serde_json::Value) -> bool {
+    let Some(fields) = body.as_object() else { return false };
+    fields.iter().filter(|(key, _)| key.eq_ignore_ascii_case("expected_revision")).any(|(_, value)| match value {
+        serde_json::Value::Null => false,
+        serde_json::Value::Number(revision) => revision.as_f64() != Some(0.0),
+        // Not a number: the server refuses it, but treat it as an update and ask.
+        _ => true,
+    })
+}
+
+fn binding_prompt(environment: &str, body: &serde_json::Value) -> String {
+    let field = |key: &str| body[key].as_str().unwrap_or("?").to_string();
+    format!(
+        "Update the binding of {} for {} in {environment}? Saving invalidates authority held by older leases.",
+        field("consumer"),
+        field("requirement")
+    )
+}
+
+/// The dashboard's enable and disable wording; any other status names the change.
+fn environment_prompt(environment: &str, body: &serde_json::Value) -> String {
+    match body["status"].as_str() {
+        Some("disabled") => format!("Disable {environment}? Runtime consumption will be denied and affected leases invalidated. Values and audit history remain."),
+        Some("active") => format!("Update {environment} with status active? If it is disabled, this enables it: explicit grants and version pins still apply, and enabling does not restore revoked access."),
+        Some(status) => format!("Set the status of {environment} to {status}?"),
+        None => format!("Update {environment}?"),
+    }
+}
+
 pub async fn handle(action: &Action) -> Result<()> {
     match action {
+        Action::Environment { action } => crate::commands::data_metadata::handle_secrets(action).await?,
         Action::Requirements { plan } => {
             let plan: axiom_lib::backend::ServerPlan =
                 axiom_server::serve::read_json(plan, 16_777_216)?;
@@ -348,6 +477,7 @@ pub async fn handle(action: &Action) -> Result<()> {
             project,
             environment,
             file,
+            ..
         }
         | Action::RegisterWorkload {
             project,
@@ -363,7 +493,15 @@ pub async fn handle(action: &Action) -> Result<()> {
             project,
             environment,
             file,
+            ..
         } => {
+            // Every environment update carries a status (the API refuses one without), and
+            // whether it changes the stored status is known only to the server, so every update
+            // asks, as the dashboard's enable and disable do. Without a terminal and --yes it is
+            // refused here, before the file is read or anything is sent.
+            if let Action::UpdateEnvironment { yes, .. } = action {
+                super::auth::require_yes_or_terminal(*yes)?;
+            }
             let bytes = axiom_server::secret_runtime::read_private(
                 file.parent()
                     .filter(|path| !path.as_os_str().is_empty())
@@ -375,8 +513,21 @@ pub async fn handle(action: &Action) -> Result<()> {
                 bytes.len() <= 32768,
                 "AXSECRET_INVALID: metadata input exceeds bounds"
             );
-            let body = serde_json::from_slice(&bytes)
+            let body: serde_json::Value = serde_json::from_slice(&bytes)
                 .map_err(|_| anyhow::anyhow!("AXSECRET_INVALID: invalid reference metadata"))?;
+            match action {
+                Action::UpdateEnvironment { yes, .. } => {
+                    super::auth::confirm_yes(*yes, &environment_prompt(environment, &body))?;
+                }
+                // A binding with an expected revision updates an existing one; the server then
+                // bumps its revision, which invalidates authority held by older leases. Asked
+                // first, as the dashboard's "Update this binding?". A new binding does not ask.
+                Action::Bind { yes, .. } if updates_binding(&body) => {
+                    super::auth::confirm_yes(*yes, &binding_prompt(environment, &body))?;
+                }
+                _ => {}
+            }
+            let environment = environment_id(project, environment).await?;
             let (part, method) = match action {
                 Action::Bind { .. } => ("secret-bindings", reqwest::Method::PUT),
                 Action::RegisterWorkload { .. } => ("secret-workloads", reqwest::Method::POST),
@@ -404,9 +555,10 @@ pub async fn handle(action: &Action) -> Result<()> {
             } else {
                 "secret-grants"
             };
+            let environment = environment_id(project, environment).await?;
             metadata(
                 project,
-                &["configuration-environments", environment, part],
+                &["configuration-environments", &environment, part],
                 reqwest::Method::GET,
                 None,
             )
@@ -416,22 +568,27 @@ pub async fn handle(action: &Action) -> Result<()> {
             id,
             project,
             environment,
+            yes,
         }
         | Action::RevokeGrant {
             id,
             project,
             environment,
+            yes,
         } => {
-            let (part, operation) = if matches!(action, Action::DisableWorkload { .. }) {
-                ("secret-workloads", "disable")
+            // The dashboard asks before both; a terminal prompts, otherwise --yes is required.
+            let (part, operation, prompt) = if matches!(action, Action::DisableWorkload { .. }) {
+                ("secret-workloads", "disable", format!("Disable workload {id} in {environment}? It gets no new secrets or database credentials and its Cloud leases are invalidated. A database credential it already holds keeps working for the engine's bound (SQLite: at most 15 minutes; PostgreSQL: open connections end within about 10 minutes)."))
             } else {
-                ("secret-grants", "revoke")
+                ("secret-grants", "revoke", format!("Revoke grant {id} in {environment}? Affected Cloud leases are invalidated."))
             };
+            super::auth::confirm_yes(*yes, &prompt)?;
+            let environment = environment_id(project, environment).await?;
             metadata(
                 project,
                 &[
                     "configuration-environments",
-                    environment,
+                    &environment,
                     part,
                     id,
                     operation,
@@ -445,43 +602,18 @@ pub async fn handle(action: &Action) -> Result<()> {
             secret,
             project,
             environment,
-        } => {
-            metadata(
-                project,
-                &[
-                    "configuration-environments",
-                    environment,
-                    "secrets",
-                    secret,
-                    "versions",
-                ],
-                reqwest::Method::GET,
-                None,
-            )
-            .await?;
-        }
+            json,
+        } => super::secrets_cloud::show_versions(secret, project, environment, *json).await?,
         Action::Destroy {
             secret,
             version,
             project,
             environment,
             revision,
+            yes,
         } => {
-            metadata(
-                project,
-                &[
-                    "configuration-environments",
-                    environment,
-                    "secrets",
-                    secret,
-                    "versions",
-                    version,
-                    "destroy",
-                ],
-                reqwest::Method::POST,
-                Some(serde_json::json!({"expected_revision":revision})),
-            )
-            .await?;
+            super::secrets_cloud::version_action("destroy", secret, version, project, environment, *revision, *yes)
+                .await?
         }
         Action::Init { root } => {
             ensure!(root.is_dir(), "project root is unavailable");
@@ -531,34 +663,26 @@ pub async fn handle(action: &Action) -> Result<()> {
             environment,
             stdin,
         } => {
-            let mut material = if *stdin {
-                let mut value = Zeroizing::new(Vec::new());
-                std::io::stdin().take(65_537).read_to_end(&mut value)?;
-                value
-            } else {
-                Zeroizing::new(
-                    dialoguer::Password::new()
-                        .with_prompt("New secret value")
-                        .interact()?
-                        .into_bytes(),
-                )
-            };
-            ensure!(
-                !material.is_empty() && material.len() <= 65_536,
-                "AXSECRET_INVALID: value must contain 1..65536 bytes"
-            );
-            let client = crate::auth_store::authenticated_cloud_client()?;
-            let result = client
-                .write_secret_version(
-                    project,
-                    environment,
-                    secret,
-                    &material,
-                    &uuid::Uuid::new_v4().to_string(),
-                )
-                .await;
-            material.fill(0);
-            println!("{}", serde_json::to_string_pretty(&result?)?);
+            let material = super::secrets_cloud::read_material(*stdin)?;
+            super::secrets_cloud::set(secret, project, environment, material).await?;
+        }
+        Action::Rotate {
+            secret,
+            project,
+            environment,
+            stdin,
+            json,
+            yes,
+        } => {
+            super::secrets_cloud::rotate(
+                secret,
+                project,
+                environment,
+                || super::secrets_cloud::read_material(*stdin),
+                *json,
+                *yes,
+            )
+            .await?
         }
         Action::List { project } | Action::Environments { project } => {
             let client = crate::auth_store::authenticated_cloud_client()?;
@@ -582,11 +706,13 @@ pub async fn handle(action: &Action) -> Result<()> {
             before,
         } => {
             let client = crate::auth_store::authenticated_cloud_client()?;
+            let environment =
+                super::secrets_cloud::environment_id(&client, project, environment).await?;
             println!(
                 "{}",
                 serde_json::to_string_pretty(
                     &client
-                        .secret_audit_page(project, environment, *before)
+                        .secret_audit_page(project, &environment, *before)
                         .await?
                 )?
             );
@@ -597,6 +723,7 @@ pub async fn handle(action: &Action) -> Result<()> {
             project,
             environment,
             revision,
+            yes,
         }
         | Action::Rewrap {
             secret,
@@ -604,6 +731,7 @@ pub async fn handle(action: &Action) -> Result<()> {
             project,
             environment,
             revision,
+            yes,
         }
         | Action::Revoke {
             secret,
@@ -611,6 +739,7 @@ pub async fn handle(action: &Action) -> Result<()> {
             project,
             environment,
             revision,
+            yes,
         } => {
             let operation = if matches!(action, Action::Activate { .. }) {
                 "activate"
@@ -619,28 +748,8 @@ pub async fn handle(action: &Action) -> Result<()> {
             } else {
                 "disable"
             };
-            let client = crate::auth_store::authenticated_cloud_client()?;
-            println!(
-                "{}",
-                serde_json::to_string_pretty(
-                    &client
-                        .secret_metadata(
-                            project,
-                            &[
-                                "configuration-environments",
-                                environment,
-                                "secrets",
-                                secret,
-                                "versions",
-                                version,
-                                operation
-                            ],
-                            reqwest::Method::POST,
-                            Some(serde_json::json!({"expected_revision":revision}))
-                        )
-                        .await?
-                )?
-            );
+            super::secrets_cloud::version_action(operation, secret, version, project, environment, *revision, *yes)
+                .await?;
         }
     }
     Ok(())

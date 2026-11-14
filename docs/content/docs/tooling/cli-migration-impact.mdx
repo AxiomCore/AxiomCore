@@ -1,0 +1,32 @@
+---
+title: Hosted migration impact
+description: Read a migration release's stored impact report with the Axiom CLI.
+pageType: reference
+---
+
+Available in CLI 0.152.0 and later. After `axiom login`, use
+`axiom database impact get` to read the stored report for an uploaded release.
+This does not apply a migration or recompute the report.
+
+```sh title="Read a stored migration impact report"
+axiom database impact get RELEASE_SHA256 --project demo --environment development --json
+```
+
+Replace `RELEASE_SHA256` with the release's 64-character lowercase SHA-256 digest
+from the project's Migrations dashboard. `--project` and `--environment` are
+required and accept IDs, slugs, or display names. Ambiguous names fail; select an
+ID instead. The environment is validated as part of selection; the stored impact
+report belongs to the project release and is shared across environments.
+
+With `--json`, output is the stored impact envelope, or `null` if no report has
+been uploaded. Without it, output has a plain-language heading and the report
+fields, or a message that no stored report is available. Authentication failures,
+invalid digests, and API errors return a nonzero exit status. Missing reports
+return successfully, matching the dashboard's optional impact panel.
+
+To verify a report, compare its release digest and impact details with the same
+release in the Migrations dashboard. Reading requires project access and does
+not require confirmation or step-up sign-in.
+
+Continue with the [database CLI](/tooling/cli-database) to inspect local migration
+history or prepare a migration.

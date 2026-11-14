@@ -10,8 +10,10 @@ pageType: concept
   SQLite and managed PostgreSQL, for invited accounts: Axiom Cloud signup is
   invite-only. Verifying its tokens in a deployed Axiom
   server is **Coming soon**: it needs a runtime release. The CLI scaffold for
-  it and the `axiom auth` commands need CLI 0.151.0 or later. The Dashboard
-  **Authentication** page enables and administers authentication.
+  it and the `axiom auth` commands need CLI 0.151.0 or later; `axiom auth
+  enable` and `axiom auth disable` need CLI 0.152.0 or later. The
+  Dashboard **Authentication** page or `axiom auth enable` turns
+  authentication on, and the page administers it.
 </StatusNote>
 
 Managed authentication lets the users of your application sign up, sign in
@@ -48,6 +50,34 @@ Authentication needs a `ready` managed database in the environment. The
 **Resources** page shows the database's auth status under its state, for
 example **Auth: not_configured**. `ready` means the authentication tables are
 installed and verified.
+
+## Turn authentication on
+
+Authentication is off in a new environment. An Owner turns it on in the
+Dashboard's **Authentication** page or with the CLI:
+
+```bash title="Terminal"
+axiom auth enable --environment production
+```
+
+This creates the environment's first signing key and installs the
+authentication tables in the environment's database. Setup continues in the
+background: the command prints the status afterwards, and
+`axiom auth status` reports `ready` once the tables are installed. Users can
+then sign in with the enabled methods. Signup keeps its current policy
+(`closed` unless you opened it). When authentication is already on, `enable`
+changes nothing.
+
+```bash title="Terminal"
+axiom auth disable --environment production --yes
+```
+
+While it is off, signup, sign-in, token exchange and refresh are refused.
+Logout still works. Access tokens already issued stay valid until they expire
+(at most 15 minutes). Users, sessions and settings are kept. In a terminal
+`disable` asks for confirmation; without one it needs `--yes`, and without it
+exits 2 before it signs in or sends anything. Both commands
+change only the `enabled` setting and accept `--json`.
 
 ## How a request is authenticated
 
@@ -201,3 +231,4 @@ are **Coming soon**. Each page states its status and limits.
 - [Sign in, refresh and log out](/authentication/sessions)
 - [Put roles and permissions in tokens](/authentication/roles-permissions)
 - [Verify access tokens in your backend](/authentication/verify-tokens)
+- [CLI reference for every `axiom auth` command](/tooling/cli-auth)

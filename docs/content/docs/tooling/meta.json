@@ -3,14 +3,24 @@
   "pages": [
     "cli-reference",
     "cli-project",
+    "cli-workspace",
+    "cli-sandbox-environments",
     "cli-build-and-run",
     "cli-testing",
     "cli-server",
     "cli-database",
+    "cli-auth",
+    "cli-branch",
     "cli-ui",
     "cli-contracts",
+    "cli-contract-releases",
     "cli-extensions",
     "cli-inspect",
-    "secrets-cli"
+    "cli-auth-admin",
+    "secrets-cli",
+    "cli-secret-metadata",
+    "cli-migration-impact",
+    "cli-data",
+    "intel"
   ]
 }

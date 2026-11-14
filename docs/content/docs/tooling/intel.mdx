@@ -1,0 +1,128 @@
+---
+title: Project intelligence commands
+description: Inspect project telemetry, activity, security, pipeline runs and pull requests with the Axiom CLI.
+pageType: reference
+---
+
+`axiom intel` reads project intelligence and performs the same management
+operations as the Cloud dashboard. Use it from any directory after `axiom login`.
+Acore source files are not required.
+
+<StatusNote status="experimental" title="In CLI 0.152.0 and later">
+  These commands are **Experimental** and need CLI 0.152.0 or later
+  (`axiom intel --help` lists them). This reference does not qualify
+  production behavior. See
+  [Support and availability](/introduction/support-matrix).
+</StatusNote>
+
+## Common options
+
+Start with `axiom intel --help`. Options may appear before or after the noun and
+verb. Replace uppercase identifiers below with values from your own project.
+
+| Option | Meaning |
+| --- | --- |
+| `--project PROJECT` | Project name, slug or ID. Defaults to the current directory’s project link. Required if no link exists. |
+| `--environment ENVIRONMENT` | Validate an environment name, slug or ID. These endpoints return project-wide data; this option does not filter it. |
+| `--query KEY=VALUE` | Repeatable API filters such as `--query limit=20` or `--query cursor=VALUE`. |
+| `--json` | Machine-readable JSON output. |
+| `--yes` | Confirm operations that change existing settings, update a pull request or revoke an ingestion source. |
+| `--show-secrets` | Explicitly reveal credentials returned when creating an OTLP source. Keep this output private. |
+| `--body JSON` | Required JSON object for mutations shown with this option. Field names and validation follow the Cloud API. |
+
+Without `--json`, results have a plain-language heading. Permission and API
+validation errors fail the command. A name that matches multiple projects or
+environments must be replaced with its unambiguous ID.
+
+## Read commands
+
+Each row starts with `axiom intel`. Project operations also take
+`--project PROJECT`.
+
+| Command suffix | Result |
+| --- | --- |
+| `activity list` | Account activity. |
+| `activity stream [--follow]` | Activity events. |
+| `me get` | Current account. |
+| `project get` | Project details. |
+| `project overview` | Project overview. |
+| `alerts list` | Project alerts. |
+| `alert-policies list` | Alert policies. |
+| `logs list [--follow]` | Project logs. |
+| `observability get` | Observability summary. |
+| `observability settings get` | Collection and retention settings. |
+| `observability sources list` | OTLP source metadata. |
+| `pipeline-runs list` | Pipeline runs. |
+| `pipeline-runs steps RUN_ID` | Steps for one run. |
+| `pipeline-runs attempts RUN_ID` | Step attempts for one run. |
+| `pull-requests list` | Project pull requests. |
+| `pull-requests get NUMBER` | One pull request. |
+| `pull-requests changes NUMBER` | Pull request changes. |
+| `pull-requests comments NUMBER` | Pull request comments. |
+| `release-channel latest` | Latest release channel. |
+| `security audit` | Security checks. |
+| `security posture` | Security posture. |
+| `speed-insights get` | Speed insights. |
+| `test-runs list` | Contract test runs. |
+| `test-runs results TEST_RUN_ID` | Results for one test run. |
+| `traces list` | Project traces. |
+| `traces get TRACE_ID` | One trace. |
+| `traffic list` | Project traffic. |
+
+For example, inspect a project and its traces:
+
+```bash title="Terminal"
+axiom intel project get --project example-project --json
+axiom intel traces list --project example-project --json
+axiom intel logs list --project example-project --follow --json
+```
+
+`--follow` keeps logs running until you press Ctrl+C. Activity streams run until
+Ctrl+C, reconnecting after a disconnect with backoff from one to 30 seconds.
+Without `--follow`, activity skips the ready notification and returns the first activity change.
+Logs poll every 15 seconds by default; use `--interval SECONDS` with a positive integer
+to change the interval. Follow emits each new log row once, using its ID, and retains
+the latest 10,000 IDs. Without `--follow`, logs return one snapshot. An interrupted follow does not modify the project.
+
+## Management commands
+
+Each row starts with `axiom intel`. All rows except `cli-installed confirm` take
+`--project PROJECT`. Quoted `JSON` below is a placeholder for an API object, not
+literal input.
+
+| Command suffix | Operation |
+| --- | --- |
+| `alert-policies update POLICY_KIND --threshold NUMBER --yes` | Update an alert policy. |
+| `observability settings update --name NAME --yes` | Update observability settings. |
+| `observability sources create --body JSON` | Create an OTLP ingestion source. |
+| `observability sources revoke SOURCE_ID --yes` | Revoke an OTLP source, stopping ingestion with its credentials. |
+| `pull-requests create --body JSON` | Create a project pull request. |
+| `pull-requests update NUMBER --body JSON --yes` | Update a pull request. |
+| `pull-requests comment NUMBER --body JSON` | Add a comment. |
+| `test-runs queue [--version VERSION]` | Queue a contract test run. |
+| `settings update --name NAME --yes` | Update project settings. |
+| `cli-installed confirm` | Record CLI installation in dashboard setup. |
+
+For example, set retention and create an ingestion source:
+
+```bash title="Terminal"
+axiom intel observability settings update --project example-project --body '{"retention_days":7}' --yes
+axiom intel observability sources create --project example-project --body '{"name":"example-source","spans_per_minute":100}'
+```
+
+Settings updates accept `--name`, `--description`, `--default-branch`, and `--visibility private|public`.
+Alert policy updates accept `--enabled true|false`, `--threshold NUMBER`, and
+`--window-seconds SECONDS` (60 to 86400), `--minimum-samples COUNT` (at least one),
+and `--severity info|warning|critical`. Both read current values before writing, preserving
+fields you leave unspecified. An unconfigured alert policy requires all five
+policy flags for its initial configuration. Unknown flags and raw `--body` input are rejected
+for these commands and `test-runs queue`. Queueing without `--version` uses the
+current version selected by the service.
+
+The source creation response hides credentials, including the Acore snippet, unless you also supply
+`--show-secrets`. The dashboard exposes these credentials only at creation;
+listing sources is not a way to recover them. Creation prints a one-time credential warning to stderr. Revoke an unused source with
+`observability sources revoke SOURCE_ID --yes`.
+
+Use [Project commands](/tooling/cli-project) to list or link projects before
+inspecting their intelligence.

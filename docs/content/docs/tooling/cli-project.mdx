@@ -337,8 +337,17 @@ axiom project restore [PROJECT] [OPTIONS]
 | `--wait` | flag | off | Poll every 3 seconds until the project is restored or the restore failed (up to 60 minutes). |
 | `--json` | flag | off | Print the archive status as JSON. |
 
-A restore while the archive is still running is refused; wait until
-`axiom project archive-status` shows `archived` or `failed`.
+A restore is refused while the archive is still running, or while an operation
+runs on one of the archived databases; wait until `axiom project archive-status`
+shows `archived` or `failed` and no database operation is running. Restore works
+even for a project where archive is no longer enabled.
+
+A project name or slug is looked up among both your listed and your archived
+projects: an ID wins, then an exact slug, then an exact name. When two projects
+share a name, `restore` takes the archived one; the other commands ask for the
+slug. With `--wait`, server errors and lost connections while polling are
+retried (up to 10 in a row); any other refusal stops the wait. With `--json`, the
+last status read is printed even when the wait ends in `failed` or times out.
 
 ### axiom project archive-status
 

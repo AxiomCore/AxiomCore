@@ -180,7 +180,8 @@ A server workload gets credentials for a database only through a grant: one
 requirement of your app, one enabled workload registered for database access in
 the database's environment, its compiled backend plan, and an expiry of 7, 30
 or 90 days. Only owners can list, create and revoke grants. The **Database
-access** section of **Resources** and these CLI commands do the same:
+access** section of **Resources** and these CLI commands (CLI 0.152.0 and
+later) do the same:
 
 ```bash title="Terminal: grant and revoke database access"
 axiom project resources --project my-project grants --environment production

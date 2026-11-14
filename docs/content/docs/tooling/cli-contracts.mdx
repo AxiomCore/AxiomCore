@@ -14,7 +14,7 @@ registries over the network.
 | Group | Use it to | Status |
 | --- | --- | --- |
 | [`axiom contract`](#axiom-contract) | Lock and verify the backend contracts a frontend imports. | Alpha |
-| [`axiom packages`](#axiom-packages) | Build, lock, verify and review typed frontend `.axiom` packages, and author component library source. | Alpha; [library adaptation](#library-adaptation-commands) Experimental |
+| [`axiom packages`](#axiom-packages) | Build, lock, verify and review typed frontend `.axiom` packages, and author component library source. | Alpha; [library source](#library-source-commands) and [library adaptation](#library-adaptation-commands) Experimental |
 | [`axiom dependencies`](#axiom-dependencies) | Resolve and audit third-party packages used by authored extensions. | Experimental |
 | [`axiom domain`](#axiom-domain) | Validate the Domain Model v1 layer, or bootstrap it from OpenAPI or SQL. | Alpha (`validate`), Experimental (`bootstrap`) |
 | [`axiom security`](#axiom-security) | Analyze the opt-in Security Model v1 layer without building. | Alpha, as part of the Acore contract toolchain |
@@ -333,8 +333,7 @@ axiom packages run [OPTIONS] <SOURCE>
 These commands are in CLI 0.151.0. They work on a component library written
 as ordinary Acore source and described by an `AxiomLibrary.toml` source
 manifest (format `axiom-component-source/v1`). They run locally and change no
-package lock. Library source authoring is **Alpha**, like the rest of the typed
-package toolchain.
+package lock. Library source authoring is **Experimental**.
 
 | Command | Purpose |
 | --- | --- |

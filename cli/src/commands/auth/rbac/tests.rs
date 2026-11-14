@@ -13,7 +13,7 @@ const ORG: &str = "5a6b7c8d-9e0f-4a1b-8c3d-4e5f6a7b8c93";
 const GRANT: &str = "6b7c8d9e-0f1a-4b2c-9d4e-5f6a7b8c9da4";
 
 fn args() -> AuthArgs {
-    AuthArgs { project: Some("demo".into()), environment: ENV.into(), json: true, action: Action::Status }
+    AuthArgs { project: Some("demo".into()), org: None, environment: ENV.into(), json: true, action: Action::Status }
 }
 
 async fn fixture() -> (Mock, Target) {

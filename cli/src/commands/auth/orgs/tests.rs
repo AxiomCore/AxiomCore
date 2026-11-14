@@ -10,7 +10,7 @@ const USER: &str = "4b5c6d7e-8f9a-4b0c-9d1e-2f3a4b5c6d7e";
 const INVITE: &str = "5c6d7e8f-9a0b-4c1d-8e2f-3a4b5c6d7e8f";
 
 fn args() -> AuthArgs {
-    AuthArgs { project: Some("demo".into()), environment: ENV.into(), json: true, action: Action::Status }
+    AuthArgs { project: Some("demo".into()), org: None, environment: ENV.into(), json: true, action: Action::Status }
 }
 
 async fn fixture() -> (Mock, Target) {

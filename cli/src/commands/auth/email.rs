@@ -4,15 +4,19 @@
 //! The SMTP password comes only from stdin or a masked prompt, never argv, and is never
 //! printed: `smtp get` shows only whether it is set. Template text is plain text with the
 //! documented `{{variables}}`; it is checked here with the backend's rules before sending.
-//! Template text comes only from files or stdin (`-`), never argv, and token-like values
-//! in printed template text are redacted unless `--reveal-text`.
+//! Template text comes only from files or stdin (`-`), never argv. Template text is
+//! never printed unless `--reveal-text`: by default the `templates` commands print only
+//! metadata of each text field (whether it is set, its length, the `{{variables}}` it
+//! uses and its SHA-256), because a credential pasted into a template cannot be told
+//! apart from ordinary text reliably.
 use super::advanced::{confirm_yes, read_secret_input};
-use super::{looks_like_email, print, redact_tokens, sanitize, target, text, usage, AuthArgs, Target};
+use super::{looks_like_email, print, sanitize, target, text, usage, AuthArgs, Target};
 use anyhow::{Context, Result};
 use clap::builder::PossibleValuesParser;
 use clap::Subcommand;
 use reqwest::Method;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use zeroize::Zeroizing;
@@ -95,7 +99,7 @@ pub enum SmtpAction {
 pub enum TemplatesAction {
     /// List every template kind and whether it is customized
     List {
-        /// Print token-like values in template text unredacted
+        /// Print the template text itself (it can contain anything pasted into it)
         #[arg(long)]
         reveal_text: bool,
     },
@@ -104,7 +108,7 @@ pub enum TemplatesAction {
         /// Template kind
         #[arg(value_parser = PossibleValuesParser::new(TEMPLATE_KINDS))]
         kind: String,
-        /// Print token-like values in template text unredacted
+        /// Print the template text itself (it can contain anything pasted into it)
         #[arg(long)]
         reveal_text: bool,
     },
@@ -122,7 +126,7 @@ pub enum TemplatesAction {
         /// File with the text after the code or link (plain text, at most 2,000 bytes); `-` reads stdin
         #[arg(long)]
         outro_file: Option<PathBuf>,
-        /// Print token-like values in the saved template text unredacted
+        /// Print the saved template text itself (it can contain anything pasted into it)
         #[arg(long)]
         reveal_text: bool,
     },
@@ -152,7 +156,7 @@ pub enum TemplatesAction {
         /// Print the HTML part instead of the plain-text part
         #[arg(long)]
         html: bool,
-        /// Print token-like values in the rendered text unredacted
+        /// Print the rendered text itself (it can contain anything pasted into the template)
         #[arg(long)]
         reveal_text: bool,
     },
@@ -163,12 +167,8 @@ pub enum TemplatesAction {
 // ---------------------------------------------------------------------------
 
 pub async fn email(args: &AuthArgs, action: &EmailAction) -> Result<()> {
-    if let EmailAction::Unsuppress { email, yes } = action {
+    if let EmailAction::Unsuppress { email, .. } = action {
         valid_email(email, "the address")?;
-        // Without a terminal the confirmation is refused before signing in.
-        if !*yes && !std::io::stdin().is_terminal() {
-            return Err(usage("pass --yes to confirm without a prompt"));
-        }
     }
     let target = target(args).await?;
     email_with(args, &target, action).await
@@ -495,43 +495,142 @@ async fn template_view(target: &Target, kind: &str) -> Result<Value> {
     target.call(Method::GET, &format!("templates/{kind}"), &[], None).await
 }
 
-fn template_lines(t: &Value) -> Vec<String> {
-    let field = |key: &str| match t[key].as_str() {
-        Some(value) if !value.is_empty() => value.to_string(),
-        _ => format!("(default) {}", t["defaults"][key].as_str().unwrap_or("-")),
+/// Response keys whose string values are metadata, not template text.
+const METADATA_KEYS: [&str; 3] = ["kind", "updated_at", "created_at"];
+
+/// What is printed instead of one template text field: whether it is set, its length in
+/// bytes, the `{{variables}}` it uses (in order, once each) and the SHA-256 of its UTF-8
+/// bytes, so two outputs can be compared without showing the text.
+pub fn text_summary(value: &Value) -> Value {
+    match value.as_str() {
+        Some(text) if !text.is_empty() => {
+            let mut variables: Vec<&str> = Vec::new();
+            for found in regex::Regex::new(r"\{\{[a-z_]+\}\}").expect("static regex").find_iter(text) {
+                if !variables.contains(&found.as_str()) {
+                    variables.push(found.as_str());
+                }
+            }
+            json!({"set": true, "bytes": text.len(), "variables": variables, "sha256": hex::encode(Sha256::digest(text.as_bytes()))})
+        }
+        _ => json!({"set": false}),
+    }
+}
+
+/// Replace every string of a templates response with its `text_summary`, except the
+/// metadata keys (`METADATA_KEYS`); numbers, booleans and structure are kept. Unknown
+/// string fields are summarized too, so no template text is printed by default.
+pub fn hide_text(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            for (key, value) in map.iter_mut() {
+                if value.is_string() && METADATA_KEYS.contains(&key.as_str()) {
+                    continue;
+                }
+                if value.is_string() || value.is_null() && TEXT_FIELDS.contains(&key.as_str()) {
+                    let summary = text_summary(value);
+                    *value = summary;
+                } else {
+                    hide_text(value);
+                }
+            }
+        }
+        Value::Array(items) => items.iter_mut().for_each(hide_text),
+        Value::String(_) => {
+            let summary = text_summary(value);
+            *value = summary;
+        }
+        _ => {}
+    }
+}
+
+/// Text fields of template views, summaries and previews; a null one is shown as not set.
+const TEXT_FIELDS: [&str; 5] = ["subject", "intro", "outro", "text", "html"];
+
+/// `set, 23 bytes, variables {{app_name}}, sha256 …` for a `text_summary`.
+fn describe(summary: &Value) -> String {
+    if summary["set"] != true {
+        return "not set".into();
+    }
+    let variables: Vec<&str> = summary["variables"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+    let variables = if variables.is_empty() { "no variables".to_string() } else { format!("variables {}", variables.join(" ")) };
+    format!("set, {} bytes, {variables}, sha256 {}", summary["bytes"], text(summary, "sha256"))
+}
+
+/// The value of a text field for human output: the text itself if revealed, otherwise
+/// its description.
+fn shown(value: &Value, reveal: bool) -> String {
+    if reveal {
+        value.as_str().unwrap_or("").to_string()
+    } else {
+        describe(value)
+    }
+}
+
+const HIDDEN_HINT: &str = "Template text is not shown; pass --reveal-text to print it.";
+
+/// One line on stderr before template text is printed.
+fn warn_revealed() {
+    eprintln!("axiom auth: warning: --reveal-text prints template text as stored, including anything pasted into it");
+}
+
+/// Human lines of a template view; `t` is the raw view if `reveal`, otherwise the
+/// view after `hide_text`.
+fn template_lines(t: &Value, reveal: bool) -> Vec<String> {
+    let field = |key: &str| {
+        let set = if reveal { t[key].as_str().is_some_and(|v| !v.is_empty()) } else { t[key]["set"] == true };
+        if set {
+            shown(&t[key], reveal)
+        } else if reveal {
+            format!("(default) {}", t["defaults"][key].as_str().unwrap_or("-"))
+        } else {
+            format!("default text ({})", describe(&t["defaults"][key]))
+        }
     };
-    vec![
+    let mut lines = vec![
         format!("{}: {} (revision {})", text(t, "kind"), if t["overridden"] == true { "customized" } else { "default" }, text(t, "revision")),
         format!("Subject: {}", field("subject")),
         format!("Intro: {}", field("intro")),
         format!("Outro: {}", field("outro")),
-    ]
+    ];
+    if !reveal {
+        lines.push(HIDDEN_HINT.into());
+    }
+    lines
+}
+
+/// Print a templates response: the text itself with `--reveal-text` (after a warning on
+/// stderr), otherwise only its metadata.
+fn print_templates(args: &AuthArgs, mut value: Value, reveal: bool, human: impl FnOnce(&Value) -> Vec<String>) -> Result<()> {
+    sanitize(&mut value, true);
+    if reveal {
+        warn_revealed();
+    } else {
+        hide_text(&mut value);
+    }
+    print(args, &value, human)
 }
 
 pub(super) async fn templates_with(args: &AuthArgs, target: &Target, action: &TemplatesAction) -> Result<()> {
     match action {
         TemplatesAction::List { reveal_text } => {
-            let mut listed = target.call(Method::GET, "templates", &[], None).await?;
-            sanitize(&mut listed, true);
-            if !reveal_text {
-                redact_tokens(&mut listed);
-            }
-            print(args, &listed, |l| {
-                l["templates"]
+            let listed = target.call(Method::GET, "templates", &[], None).await?;
+            let reveal = *reveal_text;
+            print_templates(args, listed, reveal, |l| {
+                let mut lines: Vec<String> = l["templates"]
                     .as_array()
                     .into_iter()
                     .flatten()
-                    .map(|t| format!("{}  {}  revision {}  {}", text(t, "kind"), if t["overridden"] == true { "customized" } else { "default" }, text(t, "revision"), t["subject"].as_str().unwrap_or("")))
-                    .collect()
+                    .map(|t| format!("{}  {}  revision {}  subject: {}", text(t, "kind"), if t["overridden"] == true { "customized" } else { "default" }, text(t, "revision"), shown(&t["subject"], reveal)))
+                    .collect();
+                if !reveal {
+                    lines.push(HIDDEN_HINT.into());
+                }
+                lines
             })
         }
         TemplatesAction::Show { kind, reveal_text } => {
-            let mut view = template_view(target, template_kind(kind)?).await?;
-            sanitize(&mut view, true);
-            if !reveal_text {
-                redact_tokens(&mut view);
-            }
-            print(args, &view, template_lines)
+            let view = template_view(target, template_kind(kind)?).await?;
+            print_templates(args, view, *reveal_text, |t| template_lines(t, *reveal_text))
         }
         TemplatesAction::Set { kind, subject_file, intro_file, outro_file, reveal_text } => {
             let kind = template_kind(kind)?;
@@ -546,13 +645,9 @@ pub(super) async fn templates_with(args: &AuthArgs, target: &Target, action: &Te
             }
             // The revision of the current override (0 creates one).
             body["revision"] = json!(current["revision"].as_i64().unwrap_or(0));
-            let mut saved = target.call(Method::PUT, &format!("templates/{kind}"), &[], Some(&body)).await?;
-            sanitize(&mut saved, true);
-            if !reveal_text {
-                redact_tokens(&mut saved);
-            }
-            print(args, &saved, |t| {
-                let mut lines = template_lines(t);
+            let saved = target.call(Method::PUT, &format!("templates/{kind}"), &[], Some(&body)).await?;
+            print_templates(args, saved, *reveal_text, |t| {
+                let mut lines = template_lines(t, *reveal_text);
                 lines.insert(0, "Template saved.".into());
                 lines
             })
@@ -572,12 +667,16 @@ pub(super) async fn templates_with(args: &AuthArgs, target: &Target, action: &Te
                 let current = template_view(target, kind).await?;
                 template_body(kind, &current, subject_file.as_deref(), intro_file.as_deref(), outro_file.as_deref())?
             };
-            let mut rendered = target.call(Method::POST, &format!("templates/{kind}/preview"), &[], Some(&body)).await?;
-            sanitize(&mut rendered, true);
-            if !reveal_text {
-                redact_tokens(&mut rendered);
-            }
-            print(args, &rendered, |r| vec![format!("Subject: {}", text(r, "subject")), String::new(), text(r, if *html { "html" } else { "text" })])
+            let rendered = target.call(Method::POST, &format!("templates/{kind}/preview"), &[], Some(&body)).await?;
+            let reveal = *reveal_text;
+            print_templates(args, rendered, reveal, |r| {
+                let part = if *html { "html" } else { "text" };
+                if reveal {
+                    vec![format!("Subject: {}", text(r, "subject")), String::new(), text(r, part)]
+                } else {
+                    vec![format!("Subject: {}", describe(&r["subject"])), format!("{}: {}", if *html { "HTML" } else { "Text" }, describe(&r[part])), HIDDEN_HINT.into()]
+                }
+            })
         }
     }
 }

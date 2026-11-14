@@ -116,7 +116,7 @@ pub async fn environment_policy(target: &Target) -> Result<(Policy, Value)> {
 async fn base_policy(args: &AuthArgs, base: &str) -> Result<Policy> {
     match base.strip_prefix("env:") {
         Some(environment) => {
-            let scoped = AuthArgs { project: args.project.clone(), environment: environment.to_string(), json: args.json, action: super::Action::Status };
+            let scoped = AuthArgs { project: args.project.clone(), org: args.org.clone(), environment: environment.to_string(), json: args.json, action: super::Action::Status };
             let target = target(&scoped).await?;
             Ok(environment_policy(&target).await?.0)
         }
@@ -434,7 +434,7 @@ mod tests {
         let base = mock.start().await;
         let environment = "0b5e2c1a-9f3d-4c7e-8a21-5d6f7e8a9b0c";
         let target = Target { client: axiom_cloud::CloudClient::for_loopback(&base, "access".into(), "refresh".into()).unwrap(), slug: "demo".into(), environment: environment.into() };
-        let args = AuthArgs { project: Some("demo".into()), environment: environment.into(), json: false, action: super::super::Action::Status };
+        let args = AuthArgs { project: Some("demo".into()), org: None, environment: environment.into(), json: false, action: super::super::Action::Status };
         let route = "GET /api/v1/projects/demo/auth/policy/releases";
         mock.script(route, 200, json!({"releases": [{"sha256": "a".repeat(64), "policy_sha256": "b".repeat(64), "parent_sha256": null, "public_key": "k", "uploaded_at": "2026-11-01T00:00:00Z"}]}));
         releases(&args, &target).await.unwrap();

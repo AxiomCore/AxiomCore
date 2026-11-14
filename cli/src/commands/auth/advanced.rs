@@ -480,12 +480,22 @@ pub fn duration_seconds(value: &str) -> Result<u64> {
     Ok(seconds)
 }
 
+/// The OAuth client id, if `confirm` is its typed phrase `delete client <id>`.
+pub(super) fn delete_client_phrase<'a>(id: &'a str, confirm: Option<&str>) -> Result<&'a str> {
+    let id = checked_id(id)?;
+    let phrase = format!("delete client {id}");
+    if confirm != Some(phrase.as_str()) {
+        return Err(usage(format!("deleting a client ends its grant sessions at their next refresh; repeat with --confirm \"{phrase}\" (disable it first)")));
+    }
+    Ok(id)
+}
+
 pub(super) fn confirm_yes(yes: bool, prompt: &str) -> Result<()> {
     if yes {
         return Ok(());
     }
     if !std::io::stdin().is_terminal() {
-        return Err(usage("pass --yes to confirm without a prompt"));
+        return Err(usage(super::NEEDS_YES));
     }
     if !dialoguer::Confirm::new().with_prompt(prompt).default(false).interact()? {
         return Err(usage("cancelled"));
@@ -654,11 +664,7 @@ pub(super) async fn oauth_apps_with(args: &AuthArgs, target: &Target, action: &O
             print(args, &saved, |_| vec![format!("Disabled {id}; new authorizations are refused.")])
         }
         OauthAppsAction::Delete { id, confirm } => {
-            let id = checked_id(id)?;
-            let phrase = format!("delete client {id}");
-            if confirm.as_deref() != Some(phrase.as_str()) {
-                return Err(usage(format!("deleting a client ends its grant sessions at their next refresh; repeat with --confirm \"{phrase}\" (disable it first)")));
-            }
+            let id = delete_client_phrase(id, confirm.as_deref())?;
             target.call(Method::DELETE, &format!("oauth-clients/{id}"), &[], None).await?;
             print(args, &json!({"deleted": id}), |_| vec![format!("Deleted {id}.")])
         }

@@ -30,6 +30,11 @@ pub struct AuthArgs {
     /// Cloud project slug, name or id (default: the project linked to this directory)
     #[arg(long, global = true)]
     pub project: Option<String>,
+    /// Organization of a `--project` outside your current organization. The project list
+    /// covers only the current organization, so with `--org` the `--project` value must
+    /// be the project's exact slug
+    #[arg(long, global = true, value_name = "ORGANIZATION_SLUG")]
+    pub org: Option<String>,
     /// Environment name or UUID
     #[arg(long, global = true, default_value = "development")]
     pub environment: String,
@@ -393,11 +398,13 @@ async fn project_target(args: &AuthArgs) -> Result<Target> {
     let client = crate::auth_store::authenticated_cloud_client()
         .map_err(|_| Exit { code: 3, message: "AXAUTH_UNAUTHENTICATED: run `axiom login` first".into() })?;
     let unavailable = || Exit { code: 5, message: "AXAUTH_UNAVAILABLE: could not list projects".into() };
-    let slug = match &args.project {
+    let slug = match (&args.project, &args.org) {
+        (None, Some(_)) => return Err(usage("--org needs --project <project-slug>")),
+        (Some(given), Some(org)) => project_in_org(&client, given, org).await?,
         // Slugs, ids and display names all go through the project list, so a lowercase
         // name is never mistaken for a slug and an ambiguous name always exits 2.
-        Some(given) => pick_project(&client.list_projects().await.map_err(|_| unavailable())?, given)?,
-        None => {
+        (Some(given), None) => pick_project(&client.list_projects().await.map_err(|_| unavailable())?, given)?,
+        (None, None) => {
             let directory = std::env::current_dir()?;
             let linked = crate::auth_store::get_project_id(&directory)?
                 .ok_or_else(|| usage("no project: pass --project <slug> or link this directory with `axiom project link`"))?;
@@ -422,9 +429,47 @@ pub fn pick_project(projects: &[axiom_cloud::project::Project], given: &str) -> 
     let named: Vec<_> = projects.iter().filter(|p| p.name.eq_ignore_ascii_case(given.trim())).collect();
     match named.as_slice() {
         [p] => Ok(p.slug.clone()),
-        [] => Err(usage(format!("no project with the slug, id or name `{given}` in your current organization (see `axiom project list`)"))),
+        [] => Err(usage(format!(
+            "no project with the slug, id or name `{given}` in your current organization (see `axiom project list`); for a project in another organization pass --org <organization-slug> with the project's exact slug"
+        ))),
         _ => Err(usage(format!("more than one project is named `{given}`; pass its slug"))),
     }
+}
+
+/// `--project <slug> --org <organization>`: a project outside the current organization.
+/// The Cloud API lists projects of the current organization only and has no list per
+/// organization, so the value must be the project's exact slug (slugs are unique across
+/// Axiom); `GET /api/v1/projects/<slug>` confirms it exists and that you may use it.
+/// Names and ids are not resolved here. The API does not say which organization a
+/// project belongs to, so `--org` cannot be checked against it.
+async fn project_in_org(client: &CloudClient, given: &str, org: &str) -> Result<String> {
+    if !org_slug_shaped(org) {
+        return Err(usage(format!("--org `{org}` is not an organization slug")));
+    }
+    if !project_slug_shaped(given) {
+        return Err(usage(format!("with --org, --project must be the project's exact slug; `{given}` is not a slug")));
+    }
+    match client.project_auth_request(Method::GET, given, "", None, None).await {
+        Ok(project) if project["slug"].as_str() == Some(given) => Ok(given.to_string()),
+        Ok(_) | Err(AuthAdminError::Forbidden { .. } | AuthAdminError::Invalid { .. }) => Err(usage(format!(
+            "no project with the slug `{given}` that you can use (looked it up for organization `{org}`; with --org, --project must be the project's exact slug)"
+        ))),
+        Err(error) => Err(admin(error)),
+    }
+}
+
+/// The backend's slug patterns: projects `^[a-z0-9]+(?:-[a-z0-9]+)*$`, organizations
+/// (workspaces) `^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$`.
+fn project_slug_shaped(value: &str) -> bool {
+    value.len() <= 255 && !value.is_empty() && value.split('-').all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()))
+}
+
+fn org_slug_shaped(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    (3..=63).contains(&bytes.len())
+        && bytes.iter().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'-')
+        && bytes[0] != b'-'
+        && bytes[bytes.len() - 1] != b'-'
 }
 
 /// A name resolves through `configuration-environments`; a UUID passes through.
@@ -495,49 +540,6 @@ pub fn sanitize(value: &mut Value, reveal: bool) {
     }
 }
 
-/// Free-text fields (template subject, intro and outro, rendered previews) whose
-/// token-like values are redacted unless the command's `--reveal-text` is given.
-const TEXT_KEYS: [&str; 5] = ["subject", "intro", "outro", "text", "html"];
-
-/// Replace token-like values in free text with `[redacted]`: Axiom token prefixes
-/// (`axr1_…`), JWTs, runs of 20 or more letters, digits, `_` or `-` that mix letters
-/// and digits (API keys, hex and base64url secrets), and standard base64 runs of 30 or
-/// more that mix letters and digits (such as AWS secret keys). UUIDs, `{{variables}}`
-/// and ordinary words are kept. Key-based `sanitize` cannot see a credential pasted
-/// into template text, so the text itself is checked.
-pub fn redact_token_text(text: &str) -> String {
-    use std::sync::LazyLock;
-    static JWT: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"eyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}(?:\.[A-Za-z0-9_-]*)?").expect("static regex"));
-    static PREFIXED: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"\bax[a-z]{0,4}[0-9]?_[A-Za-z0-9_-]{8,}").expect("static regex"));
-    static BASE64: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"[A-Za-z0-9+/]{30,}={0,2}").expect("static regex"));
-    static RUN: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"[A-Za-z0-9_-]{20,}").expect("static regex"));
-    let text = JWT.replace_all(text, "[redacted]");
-    let text = PREFIXED.replace_all(&text, |c: &regex::Captures| if c[0].starts_with("axiom_") { c[0].to_string() } else { "[redacted]".into() });
-    let mixed = |run: &str| run.bytes().any(|b| b.is_ascii_digit()) && run.bytes().any(|b| b.is_ascii_alphabetic());
-    let text = RUN.replace_all(&text, |c: &regex::Captures| {
-        let run = &c[0];
-        if mixed(run) && !uuid_shaped(&run.to_ascii_lowercase()) { "[redacted]".into() } else { run.to_string() }
-    });
-    // 30 or more: a path of UUIDs (the preview's sample link) never has a longer run without `-`.
-    BASE64.replace_all(&text, |c: &regex::Captures| if mixed(&c[0]) { "[redacted]".into() } else { c[0].to_string() }).into_owned()
-}
-
-/// Apply `redact_token_text` to every free-text field (`TEXT_KEYS`) of a response.
-pub fn redact_tokens(value: &mut Value) {
-    match value {
-        Value::Object(map) => {
-            for (key, value) in map.iter_mut() {
-                match value {
-                    Value::String(text) if TEXT_KEYS.contains(&key.as_str()) => *text = redact_token_text(text),
-                    _ => redact_tokens(value),
-                }
-            }
-        }
-        Value::Array(items) => items.iter_mut().for_each(redact_tokens),
-        _ => {}
-    }
-}
-
 fn print(args: &AuthArgs, value: &Value, human: impl FnOnce(&Value) -> Vec<String>) -> Result<()> {
     if args.json {
         println!("{}", serde_json::to_string_pretty(value)?);
@@ -557,7 +559,55 @@ fn text(value: &Value, key: &str) -> String {
     }
 }
 
+/// Refusal of a confirmation that cannot be asked: there is no terminal and no `--yes`.
+pub(crate) const NEEDS_YES: &str = "pass --yes to confirm without a prompt";
+
+/// `Some(yes)` for a command that asks before it changes or removes something
+/// (`yes` is its `--yes`); `None` for every other command.
+fn confirmation(action: &Action) -> Option<bool> {
+    use advanced::{HooksAction, SmsAction, TrustedIssuersAction, WebhooksAction};
+    use email::{EmailAction, SmtpAction, TemplatesAction};
+    use orgs::{InvitationsAction, OrganizationsAction};
+    use rbac::{AssignmentsAction, PermissionsAction, RolesAction};
+    use users_admin::UsersAdminAction;
+    let yes = match action {
+        Action::Providers { action: ProvidersAction::Remove { yes, .. } }
+        | Action::Users { action: UsersAction::ResetFactors { yes, .. } | UsersAction::RevokeConsent { yes, .. } | UsersAction::Revoke { yes, .. } }
+        | Action::Users { action: UsersAction::Admin(UsersAdminAction::Delete { yes, .. } | UsersAdminAction::RemoveFactor { yes, .. }) }
+        | Action::Organizations { action: OrganizationsAction::RemoveMember { yes, .. } }
+        | Action::Invitations { action: InvitationsAction::Revoke { yes, .. } }
+        | Action::Roles { action: RolesAction::Delete { yes, .. } }
+        | Action::Permissions { action: PermissionsAction::Delete { yes, .. } }
+        | Action::Assignments { action: AssignmentsAction::Remove { yes, .. } }
+        | Action::Email { action: EmailAction::Unsuppress { yes, .. } }
+        | Action::Smtp { action: SmtpAction::Remove { yes } }
+        | Action::Templates { action: TemplatesAction::Reset { yes, .. } }
+        | Action::TrustedIssuers { action: TrustedIssuersAction::Remove { yes, .. } }
+        | Action::Webhooks { action: WebhooksAction::Delete { yes, .. } }
+        | Action::Hooks { action: HooksAction::Remove { yes, .. } }
+        | Action::Sms { action: SmsAction::Remove { yes, .. } } => yes,
+        // Suspending asks; reactivating does not.
+        Action::Organizations { action: OrganizationsAction::Update { status, yes, .. } | OrganizationsAction::AddMember { status, yes, .. } } if status == "suspended" => yes,
+        _ => return None,
+    };
+    Some(*yes)
+}
+
+/// Before signing in, resolving the project or sending anything: a confirmation that
+/// cannot be asked is refused (exit 2), as is an OAuth client delete without its
+/// typed `--confirm` phrase. The terminal prompt itself comes later, next to the change.
+fn preflight(action: &Action) -> Result<()> {
+    if confirmation(action) == Some(false) && !std::io::stdin().is_terminal() {
+        return Err(usage(NEEDS_YES));
+    }
+    if let Action::OauthApps { action: advanced::OauthAppsAction::Delete { id, confirm } } = action {
+        advanced::delete_client_phrase(id, confirm.as_deref())?;
+    }
+    Ok(())
+}
+
 async fn run(args: &AuthArgs) -> Result<()> {
+    preflight(&args.action)?;
     match &args.action {
         Action::Jwks { issuer, check } => jwks(args, issuer.as_deref(), *check).await,
         Action::Check { manifest, deployment, backend } => check(args, manifest, deployment.as_deref(), backend.as_deref()).await,
@@ -1048,7 +1098,7 @@ async fn users(args: &AuthArgs, action: &UsersAction) -> Result<()> {
             let user_id = checked_id(user_id)?;
             if !yes {
                 if !std::io::stdin().is_terminal() {
-                    return Err(usage("pass --yes to revoke without a prompt"));
+                    return Err(usage(NEEDS_YES));
                 }
                 let what = session.as_ref().map_or("every session".to_string(), |s| format!("session {s}"));
                 if !dialoguer::Confirm::new().with_prompt(format!("End {what} of user {user_id}?")).default(false).interact()? {

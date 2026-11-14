@@ -8,7 +8,7 @@ const CLIENT: &str = "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f";
 const CANARY: &str = "SYNTHETIC_CLIENT_SECRET_CANARY";
 
 fn args() -> AuthArgs {
-    AuthArgs { project: Some("demo".into()), environment: ENV.into(), json: true, action: Action::Status }
+    AuthArgs { project: Some("demo".into()), org: None, environment: ENV.into(), json: true, action: Action::Status }
 }
 
 async fn fixture() -> (Mock, Target) {

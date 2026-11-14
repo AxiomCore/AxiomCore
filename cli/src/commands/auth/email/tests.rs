@@ -8,7 +8,7 @@ const ENV: &str = "0b5e2c1a-9f3d-4c7e-8a21-5d6f7e8a9b0c";
 const CANARY: &str = "SYNTHETIC_SMTP_PASSWORD_CANARY";
 
 fn args() -> AuthArgs {
-    AuthArgs { project: Some("demo".into()), environment: ENV.into(), json: true, action: Action::Status }
+    AuthArgs { project: Some("demo".into()), org: None, environment: ENV.into(), json: true, action: Action::Status }
 }
 
 async fn fixture() -> (Mock, Target) {
@@ -168,7 +168,13 @@ async fn templates_list_show_and_reset() {
     mock.script(&admin_route("GET", "templates/magic_link"), 200, view.clone());
     templates_with(&args(), &target, &TemplatesAction::Show { kind: "magic_link".into(), reveal_text: false }).await.unwrap();
     assert_eq!(mock.seen(&admin_route("GET", "templates/magic_link")).len(), 1);
-    assert_eq!(template_lines(&view)[2], "Intro: (default) Use this link.");
+    assert_eq!(template_lines(&view, true)[2], "Intro: (default) Use this link.");
+    let mut hidden = view.clone();
+    hide_text(&mut hidden);
+    let lines = template_lines(&hidden, false);
+    assert!(lines[1].starts_with("Subject: set, 7 bytes, no variables, sha256 "), "{lines:?}");
+    assert!(lines[2].starts_with("Intro: default text (set, 14 bytes"), "{lines:?}");
+    assert!(!lines.join("\n").contains("Sign in") && !lines.join("\n").contains("Use this link"), "{lines:?}");
 
     // An unknown kind is a usage error; nothing is sent.
     assert!(templates_with(&args(), &target, &TemplatesAction::Show { kind: "welcome".into(), reveal_text: false }).await.is_err());
@@ -266,32 +272,31 @@ fn template_text_follows_the_backend_rules() {
 }
 
 #[test]
-fn token_like_template_text_is_redacted_and_ordinary_text_kept() {
-    use crate::commands::auth::{redact_token_text, redact_tokens};
-    for token in ["wJalrXUtnFEMI/K7MDENG/bPxRfiCYSYNTHETIC1", "axr1_SYNTHETICREFRESHCANARY01", "axg1_0123456789abcdef", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.c2lnbmF0dXJl", "sk_live_51SYNTHETICcanary0000", "ghp_SYNTHETIC0123456789abcdefCANARY", "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b"] {
-        let shown = redact_token_text(&format!("Your key {token} expires"));
-        assert_eq!(shown, "Your key [redacted] expires", "{token}");
-    }
-    for kept in [
-        "Welcome to {{app_name}}, {{recipient_email}}",
-        "Your code is 123456 and expires in {{expires_minutes}} minutes.",
-        "Authentication administration for internationalization",
-        "Request 6a0c1f8e-3b2d-4c5e-9f70-1a2b3c4d5e6f",
-        "Open #axiom_link=preview",
-        "Open https://auth.axiomcore.dev/6a0c1f8e-3b2d-4c5e-9f70-1a2b3c4d5e6f/0b5e2c1a-9f3d-4c7e-8a21-5d6f7e8a9b0c/sign-in/link#axiom_link=preview",
-        "and/or, 2026/11/14",
-    ] {
-        assert_eq!(redact_token_text(kept), kept);
-    }
-    let mut view = json!({"kind": "email_change_confirm", "revision": 3, "subject": "Code axr1_SYNTHETICREFRESHCANARY01", "intro": null,
-        "defaults": {"outro": "token ghp_SYNTHETIC0123456789abcdefCANARY"}, "templates": [{"subject": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.sig"}]});
-    redact_tokens(&mut view);
-    let text = view.to_string();
-    for canary in ["axr1_", "ghp_", "eyJ"] {
-        assert!(!text.contains(canary), "{canary} in {text}");
+fn hidden_template_text_keeps_only_metadata() {
+    let text = "Hi {{recipient_email}}, {{app_name}} {{recipient_email}} axr1_SYNTHETIC\nCANARY0123456789";
+    let summary = text_summary(&json!(text));
+    assert_eq!(summary["set"], true);
+    assert_eq!(summary["bytes"], text.len());
+    assert_eq!(summary["variables"], json!(["{{recipient_email}}", "{{app_name}}"]));
+    assert_eq!(summary["sha256"], hex::encode(sha2::Sha256::digest(text.as_bytes())));
+    assert_eq!(text_summary(&json!("")), json!({"set": false}));
+    assert_eq!(text_summary(&Value::Null), json!({"set": false}));
+
+    let mut view = json!({"kind": "email_change_confirm", "overridden": true, "revision": 3, "updated_at": "2026-11-01T00:00:00Z", "subject": text, "intro": null,
+        "defaults": {"outro": "token ghp_SYNTHETIC0123456789abcdefCANARY"}, "templates": [{"subject": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.sig"}], "future_field": "Zanzibar"});
+    hide_text(&mut view);
+    let printed = view.to_string();
+    for canary in ["axr1_", "CANARY", "ghp_", "eyJ", "Zanzibar", "Hi "] {
+        assert!(!printed.contains(canary), "{canary} in {printed}");
     }
     assert_eq!(view["kind"], "email_change_confirm");
-    assert_eq!(view["subject"], "Code [redacted]");
+    assert_eq!(view["revision"], 3);
+    assert_eq!(view["overridden"], true);
+    assert_eq!(view["updated_at"], "2026-11-01T00:00:00Z");
+    assert_eq!(view["intro"], json!({"set": false}));
+    assert_eq!(view["subject"], summary);
+    assert_eq!(view["defaults"]["outro"]["set"], true);
+    assert_eq!(view["future_field"]["set"], true);
 }
 
 #[tokio::test]

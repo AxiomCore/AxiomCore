@@ -9,7 +9,7 @@ const USER: &str = "3e4f5a6b-7c8d-4e9f-8a0b-1c2d3e4f5a6b";
 const FACTOR: &str = "4f5a6b7c-8d9e-4f0a-9b1c-2d3e4f5a6b7c";
 
 fn args(json: bool) -> AuthArgs {
-    AuthArgs { project: Some("demo".into()), environment: ENV.into(), json, action: Action::Status }
+    AuthArgs { project: Some("demo".into()), org: None, environment: ENV.into(), json, action: Action::Status }
 }
 
 async fn fixture() -> (Mock, Target) {

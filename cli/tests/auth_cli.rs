@@ -13,6 +13,34 @@ const USER: &str = "7d1c2b3a-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
 const SHOP_ID: &str = "6a0c1f8e-3b2d-4c5e-9f70-1a2b3c4d5e6f";
 /// A credential-shaped canary that must never be echoed by template output.
 const TOKEN: &str = "axr1_SYNTHETICTEMPLATECANARY0123";
+/// Synthetic credential shapes that heuristic redaction let through (P1 re-verification,
+/// runtime-probes.log), plus an ordinary word and URL: by default none of the template
+/// text may be printed.
+const LEAKS: [&str; 13] = [
+    "AbcDef0123456789AbcDef/+GhIjKlMnOpQrStUv==",
+    "QWxhZGRpbjpvcGVuIHNlc2FtZQ==",
+    "abcdefabcdefabcdefabcdefabcdefab",
+    "AbcDefghiJklMnopQrStUvWxYz_-abcDEF",
+    "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b",
+    "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.c2lnbmF0dXJl",
+    TOKEN,
+    "axr1_SYNTHETIC\nCANARY0123456789",
+    "9f86d081884c7d65\n9a2feaa0c55ad015a",
+    "<a href=\"https://example.test/?token=AbcDefghiJklMnopQrStUvWxYz_-abcDEF\">Sign in</a>",
+    "https://example.com/documentation/version2026gettingstarted",
+    "internationalization",
+    "Zanzibar",
+];
+const SUBJECT: &str = "Welcome to {{app_name}} Zanzibar AbcDefghiJklMnopQrStUvWxYz_-abcDEF";
+
+fn template_text() -> String {
+    format!("Hello {{{{recipient_email}}}}\n{}", LEAKS.join("\n"))
+}
+
+fn sha256(text: &str) -> String {
+    use sha2::Digest;
+    hex::encode(sha2::Sha256::digest(text.as_bytes()))
+}
 
 /// `GET /api/v1/projects`: "storefront" is a lowercase display name whose slug differs,
 /// and two projects share the name "twin".
@@ -124,13 +152,15 @@ fn route(method: &str, path: &str, body: &str) -> (u16, String) {
         ("POST", p) if p == format!("{}/email/suppressions/remove", env(DEV)) => (200, r#"{"removed":true}"#.into()),
         ("GET", p) if p == format!("{}/templates/signup", env(DEV)) => (
             200,
-            format!(r#"{{"kind":"signup","overridden":true,"subject":"Code {TOKEN}","intro":"Use {TOKEN} now","outro":null,"revision":2,"defaults":{{"outro":"Bye"}}}}"#),
+            serde_json::json!({"kind": "signup", "overridden": true, "subject": SUBJECT, "intro": template_text(), "outro": null, "revision": 2,
+                "updated_at": "2026-11-01T00:00:00Z", "defaults": {"subject": "Welcome", "intro": "Hello", "outro": "Bye {{app_name}}"}})
+            .to_string(),
         ),
-        ("GET", p) if p == format!("{}/templates", env(DEV)) => (200, format!(r#"{{"templates":[{{"kind":"signup","overridden":true,"subject":"Code {TOKEN}","revision":2}}]}}"#)),
-        ("POST", p) if p == format!("{}/templates/signup/preview", env(DEV)) => (
-            200,
-            format!(r#"{{"subject":"Code {TOKEN}","text":"Use {TOKEN} now: https://auth.axiomcore.dev/{SHOP_ID}/{DEV}/sign-in/link#axiom_link=preview","html":"<p>Use {TOKEN} now</p>"}}"#),
-        ),
+        ("GET", p) if p == format!("{}/templates", env(DEV)) => (200, serde_json::json!({"templates": [{"kind": "signup", "overridden": true, "subject": SUBJECT, "revision": 2}]}).to_string()),
+        ("POST", p) if p == format!("{}/templates/signup/preview", env(DEV)) => (200, serde_json::json!({"subject": SUBJECT, "text": template_text(), "html": format!("<p>{}</p>", template_text())}).to_string()),
+        ("GET", "/api/v1/projects/other-shop") => (200, r#"{"id":"5e6f7081-92a3-4d4e-8f5a-6b7c8d9e0f1a","name":"Other Shop","slug":"other-shop","visibility":"private","created_at":"","updated_at":""}"#.into()),
+        ("GET", "/api/v1/projects/not-mine") => (403, "workspace access denied".into()),
+        ("GET", p) if p == format!("/api/v1/projects/other-shop/auth/environments/{DEV}/email/usage") => (200, r#"{"sent":2,"budget":10,"suppressions":{}}"#.into()),
         ("PUT", p) if p == format!("{}/templates/signup", env(DEV)) => {
             let mut saved: serde_json::Value = serde_json::from_str(body).unwrap();
             saved["kind"] = "signup".into();
@@ -263,8 +293,105 @@ fn email_unsuppress_needs_yes_without_a_terminal() {
     assert_eq!(removed[0].2, r#"{"email":"bounced@example.com"}"#);
 }
 
+/// Every piece of template text a test sample holds, split at line breaks as well (a
+/// wrapped token must not leak half of itself).
+fn pieces() -> Vec<String> {
+    let mut pieces = vec![SUBJECT.to_string()];
+    for leak in LEAKS {
+        pieces.push(leak.to_string());
+        pieces.extend(leak.split('\n').filter(|p| p.len() >= 8).map(str::to_string));
+    }
+    pieces.extend(["AbcDef0123456789AbcDef", "GhIjKlMnOpQrStUv", "example.test", "Hello", "Welcome", "Bye"].map(String::from));
+    pieces
+}
+
+const TEMPLATE_COMMANDS: [&[&str]; 4] = [&["show", "signup"], &["list"], &["preview", "signup"], &["preview", "signup", "--html"]];
+
+fn templates(cloud: &str, directory: &Path, command: &[&str], extra: &[&str]) -> Output {
+    let mut args = vec!["auth", "--project", "shop", "--environment", DEV, "templates"];
+    args.extend_from_slice(command);
+    args.extend_from_slice(extra);
+    axiom(cloud, directory, &args, None)
+}
+
 #[test]
-fn template_text_comes_from_files_or_stdin_and_tokens_are_redacted_in_output() {
+fn template_text_is_not_printed_by_default_only_its_metadata() {
+    let (cloud, _) = stub(route);
+    let directory = tempfile::tempdir().unwrap();
+    profile(directory.path());
+    for command in TEMPLATE_COMMANDS {
+        for json in [false, true] {
+            let shown = templates(&cloud, directory.path(), command, if json { &["--json"] } else { &[] });
+            assert!(shown.status.success(), "{command:?}: {}", String::from_utf8_lossy(&shown.stderr));
+            let stdout = String::from_utf8_lossy(&shown.stdout);
+            let stderr = String::from_utf8_lossy(&shown.stderr);
+            for piece in pieces() {
+                assert!(!stdout.contains(&piece) && !stderr.contains(&piece), "{command:?} json={json} printed {piece:?}: {stdout}");
+            }
+            assert!(stdout.contains(&sha256(SUBJECT)), "{command:?}: {stdout}");
+            if json {
+                let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+                let subject = if command == ["list"] { &value["templates"][0]["subject"] } else { &value["subject"] };
+                assert_eq!(subject["set"], true);
+                assert_eq!(subject["bytes"], SUBJECT.len());
+                assert_eq!(subject["variables"], serde_json::json!(["{{app_name}}"]));
+                assert_eq!(subject["sha256"], sha256(SUBJECT));
+                if command == ["show", "signup"] {
+                    assert_eq!(value["kind"], "signup");
+                    assert_eq!(value["revision"], 2);
+                    assert_eq!(value["updated_at"], "2026-11-01T00:00:00Z");
+                    assert_eq!(value["intro"]["sha256"], sha256(&template_text()));
+                    assert_eq!(value["intro"]["variables"], serde_json::json!(["{{recipient_email}}"]));
+                    assert_eq!(value["outro"], serde_json::json!({"set": false}));
+                    assert_eq!(value["defaults"]["outro"]["variables"], serde_json::json!(["{{app_name}}"]));
+                }
+            } else {
+                assert!(stdout.contains("--reveal-text"), "{command:?}: {stdout}");
+                assert!(stdout.contains("variables {{app_name}}"), "{command:?}: {stdout}");
+            }
+        }
+    }
+}
+
+#[test]
+fn reveal_text_prints_template_text_exactly_after_a_warning() {
+    let (cloud, _) = stub(route);
+    let directory = tempfile::tempdir().unwrap();
+    profile(directory.path());
+    let intro = template_text();
+    let html = format!("<p>{intro}</p>");
+    let expected: [(&[&str], String); 4] = [
+        (&["show", "signup"], format!("signup: customized (revision 2)\nSubject: {SUBJECT}\nIntro: {intro}\nOutro: (default) Bye {{{{app_name}}}}\n")),
+        (&["list"], format!("signup  customized  revision 2  subject: {SUBJECT}\n")),
+        (&["preview", "signup"], format!("Subject: {SUBJECT}\n\n{intro}\n")),
+        (&["preview", "signup", "--html"], format!("Subject: {SUBJECT}\n\n{html}\n")),
+    ];
+    for (command, human) in expected {
+        let shown = templates(&cloud, directory.path(), command, &["--reveal-text"]);
+        assert!(shown.status.success(), "{command:?}: {}", String::from_utf8_lossy(&shown.stderr));
+        assert_eq!(String::from_utf8_lossy(&shown.stdout), human, "{command:?}");
+        let stderr = String::from_utf8_lossy(&shown.stderr);
+        assert_eq!(stderr.lines().count(), 1, "{stderr}");
+        assert!(stderr.contains("warning") && stderr.contains("--reveal-text"), "{stderr}");
+        let json = templates(&cloud, directory.path(), command, &["--reveal-text", "--json"]);
+        let value: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+        match command {
+            ["list"] => assert_eq!(value["templates"][0]["subject"], SUBJECT),
+            ["show", _] => {
+                assert_eq!(value["subject"], SUBJECT);
+                assert_eq!(value["intro"], intro);
+                assert_eq!(value["defaults"]["outro"], "Bye {{app_name}}");
+            }
+            _ => {
+                assert_eq!(value["text"], intro);
+                assert_eq!(value["html"], html);
+            }
+        }
+    }
+}
+
+#[test]
+fn template_text_comes_from_files_or_stdin_and_is_not_echoed() {
     let (cloud, log) = stub(route);
     let directory = tempfile::tempdir().unwrap();
     profile(directory.path());
@@ -273,49 +400,122 @@ fn template_text_comes_from_files_or_stdin_and_tokens_are_redacted_in_output() {
     assert_eq!(argv.status.code(), Some(2), "{}", String::from_utf8_lossy(&argv.stderr));
     assert!(!log.lock().unwrap().iter().any(|(m, _, _)| m == "PUT"));
 
-    // Shown text: token-like values are redacted in human and JSON output of every
-    // templates command, unless --reveal-text.
-    for command in [&["show", "signup"][..], &["list"], &["preview", "signup"], &["preview", "signup", "--html"]] {
-        for json in [false, true] {
-            let mut args = vec!["auth", "--project", "shop", "--environment", DEV, "templates"];
-            args.extend_from_slice(command);
-            if json {
-                args.push("--json");
-            }
-            let shown = axiom(&cloud, directory.path(), &args, None);
-            assert!(shown.status.success(), "{command:?}: {}", String::from_utf8_lossy(&shown.stderr));
-            let stdout = String::from_utf8_lossy(&shown.stdout);
-            assert!(!stdout.contains(TOKEN) && !stdout.contains("axr1_"), "{command:?}: {stdout}");
-            assert!(stdout.contains("[redacted]"), "{command:?}: {stdout}");
-            if command == ["preview", "signup"] {
-                // The sample sign-in link is kept.
-                assert!(stdout.contains(&format!("/{SHOP_ID}/{DEV}/sign-in/link#axiom_link=preview")), "{stdout}");
-            }
-        }
-    }
-    let revealed = axiom(&cloud, directory.path(), &["auth", "--project", "shop", "--environment", DEV, "templates", "show", "signup", "--reveal-text"], None);
-    assert!(String::from_utf8_lossy(&revealed.stdout).contains(TOKEN));
-    let revealed = axiom(&cloud, directory.path(), &["auth", "--project", "shop", "--environment", DEV, "templates", "preview", "signup", "--reveal-text"], None);
-    assert!(String::from_utf8_lossy(&revealed.stdout).contains(TOKEN));
-
     // Empty stdin is refused rather than resetting the subject to the default.
     let empty = axiom(&cloud, directory.path(), &["auth", "--project", "shop", "--environment", DEV, "templates", "set", "signup", "--subject-file", "-"], Some(""));
     assert_eq!(empty.status.code(), Some(2), "{}", String::from_utf8_lossy(&empty.stderr));
     assert!(!log.lock().unwrap().iter().any(|(m, _, _)| m == "PUT"));
 
-    // The subject from stdin is sent as given; the saved template echoed back is redacted.
-    let set = axiom(
-        &cloud,
-        directory.path(),
-        &["auth", "--project", "shop", "--environment", DEV, "templates", "set", "signup", "--subject-file", "-", "--json"],
-        Some(&format!("Welcome {TOKEN}\n")),
-    );
-    assert!(set.status.success(), "{}", String::from_utf8_lossy(&set.stderr));
-    let stdout = String::from_utf8_lossy(&set.stdout);
-    assert!(!stdout.contains(TOKEN), "{stdout}");
+    // The subject from stdin is sent as given; the saved template echoed back shows no text.
+    let intro = directory.path().join("intro.txt");
+    std::fs::write(&intro, "Welcome aboard, {{recipient_email}}.\n").unwrap();
+    let intro = intro.to_str().unwrap();
+    for json in [true, false] {
+        let mut args = vec!["auth", "--project", "shop", "--environment", DEV, "templates", "set", "signup", "--subject-file", "-", "--intro-file", intro];
+        if json {
+            args.push("--json");
+        }
+        let set = axiom(&cloud, directory.path(), &args, Some(&format!("Welcome {TOKEN}\n")));
+        assert!(set.status.success(), "{}", String::from_utf8_lossy(&set.stderr));
+        let stdout = String::from_utf8_lossy(&set.stdout);
+        assert!(!stdout.contains(TOKEN) && !stdout.contains("Welcome") && !stdout.contains("Zanzibar"), "{stdout}");
+        assert!(stdout.contains(&sha256(&format!("Welcome {TOKEN}"))), "{stdout}");
+    }
     let requests = log.lock().unwrap().clone();
     let put = requests.iter().find(|(m, _, _)| m == "PUT").unwrap();
     let body: serde_json::Value = serde_json::from_str(&put.2).unwrap();
     assert_eq!(body["subject"], format!("Welcome {TOKEN}"));
+    assert_eq!(body["intro"], "Welcome aboard, {{recipient_email}}.");
     assert_eq!(body["revision"], 2);
 }
+
+/// Every command that asks before it removes, revokes or suspends something.
+const DESTRUCTIVE: [&[&str]; 21] = [
+    &["email", "unsuppress", "test@example.com"],
+    &["users", "delete", USER],
+    &["users", "remove-factor", USER, USER],
+    &["users", "revoke", USER],
+    &["organizations", "update", USER, "--status", "suspended"],
+    &["organizations", "remove-member", USER, USER],
+    &["invitations", "revoke", USER],
+    &["roles", "delete", USER],
+    &["permissions", "delete", USER],
+    &["assignments", "remove", USER],
+    &["providers", "remove", "google"],
+    &["trusted-issuers", "remove", USER],
+    &["smtp", "remove"],
+    &["templates", "reset", "signup"],
+    // Older commands with the same prompt.
+    &["roles", "delete", "editor"],
+    &["organizations", "add-member", USER, USER, "--status", "suspended"],
+    &["users", "reset-factors", USER, "--reason", "lost phone"],
+    &["users", "revoke-consent", USER, USER],
+    &["webhooks", "delete", USER],
+    &["hooks", "remove", "token_claims"],
+    &["sms", "remove"],
+];
+
+#[test]
+fn destructive_commands_without_yes_or_a_terminal_exit_2_before_any_request() {
+    let (cloud, log) = stub(route);
+    let signed_in = tempfile::tempdir().unwrap();
+    profile(signed_in.path());
+    let signed_out = tempfile::tempdir().unwrap();
+    for command in DESTRUCTIVE {
+        for directory in [signed_in.path(), signed_out.path()] {
+            for project in [&["--project", "shop"][..], &[]] {
+                let mut args = vec!["auth", "--environment", "development"];
+                args.extend_from_slice(project);
+                args.extend_from_slice(command);
+                let before = log.lock().unwrap().len();
+                let refused = axiom(&cloud, directory, &args, None);
+                let stderr = String::from_utf8_lossy(&refused.stderr);
+                assert_eq!(refused.status.code(), Some(2), "{args:?}: {stderr}");
+                assert_eq!(stderr.trim_end(), "axiom auth: pass --yes to confirm without a prompt", "{args:?}");
+                let sent: Vec<_> = log.lock().unwrap()[before..].to_vec();
+                assert!(sent.is_empty(), "{args:?} sent {sent:?}");
+            }
+        }
+        // With --yes the command goes ahead (it signs in and sends requests).
+        let mut args = vec!["auth", "--project", "shop", "--environment", "development"];
+        args.extend_from_slice(command);
+        args.push("--yes");
+        let before = log.lock().unwrap().len();
+        let _ = axiom(&cloud, signed_in.path(), &args, None);
+        assert!(log.lock().unwrap().len() > before, "{args:?} sent nothing with --yes");
+    }
+    // An OAuth client delete without its typed phrase is refused the same way, before anything.
+    let before = log.lock().unwrap().len();
+    let refused = axiom(&cloud, signed_out.path(), &["auth", "--project", "shop", "oauth-apps", "delete", USER], None);
+    assert_eq!(refused.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&refused.stderr).contains(&format!("--confirm \"delete client {USER}\"")));
+    assert_eq!(log.lock().unwrap().len(), before);
+}
+
+#[test]
+fn org_selects_a_project_outside_the_current_organization_by_exact_slug() {
+    let (cloud, log) = stub(route);
+    let directory = tempfile::tempdir().unwrap();
+    profile(directory.path());
+    // Not in the current organization's list: exit 2, and the error names --org.
+    let listed_only = axiom(&cloud, directory.path(), &["auth", "--project", "other-shop", "--environment", DEV, "email", "usage"], None);
+    assert_eq!(listed_only.status.code(), Some(2), "{}", String::from_utf8_lossy(&listed_only.stderr));
+    assert!(String::from_utf8_lossy(&listed_only.stderr).contains("--org"));
+    // With --org the exact slug is looked up directly and used.
+    let output = axiom(&cloud, directory.path(), &["auth", "--project", "other-shop", "--org", "acme-labs", "--environment", DEV, "email", "usage", "--json"], None);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let requests = log.lock().unwrap().clone();
+    let tail: Vec<_> = requests[requests.len() - 2..].iter().map(|(m, p, _)| format!("{m} {p}")).collect();
+    assert_eq!(tail, ["GET /api/v1/projects/other-shop".to_string(), format!("GET /api/v1/projects/other-shop/auth/environments/{DEV}/email/usage")]);
+    // Names, ids, malformed values and projects you cannot use: exit 2, nothing sent to a project's auth.
+    let before = log.lock().unwrap().len();
+    for (project, org) in [("Other Shop", "acme-labs"), ("5e6f7081-92a3-4d4e-8f5a-6b7c8d9e0f1a", "acme-labs"), ("not-mine", "acme-labs"), ("other-shop", "Acme Labs")] {
+        let refused = axiom(&cloud, directory.path(), &["auth", "--project", project, "--org", org, "--environment", DEV, "email", "usage"], None);
+        assert_eq!(refused.status.code(), Some(2), "{project} {org}: {}", String::from_utf8_lossy(&refused.stderr));
+    }
+    let refused = axiom(&cloud, directory.path(), &["auth", "--org", "acme-labs", "--environment", DEV, "email", "usage"], None);
+    assert_eq!(refused.status.code(), Some(2));
+    let after: Vec<_> = log.lock().unwrap()[before..].iter().map(|(m, p, _)| format!("{m} {p}")).collect();
+    // A UUID is slug-shaped, so the API is asked and answers that no such project exists.
+    assert_eq!(after, ["GET /api/v1/projects/5e6f7081-92a3-4d4e-8f5a-6b7c8d9e0f1a", "GET /api/v1/projects/not-mine"], "{after:?}");
+}
+

@@ -11,10 +11,11 @@ dashboard action, with your `axiom login` session and the same role checks.
 Every command accepts the global flags:
 
 - `--project`: the project slug, name or id (default: the project linked to
-  this directory). The value is looked up in your project list: it is a slug or
-  id only if a project has it, otherwise a display name (any letter case). A
-  name that more than one project shares, or a value that matches no project,
-  exits with 2; pass the slug instead.
+  this directory). The value is looked up in your project list (the projects of
+  your current organization): it is a slug or id only if a project has it,
+  otherwise a display name (any letter case). A name that more than one project
+  shares, or a value that matches no project, exits with 2; pass the slug
+  instead.
 - `--environment`: the environment name or id (default `development`).
 - `--json`: print the API answer as JSON instead of plain sentences.
 
@@ -539,7 +540,7 @@ Endpoint: `GET /api/v1/projects/{project}/auth/environments/{environment}/templa
 
 Shows a template's subject, intro and outro. Fields that are not customized show Axiom's default text, marked `(default)`.
 
-Template text is printed with token-like values (Axiom tokens such as `axr1_…`, JWTs, and long runs that mix letters and digits, such as API keys) replaced by `[redacted]`, in plain and `--json` output. This applies to every `templates` command. Pass `--reveal-text` to print the text exactly as saved.
+Template text is printed with token-like values (Axiom tokens such as `axr1_…`, JWTs, and long runs that mix letters and digits, such as API keys) replaced by `[redacted]`, in plain and `--json` output. UUIDs are kept. This applies to every `templates` command. Pass `--reveal-text` to print the text exactly as saved.
 
 ```text title="Usage"
 axiom auth templates show KIND [--reveal-text]
@@ -550,7 +551,7 @@ Endpoint: `GET /api/v1/projects/{project}/auth/environments/{environment}/templa
 
 ### axiom auth templates set
 
-Customizes a template. A template has a subject, an intro (before the code or link) and an outro (after it). Fields you leave out keep their current text; an empty file uses the default text for that field. Template text is never taken as a command argument: each field comes from a file, or from stdin when the path is `-` (one field at a time). The command reads the current template first and sends its revision.
+Customizes a template. A template has a subject, an intro (before the code or link) and an outro (after it). Fields you leave out keep their current text; an empty file uses the default text for that field. Template text is never taken as a command argument: each field comes from a file, or from stdin when the path is `-` (one field at a time; empty stdin is refused, so use an empty file for the default text). The command reads the current template first and sends its revision.
 
 Template text is plain text: no HTML, links, web addresses or domain names (the message adds its own sign-in link). The variables `{{app_name}}`, `{{expires_minutes}}` and `{{recipient_email}}` are available, plus `{{new_email}}` in `email_change_notice`. The subject is one line of at most 600 bytes; the intro and outro are at most 2,000 bytes each, and a request is at most 64 KiB. These rules are checked before anything is sent.
 

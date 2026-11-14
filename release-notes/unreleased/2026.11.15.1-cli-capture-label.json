@@ -1,5 +1,5 @@
 {
   "component": "cli",
   "type": "fix",
-  "summary": "axiom database pull labels a capture made in the dashboard with its author's email address, as the release list reports it to Owners and Maintainers, and falls back to the signed user id."
+  "summary": "axiom database pull and axiom database history label a capture made in the dashboard with its author's email address, as the hosted release list reports it to Owners and Maintainers, and fall back to the signed user id."
 }

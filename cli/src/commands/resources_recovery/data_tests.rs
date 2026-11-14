@@ -175,7 +175,8 @@ fn data_error_code_cannot_inject_arbitrary_server_text() {
         let error = data_result(Reply {
             status: 400,
             body: json!({"error":{"code":code}}),
-            retry_after: None, text: None,
+            retry_after: None,
+            text: None,
         })
         .unwrap_err()
         .to_string();

@@ -321,7 +321,8 @@ impl Api {
             .await?;
         let mut elevated = None;
         if reply.status == 403 && reply.code() == Some("AXRESOURCE_REAUTH_REQUIRED") {
-            // Reuse the established device flow only for an explicit challenge.
+            // Current /data routes never issue this challenge. Keep the established
+            // flow for forward compatibility, only on an explicit reauth code.
             step_up(&self.base, &self.step_up, self.step_up_poll_floor).await?;
             let token = self
                 .step_up
@@ -341,7 +342,7 @@ impl Api {
                 self.send_session_as(method, url.clone(), body, key, ResponseKind::DataJson).await?
             };
         }
-        data_result(reply)
+        data_route_result(reply, method, segments)
     }
 
     /// Export through the same session refresh and bounded transport as JSON.
@@ -356,7 +357,7 @@ impl Api {
                 ResponseKind::Csv,
             )
             .await?;
-        let value = data_result(reply)?;
+        let value = data_route_result(reply, &Method::POST, segments)?;
         let text = value
             .as_str()
             .context("AXDATA_INVALID_RESPONSE: expected CSV")?;
@@ -490,6 +491,26 @@ fn ensure_data(valid: bool, message: &str) -> Result<()> {
         bail!("{message}");
     }
     Ok(())
+}
+
+fn data_route_result(reply: Reply, method: &Method, segments: &[&str]) -> Result<Value> {
+    if let ["projects", project, "data", "environments", environment, rest @ ..] = segments {
+        let browser_only = (*method == Method::POST
+            && matches!(rest, ["sql", "write", "preview" | "execute"]
+                | ["tables", _, "rows:write" | "export"]
+                | ["capture", "preview"] | ["capture"]))
+            || (*method == Method::PUT && rest == ["capture", "settings"]);
+        let error = &reply.body["error"];
+        let reason = error.get("reason").or_else(|| reply.body.get("reason"));
+        if reply.status == 403
+            && error["code"].as_str().or_else(|| reply.code()) == Some("AXDATA_FORBIDDEN")
+            && (reason.and_then(Value::as_str) == Some("browser_session")
+                || (reason.is_none() && browser_only))
+        {
+            bail!("AXDATA_FORBIDDEN: This operation currently needs a dashboard browser session. Open https://app.axiomcore.dev/dashboard and select project {project}, environment {environment}, to do it.");
+        }
+    }
+    data_result(reply)
 }
 
 fn data_result(reply: Reply) -> Result<Value> {

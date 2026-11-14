@@ -105,7 +105,13 @@ pub enum Table {
     Query(Input),
     Cell(Input),
     Count(Input),
-    Export(Input),
+    Export {
+        #[command(flatten)]
+        input: Input,
+        /// Save validated CSV to a file.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
     Write(Write),
 }
 #[derive(Debug, Subcommand)]
@@ -149,6 +155,20 @@ fn input(input: &Input, max: usize) -> Result<Value> {
     ensure!(body.is_object(), "Expected a JSON request object");
     Ok(body)
 }
+fn capture_confirmation_version(preview: &Value) -> Option<&str> {
+    (preview["preview"]["destructive"] == true)
+        .then(|| preview["version"].as_str())
+        .flatten()
+}
+
+fn check_confirmation(answer: &str, expected: &str) -> Result<()> {
+    ensure!(
+        answer.trim() == expected,
+        "Confirmation did not match; nothing executed"
+    );
+    Ok(())
+}
+
 fn confirm(preview: &Value, yes: bool) -> Result<()> {
     eprintln!(
         "Review the proposed change:\n{}",
@@ -161,6 +181,12 @@ fn confirm(preview: &Value, yes: bool) -> Result<()> {
         std::io::stdin().is_terminal(),
         "Use --yes to accept the preview in noninteractive use"
     );
+    if let Some(version) = capture_confirmation_version(preview) {
+        let answer: String = dialoguer::Input::new()
+            .with_prompt(format!("Type {version} to confirm"))
+            .interact_text()?;
+        check_confirmation(&answer, version)?;
+    }
     for field in ["affected", "total_changed"] {
         if let Some(n) = preview[field].as_u64() {
             let answer: String = dialoguer::Input::new()
@@ -392,9 +418,20 @@ async fn run(api: &Api, project: &str, environment: &str, action: &Action) -> Re
                     )
                     .await
                 }
-                Table::Export(i) => Ok(
-                    json!({"csv":api.data_export(&t.path(&format!("tables/{table}/export")), &input(i,65536)?).await?}),
-                ),
+                Table::Export { input: i, out } => {
+                    let csv = api
+                        .data_export(
+                            &t.path(&format!("tables/{table}/export")),
+                            &input(i, 65536)?,
+                        )
+                        .await?;
+                    if let Some(path) = out {
+                        std::fs::write(path, &csv).context("Could not write CSV export")?;
+                        Ok(json!({"out":path}))
+                    } else {
+                        Ok(json!({"csv":csv}))
+                    }
+                }
                 Table::Write(w) => {
                     let body = input(&w.input, 2097152)?;
                     ensure!(body["operations"].as_array().is_some_and(|v| !v.is_empty() && v.len() <= 100), "Expected 1..100 operations with keys and original values for updates/deletes");
@@ -894,20 +931,62 @@ mod tests {
             "env",
             &Action::Tables {
                 table: "items".into(),
-                action: Table::Export(file(&dir, json!({"filters":[]}))),
+                action: Table::Export {
+                    input: file(&dir, json!({"filters":[]})),
+                    out: None,
+                },
             },
         )
         .await
         .unwrap();
         assert_eq!(result["csv"], "id\n1\n# complete 1 rows\n");
+        let out = dir.path().join("export.csv");
+        run(
+            &api,
+            "demo",
+            "env",
+            &Action::Tables {
+                table: "items".into(),
+                action: Table::Export {
+                    input: file(&dir, json!({"filters":[]})),
+                    out: Some(out.clone()),
+                },
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(out).unwrap(),
+            result["csv"].as_str().unwrap()
+        );
+    }
+    #[test]
+    fn destructive_capture_requires_reviewed_version_unless_yes() {
+        let preview = json!({"preview":{"destructive":true},"version":"v2"});
+        assert_eq!(capture_confirmation_version(&preview), Some("v2"));
+        assert!(check_confirmation("v1", "v2").is_err());
+        assert!(check_confirmation("yes", "v2").is_err());
+        assert!(check_confirmation("v2", "v2").is_ok());
+        assert!(confirm(&preview, true).is_ok());
+        assert_eq!(
+            capture_confirmation_version(&json!({"preview":{"destructive":false},"version":"v2"})),
+            None
+        );
     }
     #[test]
     fn capture_hash_mismatch_refuses_execution() {
-        assert!(capture_body(
-            &json!({"sql":"select 1","title":"test"}),
-            &json!({"statements":[],"statements_sha256":"wrong"})
-        )
-        .is_err());
+        use sha2::{Digest, Sha256};
+        let body = json!({"sql":"select 1","title":"test"});
+        let mut preview = json!({"statements":[],"statements_sha256":"wrong",
+            "parent_sha256":"a".repeat(64), "sql_sha256":"b".repeat(64), "version":"v1"});
+        assert_eq!(
+            capture_body(&body, &preview).unwrap_err().to_string(),
+            "Capture statements hash does not match the review"
+        );
+        preview["statements_sha256"] = json!(hex::encode(Sha256::digest(
+            serde_jcs::to_vec(&preview["statements"]).unwrap()
+        )));
+        assert!(capture_body(&body, &preview).is_ok());
     }
     #[test]
     fn unsafe_previews_and_uncertain_receipts_do_not_succeed() {

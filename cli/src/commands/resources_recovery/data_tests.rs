@@ -213,3 +213,62 @@ async fn data_explicit_step_up_challenge_reuses_body_and_key() {
     assert_eq!(seen[1].bearer.as_deref(), Some("step-up-token"));
     assert!(mock.seen("POST /auth/token/refresh").is_empty());
 }
+
+#[tokio::test]
+async fn browser_only_refusals_explain_dashboard_and_preserve_role_refusals() {
+    let mock = Mock::default();
+    let base = mock.start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let api = api(&base, &dir);
+    for (method, suffix) in [
+        (Method::POST, "sql/write/preview"),
+        (Method::POST, "sql/write/execute"),
+        (Method::POST, "tables/items/rows:write"),
+        (Method::POST, "tables/items/export"),
+        (Method::POST, "capture/preview"),
+        (Method::POST, "capture"),
+        (Method::PUT, "capture/settings"),
+        (Method::GET, "overview"),
+        (Method::POST, "sql/read"),
+        (Method::GET, "capture/settings"),
+    ] {
+        let route = format!("{method} /api/v1/projects/demo/data/environments/env/{suffix}");
+        let mut segments = vec!["projects", "demo", "data", "environments", "env"];
+        segments.extend(suffix.split('/'));
+        for reason in [None, Some("browser_session"), Some("role")] {
+            let mut body =
+                json!({"error":{"code":"AXDATA_FORBIDDEN", "message":"PRIVATE_SQL_CANARY"}});
+            if let Some(reason) = reason {
+                body["error"]["reason"] = json!(reason);
+            }
+            mock.script(&route, 403, body);
+        }
+        for reason in [None, Some("browser_session"), Some("role")] {
+            let error = if suffix.ends_with("/export") {
+                api.data_export(&segments, &json!({})).await.unwrap_err()
+            } else {
+                api.data_request(&method, &segments, None, None, &[])
+                    .await
+                    .unwrap_err()
+            }
+            .to_string();
+            let expected = reason == Some("browser_session")
+                || (reason.is_none()
+                    && (method == Method::PUT || (method == Method::POST && suffix != "sql/read")));
+            assert_eq!(
+                error.contains("dashboard browser session"),
+                expected,
+                "{route}: {error}"
+            );
+            if expected {
+                assert!(error.contains("https://app.axiomcore.dev/dashboard"));
+                assert!(error.contains("project demo, environment env"));
+            } else {
+                assert!(error.contains("data request refused (HTTP 403)"));
+            }
+            assert!(!error.contains("PRIVATE_SQL_CANARY"));
+        }
+        assert_eq!(mock.seen(&route).len(), 3);
+    }
+    assert!(mock.seen("POST /auth/device/start").is_empty());
+}

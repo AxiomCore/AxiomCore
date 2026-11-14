@@ -22,17 +22,18 @@ flowchart LR
 
 ## Prerequisites
 
-- [Axiom CLI 0.149.1](/getting-started/installation). This walkthrough is
-  checked on macOS arm64.
+- [Axiom CLI 0.151.0](/getting-started/installation). This walkthrough was
+  last run end to end with CLI 0.149.1 and web UI host 0.6.12 on macOS arm64.
 - `git`, a browser and two terminals. Ports 8080 and 5173 must be free.
-- The web UI host 0.6.12:
+- The web UI host 0.8.0, which CLI 0.151.0 requires (with CLI 0.149.1, pass
+  `--version 0.6.12`):
 
 ```bash title="Terminal"
-axiom ui host install --target web --version 0.6.12 --non-interactive
+axiom ui host install --target web --version 0.8.0 --non-interactive
 ```
 
 ```text title="Expected output"
-Verified and installed Axiom UI Host 0.6.12 (browser) for web.
+Verified and installed Axiom UI Host 0.8.0 (browser) for web.
 ```
 
 ## 1. Get the source
@@ -134,7 +135,7 @@ and the source behind each operation.
 
 | Symptom | Fix |
 | --- | --- |
-| Web host missing or incompatible | Install version 0.6.12 as shown; check it with `axiom ui host status --target web`. |
+| Web host missing or incompatible | Install the host version for your CLI as shown; check it with `axiom ui host status --target web`. |
 | UI cannot load tasks | Check that the backend is running, the key is pasted, and `baseUrl` in `frontend/AxiomDeps.toml` matches. |
 | Port already in use | Change the port in the command, the frontend manifest's `baseUrl` and the backend's `cors` origins in `backend/application.acore` together. |
 | Wrong database selected | Run `unset DATABASE_URL` and restart the backend. |

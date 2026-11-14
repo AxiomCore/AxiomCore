@@ -1,6 +1,6 @@
 ---
 title: CLI overview
-description: What the Axiom CLI is, how its 38 commands are grouped, and its global options, exit codes, environment variables, files and terminal interfaces.
+description: What the Axiom CLI is, how its 41 top-level commands are grouped, and its global options, exit codes, environment variables, files and terminal interfaces.
 pageType: reference
 ---
 
@@ -29,8 +29,9 @@ pageType: reference
 The Axiom CLI (`axiom`) is the single command-line tool for AxiomCore. It
 checks and builds Acore contracts, runs backends, frontends and databases
 locally, inspects applications, manages extensions and packages, and publishes
-releases to Axiom Cloud. This reference covers the released CLI **0.149.1**: 38
-top-level commands and 203 commands in total.
+releases to Axiom Cloud. This reference covers the released CLI **0.151.0**: 41
+top-level commands and 356 commands and subcommands in total. Command pages
+that were last checked against an earlier release say which one.
 
 <StatusNote status="alpha" title="Axiom CLI">
   These commands are implemented in the current CLI, but names, flags, output
@@ -66,20 +67,22 @@ Axiom Cloud; see [Cloud access and telemetry](#cloud-access-and-telemetry).
 | [Build and run commands](/tooling/cli-build-and-run) | `check`, `build`, `run`, `serve`, `watch`, `explain`, `diff`, `pull`, `package`, `release`, `deploy`, `migrate`, `benchmark` |
 | [Test and mock commands](/tooling/cli-testing) | `test`, `scenario`, `mock` |
 | [axiom server](/tooling/cli-server) | `server` and its 22 subcommands |
-| [axiom database](/tooling/cli-database) | `database` and its 14 subcommands |
+| [axiom database](/tooling/cli-database) | `database` and its subcommands |
+| [Authentication commands](/tooling/cli-auth) | `auth` and its subcommands, in CLI 0.151.0 and later |
+| [Branch commands](/tooling/cli-branch) | `branch` and its subcommands, in CLI 0.151.0 and later |
 | [axiom ui](/tooling/cli-ui) | `ui` and its 16 subcommands |
 | [Contract, package and security commands](/tooling/cli-contracts) | `contract`, `packages`, `dependencies`, `domain`, `security` |
 | [axiom extensions](/tooling/cli-extensions) | `extensions` and its 19 subcommands |
 | [axiom inspect](/tooling/cli-inspect) | `inspect` and its 46 subcommands |
-| [Secrets commands (source preview)](/tooling/secrets-cli) | `secrets`, which is not in CLI 0.149.1 |
+| [Secrets commands](/tooling/secrets-cli) | `secrets`, in CLI 0.151.0 and later |
 
 <span id="ui-host-commands" />
 
 ## All top-level commands
 
-For the separate **Experimental** `axiom secrets` source-preview namespace, use
-the [Secrets CLI reference](/tooling/secrets-cli). Published CLI 0.149.0 does not
-carry its protected runtime qualification. The
+For `axiom secrets` (CLI 0.151.0 and later; not in 0.149.1), use the
+[Secrets CLI reference](/tooling/secrets-cli). Protected runtime consumption of
+secrets is **Experimental** and is not qualified with the published CLI. The
 [Cloud Dashboard workflow](/cloud/secrets) is deployed as **Alpha**.
 
 | Command | Purpose |
@@ -114,6 +117,9 @@ carry its protected runtime qualification. The
 | [`axiom mock`](/tooling/cli-testing#axiom-mock) | Run server simulation or local or Cloud contract mocks. |
 | [`axiom server`](/tooling/cli-server#axiom-server) | Scaffold, validate, run, package and verify server plans offline. |
 | [`axiom database`](/tooling/cli-database#axiom-database) | Run and migrate versioned PostgreSQL and SQLite contracts. |
+| [`axiom auth`](/tooling/cli-auth) | Administer project authentication: settings, providers, users and keys. |
+| [`axiom branch`](/tooling/cli-branch) | Create, review and delete short-lived branch environments of a hosted database. |
+| [`axiom secrets`](/tooling/secrets-cli) | Runtime secret sources and Cloud secret metadata. Values never enter compilation. |
 | [`axiom ui`](/tooling/cli-ui#axiom-ui) | Advanced frontend tooling: hosts, packaging, tests and inspection. |
 | [`axiom contract`](/tooling/cli-contracts#axiom-contract) | Resolve and verify signed contract dependencies for an Acore UI app. |
 | [`axiom packages`](/tooling/cli-contracts#axiom-packages) | Build, resolve, verify, inspect and diff frontend `.axiom` packages. |
@@ -150,7 +156,7 @@ axiom --version
 ```
 
 ```text title="Expected output"
-axiom 0.149.1
+axiom 0.151.0
 ```
 
 ## Exit codes

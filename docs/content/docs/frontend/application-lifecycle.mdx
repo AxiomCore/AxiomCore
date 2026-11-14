@@ -40,7 +40,7 @@ combines target builds into one multi-target artifact.
 A **UI host** is the signed shell that renders compiled Acore UI. Hosts are
 installed outside your workspace and verified before use.
 
-| Target | Host (release 0.6.12) | Also needs | Status |
+| Target | Host | Also needs | Status |
 | --- | --- | --- | --- |
 | `web` | Browser host | A browser | **Alpha** |
 | `android` | Android Emulator development host | A running Android Emulator | **Alpha** |
@@ -50,10 +50,12 @@ installed outside your workspace and verified before use.
 on Acore source. Pass `--target web` for browser work.
 
 Host 0.6.12 was checked with CLI 0.149.0 on macOS arm64. A host older than
-your CLI can fail even when both are installed.
+your CLI can fail even when both are installed. Each CLI release accepts only the UI hosts qualified for it: CLI 0.151.0
+uses host 0.8.0 and refuses 0.6.12 with `LYNX_BUNDLE_INCOMPATIBLE`; CLI 0.149.1
+uses host 0.6.12.
 
 ```bash title="Terminal"
-axiom ui host install --target web --version 0.6.12 --non-interactive
+axiom ui host install --target web --version 0.8.0 --non-interactive
 axiom ui host status --target web
 ```
 

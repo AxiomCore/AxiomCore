@@ -1,0 +1,498 @@
+---
+title: Branch commands
+description: Reference for every axiom branch subcommand that creates, inspects, extends and deletes preview branches, manages a parent's sanitization policy and review settings, records reviews and reads captured mail.
+pageType: reference
+---
+
+`axiom branch` manages preview branches: short-lived copies of a hosted
+environment's database with their own authentication. This page lists the
+syntax, options, defaults and output of every `branch` subcommand in Axiom CLI
+0.151.0. For the concepts and the end-to-end workflow, read
+[Preview branches](/cloud/branches).
+
+<StatusNote status="alpha" title="Preview branches">
+  Preview branches are **Alpha** and available to selected projects during the
+  Alpha. `axiom branch` needs CLI 0.151.0 or later.
+</StatusNote>
+
+```text title="Usage"
+axiom branch [OPTIONS] <COMMAND>
+```
+
+| Subcommand | Purpose | Who |
+| --- | --- | --- |
+| [`list`](#axiom-branch-list) | List live branches and the last 10 ended. | |
+| [`create`](#axiom-branch-create) | Create a branch of a parent environment. | Owner. A `sanitized` branch also needs a recent sign-in. |
+| [`show`](#axiom-branch-show) | Show one branch: source, authentication and environment. | |
+| [`extend`](#axiom-branch-extend) | Move a branch's expiry. | Owner |
+| [`delete`](#axiom-branch-delete) | Delete a branch and its database. | Owner |
+| [`policy get`](#axiom-branch-policy-get) | Print a parent environment's sanitization policy. | |
+| [`policy set`](#axiom-branch-policy-set) | Replace a parent environment's sanitization policy. | Owner, recent sign-in |
+| [`settings get`](#axiom-branch-settings-get) | Print a parent environment's branch settings. | |
+| [`settings set`](#axiom-branch-settings-set) | Turn required reviews on or off for a parent environment. | |
+| [`sources`](#axiom-branch-sources) | List sanitized sources built for a parent environment. | |
+| [`review create`](#axiom-branch-review-create) | Approve a release tested on a branch for its parent. | Owner, recent sign-in |
+| [`review list`](#axiom-branch-review-list) | List the reviews recorded for a parent environment. | |
+| [`review revoke`](#axiom-branch-review-revoke) | Revoke a review. | |
+| [`mail list`](#axiom-branch-mail-list) | List mail and SMS captured by a branch. | |
+| [`mail show`](#axiom-branch-mail-show) | Print one captured message. | |
+| [`test-users`](#axiom-branch-test-users) | Create password test users on a branch. | |
+
+An empty **Who** cell means the CLI help states no role requirement.
+
+## Common options and requirements
+
+Every `branch` subcommand accepts these two options, before or after the
+subcommand name:
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--project` | slug | none | Cloud project slug. Required: `branch` does not read the directory's project link, and stops with `pass --project <slug>` when it is missing. |
+| `--json` | flag | off | Print the server's response as indented JSON instead of the summary lines shown on this page. |
+
+- Run [`axiom login`](/tooling/cli-project#axiom-login) first. Without a saved
+  session, the command stops with `Not logged in. Run 'axiom login' first.`
+- `branch` is a Cloud command and passes the one-time
+  [Cloud access check](/tooling/cli-reference#cloud-access-and-telemetry).
+- Branch, review, source and message IDs are UUIDs. The CLI rejects any other
+  value before it sends a request. Branch IDs appear in the first column of
+  [`axiom branch list`](#axiom-branch-list).
+- Branch names and environment names are lowercase letters, digits, `-` and
+  `_`, at most 64 characters.
+- When an action needs a recent sign-in and the server answers
+  `AXRESOURCE_REAUTH_REQUIRED`, the CLI starts the step-up device flow once
+  (the same flow as `axiom login --step-up`), then retries the request with
+  the same idempotency key. Approve it in a browser where you signed in within
+  the last 15 minutes.
+- Values that the server returns are printed without control characters and
+  cut to 128 characters in the summary lines. Use `--json` for complete values.
+
+## Branches
+
+### axiom branch list
+
+List the project's live branches and the last 10 that ended.
+
+```text title="Usage"
+axiom branch list [OPTIONS]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--environment` | environment name | all | Only branches of this parent environment. |
+
+Each branch is one line: ID, name, mode, parent, status, expiry and database
+status. With no branches, the command prints `No branches.`
+
+```bash title="Terminal"
+axiom branch list --project my-project --environment production
+```
+
+```text title="Output shape"
+BRANCH_ID  checkout-v2  schema of production  ready  expires EXPIRES_AT  database DATABASE_STATUS
+```
+
+### axiom branch create
+
+Create a branch of a parent environment. The guide explains each mode and
+source in [Create a branch](/cloud/branches#create-a-branch) and
+[Branch modes](/cloud/branches#branch-modes).
+
+```text title="Usage"
+axiom branch create [OPTIONS] --parent <PARENT> <NAME>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<NAME>` | branch name | required | Name of the branch. The branch environment is `br-<NAME>`. |
+| `--parent` | environment name | required | Parent environment, for example `production`. |
+| `--mode` | `schema`, `sanitized` | `schema` | `schema` copies no application rows. `sanitized` copies rows through the parent's [sanitization policy](/cloud/branches#sanitization-policy). |
+| `--at` | RFC 3339 time | parent as it is now | Copy the parent as it was at this time. Must be in the past and within the parent's point-in-time window. |
+| `--backup` | backup ID | none | Copy from a daily backup. IDs are letters, digits, `-` and `_`, up to 128 characters. |
+| `--source` | source ID | none | Reuse a sealed sanitized source from [`axiom branch sources`](#axiom-branch-sources). Requires `--mode sanitized`. |
+| `--ttl-hours` | positive integer | `24` | Lifetime in hours. The server caps it at the plan's maximum. |
+| `--no-auth` | flag | off | Create the branch without authentication. |
+| `--auth-policy` | `copy`, `none` | `copy` | Copy the parent's roles and permissions, or start with none. |
+| `--redirect-url` | URL | none | Extra redirect URL for the branch environment. Repeatable. |
+| `--allowed-origin` | origin | none | Extra allowed origin for the branch environment. Repeatable. |
+| `--confirm` | text | none | Typed confirmation, exactly `branch <PARENT> as <NAME>`. |
+| `--wait` | flag | off | Poll until the branch is ready, for up to 20 minutes. |
+| `--operation-id` | UUID | new UUID | Idempotency key. Pass the key from an earlier attempt to retry it without creating a second branch. |
+
+`--at`, `--backup` and `--source` are mutually exclusive. Without any of them,
+the branch copies the parent as it is now.
+
+The CLI checks the names, the source options and `--confirm` before it sends
+anything. Without `--confirm`, it explains what the branch copies and its
+lifetime, prints the exact phrase to pass, and exits non-zero. A different
+phrase fails with `The confirmation does not match.`
+
+The command prints `Idempotency key: KEY` on standard error, then the new
+branch on one line, as in `list`. Without `--wait` the branch is usually still
+being built. With `--wait`, the CLI polls the branch until it is `ready`. If
+the build ends as `failed`, `deleted` or `expired`, the command exits non-zero
+with the branch's error code and its explanation, or tells you to run
+`axiom branch show` when the code is unknown. After 20 minutes it stops and tells you to run
+[`axiom branch show`](#axiom-branch-show).
+
+```bash title="Terminal"
+axiom branch create checkout-v2 --project my-project --parent production \
+  --mode schema --ttl-hours 24 \
+  --allowed-origin http://localhost:5173 --redirect-url http://localhost:5173/auth/callback \
+  --confirm "branch production as checkout-v2" --wait
+```
+
+### axiom branch show
+
+Show one branch with its source, authentication and environment.
+
+```text title="Usage"
+axiom branch show [OPTIONS] <ID>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<ID>` | branch ID | required | Branch to show. |
+
+```bash title="Terminal"
+axiom branch show BRANCH_ID --project my-project
+```
+
+```text title="Output shape"
+BRANCH_ID  checkout-v2  schema of production  ready  expires EXPIRES_AT  database DATABASE_STATUS
+Source SOURCE_KIND at TAKEN_AT (head HEAD)
+Auth true (AUTH_STATUS), issuer ISSUER_URL
+Environment br-checkout-v2 (ENVIRONMENT_ID), max expiry MAX_EXPIRES_AT
+```
+
+The second line names the source the branch was copied from, when it was taken
+and the migration head it carried. The last line shows the latest expiry that
+[`axiom branch extend`](#axiom-branch-extend) can reach. A field the server
+does not return prints as `-`.
+
+### axiom branch extend
+
+Move a branch's expiry. Requires the Owner role.
+
+```text title="Usage"
+axiom branch extend [OPTIONS] <ID>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<ID>` | branch ID | required | Branch to extend. |
+| `--expires-at` | RFC 3339 time | none | New expiry. |
+| `--hours` | integer | none | New expiry this many hours from now. |
+
+Pass exactly one of `--expires-at` and `--hours`. The expiry cannot go past
+the branch's maximum (see [Limits and lifetime](/cloud/branches#limits-and-lifetime)).
+The command prints `Branch now expires EXPIRES_AT.`
+
+```bash title="Terminal"
+axiom branch extend BRANCH_ID --project my-project --hours 48
+```
+
+### axiom branch delete
+
+Delete a branch, its database and its authentication environment. Requires
+the Owner role. Reviews recorded on the branch stay valid.
+
+```text title="Usage"
+axiom branch delete [OPTIONS] <ID>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<ID>` | branch ID | required | Branch to delete. |
+| `--confirm` | text | none | Typed confirmation, exactly `delete branch <name>` with the branch's name. |
+
+The CLI looks up the branch name first. Without the matching phrase, it prints
+the phrase to pass and exits non-zero. On success it prints
+`Branch NAME is being deleted.`
+
+```bash title="Terminal"
+axiom branch delete BRANCH_ID --project my-project --confirm "delete branch checkout-v2"
+```
+
+## Parent environment policy and settings
+
+### axiom branch policy get
+
+Print the sanitization policy of a parent environment.
+
+```text title="Usage"
+axiom branch policy get [OPTIONS] --environment <ENVIRONMENT>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--environment` | environment name | required | Parent environment, for example `production`. |
+
+The first line shows the policy's revision, SHA-256 and update time. The
+policy document follows as indented JSON in the
+[`axiom-branch-sanitization/v1` format](/cloud/branches#sanitization-policy).
+
+```bash title="Terminal"
+axiom branch policy get --project my-project --environment production
+```
+
+### axiom branch policy set
+
+Replace the sanitization policy of a parent environment from a file. Requires
+the Owner role and a recent sign-in. The rules are described in
+[Sanitization policy](/cloud/branches#sanitization-policy).
+
+```text title="Usage"
+axiom branch policy set [OPTIONS] --environment <ENVIRONMENT> --file <FILE>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--environment` | environment name | required | Parent environment. |
+| `--file` | path | required | Policy document. |
+
+Before it sends the file, the CLI checks that it is JSON of at most 64 KiB,
+that `format` is `axiom-branch-sanitization/v1`, and that `tables` is an
+array of at most 256 tables. The server validates the rules. The CLI reads the
+current revision first and sends it with the new policy, so the server can
+refuse the write if someone changed the policy in between. On success it
+prints the new revision and SHA-256.
+
+```bash title="Terminal"
+axiom branch policy set --project my-project --environment production --file sanitization.json
+```
+
+### axiom branch settings get
+
+Print the branch settings of a parent environment.
+
+```text title="Usage"
+axiom branch settings get [OPTIONS] --environment <ENVIRONMENT>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--environment` | environment name | required | Parent environment. |
+
+```bash title="Terminal"
+axiom branch settings get --project my-project --environment production
+```
+
+```text title="Output shape"
+require_review false (revision REVISION)
+```
+
+### axiom branch settings set
+
+Turn required reviews on or off for a parent environment. When
+`require_review` is `true`, the parent refuses a migration or policy apply
+without a matching review (see [Review and promote](/cloud/branches#review-and-promote)).
+
+```text title="Usage"
+axiom branch settings set [OPTIONS] --environment <ENVIRONMENT> --require-review <REQUIRE_REVIEW>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--environment` | environment name | required | Parent environment. |
+| `--require-review` | `true`, `false` | required | Require a branch review before the parent applies a release or policy. |
+
+The CLI sends the current revision with the change and uses your normal
+session; this command does not start the step-up flow. It prints the saved
+setting in the same shape as `settings get`.
+
+```bash title="Terminal"
+axiom branch settings set --project my-project --environment production --require-review true
+```
+
+### axiom branch sources
+
+List the sanitized sources built for a parent environment. The list shows
+counts and checks, never row values.
+
+```text title="Usage"
+axiom branch sources [OPTIONS] --environment <ENVIRONMENT>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--environment` | environment name | required | Parent environment. |
+
+Each source is one line: ID, mode, state, size in bytes, expiry and, when it
+has one, an error code. With no sources, the command prints `No sources.`
+Pass a source ID to `axiom branch create --mode sanitized --source`.
+
+```bash title="Terminal"
+axiom branch sources --project my-project --environment production
+```
+
+## Reviews
+
+### axiom branch review create
+
+Approve a release that succeeded on a branch, so the branch's parent may apply
+it. Requires the Owner role and a recent sign-in. A review lasts 30 days.
+
+```text title="Usage"
+axiom branch review create [OPTIONS] --kind <KIND> --sha256 <SHA256> <BRANCH>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<BRANCH>` | branch ID | required | Branch where the release was applied. |
+| `--kind` | `migration_release`, `auth_policy_release` | required | Kind of release. |
+| `--sha256` | 64 lowercase hex characters | required | SHA-256 of the release. |
+| `--confirm` | text | none | Typed confirmation, exactly `approve <first 12 hex> for <parent environment>`. |
+
+The CLI looks up the branch's parent, then checks `--sha256` and `--confirm`.
+Without the matching phrase, it prints the phrase and exits non-zero. On
+success it prints the review ID, the parent, the first 12 hex characters of
+the release and the review's expiry.
+
+```bash title="Terminal"
+axiom branch review create BRANCH_ID --project my-project \
+  --kind migration_release --sha256 RELEASE_SHA256 \
+  --confirm "approve RELEASE_SHA_FIRST_12 for production"
+```
+
+### axiom branch review list
+
+List the reviews recorded for a parent environment.
+
+```text title="Usage"
+axiom branch review list [OPTIONS] --environment <ENVIRONMENT>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--environment` | environment name | required | Parent environment. |
+
+Each review is one line: review ID, kind, release SHA-256, branch ID and
+expiry, followed by `revoked` when it was revoked. With no reviews, the
+command prints `No reviews.`
+
+```bash title="Terminal"
+axiom branch review list --project my-project --environment production
+```
+
+### axiom branch review revoke
+
+Revoke a review recorded for a parent environment.
+
+```text title="Usage"
+axiom branch review revoke [OPTIONS] <REVIEW>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<REVIEW>` | review ID | required | Review to revoke, from `axiom branch review list`. |
+
+The command asks for no confirmation. It prints `Review revoked.`
+
+```bash title="Terminal"
+axiom branch review revoke REVIEW_ID --project my-project
+```
+
+## Captured mail and test users
+
+A branch never sends mail or SMS. It captures every message and keeps the
+latest 500. See [Authentication in a branch](/cloud/branches#authentication-in-a-branch).
+
+### axiom branch mail list
+
+List the mail and SMS captured by a branch, one page at a time.
+
+```text title="Usage"
+axiom branch mail list [OPTIONS] <BRANCH>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<BRANCH>` | branch ID | required | Branch to read. |
+| `--limit` | 1 to 100 | server default | Messages per page. |
+| `--cursor` | text | first page | Cursor for the next page. |
+
+Each message is one line: message ID, time, channel, template and recipient.
+When more messages exist, the last line is `More: --cursor NEXT`; pass that
+value to get the next page.
+
+```bash title="Terminal"
+axiom branch mail list BRANCH_ID --project my-project --limit 20
+```
+
+### axiom branch mail show
+
+Print one captured message, including the links and codes it carries, such as
+a sign-in link or a verification code.
+
+```text title="Usage"
+axiom branch mail show [OPTIONS] <BRANCH> <MESSAGE>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<BRANCH>` | branch ID | required | Branch that captured the message. |
+| `<MESSAGE>` | message ID | required | Message from `axiom branch mail list`. |
+
+The first line shows the template, recipient and subject. The plain-text body
+follows.
+
+```bash title="Terminal"
+axiom branch mail show BRANCH_ID MESSAGE_ID --project my-project
+```
+
+### axiom branch test-users
+
+Create password test users on a branch. Their passwords go only to a new file
+with mode `0600`, never to standard output.
+
+```text title="Usage"
+axiom branch test-users [OPTIONS] --output <OUTPUT> <ID>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<ID>` | branch ID | required | Branch to add users to. |
+| `--count` | 1 to 10 | `1` | Number of users to create. |
+| `--role` | role name | none | Role to grant each user. Repeatable. |
+| `--organization` | slug | none | Organization to add the users to. It is created if it does not exist. |
+| `--output` | path | required | New file for the emails and passwords. The command refuses a path that already exists. |
+| `--idempotency-key` | UUID | new UUID | Key for a safe retry of the same request. |
+
+The file has one line per user: the email address, a tab and the password.
+The command prints how many users it created and the file path. With
+`--json`, the response is printed without the passwords. A branch has at most
+50 test users.
+
+```bash title="Terminal"
+axiom branch test-users BRANCH_ID --project my-project --count 3 --role editor --output ./test-users.txt
+```
+
+## Errors
+
+When the server refuses a branch, policy, settings, source or review request,
+the command exits non-zero and prints `CODE: explanation (HTTP STATUS)`. These
+codes are specific to branches:
+
+| Code | Meaning |
+| --- | --- |
+| `AXRESOURCE_BRANCH_QUOTA` | The project reached its branch quota (live branches or creations today). |
+| `AXRESOURCE_BRANCH_POLICY_REQUIRED` | A sanitized branch needs a sanitization policy (`axiom branch policy set`). |
+| `AXRESOURCE_BRANCH_POLICY_INVALID` | The sanitization policy has a shape or transform that is not allowed. |
+| `AXRESOURCE_BRANCH_POLICY_INCOMPLETE` | The sanitization policy leaves tables or columns unclassified. |
+| `AXRESOURCE_BRANCH_TOO_LARGE` | The parent database is above the branch storage cap. |
+| `AXRESOURCE_BRANCH_VERIFY_FAILED` | The sanitized copy failed a verification check. Nothing was kept. |
+| `AXRESOURCE_BRANCH_UNSUPPORTED` | The action is not available on a branch resource. |
+| `AXRESOURCE_BRANCH_EXPIRED` | The branch expired or was deleted. |
+| `AXRESOURCE_SOURCE_EXPIRED` | The sanitized source expired. Build a new one. |
+| `AXRESOURCE_REVIEW_REQUIRED` | The parent requires a branch review of this release before it applies. |
+| `AXRESOURCE_REVIEW_INVALID` | The release was not applied on that branch, so it cannot be reviewed there. |
+| `AXRESOURCE_REAUTH_REQUIRED` | The action needs a recent sign-in that the CLI could not obtain. Run `axiom login --step-up` and retry. |
+
+Invalid command lines exit `2`; see [Exit codes](/tooling/cli-reference#exit-codes).
+
+## Related pages
+
+- [Preview branches](/cloud/branches): modes, sanitization rules, branch
+  authentication, review and limits.
+- [Auth policy releases and impact](/authentication/policy-releases)

@@ -513,7 +513,7 @@ axiom server package [OPTIONS] --deployment <DEPLOYMENT> --output <OUTPUT> <CONT
 | `--bindings` | path | none | Sandbox bindings file. The environment variables it names must point to the package, authority and module files to seal. |
 | `--target` | target ID | `native-server` | Target profile. |
 | `--runtime-source` | directory | none | Reviewed workspace source root used to build a container or Worker runtime. Required for `container-amd64`, `container-arm64` and `cloudflare-workers-local`; rejected for other targets. |
-| `--environment` | profile name | none | Container targets only: seal this `AxiomSecrets.toml` profile into the release as a value-free record, so the container resolves its Cloud sources through the workload identity at run time. Rejected for other targets with `AXSECRET_UNSUPPORTED_TARGET`. Needs a released CLI with this option, which is **Coming soon**. |
+| `--environment` | profile name | none | Container targets only: seal this `AxiomSecrets.toml` profile into the release as a value-free record, so the container resolves its Cloud sources through the workload identity at run time. Rejected for other targets with `AXSECRET_UNSUPPORTED_TARGET`. Needs CLI 0.151.0 or later. |
 | `--secret-root` | directory | the contract's directory | Directory that holds `AxiomSecrets.toml`. Requires `--environment`. |
 | `-o, --output` | directory | required | New release directory. An existing path is rejected because releases are immutable. |
 

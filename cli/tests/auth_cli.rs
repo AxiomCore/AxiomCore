@@ -444,8 +444,9 @@ const DESTRUCTIVE: [&[&str]; 21] = [
     &["trusted-issuers", "remove", USER],
     &["smtp", "remove"],
     &["templates", "reset", "signup"],
-    // Older commands with the same prompt.
+    // A role by name (looked up with a request when confirmed).
     &["roles", "delete", "editor"],
+    // Older commands with the same prompt.
     &["organizations", "add-member", USER, USER, "--status", "suspended"],
     &["users", "reset-factors", USER, "--reason", "lost phone"],
     &["users", "revoke-consent", USER, USER],
@@ -483,6 +484,15 @@ fn destructive_commands_without_yes_or_a_terminal_exit_2_before_any_request() {
         let _ = axiom(&cloud, signed_in.path(), &args, None);
         assert!(log.lock().unwrap().len() > before, "{args:?} sent nothing with --yes");
     }
+    // Reactivating asks nothing, so it runs without --yes or a terminal.
+    for command in [&["organizations", "update", USER, "--status", "active"][..], &["organizations", "add-member", USER, USER]] {
+        let mut args = vec!["auth", "--project", "shop", "--environment", "development"];
+        args.extend_from_slice(command);
+        let before = log.lock().unwrap().len();
+        let ran = axiom(&cloud, signed_in.path(), &args, None);
+        assert!(!String::from_utf8_lossy(&ran.stderr).contains("--yes"), "{args:?}");
+        assert!(log.lock().unwrap().len() > before, "{args:?} was refused");
+    }
     // An OAuth client delete without its typed phrase is refused the same way, before anything.
     let before = log.lock().unwrap().len();
     let refused = axiom(&cloud, signed_out.path(), &["auth", "--project", "shop", "oauth-apps", "delete", USER], None);
@@ -514,6 +524,12 @@ fn org_selects_a_project_outside_the_current_organization_by_exact_slug() {
     }
     let refused = axiom(&cloud, directory.path(), &["auth", "--org", "acme-labs", "--environment", DEV, "email", "usage"], None);
     assert_eq!(refused.status.code(), Some(2));
+    // A malformed --org is a usage error even when signed out.
+    let signed_out = tempfile::tempdir().unwrap();
+    for args in [&["auth", "--org", "acme-labs", "email", "usage"][..], &["auth", "--project", "Other Shop", "--org", "acme-labs", "email", "usage"]] {
+        let refused = axiom(&cloud, signed_out.path(), args, None);
+        assert_eq!(refused.status.code(), Some(2), "{args:?}: {}", String::from_utf8_lossy(&refused.stderr));
+    }
     let after: Vec<_> = log.lock().unwrap()[before..].iter().map(|(m, p, _)| format!("{m} {p}")).collect();
     // A UUID is slug-shaped, so the API is asked and answers that no such project exists.
     assert_eq!(after, ["GET /api/v1/projects/5e6f7081-92a3-4d4e-8f5a-6b7c8d9e0f1a", "GET /api/v1/projects/not-mine"], "{after:?}");

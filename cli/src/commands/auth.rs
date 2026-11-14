@@ -358,15 +358,25 @@ fn admin(error: AuthAdminError) -> anyhow::Error {
 pub async fn handle(args: &AuthArgs) -> Result<()> {
     match run(args).await {
         Ok(()) => Ok(()),
-        Err(error) => {
-            let (code, message) = match error.downcast_ref::<Exit>() {
-                Some(exit) => (exit.code, exit.message.clone()),
-                None => (5, format!("{error:#}")),
-            };
-            eprintln!("axiom auth: {message}");
-            std::process::exit(code)
-        }
+        Err(error) => exit_on(error),
     }
+}
+
+/// The checks of `preflight`, run by `main` before the access gate (which can register
+/// this machine with Cloud) and before any request; failures exit with the documented code.
+pub fn preflight_or_exit(args: &AuthArgs) {
+    if let Err(error) = preflight(args) {
+        exit_on(error)
+    }
+}
+
+fn exit_on(error: anyhow::Error) -> ! {
+    let (code, message) = match error.downcast_ref::<Exit>() {
+        Some(exit) => (exit.code, exit.message.clone()),
+        None => (5, format!("{error:#}")),
+    };
+    eprintln!("axiom auth: {message}");
+    std::process::exit(code)
 }
 
 struct Target {
@@ -443,14 +453,12 @@ pub fn pick_project(projects: &[axiom_cloud::project::Project], given: &str) -> 
 /// Names and ids are not resolved here. The API does not say which organization a
 /// project belongs to, so `--org` cannot be checked against it.
 async fn project_in_org(client: &CloudClient, given: &str, org: &str) -> Result<String> {
-    if !org_slug_shaped(org) {
-        return Err(usage(format!("--org `{org}` is not an organization slug")));
-    }
-    if !project_slug_shaped(given) {
-        return Err(usage(format!("with --org, --project must be the project's exact slug; `{given}` is not a slug")));
-    }
+    check_org_flags(Some(given), org)?;
     match client.project_auth_request(Method::GET, given, "", None, None).await {
         Ok(project) if project["slug"].as_str() == Some(given) => Ok(given.to_string()),
+        // The project route answers 403 both for a project that does not exist and for
+        // one you are not a member of; 401 (after a refresh) means signed out.
+        Err(AuthAdminError::Forbidden { status: 401, .. }) => Err(Exit { code: 3, message: "AXAUTH_UNAUTHENTICATED: run `axiom login` first".into() }.into()),
         Ok(_) | Err(AuthAdminError::Forbidden { .. } | AuthAdminError::Invalid { .. }) => Err(usage(format!(
             "no project with the slug `{given}` that you can use (looked it up for organization `{org}`; with --org, --project must be the project's exact slug)"
         ))),
@@ -596,18 +604,36 @@ fn confirmation(action: &Action) -> Option<bool> {
 /// Before signing in, resolving the project or sending anything: a confirmation that
 /// cannot be asked is refused (exit 2), as is an OAuth client delete without its
 /// typed `--confirm` phrase. The terminal prompt itself comes later, next to the change.
-fn preflight(action: &Action) -> Result<()> {
+fn preflight(args: &AuthArgs) -> Result<()> {
+    let action = &args.action;
     if confirmation(action) == Some(false) && !std::io::stdin().is_terminal() {
         return Err(usage(NEEDS_YES));
     }
     if let Action::OauthApps { action: advanced::OauthAppsAction::Delete { id, confirm } } = action {
         advanced::delete_client_phrase(id, confirm.as_deref())?;
     }
+    if let Some(org) = &args.org {
+        check_org_flags(args.project.as_deref(), org)?;
+    }
+    Ok(())
+}
+
+/// `--org` needs `--project` with the project's exact slug, and an organization slug.
+fn check_org_flags(project: Option<&str>, org: &str) -> Result<()> {
+    let Some(given) = project else {
+        return Err(usage("--org needs --project <project-slug>"));
+    };
+    if !org_slug_shaped(org) {
+        return Err(usage(format!("--org `{org}` is not an organization slug")));
+    }
+    if !project_slug_shaped(given) {
+        return Err(usage(format!("with --org, --project must be the project's exact slug; `{given}` is not a slug")));
+    }
     Ok(())
 }
 
 async fn run(args: &AuthArgs) -> Result<()> {
-    preflight(&args.action)?;
+    preflight(args)?;
     match &args.action {
         Action::Jwks { issuer, check } => jwks(args, issuer.as_deref(), *check).await,
         Action::Check { manifest, deployment, backend } => check(args, manifest, deployment.as_deref(), backend.as_deref()).await,

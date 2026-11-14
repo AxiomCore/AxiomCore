@@ -1613,6 +1613,9 @@ async fn main() -> anyhow::Result<()> {
     let start_time = Instant::now();
     // Mode/input errors must precede cloud credentials, registration and I/O.
     match &*cli.command {
+        // A confirmation that cannot be asked, or a malformed --org, exits 2 before
+        // registration or any request.
+        Commands::Auth(args) => commands::auth::preflight_or_exit(args),
         Commands::Serve(input) => {
             input.resolve(&std::env::current_dir()?)?;
         }

@@ -23,7 +23,8 @@ Every command accepts the global flags:
   resolved). The CLI then looks the slug up directly, and the API checks that
   you are a member of that project. The API does not report which organization
   a project belongs to, so the CLI cannot check `--org` against the project.
-  `--org` needs `--project`.
+  `--org` needs `--project`. A slug that names no project, or a project you
+  are not a member of, exits with 2 (the API answers both the same way).
 - `--environment`: the environment name or id (default `development`).
 - `--json`: print the API answer as JSON instead of plain sentences.
 

@@ -297,14 +297,23 @@ axiom project archive [PROJECT] [OPTIONS]
 
 | Option | Value | Default | Meaning |
 | --- | --- | --- | --- |
-| `[PROJECT]` or `--project` | slug, name or ID | the project linked to this directory | Project to archive. |
+| `[PROJECT]` or `--project` | slug; with `--yes` also a name or ID | the project linked to this directory (with `--yes` only) | Project to archive. |
 | `--yes` | flag | off | Confirm without the prompt. Required without a terminal. |
 | `--wait` | flag | off | Poll every 3 seconds until the project is archived or the archive failed (up to 60 minutes). |
 | `--json` | flag | off | Print the archive status as JSON. |
 
-In a terminal the command shows the databases it will archive and asks you to
-type `archive <project-slug>`. With `--yes` it sends that phrase without asking.
-Without a terminal and without `--yes` it exits with status 2 and
+In a terminal the command asks you to type `archive <PROJECT>` for the project
+exactly as you passed it, before it signs in, looks up the project or sends any
+request. In a terminal, `PROJECT` must therefore be the project slug: a name,
+an ID, a value that is not lowercase letters, digits and hyphens, or no
+argument is refused with status 2 before the prompt. A wrong phrase exits with
+status 2 and sends nothing. Only after the phrase matches does the command look
+up the project; if the slug you typed belongs to a different project slug (for
+example it is another project's name), it stops without archiving anything and
+names the slug to use. It also stops, without archiving, when archive is not
+enabled or a database blocks it. With `--yes` it sends `archive <project-slug>`
+without asking, and `PROJECT` can also be a name or ID. Without a terminal and
+without `--yes` it exits with status 2 and
 `axiom project archive: pass --yes to confirm without a prompt`, before it
 signs in or sends any request. The archive needs a recent sign-in: when the
 API asks for one, the CLI runs the step-up device sign-in (the same flow as

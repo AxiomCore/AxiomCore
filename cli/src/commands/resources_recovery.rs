@@ -322,7 +322,7 @@ impl Api {
             .await
     }
 
-    /// Data API request using the normal CLI session. Data errors expose only
+    /// Data API request; only SQL and row writes may use a step-up session. Data errors expose only
     /// validated protocol codes, never SQL, values or engine error messages.
     /// A browser-only refusal remains a refusal; it is not a step-up challenge.
     pub async fn data_request(
@@ -338,13 +338,20 @@ impl Api {
             url.query_pairs_mut()
                 .extend_pairs(query.iter().map(|(k, v)| (*k, v.as_str())));
         }
-        let mut reply = self
-            .send_session_as(method, url.clone(), body, key, ResponseKind::DataJson)
-            .await?;
-        let mut elevated = None;
-        if reply.status == 403 && reply.code() == Some("AXRESOURCE_REAUTH_REQUIRED") {
-            // Current /data routes never issue this challenge. Keep the established
-            // flow for forward compatibility, only on an explicit reauth code.
+        // Only the three write routes admit the restricted step-up credential.
+        let write_route = *method == Method::POST && matches!(segments,
+            ["projects", _, "data", "environments", _, "sql", "write", "preview" | "execute"] |
+            ["projects", _, "data", "environments", _, "tables", _, "rows:write"]);
+        let mut elevated = if write_route { self.step_up.load() } else { None };
+        let mut reply = if let Some(token) = elevated.as_deref() {
+            self.send_as(method, url.clone(), body, key, token, ResponseKind::DataJson).await?
+        } else {
+            self.send_session_as(method, url.clone(), body, key, ResponseKind::DataJson).await?
+        };
+        if write_route && ((reply.status == 403 && reply.code() == Some("AXRESOURCE_REAUTH_REQUIRED"))
+            || (elevated.is_some() && reply.status == 401))
+        {
+            self.step_up.clear();
             step_up(&self.base, &self.step_up, self.step_up_poll_floor).await?;
             let token = self
                 .step_up

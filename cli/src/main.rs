@@ -105,7 +105,7 @@ enum Commands {
     /// Sign in to AxiomCore through the device flow
     Login {
         /// Get a short step-up token (scope `resources:recovery`, 15 minutes, no refresh) for
-        /// restore, archive and retire_previous. Approve it in a browser where you signed in
+        /// recovery actions, SQL writes and row edits. Approve it in a browser where you signed in
         /// within the last 15 minutes. Your normal session is kept.
         #[arg(long)]
         step_up: bool,
@@ -1633,6 +1633,7 @@ async fn main() -> anyhow::Result<()> {
         // A confirmation that cannot be asked, or a malformed --org, exits 2 before
         // registration or any request.
         Commands::Auth(args) => commands::auth::preflight_or_exit(args),
+        Commands::Data(args) => commands::data::write_preflight_or_exit(args),
         Commands::Serve(input) => {
             input.resolve(&std::env::current_dir()?)?;
         }

@@ -610,7 +610,78 @@ pub(crate) async fn rollback_with(
     Ok(())
 }
 
-/// `status` against a hosted environment: a hosted `status` run for the head,
+/// Where `status` read the hosted head.
+enum HeadSource {
+    /// The control plane's stored observation, with its time when valid.
+    Plane(Option<String>),
+    /// A hosted status run, and why it was needed.
+    Run(String),
+}
+
+/// The ledger head of `stream` for `status`: the control plane's stored
+/// observation (one GET, no job) when it is current, otherwise a hosted
+/// `status` run. Refusals of the session, the role or the request are final:
+/// the run would be refused the same way.
+async fn status_head(
+    h: &Hosted<'_>,
+    stream: &str,
+    live: bool,
+) -> Result<(Option<OperationTarget>, HeadSource)> {
+    let reason = if live {
+        "--live was given".to_string()
+    } else {
+        match h.client.migration_status(h.project, h.environment).await {
+            Ok(status) if status.known && status.environment == h.environment && status.source == "control_plane" => {
+                let head = status.target(stream).cloned();
+                let observed = status.observed_at.filter(|t| is_timestamp(t));
+                return Ok((head, HeadSource::Plane(observed)));
+            }
+            Ok(status) if status.known => "the control plane answered for another environment".to_string(),
+            Ok(status) => match status.reason.as_deref() {
+                Some("not_admitted") => "hosted migrations are not admitted for this database".to_string(),
+                Some("disconnected") => "the bring-your-own database is not connected".to_string(),
+                Some("external_ledger") => "the ledger of a bring-your-own database can change outside the control plane".to_string(),
+                _ if status.resource_status != "ready" => format!(
+                    "the hosted database is not ready ({})",
+                    safe_word(&status.resource_status)
+                ),
+                _ => "the control plane has no current observation of this environment (no status run since its last change)".to_string(),
+            },
+            Err(error) if final_status(&error) => return Err(error),
+            Err(error) => format!(
+                "the control plane could not answer ({})",
+                error.to_string().trim_end_matches('.')
+            ),
+        }
+    };
+    match hosted_head(h, stream).await {
+        Ok(head) => Ok((head, HeadSource::Run(reason))),
+        Err(error) if error.to_string().contains("(HTTP 403)") => Err(anyhow::anyhow!(
+            "{error} A hosted status run was needed because {reason}; it needs the project Owner role."
+        )),
+        Err(error) => Err(error),
+    }
+}
+/// 400, 401 and 403 answers: the hosted run would get the same refusal.
+fn final_status(error: &anyhow::Error) -> bool {
+    let message = error.to_string();
+    ["(HTTP 400)", "(HTTP 401)", "(HTTP 403)"].iter().any(|s| message.contains(s))
+        || message.starts_with("AXRESOURCE_UNAUTHENTICATED")
+}
+fn is_timestamp(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 40 && value.bytes().all(|b| b.is_ascii_digit() || b"TZ:.+-".contains(&b))
+}
+/// A server word printed only when it is short and plain.
+fn safe_word(value: &str) -> &str {
+    if !value.is_empty() && value.len() <= 32 && value.bytes().all(|b| b.is_ascii_lowercase() || b == b'_') {
+        value
+    } else {
+        "unknown state"
+    }
+}
+
+/// `status` against a hosted environment: the hosted head from the control
+/// plane (or a hosted `status` run when it cannot answer, or with `--live`),
 /// then the local comparison. Drift here means the hosted history diverges
 /// from the local catalog; the hosted executor checks database drift itself
 /// before every apply.
@@ -621,7 +692,10 @@ pub(crate) async fn status_with(
 ) -> Result<()> {
     let (loaded, diagnostic) = dev::load_existing(&args.source)?;
     let stream = loaded.compiled.identity.name.clone();
-    let head = hosted_head(h, &stream).await?;
+    let (head, source) = status_head(h, &stream, args.live).await?;
+    if let (HeadSource::Run(reason), true) = (&source, args.json) {
+        eprintln!("Read with a hosted status run: {reason}.");
+    }
     let local = db::archive_versions(&loaded.root).map_err(engine_error)?;
     let chain = hosted_chain(h, &stream, head.as_ref(), &local, None).await?;
     let (mut pending, preview) =
@@ -663,6 +737,14 @@ pub(crate) async fn status_with(
         )?;
         if let Some(head) = &head {
             writeln!(out, "Hosted head: {} (generation {})", head.head, head.generation)?;
+        }
+        match &source {
+            HeadSource::Run(reason) => writeln!(out, "Read with a hosted status run: {reason}.")?,
+            HeadSource::Plane(Some(at)) => writeln!(
+                out,
+                "Observed by the control plane at {at}; add --live for a hosted status run."
+            )?,
+            HeadSource::Plane(None) => {}
         }
         for version in &diverged {
             writeln!(
@@ -1006,6 +1088,30 @@ pub(crate) mod fake {
 
     pub const PROJECT_ID: &str = "0b0e7c8e-2f6c-4c79-9b9f-1c1d2e3f4a5b";
 
+    /// How the fake answers `GET /migrations/status`.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub enum Plane {
+        /// `known=false`: no current observation, so clients run a hosted status.
+        #[default]
+        Unknown,
+        /// `known=true` with the fake's ledger head.
+        Known,
+        /// The resource is not ready.
+        Provisioning,
+        /// A server without the route answers 404.
+        Legacy,
+        /// The caller is not a project member.
+        Denied,
+        /// Storage is unavailable.
+        Unavailable,
+        /// A bring-your-own database: `known=false`, `external_ledger`.
+        External,
+        /// A `known=true` answer naming another environment.
+        OtherEnvironment,
+        /// A 400 for an unknown environment.
+        Invalid,
+    }
+
     #[derive(Default)]
     pub struct Cloud {
         pub signers: Vec<Value>,
@@ -1028,6 +1134,11 @@ pub(crate) mod fake {
         pub capture_emails: BTreeMap<String, String>,
         /// When set, the release list answers 500.
         pub fail_release_list: bool,
+        pub plane: Plane,
+        /// Operation requests answer 403, as for a Reader.
+        pub reader: bool,
+        /// Added before every response, to model a slow network.
+        pub latency: std::time::Duration,
     }
     impl Cloud {
         pub fn count(&self, method: &str, path: &str) -> usize {
@@ -1106,6 +1217,21 @@ pub(crate) mod fake {
             match (method, rest) {
                 ("GET", "") => ok(json!({"id": PROJECT_ID, "slug": "acme"})),
                 ("GET", "/migrations/signers") => ok(json!({"signers": self.signers})),
+                ("GET", "/migrations/status") => {
+                    let environment = path.split_once("?environment=").map(|(_, e)| e.to_string()).unwrap_or_default();
+                    let status = |environment: &str, ready: &str, known: bool, targets: Value, reason: Option<&str>| ok(json!({"status": {"environment": environment, "resource_status": ready, "generation": 3, "source": "control_plane", "known": known, "targets": targets, "observed_at": if known { json!("2026-10-20T00:00:01Z") } else { Value::Null }, "operation_id": null, "operation_status": null, "reason": reason}}));
+                    match self.plane {
+                        Plane::Known => status(&environment, "ready", true, self.target(), None),
+                        Plane::OtherEnvironment => status("production", "ready", true, self.target(), None),
+                        Plane::Unknown => status(&environment, "ready", false, json!([]), Some("no_observation")),
+                        Plane::External => status(&environment, "ready", false, json!([]), Some("external_ledger")),
+                        Plane::Provisioning => status(&environment, "provisioning", false, json!([]), Some("not_ready")),
+                        Plane::Invalid => (400, br#"{"error":{"code":"AXRESOURCE_INVALID"}}"#.to_vec()),
+                        Plane::Legacy => (404, b"{}".to_vec()),
+                        Plane::Denied => (403, br#"{"error":{"code":"AXRESOURCE_DENIED"}}"#.to_vec()),
+                        Plane::Unavailable => (503, br#"{"error":{"code":"AXRESOURCE_UNAVAILABLE"}}"#.to_vec()),
+                    }
+                }
                 ("POST", "/migrations/signers") => {
                     use ed25519_dalek::{Signature, Verifier, VerifyingKey};
                     let v: Value = serde_json::from_slice(body).unwrap();
@@ -1159,6 +1285,7 @@ pub(crate) mod fake {
                         None => (404, br#"{"error":{"code":"AXRESOURCE_INVALID"}}"#.to_vec()),
                     }
                 }
+                ("POST", "/migrations/operations") if self.reader => (403, br#"{"error":{"code":"AXRESOURCE_DENIED"}}"#.to_vec()),
                 ("POST", "/migrations/operations") => {
                     if self.operation_conflicts > 0 {
                         self.operation_conflicts -= 1;
@@ -1234,7 +1361,12 @@ pub(crate) mod fake {
                             .map(|(_, value)| value.trim().to_string()).unwrap_or_default();
                         cloud.lock().unwrap().operation_keys.push(key);
                     }
-                    let (status, text) = cloud.lock().unwrap().handle(&method, &path, &body);
+                    let (status, text, latency) = {
+                        let mut cloud = cloud.lock().unwrap();
+                        let (status, text) = cloud.handle(&method, &path, &body);
+                        (status, text, cloud.latency)
+                    };
+                    tokio::time::sleep(latency).await;
                     let mut response = format!(
                         "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
                         text.len()
@@ -2023,6 +2155,7 @@ mod tests {
             json: false,
             watch: false,
             check: true,
+            live: false,
         };
         let mut out = vec![];
         let error = status_with(&h, &read, &mut out).await.unwrap_err().to_string();
@@ -2043,6 +2176,195 @@ mod tests {
         assert!(preview["changes"].as_array().unwrap().iter().any(|c| c["path"].as_str().unwrap_or_default().contains("notes")), "{preview}");
         // Reads write nothing locally.
         assert!(!root.path().join(".axiom/database/migrations").exists());
+    }
+
+    fn read_args(root: &Path, json: bool, live: bool) -> ReadArgs {
+        ReadArgs {
+            source: root.join("schema.acore"),
+            connection: Default::default(),
+            remote: RemoteArgs { project: Some("acme".into()), environment: Some("development".into()) },
+            json,
+            watch: false,
+            check: false,
+            live,
+        }
+    }
+
+    /// The status fixtures: a hosted chain and a local project.
+    async fn status_fixture(name: &str) -> (Arc<Mutex<Cloud>>, CloudClient, tempfile::TempDir) {
+        let r1 = release("1.0.0", TASKS, None);
+        let r2 = release("1.1.0", &format!("{TASKS} {NOTES}"), Some(&r1));
+        let (state, client) = match name {
+            "empty" => cloud(true).await,
+            "diverged" => pull_cloud(&[&r1, &r2], true).await,
+            _ => pull_cloud(&[&r1], true).await,
+        };
+        let root = match name {
+            "current" | "missing" | "empty" => project("1.0.0", TASKS),
+            "pending" => project("1.1.0", &format!("{TASKS} {NOTES}")),
+            "diverged" => project("1.1.0", &format!("{TASKS} {LABELS}")),
+            _ => unreachable!(),
+        };
+        match name {
+            "current" | "pending" => {
+                db::archive(root.path(), &r1).unwrap();
+            }
+            "diverged" => {
+                db::archive(root.path(), &r1).unwrap();
+                db::archive(root.path(), &release("1.1.0", &format!("{TASKS} {LABELS}"), Some(&r1))).unwrap();
+            }
+            _ => {}
+        }
+        (state, client, root)
+    }
+    const FIXTURES: [&str; 5] = ["current", "pending", "diverged", "missing", "empty"];
+    const OPERATIONS: &str = "/api/v1/projects/acme/migrations/operations";
+
+    /// stdout, POST operation count and total request count of one status.
+    async fn run_status(name: &str, plane: super::fake::Plane, json: bool, live: bool) -> (String, usize, usize) {
+        let (state, client, root) = status_fixture(name).await;
+        state.lock().unwrap().plane = plane;
+        let mut out = vec![];
+        status_with(&hosted(&client), &read_args(root.path(), json, live), &mut out).await.unwrap();
+        let state = state.lock().unwrap();
+        (text(out), state.count("POST", OPERATIONS), state.requests.len())
+    }
+
+    /// Given the same ledger head, the control-plane path and the hosted run
+    /// print the same status. That the backend's stored observation equals the
+    /// ledger a run reads is pinned by the backend's migration-status tests.
+    #[tokio::test]
+    async fn control_plane_status_matches_the_hosted_run_on_every_fixture() {
+        use super::fake::Plane;
+        for name in FIXTURES {
+            let (plane, posts, _) = run_status(name, Plane::Known, true, false).await;
+            assert_eq!(posts, 0, "{name}: the control plane answered without a job");
+            let (run, posts, _) = run_status(name, Plane::Known, true, true).await;
+            assert_eq!(posts, 1, "{name}: --live runs the hosted status");
+            assert_eq!(plane, run, "{name}: JSON differs between the control plane and the run");
+            let (fallback, posts, _) = run_status(name, Plane::Unknown, true, false).await;
+            assert_eq!(posts, 1, "{name}: known=false falls back to the run");
+            assert_eq!(plane, fallback, "{name}");
+            let value: serde_json::Value = serde_json::from_str(&plane).unwrap();
+            assert_eq!(value["format"], "axiom-database-hosted-status/v1");
+            match name {
+                "current" => assert!(value["pending"] == false && value["drift"] == false, "{value}"),
+                "pending" => assert!(value["pending"] == true && value["drift"] == false, "{value}"),
+                "diverged" => assert!(value["drift"] == true && value["divergedLocalVersions"] == serde_json::json!(["1.1.0"]), "{value}"),
+                "missing" => assert_eq!(value["missingLocalVersions"], serde_json::json!(["1.0.0"]), "{value}"),
+                "empty" => assert!(value["appliedVersion"].is_null() && value["head"].is_null() && value["pending"] == true, "{value}"),
+                _ => unreachable!(),
+            }
+            // Text output: identical apart from the line naming the source.
+            let (plane, _, _) = run_status(name, Plane::Known, false, false).await;
+            let (run, _, _) = run_status(name, Plane::Known, false, true).await;
+            assert!(plane.contains("Observed by the control plane at 2026-10-20T00:00:01Z; add --live for a hosted status run.\n"), "{plane}");
+            assert_eq!(
+                run.replace("Read with a hosted status run: --live was given.\n", ""),
+                plane.replace("Observed by the control plane at 2026-10-20T00:00:01Z; add --live for a hosted status run.\n", ""),
+                "{name}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn status_is_fast_at_190_ms_latency_and_needs_one_round_trip() {
+        use super::fake::Plane;
+        let (state, client, root) = status_fixture("pending").await;
+        {
+            let mut s = state.lock().unwrap();
+            s.plane = Plane::Known;
+            s.latency = Duration::from_millis(190);
+        }
+        let started = std::time::Instant::now();
+        let mut out = vec![];
+        status_with(&hosted(&client), &read_args(root.path(), true, false), &mut out).await.unwrap();
+        let elapsed = started.elapsed();
+        let requests = state.lock().unwrap().requests.iter().map(|r| format!("{} {}", r.0, r.1)).collect::<Vec<_>>();
+        assert_eq!(requests, ["GET /api/v1/projects/acme/migrations/status?environment=development"]);
+        assert!(elapsed < Duration::from_secs(2), "{elapsed:?}");
+
+        // Releases missing from the local catalog cost one GET each.
+        let (state, client, root) = status_fixture("missing").await;
+        {
+            let mut s = state.lock().unwrap();
+            s.plane = Plane::Known;
+            s.latency = Duration::from_millis(190);
+        }
+        let started = std::time::Instant::now();
+        status_with(&hosted(&client), &read_args(root.path(), true, false), &mut vec![]).await.unwrap();
+        assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
+        assert_eq!(state.lock().unwrap().requests.len(), 2);
+
+        // The hosted run it replaces (origin/main's only path): a POST and at
+        // least two polls before the job's own runtime.
+        let (state, client, root) = status_fixture("pending").await;
+        state.lock().unwrap().latency = Duration::from_millis(190);
+        status_with(&hosted(&client), &read_args(root.path(), true, true), &mut vec![]).await.unwrap();
+        let state = state.lock().unwrap();
+        assert_eq!(state.count("POST", OPERATIONS), 1);
+        assert!(state.requests.len() >= 3, "{}", state.requests.len());
+    }
+
+    #[tokio::test]
+    async fn status_runs_the_job_and_says_why_when_the_control_plane_cannot_answer() {
+        use super::fake::Plane;
+        for (plane, reason) in [
+            (Plane::Unknown, "the control plane has no current observation of this environment"),
+            (Plane::Provisioning, "the hosted database is not ready (provisioning)"),
+            (Plane::External, "the ledger of a bring-your-own database can change outside the control plane"),
+            (Plane::OtherEnvironment, "the control plane answered for another environment"),
+            (Plane::Legacy, "the control plane could not answer (AXRESOURCE_CLOUD: the migration request was refused or unavailable (HTTP 404))."),
+            (Plane::Unavailable, "the control plane could not answer (AXRESOURCE_UNAVAILABLE"),
+        ] {
+            let (out, posts, _) = run_status("current", plane, false, false).await;
+            assert_eq!(posts, 1, "{plane:?}");
+            assert!(out.contains(&format!("Read with a hosted status run: {reason}")), "{plane:?}: {out}");
+            assert!(out.contains("Applied: 1.0.0 · Working: 1.0.0 · Drift: none"), "{out}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_refused_status_read_is_final_and_starts_no_job() {
+        for plane in [super::fake::Plane::Denied, super::fake::Plane::Invalid] {
+            let (state, client, root) = status_fixture("current").await;
+            state.lock().unwrap().plane = plane;
+            let error = status_with(&hosted(&client), &read_args(root.path(), false, false), &mut vec![]).await.unwrap_err().to_string();
+            assert!(error.starts_with("AXRESOURCE_DENIED") && error.ends_with("(HTTP 403)") || error.starts_with("AXRESOURCE_INVALID") && error.ends_with("(HTTP 400)"), "{error}");
+            assert_eq!(state.lock().unwrap().count("POST", OPERATIONS), 0, "{plane:?}");
+        }
+    }
+
+    /// Role matrix as the server enforces it: members read the stored status,
+    /// hosted runs are Owner-only. A Reader gets the stored answer, and a
+    /// fallback refusal names the reason and the role.
+    #[tokio::test]
+    async fn a_reader_reads_the_stored_status_and_a_needed_run_names_the_owner_role() {
+        use super::fake::Plane;
+        let (state, client, root) = status_fixture("current").await;
+        {
+            let mut s = state.lock().unwrap();
+            s.plane = Plane::Known;
+            s.reader = true;
+        }
+        let mut out = vec![];
+        status_with(&hosted(&client), &read_args(root.path(), false, false), &mut out).await.unwrap();
+        assert!(text(out).contains("Database matches the contract."));
+        state.lock().unwrap().plane = Plane::Unknown;
+        let error = status_with(&hosted(&client), &read_args(root.path(), false, false), &mut vec![]).await.unwrap_err().to_string();
+        assert!(error.starts_with("AXRESOURCE_DENIED"), "{error}");
+        assert!(error.contains("A hosted status run was needed because the control plane has no current observation") && error.ends_with("it needs the project Owner role."), "{error}");
+    }
+
+    #[tokio::test]
+    async fn check_fails_from_the_control_plane_too() {
+        let (state, client, root) = status_fixture("pending").await;
+        state.lock().unwrap().plane = super::fake::Plane::Known;
+        let mut args = read_args(root.path(), false, false);
+        args.check = true;
+        let error = status_with(&hosted(&client), &args, &mut vec![]).await.unwrap_err().to_string();
+        assert!(error.starts_with("ADB1105"), "{error}");
+        assert_eq!(state.lock().unwrap().count("POST", OPERATIONS), 0);
     }
 
     #[tokio::test]

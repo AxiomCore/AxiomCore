@@ -75,8 +75,17 @@ fn profile(directory: &Path) {
     .unwrap();
 }
 
+/// Held while a child is spawned, so that no child of another test can inherit a
+/// pseudo-terminal that `terminal::spawn` opened but has not yet marked close-on-exec.
+static SPAWN: Mutex<()> = Mutex::new(());
+
+fn spawn_lock() -> std::sync::MutexGuard<'static, ()> {
+    SPAWN.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 fn axiom(cloud: &str, profile: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_axiom-cli"))
+    let guard = spawn_lock();
+    let child = Command::new(env!("CARGO_BIN_EXE_axiom-cli"))
         .current_dir(profile)
         .arg("project")
         .args(args)
@@ -87,8 +96,10 @@ fn axiom(cloud: &str, profile: &Path, args: &[&str]) -> Output {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .output()
-        .unwrap()
+        .spawn()
+        .unwrap();
+    drop(guard);
+    child.wait_with_output().unwrap()
 }
 
 fn view(state: &str) -> String {
@@ -219,10 +230,28 @@ mod terminal {
         seen: String,
     }
 
+    /// Where the child's standard error goes: the terminal, or a pipe.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Stderr {
+        Terminal,
+        Piped,
+    }
+
     fn spawn(cloud: &str, directory: &Path, args: &[&str]) -> Session {
+        spawn_with(cloud, directory, args, Stderr::Terminal)
+    }
+
+    fn spawn_with(cloud: &str, directory: &Path, args: &[&str], stderr: Stderr) -> Session {
+        // From `openpty` until the parent's slave copies are dropped, no other child may be
+        // spawned: one that inherited this terminal would hold it open after the CLI exits.
+        let guard = spawn_lock();
         let (mut master, mut slave) = (-1, -1);
         let opened = unsafe { libc::openpty(&mut master, &mut slave, std::ptr::null_mut(), std::ptr::null(), std::ptr::null()) };
         assert_eq!(opened, 0, "openpty: {}", std::io::Error::last_os_error());
+        for fd in [master, slave] {
+            let set = unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) };
+            assert_eq!(set, 0, "FD_CLOEXEC: {}", std::io::Error::last_os_error());
+        }
         let slave = unsafe { std::fs::File::from_raw_fd(slave) };
         let master = unsafe { std::fs::File::from_raw_fd(master) };
         let mut command = Command::new(env!("CARGO_BIN_EXE_axiom-cli"));
@@ -236,8 +265,14 @@ mod terminal {
             .env("AXIOM_LOCAL_PROFILE_DIR", directory)
             .env_remove("AXIOM_REFERRAL_CODE")
             .stdin(slave.try_clone().unwrap())
-            .stdout(slave.try_clone().unwrap())
-            .stderr(slave);
+            .stdout(slave.try_clone().unwrap());
+        match stderr {
+            Stderr::Terminal => command.stderr(slave),
+            Stderr::Piped => {
+                drop(slave);
+                command.stderr(Stdio::piped())
+            }
+        };
         // The terminal becomes the child's controlling terminal (`/dev/tty`).
         unsafe {
             command.pre_exec(|| {
@@ -250,6 +285,7 @@ mod terminal {
         let child = command.spawn().unwrap();
         // `command` holds the slave copies; drop them so reads end when the child exits.
         drop(command);
+        drop(guard);
         Session { child, master, seen: String::new() }
     }
 
@@ -259,11 +295,20 @@ mod terminal {
             let deadline = Instant::now() + Duration::from_secs(30);
             let mut buffer = [0u8; 4096];
             while !self.seen.contains(text) {
-                let left = deadline.saturating_duration_since(Instant::now()).as_millis() as libc::c_int;
+                let left = deadline.saturating_duration_since(Instant::now());
+                assert!(!left.is_zero(), "timed out waiting for {text:?}; saw {:?}", self.seen);
+                let millis = left.as_millis().clamp(1, libc::c_int::MAX as u128) as libc::c_int;
                 let mut ready = libc::pollfd { fd: self.master.as_raw_fd(), events: libc::POLLIN, revents: 0 };
-                let polled = unsafe { libc::poll(&mut ready, 1, left) };
-                assert!(polled != 0 && left > 0, "timed out waiting for {text:?}; saw {:?}", self.seen);
+                let polled = unsafe { libc::poll(&mut ready, 1, millis) };
+                if polled < 0 {
+                    let error = std::io::Error::last_os_error();
+                    assert_eq!(error.kind(), std::io::ErrorKind::Interrupted, "poll: {error}");
+                    continue;
+                }
+                assert!(polled != 0, "timed out waiting for {text:?}; saw {:?}", self.seen);
                 match self.master.read(&mut buffer) {
+                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                    // EOF, or EIO once the child has closed its end of the terminal.
                     Ok(0) | Err(_) => return false,
                     Ok(n) => self.seen.push_str(&String::from_utf8_lossy(&buffer[..n])),
                 }
@@ -299,8 +344,8 @@ mod terminal {
         let mut session = spawn(&cloud, directory.path(), &["archive", "shop"]);
         assert!(session.until(PROMPT), "no prompt: {:?}", session.seen);
         assert!(session.seen.contains("Type `archive shop` to confirm"), "{:?}", session.seen);
-        // Let a request that raced the prompt land before looking.
-        std::thread::sleep(Duration::from_millis(300));
+        // Requests are sent one after another and the stub records each before it replies,
+        // so any request made before the prompt is already in the log.
         assert_eq!(methods(&log), Vec::<String>::new(), "requests before the prompt");
         session.type_line("archive shop");
         let (code, text) = session.finish();
@@ -347,5 +392,22 @@ mod terminal {
         assert!(text.contains(&format!("`{PROJECT_ID}` is the project `shop`. Nothing was archived.")), "{text}");
         let sent = methods(&log);
         assert!(!sent.is_empty() && sent.iter().all(|r| r.starts_with("GET ")), "{sent:?}");
+    }
+
+    #[test]
+    fn a_terminal_stdin_with_stderr_redirected_needs_yes_and_sends_nothing() {
+        let (cloud, log) = stub(route);
+        let directory = tempfile::tempdir().unwrap();
+        profile(directory.path());
+        // The prompt is drawn on standard error, so it cannot be asked when that is a pipe.
+        let mut session = spawn_with(&cloud, directory.path(), &["archive", "shop"], Stderr::Piped);
+        let mut errors = session.child.stderr.take().unwrap();
+        let (code, text) = session.finish();
+        let mut stderr = String::new();
+        errors.read_to_string(&mut stderr).unwrap();
+        assert_eq!(code, Some(2), "{stderr}{text}");
+        assert_eq!(stderr, "axiom project archive: pass --yes to confirm without a prompt\n");
+        assert!(!text.contains(PROMPT), "{text}");
+        assert_eq!(methods(&log), Vec::<String>::new());
     }
 }

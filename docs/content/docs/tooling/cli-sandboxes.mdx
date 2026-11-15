@@ -151,8 +151,9 @@ Calls `DELETE /api/v1/projects/{project_slug}/sandboxes/{environment_id}`.
 
 The sandbox API moved from `/api/v1/projects/{project_slug}/environments` to
 `/api/v1/projects/{project_slug}/sandboxes` in the same release that renamed
-the command. Under `/environments/{environment_id}` the API now addresses
-configuration environments, so the old sandbox paths are not reused.
+the command. `/environments/{environment_id}` is reserved for configuration
+environments (deployments); today the old sandbox paths there answer
+`AXSANDBOX_MOVED` and are not reused.
 
 **The old name in this CLI.** `axiom project environments`, with any
 subcommand, stops before it sends anything and exits with status 2. Use
@@ -163,7 +164,7 @@ axiom project: `axiom project environments` was renamed to `axiom project sandbo
 ```
 
 **CLI 0.153.0 or older against Axiom Cloud.** Every `axiom project
-environments` command fails on its first request. `reset` and `delete` look the
+environments` command fails on its first sandbox request. `reset` and `delete` look the
 sandbox up first, so they fail before anything changes. Install the current
 CLI:
 

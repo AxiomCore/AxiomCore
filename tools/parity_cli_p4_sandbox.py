@@ -1,8 +1,9 @@
 """P4 sandbox caller anchors (see parity_cli_p4.py).
 
 The sandbox API lives under `/sandboxes` (OD-1 rename); the path placeholder stays
-`{environment_id}` as in the contract. `/environments/{environment_id}` now names a
-configuration environment (deployments), which these commands never call.
+`{environment_id}` as in the contract. `/environments/{environment_id}` is reserved
+for configuration environments (deployments; today it answers AXSANDBOX_MOVED), which
+these commands never call.
 """
 
 _SRC = 'cli/src/commands/sandbox_environments.rs'

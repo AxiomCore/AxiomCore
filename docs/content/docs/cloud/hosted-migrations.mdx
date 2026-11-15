@@ -120,8 +120,11 @@ Applied: 1.0.0 · Working: 1.0.0 · Drift: none
 Database matches the contract.
 ```
 
-`history` lists the applied releases and the environment's operations, newest
-first. Neither command changes anything.
+`status` reads the hosted head from the control plane and normally answers in
+under two seconds. If the control plane has no current observation, it starts a
+hosted status run, which takes about 30 seconds, and says why. Add `--live` to
+always use a hosted status run. `history` lists the applied releases and the
+environment's operations, newest first. Neither command changes anything.
 
 ## 4. Make a change
 

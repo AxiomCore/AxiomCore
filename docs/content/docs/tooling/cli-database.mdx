@@ -266,9 +266,18 @@ axiom database status [OPTIONS] <CONTRACT>
 | `--json` | flag | off | Print the status as JSON. |
 | `--watch` | flag | off | Refresh every 2 seconds until you press Ctrl+C. |
 | `--check` | flag | off | Exit non-zero (`ADB1105`, "database is not current") when a change is pending or drift exists. Use it as a CI gate. |
+| `--live` | flag | off | Hosted only (with `--project`). Read the ledger with a hosted status run (about 30 seconds) instead of the control plane's stored observation. |
 
 If the working source is invalid, `status` reports the last archived definition
 and marks the working version `invalid`.
+
+Against a hosted environment (`--project` and `--environment`), `status` reads
+the hosted head from the control plane's stored observation, which needs no
+hosted run and normally answers in under two seconds. When the control plane has no
+current observation (for example, no status run since the database was
+restored, or the database is not ready), or with `--live`, `status` starts a
+hosted status run instead and prints why on a `Read with a hosted status run:`
+line (on stderr with `--json`). Both paths print the same JSON.
 
 ```bash title="Terminal"
 axiom database status database/schema.acore --database-url "$DATABASE_URL" --check

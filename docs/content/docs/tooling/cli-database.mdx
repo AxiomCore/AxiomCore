@@ -279,6 +279,28 @@ restored, or the database is not ready), or with `--live`, `status` starts a
 hosted status run instead and prints why on a `Read with a hosted status run:`
 line (on stderr with `--json`). Both paths print the same JSON.
 
+The `Read with a hosted status run:` line names why the control plane could not
+answer:
+
+| Reason | Explanation |
+| --- | --- |
+| `entitlement_inactive` | The project's resource entitlement is not active. |
+| `no_connection_allowance` | The entitlement allows no database connections. |
+| `environment_inactive` | The database environment is not active. |
+| `environment_expired` | The database environment has expired. |
+| `profile_not_admitted` | The database resource profile is not admitted. |
+| `region_not_served` | The database region is not served. |
+| `subscription_inactive` | The project's subscription is not active. |
+| `not_admitted` | Hosted migrations are not admitted for this database. |
+| `disconnected` | The bring-your-own database is not connected. |
+| `external_ledger` | A bring-your-own ledger can change outside the control plane. |
+| `not_ready` | The hosted database is not ready. |
+| `no_observation` | No status run has been observed since the environment last changed. |
+
+For the first seven reasons the hosted status run is normally refused as well,
+for the same cause, and `status` reports that refusal. An unknown reason gets
+the generic explanation.
+
 ```bash title="Terminal"
 axiom database status database/schema.acore --database-url "$DATABASE_URL" --check
 ```

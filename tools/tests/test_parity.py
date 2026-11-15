@@ -120,12 +120,18 @@ class ComparisonTests(unittest.TestCase):
         route = ('POST', '/api/v1/projects/{project}/data/environments/{environment}/capture')
         dash = [{'method': route[0], 'path': route[1], 'group': 'Data editor and capture', 'action': 'post capture', 'source': 'x.js', 'line': 1}]
         exempt = {route: {'category': 'owner-browser-only', 'reason': 'owner decision'}}
-        noted = [{'method': route[0], 'path': route[1], 'command': 'axiom data capture create', 'note': 'browser-only refusal'}]
+        noted = [{'method': route[0], 'path': route[1], 'command': 'axiom data capture create', 'note': 'BrowserOnly authorization rejects CLI bearer tokens'}]
         rows = checker.compare(dash, noted, exempt)
         self.assertEqual(rows[0]['status'], 'exempt')
         # A CLI command without the browser-only note maps the route: the exemption is stale.
         with self.assertRaisesRegex(ValueError, 'a CLI command maps this route'):
             checker.compare(dash, [{**noted[0], 'note': ''}], exempt)
+        for note in ('Supporting lookup only', 'browser-only refusal', 'NotBrowserOnly'):
+            with self.subTest(note=note):
+                with self.assertRaisesRegex(ValueError, 'BrowserOnly'):
+                    checker.compare(dash, [{**noted[0], 'note': note}], exempt)
+                with self.assertRaisesRegex(ValueError, 'BrowserOnly'):
+                    checker.compare(dash, noted + [{**noted[0], 'note': note}], exempt)
         # Without the exemption the noted command stays partial.
         self.assertEqual(checker.compare(dash, noted, {})[0]['status'], 'partial')
         # The category covers only its four routes.

@@ -76,6 +76,10 @@ def validate_exemptions(exempt, dashboard, cli):
         routes = {route_key(*route): actions for route, actions in spec['routes'].items()} if spec is not None else {}
         if spec is not None and key not in routes:
             errors.append(f'{name}: not a {category} route, so exempting it would hide a real gap')
+        if spec is not None and spec.get('allow_noted_cli'):
+            for row in cli:
+                if route_key(row['method'], row['path']) == key and row.get('note') and not re.search(r'\bBrowserOnly\b', str(row['note'])):
+                    errors.append(f'{name}: every noted CLI match must explain the BrowserOnly refusal')
         if key in mapped and not (spec is not None and spec.get('allow_noted_cli') and key not in unnoted):
             errors.append(f'{name}: a CLI command maps this route; remove the exemption')
         if key in routes:

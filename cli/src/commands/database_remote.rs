@@ -638,9 +638,20 @@ async fn status_head(
             }
             Ok(status) if status.known => "the control plane answered for another environment".to_string(),
             Ok(status) => match status.reason.as_deref() {
+                Some("entitlement_inactive") => "the project's resource entitlement is not active".to_string(),
+                Some("no_connection_allowance") => "the project's resource entitlement allows no database connections".to_string(),
+                Some("environment_inactive") => "the database environment is not active".to_string(),
+                Some("environment_expired") => "the database environment has expired".to_string(),
+                Some("profile_not_admitted") => "the database resource profile is not admitted".to_string(),
+                Some("region_not_served") => "the database region is not served".to_string(),
+                Some("subscription_inactive") => "the project's subscription is not active".to_string(),
                 Some("not_admitted") => "hosted migrations are not admitted for this database".to_string(),
                 Some("disconnected") => "the bring-your-own database is not connected".to_string(),
                 Some("external_ledger") => "the ledger of a bring-your-own database can change outside the control plane".to_string(),
+                Some("not_ready") => format!(
+                    "the hosted database is not ready ({})",
+                    safe_word(&status.resource_status)
+                ),
                 _ if status.resource_status != "ready" => format!(
                     "the hosted database is not ready ({})",
                     safe_word(&status.resource_status)
@@ -1098,6 +1109,7 @@ pub(crate) mod fake {
         Known,
         /// The resource is not ready.
         Provisioning,
+        Reason(&'static str),
         /// A server without the route answers 404.
         Legacy,
         /// The caller is not a project member.
@@ -1221,6 +1233,7 @@ pub(crate) mod fake {
                     let environment = path.split_once("?environment=").map(|(_, e)| e.to_string()).unwrap_or_default();
                     let status = |environment: &str, ready: &str, known: bool, targets: Value, reason: Option<&str>| ok(json!({"status": {"environment": environment, "resource_status": ready, "generation": 3, "source": "control_plane", "known": known, "targets": targets, "observed_at": if known { json!("2026-10-20T00:00:01Z") } else { Value::Null }, "operation_id": null, "operation_status": null, "reason": reason}}));
                     match self.plane {
+                        Plane::Reason(reason) => status(&environment, "ready", false, json!([]), Some(reason)),
                         Plane::Known => status(&environment, "ready", true, self.target(), None),
                         Plane::OtherEnvironment => status("production", "ready", true, self.target(), None),
                         Plane::Unknown => status(&environment, "ready", false, json!([]), Some("no_observation")),
@@ -2321,6 +2334,29 @@ mod tests {
             assert_eq!(posts, 1, "{plane:?}");
             assert!(out.contains(&format!("Read with a hosted status run: {reason}")), "{plane:?}: {out}");
             assert!(out.contains("Applied: 1.0.0 · Working: 1.0.0 · Drift: none"), "{out}");
+        }
+    }
+
+    #[tokio::test]
+    async fn status_fallback_explains_each_control_plane_reason() {
+        for (code, message) in [
+            ("entitlement_inactive", "the project's resource entitlement is not active"),
+            ("no_connection_allowance", "the project's resource entitlement allows no database connections"),
+            ("environment_inactive", "the database environment is not active"),
+            ("environment_expired", "the database environment has expired"),
+            ("profile_not_admitted", "the database resource profile is not admitted"),
+            ("region_not_served", "the database region is not served"),
+            ("subscription_inactive", "the project's subscription is not active"),
+            ("not_admitted", "hosted migrations are not admitted for this database"),
+            ("disconnected", "the bring-your-own database is not connected"),
+            ("external_ledger", "the ledger of a bring-your-own database can change outside the control plane"),
+            ("not_ready", "the hosted database is not ready (ready)"),
+            ("no_observation", "the control plane has no current observation of this environment (no status run since its last change)"),
+            ("future_reason", "the control plane has no current observation of this environment (no status run since its last change)"),
+        ] {
+            let (out, posts, _) = run_status("current", super::fake::Plane::Reason(code), false, false).await;
+            assert_eq!(posts, 1, "{code}");
+            assert!(out.contains(&format!("Read with a hosted status run: {message}.")), "{code}: {out}");
         }
     }
 

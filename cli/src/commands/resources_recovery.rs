@@ -417,7 +417,7 @@ impl Api {
 
     /// Any request with the CLI session (refreshed once on 401), returning the reply
     /// whatever its status, for commands that word their own errors (`axiom workspace`,
-    /// `axiom project environments`, `axiom contract releases`).
+    /// `axiom project sandboxes`, `axiom contract releases`).
     pub async fn request(&self, method: &Method, segments: &[&str], query: &[(&str, String)], body: Option<&Value>, key: Option<&str>) -> Result<Reply> {
         let mut url = self.url(segments)?;
         if !query.is_empty() {

@@ -1621,8 +1621,14 @@ enum ProjectAction {
         #[command(subcommand)]
         action: commands::signers::Action,
     },
-    /// Managed sandbox and hosted-mock environments: list, create, connect, reset, delete
-    Environments(commands::sandbox_environments::EnvironmentsArgs),
+    /// Managed sandboxes and hosted mocks: list, create, connect, reset, delete
+    Sandboxes(commands::sandbox_environments::SandboxesArgs),
+    /// The name of `axiom project sandboxes` up to CLI 0.153.0: refused locally (exit 2)
+    #[command(name = "environments", hide = true, disable_help_flag = true)]
+    RenamedEnvironments {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, num_args = 0..)]
+        rest: Vec<String>,
+    },
     Create {
         #[arg(long)]
         name: Option<String>,
@@ -1687,6 +1693,7 @@ async fn main() -> anyhow::Result<()> {
     }));
 
     let cli = Cli::parse();
+    renamed_command_or_exit(&cli.command);
     confirmation_preflight(&cli.command);
     let start_time = Instant::now();
     // Mode/input errors must precede cloud credentials, registration and I/O.
@@ -1878,9 +1885,20 @@ async fn main() -> anyhow::Result<()> {
     result
 }
 
+/// A renamed command exits 2 here, before registration, sign-in, telemetry or any request.
+fn renamed_command_or_exit(command: &Commands) {
+    if let Commands::Project {
+        action: ProjectAction::RenamedEnvironments { .. },
+    } = command
+    {
+        eprintln!("axiom project: `axiom project environments` was renamed to `axiom project sandboxes` (and `--environment` to `--sandbox`). Run `axiom project sandboxes --help`.");
+        std::process::exit(2);
+    }
+}
+
 /// A confirmation that cannot be asked (no terminal, no `--yes`) exits 2 here, before
 /// registration, sign-in, telemetry or any request: data, workspace, intel and project
-/// environments writes, `auth disable`, an `auth mfa set` that may weaken or turn on
+/// sandboxes writes, `auth disable`, an `auth mfa set` that may weaken or turn on
 /// multi-factor, `project resources revoke` and `project archive` (whose typed phrase is
 /// asked here, on a terminal). Data writes retain their reviewed preview confirmation
 /// after this eligibility check. (`axiom secrets` is a local command with neither
@@ -1900,7 +1918,7 @@ fn confirmation_preflight(command: &Commands) {
             None => return,
         },
         Commands::Project {
-            action: ProjectAction::Environments(args),
+            action: ProjectAction::Sandboxes(args),
         } => match commands::sandbox_environments::asks_first(args) {
             Some(yes) => ("project", yes),
             None => return,
@@ -3277,7 +3295,8 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                 commands::resources::handle(&project, action.as_ref()).await
             }
             ProjectAction::Signers { action } => commands::signers::handle(action).await,
-            ProjectAction::Environments(args) => commands::sandbox_environments::handle(args).await,
+            ProjectAction::Sandboxes(args) => commands::sandbox_environments::handle(args).await,
+            ProjectAction::RenamedEnvironments { .. } => unreachable!("refused in renamed_command_or_exit"),
             ProjectAction::Create {
                 name,
                 slug,

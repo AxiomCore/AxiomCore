@@ -1,5 +1,5 @@
 //! Shared plumbing for the dashboard-parity commands `axiom workspace`, `axiom project
-//! environments` and `axiom contract releases` (W4-L7 part 2, P4).
+//! sandboxes` and `axiom contract releases` (W4-L7 part 2, P4).
 //!
 //! Every request goes through [`Api::request`]: the CLI session from `axiom login`, refreshed
 //! once on a 401, no redirects, bounded bodies and a 20 s timeout. Nothing here re-implements

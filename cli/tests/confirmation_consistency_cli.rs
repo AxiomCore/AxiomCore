@@ -123,20 +123,8 @@ fn all_destructive_groups_refuse_without_requests_or_credentials() {
         ],
         vec!["workspace", "members", "remove", "missing@example.test"],
         vec!["workspace", "invitations", "cancel", id],
-        vec![
-            "project",
-            "environments",
-            "reset",
-            "--environment",
-            "missing",
-        ],
-        vec![
-            "project",
-            "environments",
-            "delete",
-            "--environment",
-            "missing",
-        ],
+        vec!["project", "sandboxes", "reset", "--sandbox", "missing"],
+        vec!["project", "sandboxes", "delete", "--sandbox", "missing"],
         vec![
             "intel",
             "alert-policies",
@@ -179,6 +167,49 @@ fn all_destructive_groups_refuse_without_requests_or_credentials() {
             assert_eq!(server.requests.load(Ordering::SeqCst), 0, "{args:?}");
         }
     }
+}
+
+/// `axiom project environments` (the name up to CLI 0.153.0) fails locally with exit 2 for
+/// every subcommand and flag shape, signed in or not, and sends nothing.
+#[test]
+fn renamed_environments_command_fails_locally_without_requests() {
+    let server = Server::start();
+    let id = "11111111-1111-4111-8111-111111111111";
+    let cases = [
+        vec!["project", "environments"],
+        vec!["project", "environments", "--help"],
+        vec!["project", "environments", "list"],
+        vec!["project", "environments", "--project", "demo", "list", "--json"],
+        vec!["project", "environments", "show", "--environment", id],
+        vec!["project", "environments", "create", "--name", "sandbox", "--wait"],
+        vec!["project", "environments", "events", "--environment", "sandbox", "--limit", "5"],
+        vec!["project", "environments", "connection", "--environment", "sandbox", "--show-secret"],
+        vec!["project", "environments", "reset", "--environment", "sandbox", "--yes"],
+        vec!["project", "environments", "delete", "--environment", id, "--yes"],
+        vec!["project", "environments", "delete", "--environment", "sandbox"],
+    ];
+    for signed_in in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        if signed_in {
+            sign_in(dir.path());
+        }
+        for args in &cases {
+            let output = cli(&server, dir.path(), args);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert_eq!(output.status.code(), Some(2), "{args:?}, signed_in={signed_in}: {stderr}");
+            assert!(
+                stderr.contains("`axiom project environments` was renamed to `axiom project sandboxes`"),
+                "{args:?}: {stderr}"
+            );
+            assert!(output.stdout.is_empty(), "{args:?}");
+            assert_eq!(server.requests.load(Ordering::SeqCst), 0, "{args:?}");
+        }
+    }
+    // The renamed command is hidden from the help.
+    let dir = tempfile::tempdir().unwrap();
+    let help = cli(&server, dir.path(), &["project", "--help"]);
+    let help = String::from_utf8_lossy(&help.stdout);
+    assert!(help.contains("sandboxes") && !help.contains("environments"), "{help}");
 }
 
 #[test]

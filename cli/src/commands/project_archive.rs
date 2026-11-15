@@ -13,7 +13,6 @@ use super::resources_recovery::{Api, Reply};
 use anyhow::{anyhow, bail, Result};
 use reqwest::Method;
 use serde_json::{json, Value};
-use std::io::IsTerminal;
 use std::time::Duration;
 
 /// `--wait` polls every 3 s for at most an hour: an archive snapshots and verifies every
@@ -50,8 +49,9 @@ pub trait Prompt {
 pub struct TerminalPrompt;
 
 impl Prompt for TerminalPrompt {
+    /// Standard input and standard error both: the prompt is drawn on standard error.
     fn is_terminal(&self) -> bool {
-        std::io::stdin().is_terminal()
+        super::auth::can_prompt()
     }
     fn input(&mut self, prompt: &str) -> Result<String> {
         Ok(dialoguer::Input::<String>::new().with_prompt(prompt).allow_empty(true).interact_text()?)

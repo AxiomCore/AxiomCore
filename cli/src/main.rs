@@ -1562,7 +1562,7 @@ enum ProjectAction {
     /// slug you pass; `--yes` confirms without the prompt (required without a terminal).
     /// Needs a recent sign-in: the CLI steps up when asked.
     Archive {
-        /// Project slug; with --yes also a name or ID (default: the project linked to this directory)
+        /// Project slug; with --yes also a name or ID (with --yes only, defaults to the project linked to this directory)
         #[arg(value_name = "PROJECT")]
         project: Option<String>,
         /// The project, as an option instead of the positional argument

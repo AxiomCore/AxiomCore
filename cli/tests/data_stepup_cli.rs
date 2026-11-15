@@ -8,7 +8,7 @@ fn writes_refuse_before_login_lookup_or_step_up_without_yes() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
-    for (action, command) in [
+    for (action, _command) in [
         (vec!["sql", "write"], "data sql write"),
         (vec!["tables", "items", "write"], "data tables write"),
     ] {
@@ -27,7 +27,8 @@ fn writes_refuse_before_login_lookup_or_step_up_without_yes() {
         assert_eq!(output.status.code(), Some(2));
         assert_eq!(
             String::from_utf8_lossy(&output.stderr).trim(),
-            format!("axiom {command}: pass --yes to confirm without a prompt")
+            // V1's shared preflight answers first, labelled by the command group.
+            format!("axiom data: pass --yes to confirm without a prompt")
         );
         assert_eq!(
             listener.accept().unwrap_err().kind(),

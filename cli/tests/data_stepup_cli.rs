@@ -28,7 +28,7 @@ fn writes_refuse_before_login_lookup_or_step_up_without_yes() {
         assert_eq!(
             String::from_utf8_lossy(&output.stderr).trim(),
             // V1's shared preflight answers first, labelled by the command group.
-            format!("axiom data: pass --yes to confirm without a prompt")
+            "axiom data: pass --yes to confirm without a prompt"
         );
         assert_eq!(
             listener.accept().unwrap_err().kind(),

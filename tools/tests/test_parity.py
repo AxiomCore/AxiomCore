@@ -39,6 +39,11 @@ class ComparisonTests(unittest.TestCase):
         self.assertEqual(checker.grouped_gaps([row]), [])
         self.assertEqual(checker.compare([self.SESSION], [])[0]['status'], 'gap')
 
+    def test_current_dashboard_session_alias_is_exempt(self):
+        row = {**self.SESSION, 'action': 'get_session', 'source': 'static/js/api-client.js'}
+        result = checker.compare([self.SESSION, row], [], {('GET', '/api/v1/auth/session'): self.exemption()})
+        self.assertTrue(all(r['status'] == 'exempt' for r in result))
+
     def test_exemption_without_a_reason_fails_the_checker(self):
         for reason in ['', ' ', '\n\t', None, 7]:
             with self.subTest(reason=reason), self.assertRaisesRegex(ValueError, 'no reason'):

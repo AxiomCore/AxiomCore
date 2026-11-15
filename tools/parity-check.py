@@ -26,7 +26,7 @@ EXEMPTION_CATEGORIES = {
         'routes': {
             ('POST', '/api/v1/auth/send'): {'SendOTP'},
             ('POST', '/api/v1/auth/verify'): {'VerifyOTP'},
-            ('GET', '/api/v1/auth/session'): {'GetSession'},
+            ('GET', '/api/v1/auth/session'): {'GetSession', 'get_session'},
             ('POST', '/api/v1/auth/session/refresh'): {'RefreshBrowserSession'},
             ('DELETE', '/api/v1/auth/session'): {'Logout'},
         },

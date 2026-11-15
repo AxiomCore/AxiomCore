@@ -53,7 +53,7 @@ axiom data sql read --project demo --environment staging --file query.json --jso
 | `capture create` | `sql`, `title`; execution hashes and version come from the fresh preview |
 | `capture settings set` | `enabled`; enabling also requires `acknowledged_min_cli_version` |
 
-`axiom data saved-queries list`, `saved-queries delete ID`, and `capture settings get`
+`axiom data saved-queries list`, `axiom data saved-queries delete ID`, and `axiom data capture settings get`
 do not require a file. Export returns an object with a `csv` string after validating
 the CSV completion marker. Use `--out PATH` to save the validated CSV instead:
 
@@ -66,7 +66,9 @@ you add `--force` alongside `--out`. Symlink destinations are always refused, ev
 with `--force`. On Unix, output files have mode `0600` (owner read and write only).
 The complete CSV is staged in the same directory and published atomically, so a
 failed write does not leave a partial export or truncate an existing file.
-Without `--out`, the response contains the `csv` string as before.
+Pass `--out -` to write only the validated CSV bytes to standard output, for
+example when piping to another program. No file named `-` is created. Without
+`--out`, the response contains the `csv` string as before.
 
 ## Reviewing changes
 

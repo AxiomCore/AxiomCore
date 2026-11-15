@@ -80,17 +80,28 @@ def scan_dashboard(root):
     # Every raw transport currently has a reviewed resolver below. A new raw
     # transport must be taught to this scanner rather than silently excluded.
     known_transports = {
-        'project-secrets.js', 'project-resources.js', 'project-recovery.js',
-        'project-migrations.js', 'project-database.js', 'project-auth.js',
-        'project-branches.js', 'auth-admin-client.js', 'data-editor-client.js',
-        # This file emits a fetch example for users; it does not execute it.
-        'project-intelligence.js',
+        'project-secrets.js': 'request wrapper resolved at its concrete callers',
+        'project-resources.js': 'resource action selectors expanded below',
+        'project-recovery.js': 'recovery action selectors and retry forwarding expanded below',
+        'project-migrations.js': 'request wrapper resolved at its concrete callers',
+        'project-database.js': 'request wrapper resolved at its concrete callers',
+        'project-auth.js': 'platformRequest wrapper resolved at its concrete callers',
+        'project-branches.js': 'send wrapper resolved at its concrete callers',
+        'auth-admin-client.js': 'typed ROUTES and concrete call/send pairs',
+        'data-editor-client.js': 'typed ROUTES and concrete call/send pairs',
+        'project-intelligence.js': 'emits a fetch example; does not execute it',
+        'project-archive.js': 'call wrapper with GET reads and finite POST send actions',
+        'api-client.js': 'fetch interceptor forwards existing requests; native session GET resolved below',
     }
     for file in files:
         if file.name.startswith(('atmx', 'axui')): continue
         text = file.read_text()
         fetches = list(re.finditer(r'\bfetch\s*\(', text))
-        if fetches and (file.name not in known_transports or len(fetches) != 1):
+        # The interceptor declaration is not a new HTTP call. Only this exact
+        # reviewed declaration is accepted; additional fetch calls still fail.
+        if file.name == 'api-client.js':
+            fetches = [m for m in fetches if not text[:m.start()].endswith('window.fetch = function ')]
+        if fetches and (file.name not in known_transports or file.name == 'api-client.js' or len(fetches) != 1):
             errors.append(f'{file.name}: unreviewed raw fetch transport')
         streams = list(re.finditer(r'new\s+(?:EventSource|XMLHttpRequest|WebSocket)\s*\(', text))
         if streams and (file.name != 'dashboard-state.js' or len(streams) != 1):
@@ -101,12 +112,14 @@ def scan_dashboard(root):
         if file.name.startswith(('atmx', 'axui')): continue
         text = file.read_text()
         pattern = r'(?:queryOnce|mutate|watch|watchLive|watchTelemetry|cachedQuery)\(\s*[\'\"]([A-Za-z_]+)[\'\"]|axiom\.([A-Za-z_]+)\s*\(|mutateBytes\(\s*"axiom\.([A-Za-z_]+)"'
+        if file.name == 'api-client.js':
+            pattern = pattern.replace('queryOnce|', 'send|queryOnce|')
         for m in re.finditer(pattern, text):
             name = m.group(1) or m.group(2) or m.group(3)
             endpoint = endpoint_map.get(canonical(name))
             if endpoint:
                 add(endpoint['name'], endpoint['method'], endpoint['path'], file, m.start(), m.group())
-                if file.name == 'api-client.js' and not wrapper_used(text, m.start()): rows[-1]['capability_only'] = True
+                if file.name == 'api-client.js' and not m.group().startswith('send(') and not wrapper_used(text, m.start()): rows[-1]['capability_only'] = True
             elif m.group(1): errors.append(f'{file.name}: unknown SDK operation {name}')
     # Browser stream is a first-class read transport, outside the generated SDK.
     file = js / 'api-client.js'; text = file.read_text()
@@ -115,6 +128,25 @@ def scan_dashboard(root):
         action = 'watch activity stream' if path.endswith('/activity/stream') else 'download contract release' if path.endswith('/pull') else 'download latest contract'
         add(action, 'GET', path, file, m.start(), m.group())
         if not wrapper_used(text, m.start()): rows[-1]['capability_only'] = True
+    # V8's startup session read bypasses the SDK. It is an actual browser
+    # session operation, including rechecks, not an unused wrapper capability.
+    session_calls = list(re.finditer(r'nativeFetch\(\`\$\{apiBase\(\)\}\$\{SESSION_PATH\}\`', text))
+    reviewed_session_calls = {m.start() for m in session_calls}
+    for m in re.finditer(r'\bnativeFetch\s*\(', text):
+        args = arguments(text, m.end())
+        if m.start() not in reviewed_session_calls and args != ['input', 'init']:
+            errors.append('api-client.js: unreviewed native fetch transport')
+    if session_calls:
+        session_path = re.search(r'const SESSION_PATH = ["\']([^"\']+)["\'];', text)
+        if not session_path or session_path.group(1) != '/api/v1/auth/session':
+            errors.append('api-client.js: unreviewed native session path')
+        else:
+            for m in session_calls:
+                args = arguments(text, text.index('(', m.start()) + 1)
+                if len(args) > 1 and (not args[1].lstrip().startswith('{') or re.search(r'\bmethod\s*:|\.\.\.', args[1])):
+                    errors.append('api-client.js: unreviewed native session options')
+                else:
+                    add('GetSession', 'GET', session_path.group(1), file, m.start(), m.group())
     # Direct SDK bindings in templates must resolve too. One existing legacy
     # partial references a removed operation; keep that defect visible.
     for file in files:
@@ -142,12 +174,15 @@ def scan_dashboard(root):
     for file in files:
         text = file.read_text(); name = file.name
         if name.startswith(('atmx', 'axui')): continue
-        for m in re.finditer(r'this\.(request|platformRequest|sendStepped|send)\(', text):
-            kind = m.group(1); args = arguments(text, m.end()); expr = args[0]
+        pattern = r'this\.(request|platformRequest|sendStepped|send)\('
+        if name == 'project-archive.js':
+            pattern += r'|(?<![\w.])(?P<archive_call>call)\('
+        for m in re.finditer(pattern, text):
+            kind = m.group(1) or m.group('archive_call'); args = arguments(text, m.end()); expr = args[0]
             # Shared forwarding/retry calls have their concrete callers below.
             if expr in ('path', 'action', 'c.action', 's.action'):
                 continue
-            if name == 'project-recovery.js' and kind == 'send': continue
+            if name in ('project-recovery.js', 'project-archive.js') and kind == 'send': continue
             method = 'GET'
             if kind in ('sendStepped', 'send'):
                 method = args[1].strip("'\"")
@@ -183,7 +218,11 @@ def scan_dashboard(root):
                 actions = re.findall(r'(\w+):', labels.group(1))
                 paths = [path.replace('${operation}', a) for a in actions]
             elif '${action}' in path:
-                if name == 'project-recovery.js':
+                if name == 'project-archive.js':
+                    actions = sorted(set(re.findall(r"this\.send\(['\"]([^'\"]+)['\"]", text)))
+                    if not actions:
+                        errors.append('project-archive.js: unresolved archive action selector')
+                elif name == 'project-recovery.js':
                     allowed = re.search(r'const allowed = \{([^}]+)\}', text)
                     if not allowed: raise ValueError('Unknown recovery selector')
                     actions = re.findall(r'(\w+):', allowed.group(1)) + re.findall(r"this\.send\('([^']+)'", text)

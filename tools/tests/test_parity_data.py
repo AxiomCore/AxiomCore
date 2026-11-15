@@ -12,11 +12,19 @@ class DataParityTests(unittest.TestCase):
         callers = parity_cli.scan_cli(CORE)
         data = [r for r in callers if r['command'].startswith('axiom data ')]
         self.assertEqual(len(data), 20)
-        self.assertEqual(sum(bool(r.get('note')) for r in data), 7)
+        self.assertEqual(sum(bool(r.get('note')) for r in data), 4)
         for row in data:
             action = {**row, 'group': 'Data', 'action': row['command']}
             status = checker.compare([action], data)[0]['status']
             self.assertEqual(status, 'partial' if row.get('note') else 'mapped')
+
+    def test_step_up_writes_are_mapped_but_export_and_capture_stay_partial(self):
+        rows = {r['command']: r for r in parity_cli.scan_cli(CORE)}
+        for command in ('axiom data sql preview', 'axiom data sql write', 'axiom data tables TABLE write'):
+            self.assertNotIn('note', rows[command])
+        for command in ('axiom data tables TABLE export', 'axiom data capture preview',
+                        'axiom data capture create', 'axiom data capture settings set'):
+            self.assertIn('BrowserOnly', rows[command]['note'])
 
     def test_environment_metadata_and_release_impact_have_callers(self):
         commands = {r['command'] for r in parity_cli.scan_cli(CORE)}

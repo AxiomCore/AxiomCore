@@ -24,11 +24,11 @@ EXEMPTION_CATEGORIES = {
         'description': 'dashboard sign-in routes of the browser session (email code, HttpOnly cookie); the CLI uses device login',
         'groups': {'Account authentication'},
         'routes': {
-            ('POST', '/api/v1/auth/send'): {'SendOTP'},
-            ('POST', '/api/v1/auth/verify'): {'VerifyOTP'},
+            ('POST', '/api/v1/auth/send'): {'SendOTP', 'send_otp'},
+            ('POST', '/api/v1/auth/verify'): {'VerifyOTP', 'verify_otp'},
             ('GET', '/api/v1/auth/session'): {'GetSession', 'get_session'},
-            ('POST', '/api/v1/auth/session/refresh'): {'RefreshBrowserSession'},
-            ('DELETE', '/api/v1/auth/session'): {'Logout'},
+            ('POST', '/api/v1/auth/session/refresh'): {'RefreshBrowserSession', 'refresh_browser_session'},
+            ('DELETE', '/api/v1/auth/session'): {'Logout', 'logout'},
         },
     },
 }

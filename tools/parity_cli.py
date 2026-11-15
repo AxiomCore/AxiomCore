@@ -353,6 +353,15 @@ CALLERS.extend([{'command': 'axiom data overview get',
 # Reviewed exemptions: (METHOD, path) -> {'category', 'reason'}: why the CLI deliberately has
 # no command. parity-check.validate_exemptions allows only listed categories and routes.
 EXEMPT = {}
+# Owner decision 14 Nov 2026: export and capture stay dashboard-only (see the
+# 'owner-browser-only' category in parity-check.py).
+_BROWSER_ONLY = 'owner decision 14 Nov 2026 (Wave 2 V5): data export and capture stay dashboard-only; the CLI command explains the browser-only refusal'
+EXEMPT.update({
+    ('POST', '/api/v1/projects/{project}/data/environments/{environment}/tables/{table}/export'): {'category': 'owner-browser-only', 'reason': _BROWSER_ONLY},
+    ('POST', '/api/v1/projects/{project}/data/environments/{environment}/capture/preview'): {'category': 'owner-browser-only', 'reason': _BROWSER_ONLY},
+    ('POST', '/api/v1/projects/{project}/data/environments/{environment}/capture'): {'category': 'owner-browser-only', 'reason': _BROWSER_ONLY},
+    ('PUT', '/api/v1/projects/{project}/data/environments/{environment}/capture/settings'): {'category': 'owner-browser-only', 'reason': _BROWSER_ONLY},
+})
 
 # P4 cli-workspace (W4-L7 part 2): workspace, onboarding, sandbox environments and hosted
 # contract releases, plus the account-authentication exemptions.

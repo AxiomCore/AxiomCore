@@ -71,21 +71,21 @@ fn script_step_up(h: &Harness) {
     h.mock.script("POST /auth/device/poll", 200, json!({"access_token": "step-up-access", "expires_in": 900, "scope": "resources:recovery", "token_type": "Bearer"}));
 }
 
-#[tokio::test]
-async fn headless_archive_without_yes_is_refused_before_any_request() {
-    let h = shop().await;
-    let error = archive(&h.api, Some("shop"), false, false, false, fast(), &mut headless()).await.unwrap_err();
+#[test]
+fn headless_archive_without_yes_is_refused_before_any_request() {
+    let mut prompt = headless();
+    let error = confirm(Some("shop"), &mut prompt).unwrap_err();
     assert_eq!(exit_code(&error), Some(2));
     assert_eq!(error.to_string(), "pass --yes to confirm without a prompt");
-    assert!(h.mock.seen(PROJECTS).is_empty() && h.mock.seen(ARCHIVE).is_empty() && h.mock.seen(VIEW).is_empty());
+    assert!(prompt.asked.is_empty());
 }
 
 #[tokio::test]
 async fn archive_with_yes_sends_the_confirm_phrase_and_a_fresh_key_per_invocation() {
     let h = shop().await;
     h.mock.script(ARCHIVE, 202, view("archiving"));
-    archive(&h.api, Some("Shop"), true, false, false, fast(), &mut headless()).await.unwrap();
-    archive(&h.api, Some("shop"), true, false, true, fast(), &mut headless()).await.unwrap();
+    archive(&h.api, Some("Shop"), &Confirmed::Yes, false, false, fast()).await.unwrap();
+    archive(&h.api, Some("shop"), &Confirmed::Yes, false, true, fast()).await.unwrap();
     let sent = h.mock.seen(ARCHIVE);
     assert_eq!(sent.len(), 2);
     for request in &sent {
@@ -103,7 +103,7 @@ async fn archive_reauth_steps_up_and_retries_once_with_the_same_key() {
     h.mock.script(ARCHIVE, 403, json!({"code": "AXRESOURCE_REAUTH_REQUIRED"}));
     h.mock.script(ARCHIVE, 202, view("archiving"));
     script_step_up(&h);
-    archive(&h.api, Some("shop"), true, false, false, fast(), &mut headless()).await.unwrap();
+    archive(&h.api, Some("shop"), &Confirmed::Yes, false, false, fast()).await.unwrap();
     let sent = h.mock.seen(ARCHIVE);
     assert_eq!(sent.len(), 2);
     assert_eq!(sent[0].bearer.as_deref(), Some("access"));
@@ -118,7 +118,7 @@ async fn archive_reauth_after_step_up_fails_with_the_code_and_no_third_try() {
     let h = shop().await;
     h.mock.script(ARCHIVE, 403, json!({"code": "AXRESOURCE_REAUTH_REQUIRED"}));
     script_step_up(&h);
-    let error = archive(&h.api, Some("shop"), true, false, false, fast(), &mut headless()).await.unwrap_err().to_string();
+    let error = archive(&h.api, Some("shop"), &Confirmed::Yes, false, false, fast()).await.unwrap_err().to_string();
     assert!(error.starts_with("AXRESOURCE_REAUTH_REQUIRED: This action needs a recent sign-in. Run `axiom login --step-up`"), "{error}");
     assert_eq!(h.mock.seen(ARCHIVE).len(), 2);
     assert_eq!(h.mock.seen("POST /auth/device/start").len(), 1);
@@ -139,7 +139,7 @@ async fn blocked_archive_lists_each_database_and_reason_with_a_hint() {
             {"resource_id": "r6", "database_name": "other", "reason": "future_reason"}
         ]}),
     );
-    let error = archive(&h.api, Some("shop"), true, false, false, fast(), &mut headless()).await.unwrap_err().to_string();
+    let error = archive(&h.api, Some("shop"), &Confirmed::Yes, false, false, fast()).await.unwrap_err().to_string();
     let lines: Vec<&str> = error.lines().collect();
     assert_eq!(lines[0], "AXPROJECT_ARCHIVE_BLOCKED: `shop` cannot be archived now. Nothing was changed. Blocked by:");
     assert!(lines[1].starts_with("  - preview-1: a branch database. Delete the branch first (`axiom branch delete`)"), "{error}");
@@ -167,7 +167,7 @@ async fn known_refusals_have_fixed_words() {
         let h = shop().await;
         h.mock.script(route, status, json!({"code": code}));
         let error = if route == ARCHIVE {
-            archive(&h.api, Some("shop"), true, false, false, fast(), &mut headless()).await
+            archive(&h.api, Some("shop"), &Confirmed::Yes, false, false, fast()).await
         } else {
             restore(&h.api, Some("shop"), false, false, fast()).await
         }
@@ -218,7 +218,7 @@ async fn archive_wait_polls_until_archived() {
     h.mock.script(VIEW, 200, view("archiving"));
     h.mock.script(VIEW, 200, view("archiving"));
     h.mock.script(VIEW, 200, view("archived"));
-    archive(&h.api, Some("shop"), true, true, true, fast(), &mut headless()).await.unwrap();
+    archive(&h.api, Some("shop"), &Confirmed::Yes, true, true, fast()).await.unwrap();
     assert_eq!(h.mock.seen(VIEW).len(), 3);
     assert_eq!(h.mock.seen(ARCHIVE).len(), 1, "polling never re-sends the archive");
 }
@@ -233,7 +233,7 @@ async fn archive_wait_reports_the_databases_that_failed() {
         {"resource_id": "r2", "database_name": "analytics", "status": "archived", "operation_id": "o2", "operation_status": "succeeded", "failure_code": ""}
     ]);
     h.mock.script(VIEW, 200, failed);
-    let error = archive(&h.api, Some("shop"), true, true, false, fast(), &mut headless()).await.unwrap_err().to_string();
+    let error = archive(&h.api, Some("shop"), &Confirmed::Yes, true, false, fast()).await.unwrap_err().to_string();
     assert!(error.starts_with("The archive of shop failed"), "{error}");
     assert!(error.contains("  - production (AXRESOURCE_SNAPSHOT_UNVERIFIED)"), "{error}");
     assert!(!error.contains("analytics"), "{error}");
@@ -261,46 +261,80 @@ async fn restore_wait_polls_until_restored_and_times_out_with_a_hint() {
 async fn an_immediate_terminal_state_needs_no_poll() {
     let h = shop().await;
     h.mock.script(ARCHIVE, 202, view("archived"));
-    archive(&h.api, Some("shop"), true, true, false, fast(), &mut headless()).await.unwrap();
+    archive(&h.api, Some("shop"), &Confirmed::Yes, true, false, fast()).await.unwrap();
     assert!(h.mock.seen(VIEW).is_empty());
 }
 
-#[tokio::test]
-async fn the_terminal_prompt_needs_the_exact_phrase() {
-    let h = shop().await;
-    h.mock.script(VIEW, 200, view("none"));
-    h.mock.script(ARCHIVE, 202, view("archiving"));
+#[test]
+fn the_terminal_prompt_comes_first_and_needs_the_exact_phrase() {
+    // `confirm` takes no `Api`: it cannot send anything.
     let mut wrong = typed("archive Shop");
-    let error = archive(&h.api, Some("shop"), false, false, false, fast(), &mut wrong).await.unwrap_err();
+    let error = confirm(Some("shop"), &mut wrong).unwrap_err();
     assert_eq!(exit_code(&error), Some(2));
+    assert_eq!(error.to_string(), "the confirmation did not match; nothing was sent");
     assert_eq!(wrong.asked, vec!["Type `archive shop` to confirm"]);
-    assert!(h.mock.seen(ARCHIVE).is_empty(), "a wrong phrase sends nothing");
 
     let mut right = typed(" archive shop ");
-    archive(&h.api, Some("shop"), false, false, false, fast(), &mut right).await.unwrap();
-    let sent = h.mock.seen(ARCHIVE);
-    assert_eq!(sent.len(), 1);
-    assert_eq!(sent[0].body, json!({"confirm": "archive shop"}));
+    assert_eq!(confirm(Some("shop"), &mut right).unwrap(), "shop");
+    assert_eq!(right.asked, vec!["Type `archive shop` to confirm"]);
+}
+
+#[test]
+fn the_prompt_is_refused_unasked_for_an_argument_that_is_not_a_slug() {
+    for given in [None, Some(""), Some("Shop"), Some("my shop"), Some("shop\u{1b}[2J"), Some(" shop")] {
+        let mut prompt = typed("archive shop");
+        let error = confirm(given, &mut prompt).unwrap_err();
+        assert_eq!(exit_code(&error), Some(2), "{given:?}");
+        assert!(error.to_string().contains("slug"), "{given:?}: {error}");
+        assert!(!error.to_string().contains('\u{1b}'), "{given:?}: {error}");
+        assert!(prompt.asked.is_empty(), "{given:?}");
+    }
 }
 
 #[tokio::test]
-async fn the_terminal_prompt_is_not_asked_when_the_archive_would_be_refused() {
+async fn a_typed_confirmation_archives_after_the_lookup() {
+    let h = shop().await;
+    h.mock.script(VIEW, 200, view("none"));
+    h.mock.script(ARCHIVE, 202, view("archiving"));
+    archive(&h.api, Some("shop"), &Confirmed::Typed("shop".into()), false, false, fast()).await.unwrap();
+    let sent = h.mock.seen(ARCHIVE);
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].body, json!({"confirm": "archive shop"}));
+    assert_eq!(h.mock.seen(VIEW).len(), 1, "the project is read after the confirmation");
+}
+
+#[tokio::test]
+async fn a_typed_slug_that_resolves_to_another_project_sends_no_write() {
+    // `shop` is the name of the project whose slug is `shop-2`.
+    let h = harness().await;
+    h.mock.script(PROJECTS, 200, json!([{"id": "22222222-2222-4222-8222-222222222222", "slug": "shop-2", "name": "shop"}]));
+    h.mock.script("POST /api/v1/projects/shop-2/archive", 202, view("archiving"));
+    let error = archive(&h.api, Some("shop"), &Confirmed::Typed("shop".into()), false, false, fast()).await.unwrap_err().to_string();
+    assert!(error.contains("you confirmed `archive shop`, but `shop` is the project `shop-2`. Nothing was archived."), "{error}");
+    assert!(error.contains("`axiom project archive shop-2`"), "{error}");
+    // A typed id resolves to its project's slug: refused the same way.
+    let id = "22222222-2222-4222-8222-222222222222";
+    let error = archive(&h.api, Some(id), &Confirmed::Typed(id.into()), false, false, fast()).await.unwrap_err().to_string();
+    assert!(error.contains("is the project `shop-2`"), "{error}");
+    assert!(h.mock.requests().iter().all(|r| !r.route.starts_with("POST")), "{:?}", h.mock.requests());
+}
+
+#[tokio::test]
+async fn a_typed_confirmation_is_still_refused_when_the_archive_would_be() {
     let h = shop().await;
     let mut blocked = view("none");
     blocked["blockers"] = json!([{"resource_id": "r1", "database_name": "preview-1", "reason": "branch"}]);
     h.mock.script(VIEW, 200, blocked);
-    let mut prompt = typed("archive shop");
-    let error = archive(&h.api, Some("shop"), false, false, false, fast(), &mut prompt).await.unwrap_err().to_string();
+    let error = archive(&h.api, Some("shop"), &Confirmed::Typed("shop".into()), false, false, fast()).await.unwrap_err().to_string();
     assert!(error.starts_with("AXPROJECT_ARCHIVE_BLOCKED: `shop` cannot be archived now."), "{error}");
     assert!(error.contains("  - preview-1: a branch database"), "{error}");
-    assert!(prompt.asked.is_empty());
+    assert!(h.mock.seen(ARCHIVE).is_empty());
 
     let h = shop().await;
     h.mock.script(VIEW, 200, json!({"enabled": false, "state": "none", "databases": [], "blockers": []}));
-    let mut prompt = typed("archive shop");
-    let error = archive(&h.api, Some("shop"), false, false, false, fast(), &mut prompt).await.unwrap_err().to_string();
+    let error = archive(&h.api, Some("shop"), &Confirmed::Typed("shop".into()), false, false, fast()).await.unwrap_err().to_string();
     assert!(error.starts_with("AXPROJECT_ARCHIVE_DISABLED"), "{error}");
-    assert!(prompt.asked.is_empty() && h.mock.seen(ARCHIVE).is_empty());
+    assert!(h.mock.seen(ARCHIVE).is_empty());
 }
 
 #[test]
@@ -371,7 +405,7 @@ async fn an_archived_projects_exact_slug_beats_a_visible_projects_name() {
 
     let h = lists(plain, archived).await;
     h.mock.script(ARCHIVE, 202, view("archived"));
-    archive(&h.api, Some("shop"), true, false, false, fast(), &mut headless()).await.unwrap();
+    archive(&h.api, Some("shop"), &Confirmed::Yes, false, false, fast()).await.unwrap();
     assert_eq!(h.mock.seen(ARCHIVE).len(), 1);
     assert!(h.mock.seen("POST /api/v1/projects/shop-1/archive").is_empty());
 }
@@ -386,7 +420,7 @@ async fn a_tie_prefers_the_archived_project_for_restore_only() {
     assert_eq!(h.mock.seen("POST /api/v1/projects/shop-2/restore").len(), 1);
 
     let h = lists(plain, archived).await;
-    let error = archive(&h.api, Some("Shop"), true, false, false, fast(), &mut headless()).await.unwrap_err().to_string();
+    let error = archive(&h.api, Some("Shop"), &Confirmed::Yes, false, false, fast()).await.unwrap_err().to_string();
     assert_eq!(error, "`Shop` matches 2 projects: shop-1; shop-2 (archived). Pass the slug instead.");
     assert!(h.mock.requests().iter().all(|r| r.route.starts_with("GET ")), "nothing is archived on a tie");
 
@@ -402,7 +436,7 @@ async fn a_tie_prefers_the_archived_project_for_restore_only() {
 async fn a_slug_that_is_not_plain_is_refused_before_any_write() {
     for slug in ["shop/../other", "Shop", "sh\u{1b}[31mop", "shop?x=1", "shop op"] {
         let h = lists(json!([{"id": "x", "slug": slug, "name": "Evil"}]), json!([])).await;
-        let error = archive(&h.api, Some("Evil"), true, false, false, fast(), &mut headless()).await.unwrap_err().to_string();
+        let error = archive(&h.api, Some("Evil"), &Confirmed::Yes, false, false, fast()).await.unwrap_err().to_string();
         assert!(error.contains("not lowercase letters, digits and hyphens; nothing was sent"), "{slug}: {error}");
         assert!(!error.contains('\u{1b}'));
         assert!(h.mock.requests().iter().all(|r| r.route.starts_with("GET /api/v1/projects") && !r.route.contains("archive")), "{slug}");
@@ -423,13 +457,13 @@ async fn wait_rides_out_server_errors_and_stops_on_a_refusal() {
     h.mock.script(VIEW, 200, view("archiving"));
     h.mock.script(VIEW, 500, json!({}));
     h.mock.script(VIEW, 200, view("archived"));
-    archive(&h.api, Some("shop"), true, true, false, fast(), &mut headless()).await.unwrap();
+    archive(&h.api, Some("shop"), &Confirmed::Yes, true, false, fast()).await.unwrap();
     assert_eq!(h.mock.seen(VIEW).len(), 6);
 
     let h = shop().await;
     h.mock.script(ARCHIVE, 202, view("archiving"));
     h.mock.script(VIEW, 403, json!({"code": "AXRESOURCE_DENIED"}));
-    let error = archive(&h.api, Some("shop"), true, true, false, fast(), &mut headless()).await.unwrap_err().to_string();
+    let error = archive(&h.api, Some("shop"), &Confirmed::Yes, true, false, fast()).await.unwrap_err().to_string();
     assert!(error.starts_with("AXRESOURCE_DENIED"), "{error}");
     assert_eq!(h.mock.seen(VIEW).len(), 1, "a 4xx stops the wait at once");
 

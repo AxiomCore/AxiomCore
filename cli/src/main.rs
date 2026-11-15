@@ -1558,10 +1558,11 @@ enum ProjectAction {
     ///
     /// Hides the project from `axiom project list` at once. Each database gets an encrypted,
     /// verified snapshot; only after its snapshot verifies is it deleted from the hosting
-    /// provider. Asks you to type `archive <project-slug>`; `--yes` confirms without the prompt
-    /// (required without a terminal). Needs a recent sign-in: the CLI steps up when asked.
+    /// provider. Before anything is sent it asks you to type `archive <project-slug>` for the
+    /// slug you pass; `--yes` confirms without the prompt (required without a terminal).
+    /// Needs a recent sign-in: the CLI steps up when asked.
     Archive {
-        /// Project slug, name or ID (default: the project linked to this directory)
+        /// Project slug; with --yes also a name or ID (default: the project linked to this directory)
         #[arg(value_name = "PROJECT")]
         project: Option<String>,
         /// The project, as an option instead of the positional argument
@@ -1891,8 +1892,8 @@ fn confirmation_preflight(command: &Commands) {
                     ..
                 },
         } => ("project", *yes),
-        // The typed `archive <project-slug>` prompt needs a terminal; refused before the
-        // project lookup, sign-in or any request.
+        // The typed `archive <project-slug>` prompt needs a terminal; refused (or asked,
+        // below) before the project lookup, sign-in or any request.
         Commands::Project {
             action: ProjectAction::Archive { yes, .. },
         } => ("project archive", *yes),
@@ -1901,6 +1902,17 @@ fn confirmation_preflight(command: &Commands) {
     if let Err(error) = commands::auth::require_yes_or_terminal(yes) {
         eprintln!("axiom {name}: {error}");
         std::process::exit(2);
+    }
+    // On a terminal the typed `archive <PROJECT>` prompt itself comes here, before the
+    // registration gate, sign-in, the project lookup or any request.
+    if let Commands::Project {
+        action: ProjectAction::Archive { project, project_option, yes: false, .. },
+    } = command
+    {
+        if let Err(error) = commands::project_archive::confirm_first(project.as_deref().or(project_option.as_deref())) {
+            eprintln!("axiom {name}: {error}");
+            std::process::exit(2);
+        }
     }
 }
 

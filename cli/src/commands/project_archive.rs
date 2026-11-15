@@ -2,8 +2,9 @@
 //! `axiom project list --archived` (V7 project archive, `/api/v1/projects/{slug}/archive`).
 //!
 //! Archive is destructive: it needs the typed confirmation `archive <project-slug>` on a
-//! terminal, or `--yes` (which sends that same phrase). Without a terminal and without
-//! `--yes`, `main` refuses before sign-in, the project lookup or any request (exit 2). The
+//! terminal, or `--yes` (which sends that same phrase). `main` asks (or, without a terminal
+//! and without `--yes`, refuses with exit 2) before sign-in, the project lookup or any
+//! request; the typed slug must then be the slug the project resolves to. The
 //! archive POST follows the step-up rule of the per-database archive
 //! ([`Api::post_action_reply`]); restore is not destructive and uses the session only.
 //! Only known codes select fixed messages; server text and unknown values are cleaned.
@@ -299,20 +300,14 @@ pub fn render_view(slug: &str, view: &Value) -> Vec<String> {
     out
 }
 
-fn consequences(slug: &str, view: &Value) -> Vec<String> {
-    let mut out = vec![
-        format!("Archiving `{slug}` hides it from project lists at once. Each database gets an encrypted, verified snapshot; only after its snapshot verifies is the database deleted from its hosting provider."),
-        format!("Apps cannot use the project's databases until an Owner restores it with `axiom project restore {slug}`, which brings them back from their snapshots with their data."),
-    ];
+/// The databases an archive takes, once the project has been read.
+fn database_line(view: &Value) -> Option<String> {
     let names: Vec<String> = view
         .get("databases")
         .and_then(Value::as_array)
         .map(|dbs| dbs.iter().filter_map(|db| field(db, "database_name")).map(clean).collect())
         .unwrap_or_default();
-    if !names.is_empty() {
-        out.push(format!("Databases: {}", names.join(", ")));
-    }
-    out
+    (!names.is_empty()).then(|| format!("Archiving databases: {}", names.join(", ")))
 }
 
 fn accepted_text(kind: Kind, slug: &str, view: &Value) -> Vec<String> {
@@ -445,15 +440,68 @@ fn print(json: bool, value: &Value, human: Vec<String>) -> Result<()> {
     Ok(())
 }
 
-/// `axiom project archive`.
-pub async fn archive(api: &Api, given: Option<&str>, yes: bool, wait: bool, json: bool, poll: Poll, prompt: &mut impl Prompt) -> Result<()> {
-    if !yes && !prompt.is_terminal() {
+/// How an archive was confirmed: `--yes`, or the phrase typed at the terminal for the
+/// project argument exactly as given (see [`confirm`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Confirmed {
+    Yes,
+    Typed(String),
+}
+
+/// The phrase typed in `main`, before sign-in, registration or any request.
+static TYPED: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Ask for the typed confirmation before anything is sent: no sign-in, no project lookup, no
+/// request. The phrase is `archive <PROJECT>` with the argument exactly as given, so it must
+/// already be a slug (lowercase letters, digits and hyphens); anything else, no argument
+/// (a linked directory stores an id, not a slug) or a wrong answer is refused with exit 2.
+/// Returns the confirmed slug; [`archive`] refuses if the project resolves to another slug.
+pub fn confirm(given: Option<&str>, prompt: &mut impl Prompt) -> Result<String> {
+    if !prompt.is_terminal() {
         return Err(exit2(super::auth::NEEDS_YES));
     }
+    let Some(given) = given.filter(|g| !g.is_empty()) else {
+        return Err(exit2(
+            "name the project to archive by its slug: `axiom project archive <project-slug>` (see `axiom project list`); nothing was sent",
+        ));
+    };
+    if !valid_slug(given) {
+        return Err(exit2(format!(
+            "`{}` is not a project slug (lowercase letters, digits and hyphens); the prompt asks for the slug, see `axiom project list`. Nothing was sent.",
+            clean(given)
+        )));
+    }
+    let phrase = confirm_phrase(given);
+    eprintln!("Archiving `{given}` hides it from project lists at once. Each database gets an encrypted, verified snapshot; only after its snapshot verifies is the database deleted from its hosting provider.");
+    eprintln!("Apps cannot use the project's databases until an Owner restores it with `axiom project restore {given}`, which brings them back from their snapshots with their data.");
+    let answer = prompt.input(&format!("Type `{phrase}` to confirm"))?;
+    if answer.trim() != phrase {
+        return Err(exit2("the confirmation did not match; nothing was sent"));
+    }
+    Ok(given.to_string())
+}
+
+/// `main`: the typed confirmation, asked before the registration gate and any request. The
+/// answer is kept for [`handle_archive`].
+pub fn confirm_first(given: Option<&str>) -> Result<()> {
+    let slug = confirm(given, &mut TerminalPrompt)?;
+    let _ = TYPED.set(slug);
+    Ok(())
+}
+
+/// `axiom project archive`. With [`Confirmed::Typed`] the prompt was already answered and
+/// nothing was sent before it; the project is looked up only now, and refused without a
+/// write if its slug is not the one typed, it is not enabled or it is blocked.
+pub async fn archive(api: &Api, given: Option<&str>, confirmed: &Confirmed, wait: bool, json: bool, poll: Poll) -> Result<()> {
     let slug = project_slug(api, given, Purpose::Archive).await?;
     let phrase = confirm_phrase(&slug);
-    if !yes {
-        // Show what would happen, and refuse early what the server would refuse.
+    if let Confirmed::Typed(typed) = confirmed {
+        if typed != &slug {
+            bail!(
+                "you confirmed `archive {typed}`, but `{typed}` is the project `{slug}`. Nothing was archived. To archive it, run `axiom project archive {slug}`."
+            );
+        }
+        // Refuse early, with words, what the server would refuse.
         let view = read_view(api, &slug).await?;
         if view.get("enabled").and_then(Value::as_bool) == Some(false) {
             bail!("AXPROJECT_ARCHIVE_DISABLED: Project archive is not enabled for `{slug}`. Nothing was changed.");
@@ -462,12 +510,8 @@ pub async fn archive(api: &Api, given: Option<&str>, yes: bool, wait: bool, json
         if !blockers.is_empty() && !matches!(state(&view), "archiving" | "archived") {
             bail!("AXPROJECT_ARCHIVE_BLOCKED: {}", blocked_message(&slug, &blockers));
         }
-        for line in consequences(&slug, &view) {
+        if let Some(line) = database_line(&view) {
             eprintln!("{line}");
-        }
-        let answer = prompt.input(&format!("Type `{phrase}` to confirm"))?;
-        if answer.trim() != phrase {
-            return Err(exit2("the confirmation did not match; nothing was changed"));
         }
     }
     let key = uuid::Uuid::new_v4().to_string();
@@ -543,13 +587,15 @@ pub async fn list_archived(api: &Api) -> Result<Vec<String>> {
 // ---------------------------------------------------------------------------
 
 pub async fn handle_archive(project: Option<&str>, yes: bool, wait: bool, json: bool) -> Result<()> {
-    let mut prompt = TerminalPrompt;
-    // `main` already refused this before anything else; keep the handler safe on its own.
-    if !yes && !prompt.is_terminal() {
-        return Err(exit2(super::auth::NEEDS_YES));
-    }
+    // `main` normally asked already, before anything else; keep the handler safe on its own:
+    // the prompt (or the headless refusal) still comes before the profile and any request.
+    let confirmed = match (yes, TYPED.get()) {
+        (true, _) => Confirmed::Yes,
+        (false, Some(typed)) => Confirmed::Typed(typed.clone()),
+        (false, None) => Confirmed::Typed(confirm(project, &mut TerminalPrompt)?),
+    };
     let api = Api::from_profile()?;
-    archive(&api, project, yes, wait, json, Poll::default(), &mut prompt).await
+    archive(&api, project, &confirmed, wait, json, Poll::default()).await
 }
 
 pub async fn handle_restore(project: Option<&str>, wait: bool, json: bool) -> Result<()> {

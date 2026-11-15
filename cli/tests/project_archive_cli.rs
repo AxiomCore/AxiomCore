@@ -202,3 +202,150 @@ fn json_wait_that_ends_failed_still_prints_the_last_view() {
     let text = stderr(&output);
     assert!(text.contains("The archive of shop failed") && text.contains("  - production (AXRESOURCE_SNAPSHOT_UNVERIFIED)"), "{text}");
 }
+
+/// `axiom project archive` on a pseudo-terminal: the typed prompt is shown before any request.
+#[cfg(unix)]
+mod terminal {
+    use super::*;
+    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::unix::process::CommandExt;
+    use std::time::{Duration, Instant};
+
+    const PROMPT: &str = "to confirm";
+
+    struct Session {
+        child: std::process::Child,
+        master: std::fs::File,
+        seen: String,
+    }
+
+    fn spawn(cloud: &str, directory: &Path, args: &[&str]) -> Session {
+        let (mut master, mut slave) = (-1, -1);
+        let opened = unsafe { libc::openpty(&mut master, &mut slave, std::ptr::null_mut(), std::ptr::null(), std::ptr::null()) };
+        assert_eq!(opened, 0, "openpty: {}", std::io::Error::last_os_error());
+        let slave = unsafe { std::fs::File::from_raw_fd(slave) };
+        let master = unsafe { std::fs::File::from_raw_fd(master) };
+        let mut command = Command::new(env!("CARGO_BIN_EXE_axiom-cli"));
+        command
+            .current_dir(directory)
+            .arg("project")
+            .args(args)
+            .env_remove("CI")
+            .env("TERM", "xterm")
+            .env("AXIOM_CLOUD_URL", cloud)
+            .env("AXIOM_LOCAL_PROFILE_DIR", directory)
+            .env_remove("AXIOM_REFERRAL_CODE")
+            .stdin(slave.try_clone().unwrap())
+            .stdout(slave.try_clone().unwrap())
+            .stderr(slave);
+        // The terminal becomes the child's controlling terminal (`/dev/tty`).
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() < 0 || libc::ioctl(0, libc::TIOCSCTTY as _, 0) < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let child = command.spawn().unwrap();
+        // `command` holds the slave copies; drop them so reads end when the child exits.
+        drop(command);
+        Session { child, master, seen: String::new() }
+    }
+
+    impl Session {
+        /// Read until `text` appears (true) or the terminal closes (false).
+        fn until(&mut self, text: &str) -> bool {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            let mut buffer = [0u8; 4096];
+            while !self.seen.contains(text) {
+                let left = deadline.saturating_duration_since(Instant::now()).as_millis() as libc::c_int;
+                let mut ready = libc::pollfd { fd: self.master.as_raw_fd(), events: libc::POLLIN, revents: 0 };
+                let polled = unsafe { libc::poll(&mut ready, 1, left) };
+                assert!(polled != 0 && left > 0, "timed out waiting for {text:?}; saw {:?}", self.seen);
+                match self.master.read(&mut buffer) {
+                    Ok(0) | Err(_) => return false,
+                    Ok(n) => self.seen.push_str(&String::from_utf8_lossy(&buffer[..n])),
+                }
+            }
+            true
+        }
+        fn type_line(&mut self, text: &str) {
+            self.master.write_all(format!("{text}\r").as_bytes()).unwrap();
+        }
+        fn finish(mut self) -> (Option<i32>, String) {
+            self.until("\u{0}never");
+            (self.child.wait().unwrap().code(), std::mem::take(&mut self.seen))
+        }
+    }
+
+    impl Drop for Session {
+        /// A failed assertion must not leave the CLI waiting at its prompt.
+        fn drop(&mut self) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+
+    fn methods(log: &Log) -> Vec<String> {
+        log.lock().unwrap().iter().map(|r| format!("{} {}", r.method, r.path)).collect()
+    }
+
+    #[test]
+    fn the_prompt_comes_before_any_request_and_the_phrase_then_archives() {
+        let (cloud, log) = stub(route);
+        let directory = tempfile::tempdir().unwrap();
+        profile(directory.path());
+        let mut session = spawn(&cloud, directory.path(), &["archive", "shop"]);
+        assert!(session.until(PROMPT), "no prompt: {:?}", session.seen);
+        assert!(session.seen.contains("Type `archive shop` to confirm"), "{:?}", session.seen);
+        // Let a request that raced the prompt land before looking.
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(methods(&log), Vec::<String>::new(), "requests before the prompt");
+        session.type_line("archive shop");
+        let (code, text) = session.finish();
+        assert_eq!(code, Some(0), "{text}");
+        assert!(text.contains("Archive of shop started"), "{text}");
+        let sent = methods(&log);
+        assert!(sent.contains(&"GET /api/v1/projects".to_string()), "{sent:?}");
+        assert_eq!(sent.iter().filter(|r| r.starts_with("POST")).collect::<Vec<_>>(), vec!["POST /api/v1/projects/shop/archive"]);
+    }
+
+    #[test]
+    fn a_wrong_phrase_sends_nothing() {
+        let (cloud, log) = stub(route);
+        let directory = tempfile::tempdir().unwrap();
+        profile(directory.path());
+        let mut session = spawn(&cloud, directory.path(), &["archive", "shop"]);
+        assert!(session.until(PROMPT), "no prompt: {:?}", session.seen);
+        session.type_line("archive Shop");
+        let (code, text) = session.finish();
+        assert_eq!(code, Some(2), "{text}");
+        assert!(text.contains("axiom project archive: the confirmation did not match; nothing was sent"), "{text}");
+        assert_eq!(methods(&log), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_name_is_refused_unprompted_and_a_slug_of_another_project_posts_nothing() {
+        let (cloud, log) = stub(route);
+        let directory = tempfile::tempdir().unwrap();
+        profile(directory.path());
+        // `Shop` is the project's name, not a slug: refused before the prompt and any request.
+        let session = spawn(&cloud, directory.path(), &["archive", "Shop"]);
+        let (code, text) = session.finish();
+        assert_eq!(code, Some(2), "{text}");
+        assert!(text.contains("`Shop` is not a project slug") && !text.contains(PROMPT), "{text}");
+        assert_eq!(methods(&log), Vec::<String>::new());
+
+        // The project id is typed: confirmed, then looked up, then refused without a write.
+        let mut session = spawn(&cloud, directory.path(), &["archive", PROJECT_ID]);
+        assert!(session.until(PROMPT), "no prompt: {:?}", session.seen);
+        assert_eq!(methods(&log), Vec::<String>::new(), "requests before the prompt");
+        session.type_line(&format!("archive {PROJECT_ID}"));
+        let (code, text) = session.finish();
+        assert_eq!(code, Some(1), "{text}");
+        assert!(text.contains(&format!("`{PROJECT_ID}` is the project `shop`. Nothing was archived.")), "{text}");
+        let sent = methods(&log);
+        assert!(!sent.is_empty() && sent.iter().all(|r| r.starts_with("GET ")), "{sent:?}");
+    }
+}

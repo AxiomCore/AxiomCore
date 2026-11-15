@@ -181,7 +181,7 @@ CALLERS = [
     {'command': 'axiom project create', 'method': 'POST', 'path': '/api/v1/projects', 'source': 'cli/src/commands/project.rs', 'evidence': '.create_project_with_resources(&name, &slug, &description, &selection)', 'command_evidence': 'pub async fn handle_project_create('},
     {'command': 'axiom project rotate-key', 'method': 'POST', 'path': '/api/v1/projects/{project}/keys/rotate', 'source': 'cli/src/commands/project.rs', 'evidence': 'let key = client.rotate_project_key(&project_slug).await?;', 'command_evidence': 'pub async fn handle_project_rotate_key('},
     {'command': 'axiom project archive', 'method': 'POST', 'path': '/api/v1/projects/{project}/archive', 'source': 'cli/src/commands/project_archive.rs', 'evidence': 'api.post_action_reply(&["projects", &slug, "archive"], &json!({"confirm": phrase}), &key).await?;', 'command_evidence': 'pub async fn archive('},
-    {'command': 'axiom project archive-status', 'method': 'GET', 'path': '/api/v1/projects/{project}/archive', 'source': 'cli/src/commands/project_archive.rs', 'evidence': 'api.request(&Method::GET, &["projects", slug, "archive"], &[], None, None).await?;', 'command_evidence': 'pub async fn status(', 'note': 'Also polled by archive --wait and restore --wait.'},
+    {'command': 'axiom project archive-status', 'method': 'GET', 'path': '/api/v1/projects/{project}/archive', 'source': 'cli/src/commands/project_archive.rs', 'evidence': 'api.request(&Method::GET, &["projects", slug, "archive"], &[], None, None).await?;', 'command_evidence': 'pub async fn status('},
     {'command': 'axiom project restore', 'method': 'POST', 'path': '/api/v1/projects/{project}/restore', 'source': 'cli/src/commands/project_archive.rs', 'evidence': 'api.request(&Method::POST, &["projects", &slug, "restore"], &[], Some(&json!({})), Some(&key)).await?;', 'command_evidence': 'pub async fn restore('},
     {'command': 'axiom project list --archived', 'method': 'GET', 'path': '/api/v1/projects?archived=true', 'source': 'cli/src/commands/project_archive.rs', 'evidence': 'let listed = cloud_cli::call(api, Method::GET, &["projects"], &[("archived", "true".into())], None).await?;', 'command_evidence': 'pub async fn list_archived('},
     {'command': 'axiom project signers list', 'method': 'GET', 'path': '/api/v1/projects/{project}/migrations/signers', 'source': 'cli/src/commands/signers.rs', 'evidence': 'let signers = client.migration_signers(project).await?;', 'command_evidence': 'Action::List'},
@@ -261,17 +261,13 @@ CALLERS.extend([{'command': 'axiom data overview get',
   'path': '/api/v1/projects/{project}/data/environments/{environment}/sql/write/preview',
   'source': 'cli/src/commands/data.rs',
   'evidence': '"sql/write/preview"',
-  'command_evidence': 'Sql::Preview',
-  'note': 'CLI request implemented; current server BrowserOnly authorization rejects CLI bearer tokens, including '
-          'step-up. Requires backend contract change.'},
+  'command_evidence': 'Sql::Preview'},
  {'command': 'axiom data sql write',
   'method': 'POST',
   'path': '/api/v1/projects/{project}/data/environments/{environment}/sql/write/execute',
   'source': 'cli/src/commands/data.rs',
   'evidence': '"sql/write/execute"',
-  'command_evidence': 'Sql::Write',
-  'note': 'CLI request implemented; current server BrowserOnly authorization rejects CLI bearer tokens, including '
-          'step-up. Requires backend contract change.'},
+  'command_evidence': 'Sql::Write'},
  {'command': 'axiom data tables TABLE query',
   'method': 'POST',
   'path': '/api/v1/projects/{project}/data/environments/{environment}/tables/{table}/rows:query',
@@ -303,9 +299,7 @@ CALLERS.extend([{'command': 'axiom data overview get',
   'path': '/api/v1/projects/{project}/data/environments/{environment}/tables/{table}/rows:write',
   'source': 'cli/src/commands/data.rs',
   'evidence': '"tables/{table}/rows:write"',
-  'command_evidence': 'Table::Write',
-  'note': 'CLI request implemented; current server BrowserOnly authorization rejects CLI bearer tokens, including '
-          'step-up. Requires backend contract change.'},
+  'command_evidence': 'Table::Write'},
  {'command': 'axiom data capture preview',
   'method': 'POST',
   'path': '/api/v1/projects/{project}/data/environments/{environment}/capture/preview',
@@ -359,6 +353,15 @@ CALLERS.extend([{'command': 'axiom data overview get',
 # Reviewed exemptions: (METHOD, path) -> {'category', 'reason'}: why the CLI deliberately has
 # no command. parity-check.validate_exemptions allows only listed categories and routes.
 EXEMPT = {}
+# Owner decision 14 Nov 2026: export and capture stay dashboard-only (see the
+# 'owner-browser-only' category in parity-check.py).
+_BROWSER_ONLY = 'owner decision 14 Nov 2026 (Wave 2 V5): data export and capture stay dashboard-only; the CLI command explains the browser-only refusal'
+EXEMPT.update({
+    ('POST', '/api/v1/projects/{project}/data/environments/{environment}/tables/{table}/export'): {'category': 'owner-browser-only', 'reason': _BROWSER_ONLY},
+    ('POST', '/api/v1/projects/{project}/data/environments/{environment}/capture/preview'): {'category': 'owner-browser-only', 'reason': _BROWSER_ONLY},
+    ('POST', '/api/v1/projects/{project}/data/environments/{environment}/capture'): {'category': 'owner-browser-only', 'reason': _BROWSER_ONLY},
+    ('PUT', '/api/v1/projects/{project}/data/environments/{environment}/capture/settings'): {'category': 'owner-browser-only', 'reason': _BROWSER_ONLY},
+})
 
 # P4 cli-workspace (W4-L7 part 2): workspace, onboarding, sandbox environments and hosted
 # contract releases, plus the account-authentication exemptions.
@@ -1001,6 +1004,23 @@ CALLERS += [{'command': 'axiom intel activity list',
                                                           'request.method.as_bytes()'],
                             'cli/src/main.rs': ['Commands::Intel(args) => '
                                                 'commands::intel::handle(args).await']}}]
+
+# Wave 3 standalone dashboard reads. Dispatch anchors prevent a detached
+# helper from counting as a reachable command.
+CALLERS.extend([
+    {'command': 'axiom branch overview', 'method': 'GET',
+     'path': '/api/v1/projects/{project}/branches/overview',
+     'source': 'cli/src/commands/branch.rs',
+     'evidence': 'api.get_query(&["projects", p, "branches", "overview"], &query).await?',
+     'command_evidence': 'BranchAction::Overview'},
+    {'command': 'axiom project resources recovery-preview', 'method': 'GET',
+     'path': '/api/v1/projects/{project}/resources/{resource}/recovery/preview',
+     'source': 'cli/src/commands/resources_recovery.rs',
+     'evidence': 'api.get_query(&["projects", project, "resources", resource, "recovery", "preview"], &query).await?',
+     'command_evidence': 'pub async fn handle_preview(',
+     'cross_source_evidence': {'cli/src/commands/resources.rs': [
+         'Action::RecoveryPreview', 'recovery::handle_preview(']}},
+])
 
 def production(text: str) -> str:
     # Command tests live in trailing cfg(test) modules. Drop them before matching.

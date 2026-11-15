@@ -160,6 +160,19 @@ pub enum Action {
         #[command(subcommand)]
         action: crate::commands::resources_placement::ReceiptAction,
     },
+    /// Preview migrations undone by a restore, without changing the database (JSON)
+    RecoveryPreview {
+        #[arg(long)]
+        resource: String,
+        /// Daily backup ID to preview
+        #[arg(long, required_unless_present = "at", conflicts_with = "at")]
+        backup: Option<String>,
+        /// Point in time to preview (RFC 3339)
+        #[arg(long, required_unless_present = "backup")]
+        at: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
     /// Show restore options: the point-in-time window, daily backups, the kept previous
     /// generation, archive state, inactivity and recent moves
     Recovery {
@@ -277,6 +290,9 @@ pub async fn handle(project: &str, action: Option<&Action>) -> Result<()> {
             let conversion = conversion.as_deref().ok_or_else(|| anyhow::anyhow!("--action convert needs --conversion <ID>"))?;
             return placement::handle_convert(project, resource, *generation, conversion, confirm.as_deref(), &acknowledge, operation_id.as_deref(), *wait, *json).await;
         }
+        Some(Action::RecoveryPreview { resource, backup, at, .. }) => {
+            return recovery::handle_preview(project, resource, backup.as_deref(), at.as_deref()).await;
+        }
         Some(Action::Recovery { resource, json }) => {
             return recovery::handle_view(project, resource, *json).await;
         }
@@ -342,7 +358,7 @@ pub async fn handle(project: &str, action: Option<&Action>) -> Result<()> {
                 )
                 .await?
         }
-        Some(Action::Grants { .. } | Action::Grant { .. } | Action::Revoke { .. } | Action::Recovery { .. } | Action::Connect { .. } | Action::Connection { .. } | Action::Disconnect { .. } | Action::Placement { .. } | Action::RelocationConsent { .. } | Action::Receipt { .. }) => unreachable!("handled above"),
+        Some(Action::Grants { .. } | Action::Grant { .. } | Action::Revoke { .. } | Action::Recovery { .. } | Action::RecoveryPreview { .. } | Action::Connect { .. } | Action::Connection { .. } | Action::Disconnect { .. } | Action::Placement { .. } | Action::RelocationConsent { .. } | Action::Receipt { .. }) => unreachable!("handled above"),
         Some(Action::Catalog) => {
             client
                 .resource_request(Method::GET, &["resource-catalog"], None, None)

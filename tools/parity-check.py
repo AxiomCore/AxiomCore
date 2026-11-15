@@ -24,11 +24,26 @@ EXEMPTION_CATEGORIES = {
         'description': 'dashboard sign-in routes of the browser session (email code, HttpOnly cookie); the CLI uses device login',
         'groups': {'Account authentication'},
         'routes': {
-            ('POST', '/api/v1/auth/send'): {'SendOTP'},
-            ('POST', '/api/v1/auth/verify'): {'VerifyOTP'},
+            ('POST', '/api/v1/auth/send'): {'SendOTP', 'send_otp'},
+            ('POST', '/api/v1/auth/verify'): {'VerifyOTP', 'verify_otp'},
             ('GET', '/api/v1/auth/session'): {'GetSession', 'get_session'},
-            ('POST', '/api/v1/auth/session/refresh'): {'RefreshBrowserSession'},
-            ('DELETE', '/api/v1/auth/session'): {'Logout'},
+            ('POST', '/api/v1/auth/session/refresh'): {'RefreshBrowserSession', 'refresh_browser_session'},
+            ('DELETE', '/api/v1/auth/session'): {'Logout', 'logout'},
+        },
+    },
+    # Owner decision 14 Nov 2026 (Wave 2 V5): data export and capture stay
+    # dashboard-only; the server's BrowserOnly authorization refuses CLI tokens. The CLI
+    # commands exist and explain the refusal (a `note` on every matching command), so
+    # these routes are exempt only while every CLI match carries such a note.
+    'owner-browser-only': {
+        'description': 'owner decision (14 Nov 2026): data export and capture are dashboard-only; the CLI commands explain the browser-only refusal',
+        'groups': {'Data editor and capture'},
+        'allow_noted_cli': True,
+        'routes': {
+            ('POST', '/api/v1/projects/{project}/data/environments/{environment}/tables/{table}/export'): {'post tables/{table}/export'},
+            ('POST', '/api/v1/projects/{project}/data/environments/{environment}/capture/preview'): {'post capture/preview'},
+            ('POST', '/api/v1/projects/{project}/data/environments/{environment}/capture'): {'post capture'},
+            ('PUT', '/api/v1/projects/{project}/data/environments/{environment}/capture/settings'): {'put capture/settings'},
         },
     },
 }
@@ -41,6 +56,7 @@ def validate_exemptions(exempt, dashboard, cli):
     command maps (the mapping wins, so the exemption is stale or hides a partial). Any
     violation raises ValueError, which fails the checker (exit 2)."""
     mapped = {route_key(row['method'], row['path']) for row in cli}
+    unnoted = {route_key(row['method'], row['path']) for row in cli if not row.get('note')}
     errors, result = [], {}
     for raw_key, entry in (exempt or {}).items():
         if not (isinstance(raw_key, tuple) and len(raw_key) == 2 and all(isinstance(part, str) for part in raw_key)):
@@ -60,7 +76,7 @@ def validate_exemptions(exempt, dashboard, cli):
         routes = {route_key(*route): actions for route, actions in spec['routes'].items()} if spec is not None else {}
         if spec is not None and key not in routes:
             errors.append(f'{name}: not a {category} route, so exempting it would hide a real gap')
-        if key in mapped:
+        if key in mapped and not (spec is not None and spec.get('allow_noted_cli') and key not in unnoted):
             errors.append(f'{name}: a CLI command maps this route; remove the exemption')
         if key in routes:
             callers = [row for row in dashboard if route_key(row['method'], row['path']) == key]
@@ -90,7 +106,9 @@ def compare(dashboard, cli, exempt=None):
     for row in dashboard:
         key = route_key(row['method'], row['path'])
         matches = index.get(key, [])
-        status = 'capability only' if row.get('capability_only') else 'unresolved' if row['method'] == 'UNRESOLVED' else 'partial' if matches and all(r.get('note') for r in matches) else 'mapped' if matches else 'exempt' if key in exempt else 'gap'
+        noted = matches and all(r.get('note') for r in matches)
+        noted_exempt = noted and key in exempt and EXEMPTION_CATEGORIES[exempt[key]['category']].get('allow_noted_cli')
+        status = 'capability only' if row.get('capability_only') else 'unresolved' if row['method'] == 'UNRESOLVED' else 'exempt' if noted_exempt else 'partial' if noted else 'mapped' if matches else 'exempt' if key in exempt else 'gap'
         extra = {'exempt_category': exempt[key]['category'], 'exempt_reason': exempt[key]['reason']} if status == 'exempt' else {}
         result.append({**row, 'commands': sorted({r['command'] for r in matches}),
                        'cli_evidence': matches, 'status': status, **extra})

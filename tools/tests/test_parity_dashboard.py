@@ -32,6 +32,77 @@ class DashboardInventoryTests(unittest.TestCase):
     def endpoints(self):
         return {(r['method'],r['path']) for r in scan_dashboard(self.root)}
 
+    def test_archive_transport(self):
+        self.js('project-archive.js', """
+base() { return `/projects/${encodeURIComponent(this.projectSlug)}`; }
+call(`${this.base()}/resources`);
+call(`${this.base()}/archive`);
+this.send('archive', {confirm: phrase}, key);
+this.send('restore', {}, key);
+call(`${this.base()}/${action}`, {method: 'POST', body: JSON.stringify(body)}, action);
+call('/projects?archived=true', {}, 'list');
+fetch(`${api.baseUrl}/api/v1${path}`, {credentials: 'include', ...init});
+""")
+        self.assertTrue({
+            ('GET', '/api/v1/projects/{project}/archive'),
+            ('GET', '/api/v1/projects/{project}/resources'),
+            ('POST', '/api/v1/projects/{project}/archive'),
+            ('POST', '/api/v1/projects/{project}/restore'),
+            ('GET', '/api/v1/projects'),
+        } <= self.endpoints())
+
+    def test_native_session_transport(self):
+        self.js('api-client.js', """
+const SESSION_PATH = "/api/v1/auth/session";
+return nativeFetch(`${apiBase()}${SESSION_PATH}`, {credentials: "include"});
+window.fetch = function fetch(input, init) { return nativeFetch(input, init); };
+""")
+        rows = scan_dashboard(self.root)
+        session = next(r for r in rows if r['path'] == '/api/v1/auth/session')
+        self.assertEqual(session['method'], 'GET')
+        self.assertEqual(session['action'], 'GetSession')
+        self.assertFalse(session.get('capability_only'))
+
+    def test_new_raw_fetch_in_api_client_fails(self):
+        self.js('api-client.js', "fetch('/api/v1/unreviewed');")
+        with self.assertRaisesRegex(ValueError, 'unreviewed raw fetch transport'):
+            self.endpoints()
+
+    def test_unreviewed_native_fetch_fails(self):
+        for source in ('nativeFetch("/api/v1/new-route");',
+                       'nativeFetch(input, {method: "POST"});'):
+            with self.subTest(source=source):
+                self.js('api-client.js', source)
+                with self.assertRaisesRegex(ValueError, 'unreviewed native fetch'):
+                    self.endpoints()
+
+    def test_native_session_path_and_method_drift_fail(self):
+        for path, options in [('/api/v1/new-session', '{}'),
+                              ('/api/v1/auth/session', '{method: "DELETE"}'),
+                              ('/api/v1/auth/session', 'options'),
+                              ('/api/v1/auth/session', '{"method": "DELETE"}'),
+                              ('/api/v1/auth/session', '{method}'),
+                              ('/api/v1/auth/session', '{[key]: "DELETE"}')]:
+            self.js('api-client.js', 'const SESSION_PATH = "' + path + '";' +
+                    'nativeFetch(`${apiBase()}${SESSION_PATH}`, ' + options + ');')
+            with self.assertRaisesRegex(ValueError, 'unreviewed native session'):
+                self.endpoints()
+
+    def test_sdk_send_recovery_is_an_action(self):
+        self.js('api-client.js', 'send("listThings");')
+        row = next(r for r in scan_dashboard(self.root) if r['path'] == '/api/v1/things')
+        self.assertFalse(row.get('capability_only'))
+        self.js('api-client.js', 'send("unknownOperation");')
+        with self.assertRaisesRegex(ValueError, 'unknown SDK operation'):
+            self.endpoints()
+
+    def test_archive_new_selector_is_visible(self):
+        self.js('project-archive.js', """
+this.send('new_action', {}, key);
+call(`${this.base()}/${action}`, {method: 'POST'});
+""")
+        self.assertIn(('POST', '/api/v1/projects/{project}/new_action'), self.endpoints())
+
     def test_balanced_calls(self):
         self.assertEqual(arguments("`/things/${encode(x)}`, {method: 'POST', body: JSON.stringify({x: [1,2]})})", 0),
                          ['`/things/${encode(x)}`', "{method: 'POST', body: JSON.stringify({x: [1,2]})}"])

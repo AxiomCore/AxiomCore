@@ -21,6 +21,7 @@ axiom branch [OPTIONS] <COMMAND>
 
 | Subcommand | Purpose | Who |
 | --- | --- | --- |
+| [`overview`](#axiom-branch-overview) | Read branches, environments and parent settings together. | |
 | [`list`](#axiom-branch-list) | List live branches and the last 10 ended. | |
 | [`create`](#axiom-branch-create) | Create a branch of a parent environment. | Owner. A `sanitized` branch also needs a recent sign-in. |
 | [`show`](#axiom-branch-show) | Show one branch: source, authentication and environment. | |
@@ -68,6 +69,22 @@ subcommand name:
   cut to 128 characters in the summary lines. Use `--json` for complete values.
 
 ## Branches
+
+### axiom branch overview
+
+Read the dashboard's combined branch view, including branches, environments
+and the selected parent's settings. This read does not create or change a branch.
+
+```bash title="Read the branch overview"
+axiom branch overview --project my-app --json
+axiom branch overview --project my-app --environment production --json
+```
+
+`--environment` is optional. When omitted, the server selects the parent.
+The command calls `GET /api/v1/projects/{project}/branches/overview` with the
+`environment` query parameter when supplied. The response is printed as JSON,
+including when `--json` is omitted, so optional dashboard fields remain visible.
+An API that does not support this endpoint returns an error.
 
 ### axiom branch list
 

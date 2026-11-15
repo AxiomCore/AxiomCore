@@ -1183,6 +1183,24 @@ pub async fn view(api: &Api, project: &str, resource: &str) -> Result<Value> {
 // Entry points used by `resources.rs`
 // ---------------------------------------------------------------------------
 
+/// Read the same restore-lineage preview as the dashboard. Validate the
+/// selector before loading a session or making any request.
+pub async fn handle_preview(project: &str, resource: &str, backup: Option<&str>, at: Option<&str>) -> Result<()> {
+    uuid::Uuid::parse_str(resource).map_err(|_| anyhow!("--resource must be a UUID"))?;
+    let query = match (backup, at) {
+        (Some(backup), None) if !backup.trim().is_empty() => vec![("backup_id", backup.to_string())],
+        (None, Some(at)) => {
+            chrono::DateTime::parse_from_rfc3339(at).map_err(|_| anyhow!("--at must be an RFC 3339 time"))?;
+            vec![("at", at.to_string())]
+        }
+        _ => bail!("pass exactly one of --backup <id> or --at <RFC 3339 time>"),
+    };
+    let api = Api::from_profile()?;
+    let value = api.get_query(&["projects", project, "resources", resource, "recovery", "preview"], &query).await?;
+    println!("{}", serde_json::to_string_pretty(&value)?);
+    Ok(())
+}
+
 pub async fn handle_view(project: &str, resource: &str, as_json: bool) -> Result<()> {
     let api = Api::from_profile()?;
     let value = view(&api, project, resource).await?;

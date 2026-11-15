@@ -59,6 +59,11 @@ class VerifierDashboardTests(DashboardExtractionTests):
 
 class VerifierCliTests(__import__('unittest').TestCase):
     cases = [
+        ('GET', P+'/branches/overview', 'mapped'),
+        ('GET', P+'/resources/{id}/recovery/preview', 'mapped'),
+        ('GET', P+'/archive', 'mapped'),
+        ('POST', P+'/archive', 'mapped'),
+        ('POST', P+'/restore', 'mapped'),
         ('POST', P+'/resources/{id}/conversions', 'mapped'),
         ('GET', P+'/resources/{id}/conversions/{id}', 'mapped'),
         ('GET', '/api/v1/resources/receipt-keys', 'mapped'),

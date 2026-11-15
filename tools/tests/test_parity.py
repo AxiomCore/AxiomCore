@@ -116,12 +116,30 @@ class ComparisonTests(unittest.TestCase):
         self.assertIn('no reason', err.getvalue())
         self.assertIn('not a browser-session route', err.getvalue())
 
+    def test_owner_browser_only_needs_a_note_on_every_cli_match(self):
+        route = ('POST', '/api/v1/projects/{project}/data/environments/{environment}/capture')
+        dash = [{'method': route[0], 'path': route[1], 'group': 'Data editor and capture', 'action': 'post capture', 'source': 'x.js', 'line': 1}]
+        exempt = {route: {'category': 'owner-browser-only', 'reason': 'owner decision'}}
+        noted = [{'method': route[0], 'path': route[1], 'command': 'axiom data capture create', 'note': 'browser-only refusal'}]
+        rows = checker.compare(dash, noted, exempt)
+        self.assertEqual(rows[0]['status'], 'exempt')
+        # A CLI command without the browser-only note maps the route: the exemption is stale.
+        with self.assertRaisesRegex(ValueError, 'a CLI command maps this route'):
+            checker.compare(dash, [{**noted[0], 'note': ''}], exempt)
+        # Without the exemption the noted command stays partial.
+        self.assertEqual(checker.compare(dash, noted, {})[0]['status'], 'partial')
+        # The category covers only its four routes.
+        other = ('POST', '/api/v1/projects/{project}/data/environments/{environment}/sql/write/execute')
+        with self.assertRaisesRegex(ValueError, 'not a owner-browser-only route'):
+            checker.validate_exemptions({other: {'category': 'owner-browser-only', 'reason': 'x'}}, [], [])
+
     def test_every_registered_exemption_is_a_valid_browser_session_route(self):
         import parity_cli
-        self.assertEqual(len(parity_cli.EXEMPT), 5)
+        # 5 browser-session sign-in routes + 4 owner-decided browser-only data routes.
+        self.assertEqual(len(parity_cli.EXEMPT), 9)
         rows = parity_cli.scan_cli(TOOLS.parent)
         valid = checker.validate_exemptions(parity_cli.EXEMPT, [], rows)
-        allowed = {checker.route_key(*r) for r in checker.EXEMPTION_CATEGORIES['browser-session']['routes']}
+        allowed = {checker.route_key(*r) for c in ('browser-session', 'owner-browser-only') for r in checker.EXEMPTION_CATEGORIES[c]['routes']}
         # Against the real dashboard source too, when the sibling checkout is there.
         frontend = TOOLS.parent.parent / 'axiom-frontend'
         if frontend.is_dir():
@@ -130,7 +148,7 @@ class ComparisonTests(unittest.TestCase):
             self.assertEqual({checker.route_key(r['method'], r['path']) for r in rows if r['status'] == 'exempt'}, allowed)
         self.assertEqual(set(valid), allowed)
         for entry in valid.values():
-            self.assertEqual(entry['category'], 'browser-session')
+            self.assertIn(entry['category'], ('browser-session', 'owner-browser-only'))
             self.assertGreater(len(entry['reason']), 40)
 
     def test_query_and_trailing_slash_normalized(self):

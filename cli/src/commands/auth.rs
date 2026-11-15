@@ -15,7 +15,7 @@ use serde_json::{json, Map, Value};
 use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use zeroize::Zeroizing;
-pub(crate) use advanced::{confirm_yes, require_yes_or_terminal};
+pub(crate) use advanced::{can_prompt, confirm_yes, require_yes_or_terminal};
 
 mod advanced;
 mod config;
@@ -619,7 +619,7 @@ fn confirmation(action: &Action) -> Option<bool> {
 /// typed `--confirm` phrase. The terminal prompt itself comes later, next to the change.
 fn preflight(args: &AuthArgs) -> Result<()> {
     let action = &args.action;
-    if confirmation(action) == Some(false) && !std::io::stdin().is_terminal() {
+    if confirmation(action) == Some(false) && !can_prompt() {
         return Err(usage(NEEDS_YES));
     }
     if let Action::OauthApps { action: advanced::OauthAppsAction::Delete { id, confirm } } = action {

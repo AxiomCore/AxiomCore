@@ -40,6 +40,10 @@ impl Mock {
         self.0.lock().unwrap().scripts.entry(route.to_string()).or_default().push_back((status, body));
         self
     }
+    /// Every request, in order.
+    pub fn requests(&self) -> Vec<Seen> {
+        self.0.lock().unwrap().seen.clone()
+    }
     pub fn seen(&self, route: &str) -> Vec<Seen> {
         self.0.lock().unwrap().seen.iter().filter(|s| s.route == route).cloned().collect()
     }

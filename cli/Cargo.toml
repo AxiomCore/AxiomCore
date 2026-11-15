@@ -75,6 +75,10 @@ pbkdf2 = { version = "0.11", default-features = false }
 hmac = "0.12"
 url = "2.5"
 
+[target.'cfg(unix)'.dev-dependencies]
+# `tests/project_archive_cli.rs` drives the archive prompt through a pseudo-terminal.
+libc = "0.2"
+
 # The large derived command tree otherwise retains oversized temporary builder
 # frames in unoptimized test code. Exercise the parser with release-like frames.
 [profile.test.package.axiom-cli]

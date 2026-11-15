@@ -492,6 +492,23 @@ impl Api {
         if !query.is_empty() {
             url.query_pairs_mut().extend_pairs(query.iter().map(|(k, v)| (*k, v.as_str())));
         }
+        let reply = self.step_up_send(method, url, body, key).await?;
+        if (200..300).contains(&reply.status) {
+            return Ok(reply.body);
+        }
+        Err(recovery_error(&reply))
+    }
+
+    /// [`Api::post_action`] that returns the final reply whatever its status, for commands
+    /// that word their own errors from the body (`axiom project archive` lists the blockers).
+    pub async fn post_action_reply(&self, segments: &[&str], body: &Value, key: &str) -> Result<Reply> {
+        self.step_up_send(&Method::POST, self.url(segments)?, body, key).await
+    }
+
+    /// The step-up rule shared by every step-up action: the stored step-up token when one is
+    /// valid, otherwise the session; one step-up and a retry with the same Idempotency-Key on
+    /// `403 AXRESOURCE_REAUTH_REQUIRED` or a refused step-up token.
+    async fn step_up_send(&self, method: &Method, url: reqwest::Url, body: &Value, key: &str) -> Result<Reply> {
         let mut stepped_up = false;
         loop {
             let step_up_token = self.step_up.load();
@@ -506,7 +523,7 @@ impl Api {
                 }
             };
             if (200..300).contains(&reply.status) {
-                return Ok(reply.body);
+                return Ok(reply);
             }
             let reauth = reply.status == 403 && reply.code() == Some("AXRESOURCE_REAUTH_REQUIRED");
             let stale_step_up = step_up_token.is_some() && reply.status == 401;
@@ -520,7 +537,7 @@ impl Api {
                 self.step_up.clear();
                 bail!("AXRESOURCE_REAUTH_REQUIRED: the step-up sign-in was not accepted. Run `axiom login --step-up` and retry.");
             }
-            return Err(recovery_error(&reply));
+            return Ok(reply);
         }
     }
 }

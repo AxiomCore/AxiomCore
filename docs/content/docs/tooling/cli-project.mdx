@@ -188,6 +188,9 @@ axiom project <COMMAND>
 | [`create`](#axiom-project-create) | Create a Cloud project and link this directory to it. |
 | [`link`](#axiom-project-link) | Link this directory to a Cloud project. |
 | [`rotate-key`](#axiom-project-rotate-key) | Replace the project's active signing key. |
+| [`archive`](#axiom-project-archive) | Archive a project: snapshot every database, then delete it from its provider (Owner). |
+| [`restore`](#axiom-project-restore) | Restore an archived project and bring its databases back (Owner). |
+| [`archive-status`](#axiom-project-archive-status) | Show a project's archive state, its databases and what would block an archive. |
 | [`resources`](/cloud/project-resources#manage-resources-from-the-cli) | Manage the project's Cloud databases: provisioning, lifecycle, recovery, placement and [database access grants](/cloud/project-resources#database-access) (`grants`, `grant`, `revoke`) (CLI 0.151.0 and later; access grants CLI 0.152.0 and later). |
 | [`signers`](/cloud/hosted-migrations) | Manage the keys allowed to sign hosted database releases (CLI 0.151.0 and later). |
 | [`resolve`](#axiom-project-resolve) | Resolve the dependencies of a local Acore project. |
@@ -202,10 +205,12 @@ repository.
 List the Cloud projects you can access, by name and slug.
 
 ```text title="Usage"
-axiom project list
+axiom project list [--archived]
 ```
 
-No options other than `--help`.
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--archived` | flag | off | List only your archived projects, with their archive state and when it was requested. Archived projects are hidden from the plain list. |
 
 ### axiom project create
 
@@ -277,6 +282,97 @@ axiom project rotate-key --project <PROJECT>
 | Option | Value | Default | Meaning |
 | --- | --- | --- | --- |
 | `--project` | slug | required | Project slug, for example `demo-app`. |
+
+### axiom project archive
+
+Archive a project. The project is hidden from `axiom project list` at once.
+Each database gets an encrypted, verified snapshot; only after its snapshot
+verifies is the database deleted from its hosting provider. Apps cannot use
+the project's databases until an Owner restores it. Owner only; project
+archive may not be enabled for every project yet.
+
+```text title="Usage"
+axiom project archive [PROJECT] [OPTIONS]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `[PROJECT]` or `--project` | slug; with `--yes` also a name or ID | the project linked to this directory (with `--yes` only) | Project to archive. |
+| `--yes` | flag | off | Confirm without the prompt. Required without a terminal. |
+| `--wait` | flag | off | Poll every 3 seconds until the project is archived or the archive failed (up to 60 minutes). |
+| `--json` | flag | off | Print the archive status as JSON. |
+
+In a terminal (standard input and standard error both a terminal) the command
+asks you to type `archive <PROJECT>` for the project exactly as you passed it,
+before it signs in, looks up the project or sends any request. In a terminal,
+`PROJECT` must therefore be the project slug. An argument that is not lowercase
+letters, digits and hyphens (such as a name with capitals or spaces), or no
+argument, is refused with status 2 before the prompt. A wrong phrase exits with
+status 2 and sends nothing. Only after the phrase matches does the command look
+up the project. If what you typed is an ID or a name that resolves to a project
+with a different slug, it stops with status 1 after the lookup, sends no
+archive request and names the slug to use. It also stops, without archiving,
+when archive is not enabled or a database blocks it. With `--yes` it sends
+`archive <project-slug>` without asking, and `PROJECT` can also be a name or
+ID. Without a terminal and without `--yes` it exits with status 2 and
+`axiom project archive: pass --yes to confirm without a prompt`, before it
+signs in or sends any request. The archive needs a recent sign-in: when the
+API asks for one, the CLI runs the step-up device sign-in (the same flow as
+`axiom login --step-up`) and retries once with the same idempotency key.
+
+When a database cannot be archived, the command lists each one with its reason:
+a database connected from your own provider account, a branch database, a
+database with another operation running, a database whose status does not allow
+an archive, or one not yet qualified for project archive. If the archive fails,
+the databases whose snapshot could not be verified are not deleted and keep
+serving, and the project is listed again.
+
+```bash title="Terminal"
+axiom project archive payments-api --yes --wait
+```
+
+### axiom project restore
+
+Restore an archived project. It is listed again at once, and each database is
+rebuilt from its snapshot with its data. Owner only. Restore is not destructive
+and asks for no confirmation.
+
+```text title="Usage"
+axiom project restore [PROJECT] [OPTIONS]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `[PROJECT]` or `--project` | slug, name or ID | the project linked to this directory | Project to restore. Archived projects are found too. |
+| `--wait` | flag | off | Poll every 3 seconds until the project is restored or the restore failed (up to 60 minutes). |
+| `--json` | flag | off | Print the archive status as JSON. |
+
+A restore is refused while the archive is still running, or while an operation
+runs on one of the archived databases; wait until `axiom project archive-status`
+shows `archived` or `failed` and no database operation is running. Restore works
+even for a project where archive is no longer enabled.
+
+A project name or slug is looked up among both your listed and your archived
+projects: an ID wins, then an exact slug, then an exact name. When two projects
+share a name, `restore` takes the archived one; the other commands ask for the
+slug. With `--wait`, server errors and lost connections while polling are
+retried (up to 10 in a row); any other refusal stops the wait. With `--json`, the
+last status read is printed even when the wait ends in `failed` or times out.
+
+### axiom project archive-status
+
+Show a project's archive state (`none`, `archiving`, `archived`, `restoring`,
+`restored` or `failed`), when it was requested and completed, each database's
+status, and what would block an archive now.
+
+```text title="Usage"
+axiom project archive-status [PROJECT] [--json]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `[PROJECT]` or `--project` | slug, name or ID | the project linked to this directory | Project to inspect. |
+| `--json` | flag | off | Print the status as JSON. |
 
 ### axiom project resolve
 

@@ -41,6 +41,7 @@ mod mock_development;
 pub mod onboard;
 pub mod packages;
 pub mod project; // Add this
+pub mod project_archive;
 pub mod pull;
 pub mod release;
 pub mod run;

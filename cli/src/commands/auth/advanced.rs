@@ -536,11 +536,18 @@ pub(super) fn delete_client_phrase<'a>(id: &'a str, confirm: Option<&str>) -> Re
     Ok(id)
 }
 
+/// Whether a confirmation can be asked: the answer is read from standard input and the
+/// prompt (`dialoguer`) is drawn on standard error, so both must be a terminal. With either
+/// redirected the question cannot be asked, and the command needs `--yes` instead.
+pub(crate) fn can_prompt() -> bool {
+    std::io::stdin().is_terminal() && std::io::stderr().is_terminal()
+}
+
 /// The preflight half of [`confirm_yes`]: without `--yes` and without a terminal the command
 /// is refused here, before sign-in, a project lookup, a file read or any request. The refusal
 /// exits 2 with `pass --yes to confirm without a prompt`, as the other `axiom auth` commands do.
 pub(crate) fn require_yes_or_terminal(yes: bool) -> Result<()> {
-    if !yes && !std::io::stdin().is_terminal() {
+    if !yes && !can_prompt() {
         return Err(usage("pass --yes to confirm without a prompt"));
     }
     Ok(())

@@ -302,18 +302,19 @@ axiom project archive [PROJECT] [OPTIONS]
 | `--wait` | flag | off | Poll every 3 seconds until the project is archived or the archive failed (up to 60 minutes). |
 | `--json` | flag | off | Print the archive status as JSON. |
 
-In a terminal the command asks you to type `archive <PROJECT>` for the project
-exactly as you passed it, before it signs in, looks up the project or sends any
-request. In a terminal, `PROJECT` must therefore be the project slug: a name,
-an ID, a value that is not lowercase letters, digits and hyphens, or no
-argument is refused with status 2 before the prompt. A wrong phrase exits with
+In a terminal (standard input and standard error both a terminal) the command
+asks you to type `archive <PROJECT>` for the project exactly as you passed it,
+before it signs in, looks up the project or sends any request. In a terminal,
+`PROJECT` must therefore be the project slug. An argument that is not lowercase
+letters, digits and hyphens (such as a name with capitals or spaces), or no
+argument, is refused with status 2 before the prompt. A wrong phrase exits with
 status 2 and sends nothing. Only after the phrase matches does the command look
-up the project; if the slug you typed belongs to a different project slug (for
-example it is another project's name), it stops without archiving anything and
-names the slug to use. It also stops, without archiving, when archive is not
-enabled or a database blocks it. With `--yes` it sends `archive <project-slug>`
-without asking, and `PROJECT` can also be a name or ID. Without a terminal and
-without `--yes` it exits with status 2 and
+up the project. If what you typed is an ID or a name that resolves to a project
+with a different slug, it stops with status 1 after the lookup, sends no
+archive request and names the slug to use. It also stops, without archiving,
+when archive is not enabled or a database blocks it. With `--yes` it sends
+`archive <project-slug>` without asking, and `PROJECT` can also be a name or
+ID. Without a terminal and without `--yes` it exits with status 2 and
 `axiom project archive: pass --yes to confirm without a prompt`, before it
 signs in or sends any request. The archive needs a recent sign-in: when the
 API asks for one, the CLI runs the step-up device sign-in (the same flow as

@@ -79,7 +79,10 @@ window.fetch = function fetch(input, init) { return nativeFetch(input, init); };
     def test_native_session_path_and_method_drift_fail(self):
         for path, options in [('/api/v1/new-session', '{}'),
                               ('/api/v1/auth/session', '{method: "DELETE"}'),
-                              ('/api/v1/auth/session', 'options')]:
+                              ('/api/v1/auth/session', 'options'),
+                              ('/api/v1/auth/session', '{"method": "DELETE"}'),
+                              ('/api/v1/auth/session', '{method}'),
+                              ('/api/v1/auth/session', '{[key]: "DELETE"}')]:
             self.js('api-client.js', 'const SESSION_PATH = "' + path + '";' +
                     'nativeFetch(`${apiBase()}${SESSION_PATH}`, ' + options + ');')
             with self.assertRaisesRegex(ValueError, 'unreviewed native session'):

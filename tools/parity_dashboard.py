@@ -143,7 +143,7 @@ def scan_dashboard(root):
         else:
             for m in session_calls:
                 args = arguments(text, text.index('(', m.start()) + 1)
-                if len(args) > 1 and (not args[1].lstrip().startswith('{') or re.search(r'\bmethod\s*:|\.\.\.', args[1])):
+                if len(args) > 1 and (not args[1].lstrip().startswith('{') or re.search(r'\bmethod\b|\.\.\.|\[', args[1])):
                     errors.append('api-client.js: unreviewed native session options')
                 else:
                     add('GetSession', 'GET', session_path.group(1), file, m.start(), m.group())

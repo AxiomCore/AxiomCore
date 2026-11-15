@@ -363,7 +363,7 @@ EXEMPT.update({
     ('PUT', '/api/v1/projects/{project}/data/environments/{environment}/capture/settings'): {'category': 'owner-browser-only', 'reason': _BROWSER_ONLY},
 })
 
-# P4 cli-workspace (W4-L7 part 2): workspace, onboarding, sandbox environments and hosted
+# P4 cli-workspace (W4-L7 part 2): workspace, onboarding, sandboxes (axiom project sandboxes) and hosted
 # contract releases, plus the account-authentication exemptions.
 from parity_cli_p4 import CALLERS as _P4_CALLERS, EXEMPT as _P4_EXEMPT  # noqa: E402
 CALLERS += _P4_CALLERS

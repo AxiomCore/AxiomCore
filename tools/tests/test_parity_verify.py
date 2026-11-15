@@ -53,6 +53,17 @@ class VerifierDashboardTests(DashboardExtractionTests):
     def test_auth_policy_group(self):
         self.assertEqual(group_for(P + '/auth/policy/releases'), 'Authentication administration')
 
+    def test_sandbox_deployments_and_other_environment_id_spaces(self):
+        # OD-1: the sandbox API moved to /sandboxes; /environments/{id}/deployments is a
+        # configuration environment. auth/environments and /data/ still match first.
+        self.assertEqual(group_for(P + '/sandboxes'), 'Sandbox')
+        self.assertEqual(group_for(P + '/sandboxes/{environment_id}/events'), 'Sandbox')
+        self.assertEqual(group_for(P + '/environments/{environment_id}/deployments'), 'Deployments')
+        self.assertEqual(group_for(P + '/environments/{environment_id}/deployments/{deployment_id}'), 'Deployments')
+        self.assertEqual(group_for(P + '/auth/environments/{environment}/users'), 'Authentication administration')
+        self.assertEqual(group_for(P + '/data/environments/{environment}/tables'), 'Data editor and capture')
+        self.assertNotEqual(group_for(P + '/environments/{environment_id}'), 'Sandbox')
+
     def test_action_label_ignores_control_flow(self):
         (self.root / 'static/js/page.js').write_text("async confirmRevoke(){ if (allowed) { this.request('/things', {method:'POST'}); } }")
         self.assertIn('confirmRevoke', self.scan()[0]['action'])
@@ -72,7 +83,19 @@ class VerifierCliTests(__import__('unittest').TestCase):
         ('GET', P+'/contracts', 'mapped'),
         ('GET', P+'/contracts/{version}', 'mapped'),
         ('GET', P, 'mapped'),
+        ('GET', P+'/sandboxes', 'mapped'),
+        ('POST', P+'/sandboxes', 'mapped'),
+        ('GET', P+'/sandboxes/{environment_id}', 'mapped'),
+        ('GET', P+'/sandboxes/{environment_id}/events', 'mapped'),
+        ('POST', P+'/sandboxes/{environment_id}/connection', 'mapped'),
+        ('POST', P+'/sandboxes/{environment_id}/reset', 'mapped'),
+        ('DELETE', P+'/sandboxes/{environment_id}', 'mapped'),
     ]
+
+    def test_no_cli_caller_uses_the_old_sandbox_paths(self):
+        # The old /environments sandbox shapes are tombstones (AXSANDBOX_MOVED) now.
+        old = [c for c in parity_cli.CALLERS if checker.route_key(c['method'], c['path'])[1].startswith('/api/v1/projects/{}/environments')]
+        self.assertEqual(old, [])
     def test_fixed_routes_and_removing_only_call_drops_coverage(self):
         # Real source, real CALLERS; dispatch stays intact, including main.rs.
         with tempfile.TemporaryDirectory() as d:

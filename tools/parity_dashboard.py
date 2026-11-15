@@ -46,7 +46,10 @@ def block_end(text, start):
 
 
 def group_for(path):
-    for token, group in [('auth/policy', 'Authentication administration'), ('auth/environments', 'Authentication administration'), ('/data/', 'Data editor and capture'), ('/branches', 'Branches'), ('/migrations', 'Migrations'), ('/resources', 'Resources and billing'), ('/resource-catalog', 'Resources and billing'), ('secret', 'Secrets'), ('configuration-environments', 'Configuration environments'), ('/workspace', 'Workspace'), ('/onboarding', 'Onboarding'), ('/auth', 'Account authentication'), ('/session', 'Account authentication'), ('/environments', 'Sandbox'), ('/contracts', 'Contracts and releases'), ('/releases', 'Contracts and releases')]:
+    # Order matters: `auth/environments` and `/data/` (other id spaces under `/environments`)
+    # must match before the generic tokens. The sandbox API lives under `/sandboxes`;
+    # `/environments/{id}/deployments` (configuration environments) is its own group.
+    for token, group in [('auth/policy', 'Authentication administration'), ('auth/environments', 'Authentication administration'), ('/data/', 'Data editor and capture'), ('/deployments', 'Deployments'), ('/branches', 'Branches'), ('/migrations', 'Migrations'), ('/resources', 'Resources and billing'), ('/resource-catalog', 'Resources and billing'), ('secret', 'Secrets'), ('configuration-environments', 'Configuration environments'), ('/workspace', 'Workspace'), ('/onboarding', 'Onboarding'), ('/auth', 'Account authentication'), ('/session', 'Account authentication'), ('/sandboxes', 'Sandbox'), ('/contracts', 'Contracts and releases'), ('/releases', 'Contracts and releases')]:
         if token in path: return group
     return 'Projects and intelligence'
 

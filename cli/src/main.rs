@@ -539,8 +539,10 @@ enum DatabaseAction {
     Rollback(commands::database_dev::RollbackArgs),
     /// Inspect applied version, pending changes and drift without migrating
     ///
-    /// With --project and --environment, runs a hosted status, then compares the
-    /// hosted head with the local catalog and working contract. Drift then means
+    /// With --project and --environment, reads the hosted head from the control
+    /// plane's stored observation (a hosted status run with --live, or when the
+    /// control plane cannot answer), then compares it with the local catalog and
+    /// working contract. Drift then means
     /// the hosted history diverges from the local catalog; the hosted executor
     /// checks database drift itself before every apply.
     Status(commands::database_dev::ReadArgs),

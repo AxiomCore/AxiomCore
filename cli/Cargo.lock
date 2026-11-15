@@ -252,7 +252,7 @@ dependencies = [
 
 [[package]]
 name = "axiom-cli"
-version = "0.152.0"
+version = "0.153.0"
 dependencies = [
  "acore",
  "acore-diff",

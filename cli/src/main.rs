@@ -2648,6 +2648,7 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                             json: *json,
                             watch: *watch,
                             check: false,
+                            live: false,
                         },
                         true,
                     )

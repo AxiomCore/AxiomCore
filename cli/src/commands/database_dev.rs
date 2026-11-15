@@ -128,6 +128,9 @@ pub struct ReadArgs {
     /// Exit with ADB1105 when the database has drift or pending changes
     #[arg(long)]
     pub check: bool,
+    /// Hosted only: read the ledger with a hosted status run (about 30 s) instead of the control plane's stored observation
+    #[arg(long, requires = "project")]
+    pub live: bool,
 }
 pub(crate) struct Loaded {
     pub(crate) root: PathBuf,

@@ -46,3 +46,34 @@ See the [public CLI reference](../docs/content/docs/tooling/cli-reference.mdx) f
 all command families, editor settings, Cloud project/release steps, and migration
 from the former `axiom.axiom` default. Run `axiom --help` or `axiom COMMAND --help`
 for the exact installed command tree.
+
+## Hosted database status
+
+`axiom database status CONTRACT --project PROJECT --environment ENVIRONMENT` uses the control
+plane's current ledger observation when available. Otherwise it starts a hosted
+status run and explains why on the `Read with a hosted status run:` line.
+`--live` explicitly requests that run; hosted runs require the project Owner
+role. With `--json`, the explanation goes to stderr and the JSON shape stays
+unchanged.
+
+The fallback explanation distinguishes these control-plane reasons:
+
+| Reason | Explanation |
+| --- | --- |
+| `entitlement_inactive` | The project's resource entitlement is not active. |
+| `no_connection_allowance` | The entitlement allows no database connections. |
+| `environment_inactive` | The database environment is not active. |
+| `environment_expired` | The database environment has expired. |
+| `profile_not_admitted` | The database resource profile is not admitted. |
+| `region_not_served` | The database region is not served. |
+| `subscription_inactive` | The project's subscription is not active. |
+| `not_admitted` | Hosted migrations are not admitted for this database. |
+| `disconnected` | The bring-your-own database is not connected. |
+| `external_ledger` | A bring-your-own ledger can change outside the control plane. |
+| `not_ready` | The hosted database is not ready, including its reported state. |
+| `no_observation` | No current observation exists since the environment's last change. |
+
+Unknown reasons retain the generic explanation: a database that is not ready
+reports its state; otherwise the control plane has no current observation.
+These explanations do not change admission checks or make a refused hosted run
+succeed.

@@ -407,6 +407,11 @@ export const legacyRedirects = Object.freeze(
     "permanent": true
   },
   {
+    "source": "/tooling/cli-sandbox-environments",
+    "destination": "/tooling/cli-sandboxes",
+    "permanent": true
+  },
+  {
     "source": "/tooling/doctor-and-onboarding",
     "destination": "/getting-started/installation",
     "permanent": true

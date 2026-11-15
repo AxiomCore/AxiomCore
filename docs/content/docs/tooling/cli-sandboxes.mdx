@@ -1,0 +1,181 @@
+---
+title: Sandbox commands
+description: Reference for axiom project sandboxes, the CLI commands that list, create, inspect, connect to, reset and delete the managed sandboxes and hosted mocks of an Axiom Cloud project.
+pageType: reference
+---
+
+`axiom project sandboxes` manages the same managed sandboxes and hosted mocks
+as the dashboard's **Sandbox** page. A sandbox is a provider-backed mock runtime
+built from a verified deployable release of your contract. It gets a URL once
+the provider reports it healthy, keeps its declared state until you reset it,
+and expires on its own. These commands need CLI 0.154.0 or later. CLI 0.152.0
+and 0.153.0 called them `axiom project environments`; see
+[Older CLIs and older servers](#older-clis-and-older-servers).
+
+These are not configuration environments (`axiom secrets`) and not
+authentication environments (`axiom auth`).
+
+Every command needs a prior `axiom login` and calls Axiom Cloud with that
+session. Managed sandboxes are **Alpha**. When the Cloud deployment has
+provisioning turned off, `create` and `reset` fail with HTTP 409 and print the
+server's reason, for example that you can run the contract locally with
+`axiom serve`.
+
+## Shared options
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--project` | slug, name or id | the project linked with `axiom project link` | Cloud project. |
+| `--json` | flag | off | Print the server reply as pretty JSON. |
+| `--sandbox` | name or id | none | The sandbox or hosted mock that `show`, `events`, `connection`, `reset` and `delete` act on. An id is used as given. A name is looked up in the list: live ones first, deleted or expired ones only when no live one matches. If two live ones share the name (a `sandbox` and a `hosted_mock` can both be called `sandbox`), the command stops and lists their ids; pass the id. The `reset` and `delete` confirmations name the kind, status and id they resolved. |
+
+## Commands
+
+### list
+
+Lists the managed sandboxes and hosted mocks of the project, newest first, including ended
+ones. Each line shows the name, kind, status, endpoint, expiry and id.
+
+```text title="Usage"
+axiom project sandboxes list [--project <PROJECT>] [--json]
+```
+
+Calls `GET /api/v1/projects/{project_slug}/sandboxes`.
+
+### create
+
+Asks for a managed sandbox built from a verified deployable release. Only
+project managers can do this. A project has one live sandbox per kind: if
+one already runs the same release, the server returns it, and if it runs an
+older release, the server moves it to the new one.
+
+```text title="Usage"
+axiom project sandboxes create [--name <NAME>] [--kind <KIND>] [--version <VERSION>] [--access <ACCESS>] [--expires-in-minutes <N>] [--wait]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--name` | name | `sandbox` | Lowercase letters, digits and hyphens, starting with a letter, at most 49 characters. |
+| `--kind` | `sandbox`, `hosted_mock` | `sandbox` | Kind of sandbox. |
+| `--version` | contract version | the `latest` release channel | Release to run. It must be verified and deployable. |
+| `--access` | `token`, `public` | `token` | `token` means requests need the sandbox access key. |
+| `--expires-in-minutes` | 5 to 10080 | 1440 (one day) | Lifetime. |
+| `--wait` | flag | off | Check the sandbox until it is ready, for up to 10 minutes. If it fails, expires or is deleted, the command reports an error. |
+
+The CLI checks these values the same way the server does before it sends
+anything. Calls `POST /api/v1/projects/{project_slug}/sandboxes` with
+`{"kind", "name", "access_mode", "expires_in_minutes"}`, plus `"version"` when
+you set `--version`. `--wait` repeats
+`GET /api/v1/projects/{project_slug}/sandboxes/{environment_id}`.
+
+### show
+
+Prints one sandbox or hosted mock: status, access mode, endpoint, health, reset count,
+times and any failure.
+
+```text title="Usage"
+axiom project sandboxes show --sandbox <NAME|ID>
+```
+
+Calls `GET /api/v1/projects/{project_slug}/sandboxes/{environment_id}`.
+
+### events
+
+Prints the lifecycle events of a sandbox or hosted mock, newest first: provisioning,
+health, reset, expiry and teardown.
+
+```text title="Usage"
+axiom project sandboxes events --sandbox <NAME|ID> [--limit <N>]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--limit` | 1 to 200 | 100 (the server's default) | Most events to return. |
+
+Calls `GET /api/v1/projects/{project_slug}/sandboxes/{environment_id}/events?limit=N`.
+
+### connection
+
+Prints the URL, the access header name and the expiry of a ready sandbox. Only
+project managers can do this. For a `token` sandbox the reply also holds the
+sandbox access key. The CLI hides the key, in `--json` output too, unless you
+pass `--show-secret`. This matches the dashboard's **Reveal connection** button.
+
+```text title="Usage"
+axiom project sandboxes connection --sandbox <NAME|ID> [--show-secret]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--show-secret` | flag | off | Print the access key. Send it in the `X-Axiom-Sandbox-Key` header. |
+
+Calls `POST /api/v1/projects/{project_slug}/sandboxes/{environment_id}/connection`
+with no body, like the dashboard. This is a POST so that the key never lands in a cache. Before the
+sandbox is ready, the server answers HTTP 409.
+
+### reset
+
+Resets the stateful mock data of a **ready** sandbox to the initial state that
+the project's current mock configuration declares. The URL and access key do
+not change. While the reset runs, the status is `resetting`.
+
+```text title="Usage"
+axiom project sandboxes reset --sandbox <NAME|ID> [--yes]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--yes` | flag | off | Skip the confirmation prompt. Without a terminal, `--yes` is required. |
+
+Calls `POST /api/v1/projects/{project_slug}/sandboxes/{environment_id}/reset`
+with no body, like the dashboard.
+
+### delete
+
+Deletes a sandbox or hosted mock. Its URL stops serving, the provider runtime is removed,
+and its access key stops working. Only a ready sandbox can be deleted this way;
+the status moves to `deleting` and then `deleted`. A sandbox that failed before
+any provider resource existed is removed at once.
+
+```text title="Usage"
+axiom project sandboxes delete --sandbox <NAME|ID> [--yes]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--yes` | flag | off | Skip the confirmation prompt. Without a terminal, `--yes` is required. |
+
+Calls `DELETE /api/v1/projects/{project_slug}/sandboxes/{environment_id}`.
+
+## Older CLIs and older servers
+
+The sandbox API moved from `/api/v1/projects/{project_slug}/environments` to
+`/api/v1/projects/{project_slug}/sandboxes` in the same release that renamed
+the command. Under `/environments/{environment_id}` the API now addresses
+configuration environments, so the old sandbox paths are not reused.
+
+**The old name in this CLI.** `axiom project environments`, with any
+subcommand, stops before it sends anything and exits with status 2. Use
+`axiom project sandboxes`, and `--sandbox` instead of `--environment`:
+
+```text title="Output"
+axiom project: `axiom project environments` was renamed to `axiom project sandboxes` (and `--environment` to `--sandbox`). Run `axiom project sandboxes --help`.
+```
+
+**CLI 0.153.0 or older against Axiom Cloud.** Every `axiom project
+environments` command fails on its first request. `reset` and `delete` look the
+sandbox up first, so they fail before anything changes. Install the current
+CLI:
+
+```text title="Output"
+AXSANDBOX_MOVED: Not found: The sandbox API has moved. Reload the dashboard, or install the current Axiom CLI and use `axiom project sandboxes`. (HTTP 404)
+```
+
+**This CLI against a server from before the move**, for example a rolled-back
+deployment. The server has no `/sandboxes` route, so the CLI names the release
+to install (see [Installation](/getting-started/installation)); with it, use
+`axiom project environments` again:
+
+```text title="Output"
+the server predates this CLI; install CLI 0.153.0: `curl -fsSL https://axiomcore.dev/install | VERSION=0.153.0 bash` (HTTP 404)
+```

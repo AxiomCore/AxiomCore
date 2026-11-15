@@ -146,7 +146,10 @@ All `ADB` codes are listed in [Runtime errors](/reference/error-codes).
 | `This artifact has no release version` | Neither the contract nor the command sets a version | Pass `--version`, or declare a version in `project(...)` |
 | A version collision on release | A project and version pair is immutable | Interactive releases suggest the next free version. In CI, pass a new `--version` |
 | `Release versions may only contain letters, numbers, ...` | The version has other characters | Use only letters, numbers, `.`, `_`, `-`, and `+` |
-| A managed environment is disabled although release verification works | Managed environments are separate from contract storage | Check the environment's state in the dashboard |
+| A managed sandbox is disabled although release verification works | Managed sandboxes are separate from contract storage | Check the sandbox's state on the **Sandbox** page or with `axiom project sandboxes show` |
+| `axiom project environments` was renamed to `axiom project sandboxes` | CLI 0.154.0 renamed the sandbox commands | Run `axiom project sandboxes`, with `--sandbox` instead of `--environment`. See [Sandbox commands](/tooling/cli-sandboxes) |
+| `AXSANDBOX_MOVED: Not found: The sandbox API has moved.` | An older CLI (0.153.0 or earlier) or a dashboard tab opened before the move calls the old sandbox API | Install the current CLI and use `axiom project sandboxes`, or reload the dashboard |
+| `the server predates this CLI; install CLI 0.153.0` | The server has no `/sandboxes` API yet, for example after a rollback | Install the version the message names, as shown in [Sandbox commands](/tooling/cli-sandboxes#older-clis-and-older-servers) |
 | A mock configuration is saved but no sandbox is ready | Saving mocks does not provision a sandbox | Provision the sandbox and wait for it to be ready |
 | A secret has no value, or runtime access is denied | Values are per environment; access needs a binding and grant | See [Secrets](/cloud/secrets) |
 

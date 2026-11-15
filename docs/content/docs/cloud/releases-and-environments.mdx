@@ -23,7 +23,7 @@ Cloud uses "environment" for two different things:
 
 | Term | What it is | Created by |
 | --- | --- | --- |
-| Managed sandbox | A temporary mock deployment of one release, with its own lifecycle, used for contract tests. | The release pipeline or the **Sandbox** page |
+| Managed sandbox | A temporary mock deployment of one release, with its own lifecycle, used for contract tests. | The release pipeline, the **Sandbox** page or `axiom project sandboxes create` |
 | Project environment | A long-lived data, authentication and configuration scope, such as `development`, `staging` or `production`. Secret values and a hosted database belong to one. | The **Secrets** page, or database preferences |
 
 Local development needs neither and allocates no hosted storage. Creating one
@@ -116,8 +116,9 @@ A managed sandbox runs a synthetic mock of one verified release, so contract
 tests and early consumers have something to call. Each project has one live
 sandbox.
 
-- Launch it from the **Sandbox** page with **Launch from active release**, or
-  let the release pipeline start it to run declared tests. The dashboard
+- Launch it from the **Sandbox** page with **Launch from active release**,
+  with [`axiom project sandboxes create`](/tooling/cli-sandboxes), or let the
+  release pipeline start it to run declared tests. The dashboard
   starts a token-protected sandbox that expires after 24 hours. The API
   accepts expiries from 5 minutes to 7 days.
 - Provisioning, health, reset, expiry and deletion are saved as lifecycle

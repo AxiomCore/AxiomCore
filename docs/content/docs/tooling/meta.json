@@ -4,7 +4,7 @@
     "cli-reference",
     "cli-project",
     "cli-workspace",
-    "cli-sandbox-environments",
+    "cli-sandboxes",
     "cli-build-and-run",
     "cli-testing",
     "cli-server",

@@ -101,8 +101,11 @@ mock. See [Mocks](/testing/mocks) for local mock profiles and fixtures.
 After a release is verified, open the project's **Sandbox** page and choose
 **Launch from active release**. Provisioning runs in the background. Wait for
 the sandbox to report ready before you give its endpoint to a consumer or queue
-a sandbox-backed test. See [Releases and environments](/cloud/releases-and-environments)
-for the sandbox lifecycle and key.
+a sandbox-backed test. From a terminal, `axiom project sandboxes create --wait`
+does the same and returns once the sandbox is ready; see
+[Sandbox commands](/tooling/cli-sandboxes). See
+[Releases and environments](/cloud/releases-and-environments) for the sandbox
+lifecycle and key.
 
 An empty mock document is valid, but it does not invent successful behavior.
 A contract route with no declared behavior returns an explicit `501`

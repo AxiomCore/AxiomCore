@@ -76,6 +76,68 @@ window.fetch = function fetch(input, init) { return nativeFetch(input, init); };
                 with self.assertRaisesRegex(ValueError, 'unreviewed native fetch'):
                     self.endpoints()
 
+    def test_native_forwarding_outside_interceptor_fails(self):
+        interceptor = 'window.fetch = function fetch(input, init) { return nativeFetch(input, init); };'
+        for source in ('nativeFetch(input, init);',
+                       interceptor + ' function bypass(input, init) { return nativeFetch(input, init); }',
+                       'nativeFetch(input, init);' + interceptor):
+            with self.subTest(source=source):
+                self.js('api-client.js', source)
+                with self.assertRaisesRegex(ValueError, 'unreviewed native fetch'):
+                    self.endpoints()
+
+    def test_interceptor_nested_body_and_quoted_braces(self):
+        self.js('api-client.js', r'''window.fetch = function fetch(input, init) {
+          const label = "}"; // } ignored
+          /* } ignored */
+          if (input) { return (() => nativeFetch(input, init))(); }
+          return nativeFetch(input, init);
+        };''')
+        self.endpoints()
+        self.js('api-client.js', (self.root / 'static/js/api-client.js').read_text() +
+                'nativeFetch(input, init);')
+        with self.assertRaisesRegex(ValueError, 'unreviewed native fetch'):
+            self.endpoints()
+
+    def test_fetch_bind_alias_fails(self):
+        for name in ('api-client.js', 'new-page.js'):
+            with self.subTest(name=name):
+                self.js(name, 'const bypass = window.fetch.bind(window); bypass(input, init);')
+                with self.assertRaisesRegex(ValueError, 'unreviewed.*fetch'):
+                    self.endpoints()
+                self.js(name, '')
+
+    def test_second_fetch_assignment_fails(self):
+        interceptor = 'window.fetch = function fetch(input, init) { return nativeFetch(input, init); };'
+        for extra in (interceptor, 'window.fetch = other;', 'window.fetch = (input, init) => nativeFetch(input, init);'):
+            with self.subTest(extra=extra):
+                self.js('api-client.js', interceptor + extra)
+                with self.assertRaisesRegex(ValueError, 'unreviewed.*fetch'):
+                    self.endpoints()
+
+    def test_transport_whitespace_and_regex_boundary_fail_closed(self):
+        for name, source in [
+            ('project-archive.js', 'this.send (unreviewedAction, {});'),
+            ('project-recovery.js', 'this . send (unreviewedAction, {});'),
+            ('api-client.js', 'const other = window.fetch .bind(window);'),
+            ('api-client.js', 'window .fetch = other;'),
+            ('api-client.js', 'window.fetch = function fetch(input, init) { const re = /{/; return nativeFetch(input, init); }; nativeFetch(input, init); const close = /}/;'),
+        ]:
+            with self.subTest(source=source):
+                self.js(name, source)
+                with self.assertRaises(ValueError):
+                    self.endpoints()
+                self.js(name, '')
+
+    def test_variable_archive_and_recovery_actions_fail(self):
+        for name in ('project-archive.js', 'project-recovery.js'):
+            for expr in ('unreviewedAction', 'action', 'path', 'chooseAction()'):
+                with self.subTest(name=name, expr=expr):
+                    self.js(name, 'this.send(' + expr + ', {});')
+                    with self.assertRaisesRegex(ValueError, 'unresolved.*action'):
+                        self.endpoints()
+                    self.js(name, '')
+
     def test_native_session_path_and_method_drift_fail(self):
         for path, options in [('/api/v1/new-session', '{}'),
                               ('/api/v1/auth/session', '{method: "DELETE"}'),

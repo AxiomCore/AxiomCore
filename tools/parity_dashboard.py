@@ -31,6 +31,20 @@ def arguments(text, start):
     raise ValueError('Unclosed API call')
 
 
+def block_end(text, start):
+    """Find a reviewed JS body's end, ignoring quoted strings and comments."""
+    tokens = re.compile(r"//[^\n]*|/\*.*?\*/|'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"|`(?:\\.|[^`\\])*`|[{}/]", re.S)
+    depth = 1
+    for token in tokens.finditer(text, start):
+        if token.group() == '/':
+            raise ValueError('api-client.js: unreviewed slash syntax in fetch interceptor')
+        if token.group() == '{': depth += 1
+        elif token.group() == '}':
+            depth -= 1
+            if depth == 0: return token.start()
+    raise ValueError('api-client.js: unclosed fetch interceptor')
+
+
 def group_for(path):
     for token, group in [('auth/policy', 'Authentication administration'), ('auth/environments', 'Authentication administration'), ('/data/', 'Data editor and capture'), ('/branches', 'Branches'), ('/migrations', 'Migrations'), ('/resources', 'Resources and billing'), ('/resource-catalog', 'Resources and billing'), ('secret', 'Secrets'), ('configuration-environments', 'Configuration environments'), ('/workspace', 'Workspace'), ('/onboarding', 'Onboarding'), ('/auth', 'Account authentication'), ('/session', 'Account authentication'), ('/environments', 'Sandbox'), ('/contracts', 'Contracts and releases'), ('/releases', 'Contracts and releases')]:
         if token in path: return group
@@ -97,10 +111,21 @@ def scan_dashboard(root):
         if file.name.startswith(('atmx', 'axui')): continue
         text = file.read_text()
         fetches = list(re.finditer(r'\bfetch\s*\(', text))
-        # The interceptor declaration is not a new HTTP call. Only this exact
-        # reviewed declaration is accepted; additional fetch calls still fail.
+        # Only the single reviewed interceptor declaration and native binding
+        # may bypass raw transport extraction. New aliases must be reviewed.
+        assignments = list(re.finditer(r'\bwindow\s*\.\s*fetch\s*=(?!=)', text))
+        bindings = list(re.finditer(r'\bwindow\s*\.\s*fetch\s*\.\s*bind\s*\(', text))
         if file.name == 'api-client.js':
-            fetches = [m for m in fetches if not text[:m.start()].endswith('window.fetch = function ')]
+            declaration = re.search(r'window\.fetch = function fetch\(input, init\) \{', text)
+            if assignments and (len(assignments) != 1 or not declaration or assignments[0].start() != declaration.start()):
+                errors.append('api-client.js: unreviewed fetch interceptor declaration')
+            if declaration and len(assignments) == 1:
+                fetches = [m for m in fetches if m.start() != declaration.start() + len('window.fetch = function ')]
+            native_binding = re.search(r'const nativeFetch = typeof window\.fetch === "function" \? (window\.fetch\.bind\(window\)) : null;', text)
+            if bindings and (len(bindings) != 1 or not native_binding or bindings[0].start() != native_binding.start(1)):
+                errors.append('api-client.js: unreviewed bound fetch transport')
+        elif bindings or assignments:
+            errors.append(f'{file.name}: unreviewed bound fetch transport or interceptor')
         if fetches and (file.name not in known_transports or file.name == 'api-client.js' or len(fetches) != 1):
             errors.append(f'{file.name}: unreviewed raw fetch transport')
         streams = list(re.finditer(r'new\s+(?:EventSource|XMLHttpRequest|WebSocket)\s*\(', text))
@@ -132,9 +157,12 @@ def scan_dashboard(root):
     # session operation, including rechecks, not an unused wrapper capability.
     session_calls = list(re.finditer(r'nativeFetch\(\`\$\{apiBase\(\)\}\$\{SESSION_PATH\}\`', text))
     reviewed_session_calls = {m.start() for m in session_calls}
+    interceptor = re.search(r'window\.fetch = function fetch\(input, init\) \{', text)
+    interceptor_end = block_end(text, interceptor.end()) if interceptor else -1
     for m in re.finditer(r'\bnativeFetch\s*\(', text):
         args = arguments(text, m.end())
-        if m.start() not in reviewed_session_calls and args != ['input', 'init']:
+        forwarded = interceptor and interceptor.end() <= m.start() < interceptor_end and args == ['input', 'init']
+        if m.start() not in reviewed_session_calls and not forwarded:
             errors.append('api-client.js: unreviewed native fetch transport')
     if session_calls:
         session_path = re.search(r'const SESSION_PATH = ["\']([^"\']+)["\'];', text)
@@ -174,15 +202,21 @@ def scan_dashboard(root):
     for file in files:
         text = file.read_text(); name = file.name
         if name.startswith(('atmx', 'axui')): continue
-        pattern = r'this\.(request|platformRequest|sendStepped|send)\('
+        pattern = r'this\s*\.\s*(request|platformRequest|sendStepped|send)\s*\('
         if name == 'project-archive.js':
             pattern += r'|(?<![\w.])(?P<archive_call>call)\('
         for m in re.finditer(pattern, text):
             kind = m.group(1) or m.group('archive_call'); args = arguments(text, m.end()); expr = args[0]
-            # Shared forwarding/retry calls have their concrete callers below.
+            # Recovery confirmation and step-up retries forward the reviewed
+            # finite selectors; arbitrary variables must not silently disappear.
+            if name in ('project-recovery.js', 'project-archive.js') and kind == 'send':
+                reviewed_forward = expr == 's.action' or (name == 'project-recovery.js' and expr == 'c.action')
+                if not reviewed_forward and not re.fullmatch(r"(['\"])[a-z_]+\1", expr):
+                    errors.append(f'{name}: unresolved send action {expr}')
+                continue
+            # Shared path wrappers have their concrete callers below.
             if expr in ('path', 'action', 'c.action', 's.action'):
                 continue
-            if name in ('project-recovery.js', 'project-archive.js') and kind == 'send': continue
             method = 'GET'
             if kind in ('sendStepped', 'send'):
                 method = args[1].strip("'\"")

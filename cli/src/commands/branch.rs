@@ -29,6 +29,12 @@ pub struct BranchArgs {
 
 #[derive(Subcommand, Debug)]
 pub enum BranchAction {
+    /// Combined dashboard branch view, including environments and parent settings (JSON)
+    Overview {
+        /// Select this parent environment; otherwise the server selects one
+        #[arg(long)]
+        environment: Option<String>,
+    },
     /// Live branches and the last 10 ended
     List {
         /// Only branches of this parent environment
@@ -389,6 +395,12 @@ pub async fn handle(args: &BranchArgs) -> Result<()> {
 pub async fn run(api: &Api, project: &str, args: &BranchArgs) -> Result<()> {
     let p = project;
     match &args.action {
+        BranchAction::Overview { environment } => {
+            let query = environment.iter().map(|e| ("environment", e.clone())).collect::<Vec<_>>();
+            let overview = api.get_query(&["projects", p, "branches", "overview"], &query).await?;
+            println!("{}", serde_json::to_string_pretty(&overview)?);
+            Ok(())
+        }
         BranchAction::List { environment } => {
             let query = environment.iter().map(|e| ("environment", e.clone())).collect::<Vec<_>>();
             let listed = api.get_query(&["projects", p, "branches"], &query).await?;

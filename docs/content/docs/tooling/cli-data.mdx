@@ -6,13 +6,15 @@ pageType: reference
 
 The `axiom data` command group uses the same project data endpoints as the dashboard.
 These commands need CLI 0.152.0 or later and are **Experimental**. The current Cloud service requires
-browser sessions for writes, exports, and capture. Those commands return
+browser sessions for exports and capture. Those commands return
 `AXDATA_FORBIDDEN` with CLI credentials until the service supports CLI authorization.
 The refusal says: “This operation currently needs a dashboard browser session.”
 It includes a dashboard link and the selected project and environment, preserving
 the environment name or slug you supplied. The link uses the configured Cloud URL
 (`AXIOM_CLOUD_URL` for local development). Use the dashboard for those operations
-in the meantime. Other permission refusals remain permission errors.
+in the meantime. SQL write previews, SQL writes, and row writes accept a fresh CLI
+step-up token obtained through the recent-sign-in flow. Other permission refusals
+remain permission errors.
 
 Sign in with `axiom login`. Every command requires `--project` and `--environment`;
 each accepts an ID, slug, or unambiguous display name. Add `--json` for machine output.
@@ -96,7 +98,7 @@ can change the execution body; inspect history before starting a new operation.
 Other mutations accept `--idempotency-key UUID` to replay an unchanged request.
 Authentication refresh uses the existing CLI session. An explicit server step-up
 challenge uses the existing recent-sign-in flow; a forbidden response does not
-bypass authorization. Current browser-only restrictions also apply to step-up tokens.
+bypass authorization. Export and capture restrictions also apply to step-up tokens.
 
 Use a disposable staging environment to validate changes before production. After
 an accepted write, inspect `axiom data history list` and query the affected rows.

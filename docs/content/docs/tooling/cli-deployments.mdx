@@ -78,8 +78,9 @@ sends anything, so a rule violation fails fast. A deploy waits up to 30
 minutes for each step.
 
 The CLI lists the files, hashes them and builds an `axiom-static-bundle/v1`
-manifest. It uploads only the files the server does not already hold for
-this deployment, so an unchanged asset is not sent twice.
+manifest. It uploads only the files the server lists as missing for this
+deployment; a file counts as held once an earlier upload of this deployment
+has been completed and verified.
 
 ### Which files are uploaded
 
@@ -95,6 +96,14 @@ this deployment, so an unchanged asset is not sent twice.
 | Other dotfiles and dot folders, such as `.DS_Store` or `.git` | Skipped without a message. |
 | Symbolic links, and anything that is not a regular file or folder | Rejected. |
 | File names with backslashes or control characters | Rejected. |
+| Two names that are equal once Unicode-normalised (NFC) | Rejected. Paths are NFC-normalised in the manifest. |
+
+Name rules ignore ASCII case. The private-key and source-map rules apply to
+file names only, so a folder such as `vendor.map/` is uploaded.
+
+The dashboard applies the same rules to a folder you choose. A browser
+follows symbolic links when it reads a folder, so the dashboard uploads the
+linked file's content, where the CLI refuses the link.
 
 When a file is rejected, the command names the path, says what to do and
 sends nothing. Remove it from the build output, or build into a clean
@@ -102,7 +111,9 @@ folder. Custom response headers and redirects are not configurable yet. Rejectio
 is a safety net, not a secret scanner: check what your build writes before
 you deploy it.
 
-A bundle can hold at most 10,000 files and 1 GiB.
+During the pilot a deploy can list about 700 files, because the server caps
+each request at 64 KiB; a larger bundle gets `AXDEPLOY_BODY_TOO_LARGE`. The
+design limit is 10,000 files and 1 GiB per bundle.
 
 ## axiom deploy backend
 
@@ -140,11 +151,22 @@ with `axiom server package --output` are not accepted.
 
 Each deploy writes a local journal. If a deploy stops, because the network
 dropped or you pressed Ctrl+C, run the same command again: it continues
-from the last finished step and does not upload files or create versions a
-second time. When the earlier deploy of the same build had already
-activated its version, re-running reports that result instead of deploying
-again. A different build, a failed version or a refused request starts a
-fresh deploy on the next run.
+from the last finished step with the same request keys, so the server
+replays steps it already did instead of creating a second upload or
+version. Files are skipped only once the server lists them as present, so
+files sent before an interrupted upload completed may be sent again. When
+the earlier deploy of the same build had activated its version, re-running
+asks the server whether that version is still live: if it is, the command
+reports it; if someone has since changed what the URL serves, it tries to
+activate it again under the deploy's original precondition, which fails
+with `AXDEPLOY_PRECONDITION_FAILED` and the `axiom deployments activate`
+command to run after you review. A different build, a failed version or a
+refused request starts a fresh deploy on the next run.
+
+The activation of a deploy always uses the deployment generation read when
+the deploy started. If someone activates, rolls back or deletes while your
+deploy builds, the activation is refused rather than silently overriding
+their change.
 
 The journal lives in a `deployments` folder in the CLI profile directory
 (see [Files and directories](/tooling/cli-reference#files-and-directories)),
@@ -195,7 +217,8 @@ axiom deployments status <kind> [--project <PROJECT>] [--environment <ENV>] [--j
 
 A deployment's state is one of `empty`, `activating`, `active`, `degraded`,
 `suspended`, `deleting` or `deleted`. For a kind that was never deployed in
-the environment, the command reports `AXDEPLOY_NOT_FOUND`.
+the environment, the command says there is no deployment of that kind yet,
+names `axiom deploy <kind>` as the next step and exits with status `1`.
 
 ### axiom deployments versions
 
@@ -290,8 +313,9 @@ again, wait for the delete to finish; until then, a deploy reports
 ## Errors
 
 The CLI and the dashboard print the same next step for each error code.
-Unknown codes print `Deployment request failed (<code>, request <id>).`;
-include the request id when you report a problem.
+Errors print as `axiom deployments: <code>: <next step> (request <id>)`;
+unknown codes print `Deployment request failed (<code>).` as the next
+step. Include the request id when you report a problem.
 
 | Code | HTTP | Next step |
 | --- | --- | --- |
@@ -311,6 +335,8 @@ include the request id when you report a problem.
 | `AXDEPLOY_DIGEST_MISMATCH` | 422 | Uploaded files did not match the manifest. Re-run the deploy; if it repeats, check nothing is writing to the folder. |
 | `AXDEPLOY_TARGET_MISMATCH` | 422 | This artifact does not fit that deployment kind. |
 | `AXDEPLOY_INVALID_UPLOAD` | 400 | The bundle is too large or empty (limits: 10,000 files, 1 GiB). |
+| `AXDEPLOY_BODY_TOO_LARGE` | 413 | This bundle lists too many files for the pilot server (about 700 files per deploy). Reduce the number of files, or ask the Axiom team to raise the limit. |
+| `AXDEPLOY_NETWORK` | none | Could not reach Axiom Cloud (network error or timeout). Check your connection and re-run; the deploy resumes where it stopped. |
 | `AXDEPLOY_UPLOAD_URLS_UNAVAILABLE` | none | The server did not issue upload URLs; hosting uploads are not enabled for this project. |
 | `AXDEPLOY_LOGS_UNAVAILABLE` | 503 | Runtime and access logs are not available yet; lifecycle logs are (`--stream lifecycle`). |
 | `AXDEPLOY_VERIFIER_UNAVAILABLE`, `AXDEPLOY_HOST_UNAVAILABLE`, `AXDEPLOY_UNAVAILABLE` | 503 | The deployment service is busy. Try again in a minute. |
@@ -333,9 +359,12 @@ The commands call the project deployment API under
 `/api/v1/projects/{project_slug}/environments/{environment_id}/deployments`,
 the same routes the dashboard uses. Each change carries an
 `Idempotency-Key` header, so a retried request is not applied twice, and
-each traffic change (`activate`, `rollback`, `delete`) carries the
-deployment's current generation in `If-Match`, so it never acts on a state
-you did not see.
+each traffic change (`activate`, `rollback`, `delete`) carries a deployment
+generation in `If-Match`, so it never acts on a state you did not see.
+`axiom deploy` keys every step from its journal; `axiom deployments
+activate`, `rollback` and `delete` use a new key on each run and read the
+current generation first, so running one again after a lost response acts
+on the state at that moment (a second `rollback` rolls back again).
 
 ## Related pages
 

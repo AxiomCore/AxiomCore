@@ -13,8 +13,11 @@ deployed from one shows up in the other. For a walkthrough, see
 
 <StatusNote status="experimental" title="Invite-only pilot">
   Axiom-hosted deployments are open to invited projects only. For every
-  other project, each command fails with `AXDEPLOY_DISABLED`. Custom domains,
-  runtime and access logs, and usage metering are not available yet. These
+  other project, each command stops at its first deployments request with
+  "This project is not in the Axiom hosting pilot yet" (`AXDEPLOY_DISABLED`);
+  `axiom deploy` says so before it hashes or packages anything or asks for
+  confirmation. Some commands and options are not available yet; see
+  [Not available in the pilot yet](#not-available-in-the-pilot-yet). These
   commands are in CLI 0.155.0 and later; CLI 0.154.0 and earlier have
   only `axiom deploy mock-server`.
 </StatusNote>
@@ -46,10 +49,18 @@ anything:
 - `axiom deploy frontend` and `axiom deploy backend`, unless you pass `--no-activate`;
 - `axiom deployments activate`, `rollback` and `delete`.
 
+Local checks come first: a command with no `--project` in a directory not
+linked with `axiom project link` exits with status `1` and says so, and
+`axiom deploy` checks the folder (or the backend files) the same way. Neither
+sends a request. Only then, without a terminal (a pipe or a script), is
+`--yes` required: without it, the command exits with status `2` and sends no
+request.
+
 On a terminal, the prompt names the project, environment and kind; the
-default answer is no. `--yes` skips the prompt. Without a terminal (CI, a
-pipe or a script), `--yes` is required: without it, the command exits with
-status `2` and sends no request.
+default answer is no, and `--yes` skips it. `axiom deploy` asks after one
+read of the deployment, which stops a project outside the hosting pilot,
+and after it has hashed the files (or packaged the backend), so a confirmed
+deploy is not then refused for a file rule.
 
 ## axiom deploy frontend
 
@@ -136,7 +147,7 @@ axiom deploy backend --from-input <DIR> [OPTIONS]
 | `--contract` | path | `backend.axiom`, then `axiom.axiom`, in the current directory | Compiled backend contract to package. |
 | `--plan` | path | `<contract name>.server.json` beside the contract | Server plan that `axiom build` writes. |
 | `--deployment` | path | `deployment.json` in the current directory | Deployment file, as written by [`axiom server deployment`](/tooling/cli-server#axiom-server-deployment). |
-| `--from-input` | directory | none | Upload this package input instead of packaging. Create it with `axiom server package ... --target container-amd64 --output-input DIR`. Not combined with `--contract`, `--plan` or `--deployment`. |
+| `--from-input` | directory | none | Upload this package input instead of packaging. Create it with `axiom server package <contract> <plan> --deployment <file> --target container-amd64 --output-input <dir>`. Not combined with `--contract`, `--plan` or `--deployment`. Usually not needed: without it, `axiom deploy backend` packages the project itself. |
 | `--message`, `--no-activate`, `--yes`, `--wait`, `--new` | | | As for [`axiom deploy frontend`](#axiom-deploy-frontend). |
 | `--json`, `--project`, `--environment` | | | See [Shared options](#shared-options). |
 
@@ -171,13 +182,17 @@ asks the server whether that version is still live: if it is, the command
 reports it; if someone has since changed what the URL serves, it tries to
 activate it again under the deploy's original precondition, which fails
 with `AXDEPLOY_PRECONDITION_FAILED` and the `axiom deployments activate`
-command to run after you review. A different build, a failed version or a
-refused request starts a fresh deploy on the next run.
+command to run after you review. A different build, a failed version, a
+refused request, or a deployment that was deleted (or replaced) since the
+earlier run starts a fresh deploy on the next run.
 
 The activation of a deploy always uses the deployment generation read when
 the deploy started. If someone activates, rolls back or deletes while your
 deploy builds, the activation is refused rather than silently overriding
-their change.
+their change. When there was no live deployment of the kind at the start
+(the first deploy, or a deploy after `axiom deployments delete`), the deploy
+creates one with a new URL, and its activation expects that deployment's
+first generation.
 
 The journal lives in a `deployments` folder in the CLI profile directory
 (see [Files and directories](/tooling/cli-reference#files-and-directories)),
@@ -321,10 +336,20 @@ rely on delete to withdraw something that was public. To deploy the kind
 again, wait for the delete to finish; until then, a deploy reports
 `AXDEPLOY_DELETING`.
 
+## Not available in the pilot yet
+
+| Feature | Status |
+| --- | --- |
+| Deploys from CI | Not supported: the CLI signs in only with `axiom login`, and there is no deploy token for a CI job yet. |
+| Promotion (`axiom deployments promote`) | Not available: the CLI has no `promote` command, and the server refuses copying a version to another environment in the pilot (`AXDEPLOY_PROMOTION_UNSUPPORTED`). Deploy the build to each environment instead. |
+| Deployment authorizations | Not available: there is no command to approve resource wiring for a deployment yet. A version that needs an Owner's approval gets `AXDEPLOY_APPROVAL_REQUIRED`. |
+| `axiom deployments logs --follow` | Not available: `logs` prints the events so far and exits. Run it again to see newer events. |
+| Runtime and access logs | Not available: `--stream runtime` and `--stream access` get `AXDEPLOY_LOGS_UNAVAILABLE`. |
+| Custom domains, usage metering | Not available. |
+
 ## Errors
 
-The CLI and the dashboard print the same next step for each error code in
-the table. Errors print as `axiom deployments: <code>: <next step> (request <id>)`.
+The CLI prints the next step in the table for each error code it lists. Errors print as `axiom deployments: <code>: <next step> (request <id>)`.
 For any other code, the next step is the server's own message: for example,
 `AXDEPLOY_INCOMPATIBLE_SCHEMA` (HTTP 409) says to run `axiom database migrate`
 for the environment first, then deploy again. Without a message, the next
@@ -336,7 +361,7 @@ you report a problem.
 
 | Code | HTTP | Next step |
 | --- | --- | --- |
-| `AXDEPLOY_DISABLED` | 503 | Deployments are not enabled for this project yet (invite-only pilot). Ask the Axiom team to add it. |
+| `AXDEPLOY_DISABLED` | 503 | This project is not in the Axiom hosting pilot yet (deployments are invite-only). Ask the Axiom team to add it. |
 | `AXDEPLOY_UNAUTHORIZED` | 401 | Your session expired. Run `axiom login` (dashboard: sign in again). |
 | `AXDEPLOY_NOT_FOUND` | 404 | Nothing found here. Check the project and environment; `axiom deployments list` shows what exists. |
 | `AXDEPLOY_DENIED` | 403 | Your role cannot do this. Deploying needs Maintainer; protected environments need Owner. |
@@ -351,7 +376,7 @@ you report a problem.
 | `AXDEPLOY_IDEMPOTENCY_CONFLICT` | 409 | A different request reused this deploy's key. Re-run with `--new` to start a fresh deploy. |
 | `AXDEPLOY_DIGEST_MISMATCH` | 422 | Uploaded files did not match the manifest. Re-run the deploy; if it repeats, check nothing is writing to the folder. |
 | `AXDEPLOY_TARGET_MISMATCH` | 422 | This artifact does not fit that deployment kind. |
-| `AXDEPLOY_INVALID_UPLOAD` | 400 | The bundle is too large or empty (limits: 10,000 files, 1 GiB). |
+| `AXDEPLOY_INVALID_UPLOAD` | 400 | The server refused the upload (limits: 10,000 files, 64 MiB per file, 1 GiB in total), followed by the server's reason, for example which field is missing. |
 | `AXDEPLOY_BODY_TOO_LARGE` | 413 | This bundle lists too many files for one deploy request (the limit is 1 MiB of file list, about 10,000 files). Reduce the number of files. |
 | `AXDEPLOY_NETWORK` | none | Could not reach Axiom Cloud (network error or timeout). Check your connection and re-run; the deploy resumes where it stopped. |
 | `AXDEPLOY_UPLOAD_URLS_UNAVAILABLE` | none | The server did not issue upload URLs; hosting uploads are not enabled for this project. |
@@ -367,7 +392,7 @@ has no HTTP status.
 | Code | Meaning |
 | --- | --- |
 | `0` | The command finished. A deploy also printed the URL, unless you passed `--no-activate`. |
-| `1` | The command or a request failed. The message starts with `axiom deploy:` or `axiom deployments:` and gives the reason and the next step. |
+| `1` | A local check failed (no project named or linked, a folder or file problem; nothing was sent), or a request failed. The message starts with `axiom deploy:` or `axiom deployments:` and gives the reason and the next step. |
 | `2` | Invalid command line, or a confirmation was needed without a terminal and `--yes` was not passed. No request was sent. |
 
 ## API

@@ -1,6 +1,6 @@
 ---
 title: Deploy to Axiom
-description: Put a static frontend and an Axiom backend on Axiom-hosted URLs with one CLI command each or from the dashboard, then redeploy, roll back, delete and run deploys in CI.
+description: Put a static frontend and an Axiom backend on Axiom-hosted URLs with one CLI command each or from the dashboard, then redeploy, roll back and delete.
 pageType: tutorial
 ---
 
@@ -9,10 +9,13 @@ command each, or from the dashboard's **Deployments** page. Both surfaces use
 the same API, so you can deploy from the CLI and roll back in the dashboard.
 
 <StatusNote status="experimental" title="Invite-only pilot">
-  Axiom-hosted deployments are open to invited projects only. Other projects
-  get `AXDEPLOY_DISABLED`; ask the Axiom team to add yours. Custom domains,
-  runtime and access logs, and usage metering are not available yet. URLs,
-  limits and command output can change during the pilot.
+  Axiom-hosted deployments are open to invited projects only. For other
+  projects the first command says the project is not in the hosting pilot
+  yet (`AXDEPLOY_DISABLED`); ask the Axiom team to add yours. Deploys from
+  CI, custom domains, runtime and access logs, live log following, promotion
+  between environments and usage metering are not available yet (see
+  [Not available in the pilot yet](/tooling/cli-deployments#not-available-in-the-pilot-yet)).
+  URLs, limits and command output can change during the pilot.
 </StatusNote>
 
 ## Prerequisites
@@ -169,20 +172,20 @@ browsers or caches already downloaded cannot be recalled.
 
 ## Deploy from CI
 
-Commands that change what a URL serves ask for confirmation. In CI there is
-no terminal, so pass `--yes`; without it the command exits with status `2`
-and sends nothing. Add `--json` to get one JSON object on stdout (progress
-goes to stderr), and name the project and environment explicitly:
+Deploying from CI is not supported in the pilot. The CLI signs in only
+through `axiom login` on your machine, and there is no deploy token or
+service account for a CI job yet. Do not copy your login session into a CI
+secret store: it is your personal session. Deploy from a terminal or from
+the dashboard until CI support is announced.
 
-```yaml title=".github/workflows/deploy.yml (excerpt)"
-      - run: npm ci && npm run build
-      - run: axiom deploy frontend ./dist --project my-app --environment staging --yes --json > deploy.json
+For scripts that run on your own machine, after `axiom login`: commands that
+change what a URL serves need `--yes` when there is no terminal (without it
+they exit with status `2` and send nothing), and `--json` prints one JSON
+object on stdout while progress goes to stderr:
+
+```bash title="Terminal"
+axiom deploy frontend ./dist --project my-app --environment staging --yes --json > deploy.json
 ```
-
-The job acts as the account whose `axiom login` session the CLI uses, so
-that account needs the Maintainer role on the project (Owner for a protected
-environment). Treat the session like a password and keep it in your CI
-secret store.
 
 ## Use the dashboard
 
@@ -201,18 +204,18 @@ choose **Deployments**, then the environment.
 - While an operation runs, the page shows its live status. The lifecycle
   log lists past operations.
 
-Errors show the same next step as the CLI; for a code without its own next
+Errors show a next step for each code, as the CLI does; for a code without its own next
 step, the page shows the code and the server's message.
 
 ## Troubleshooting
 
 | Code | What to do |
 | --- | --- |
-| `AXDEPLOY_DISABLED` | Deployments are not enabled for this project yet (invite-only pilot). Ask the Axiom team to add it. |
+| `AXDEPLOY_DISABLED` | This project is not in the Axiom hosting pilot yet (deployments are invite-only). Ask the Axiom team to add it. |
 | `AXDEPLOY_UNAUTHORIZED` | Your session expired. Run `axiom login` (dashboard: sign in again). |
 | `AXDEPLOY_DENIED` | Your role cannot do this. Deploying needs Maintainer; protected environments need Owner. |
 | `AXDEPLOY_NOT_FOUND` | Nothing found here. Check the project and environment; `axiom deployments list` shows what exists. |
-| `AXDEPLOY_INVALID_UPLOAD` | The bundle is too large or empty (limits: 10,000 files, 1 GiB). |
+| `AXDEPLOY_INVALID_UPLOAD` | The server refused the upload (limits: 10,000 files, 64 MiB per file, 1 GiB in total), followed by the server's reason. |
 | `AXDEPLOY_BODY_TOO_LARGE` | This bundle lists too many files for one deploy request (the limit is 1 MiB of file list, about 10,000 files). Reduce the number of files. |
 | `AXDEPLOY_NETWORK` | Could not reach Axiom Cloud (network error or timeout). Check your connection and re-run; the deploy resumes where it stopped. |
 | `AXDEPLOY_DIGEST_MISMATCH` | Uploaded files did not match the manifest. Re-run the deploy; if it repeats, check nothing is writing to the folder. |
@@ -230,7 +233,18 @@ step, the page shows the code and the server's message.
 | Any other code | The CLI and the dashboard show the code and the server's message. |
 
 A file rejected by the upload rules stops the deploy before anything is
-sent; the message names the path. The [error table in the reference](/tooling/cli-deployments#errors)
+sent; the message names the path, the rule and the fix. The CLI also checks,
+before anything is sent, that a project is named (`--project`) or linked
+(`axiom project link`).
+
+| Message | What to do |
+| --- | --- |
+| `Not signed in to Axiom Cloud. Run axiom login, ...` | Run `axiom login`, then re-run the command. |
+| `Could not reach Axiom Cloud (<reason>). ...` | Check your network connection (and `AXIOM_CLOUD_URL` if you set it), then re-run. A deploy resumes where it stopped. |
+| `<path>: .<ext> files are not served by Axiom hosting yet. ...` | The pilot serves only web content types (pages, CSS, JavaScript, JSON, XML, text, images, fonts, WebAssembly, audio, video). Remove the file from the build output and host it elsewhere. |
+| `<path>: two files have this path once Unicode-normalised (NFC): ...; "<name>" contains U+XXXX ...` | Two names differ only in how an accented character is encoded. Delete or rename the one the message names. |
+
+The [error table in the reference](/tooling/cli-deployments#errors)
 lists every code.
 
 ## Next steps

@@ -144,6 +144,13 @@ fn all_destructive_groups_refuse_without_requests_or_credentials() {
         vec!["intel", "observability", "sources", "revoke", id],
         vec!["intel", "pull-requests", "update", "1", "--body", "{}"],
         vec!["intel", "settings", "update", "--name", "Renamed"],
+        vec!["deploy", "frontend", "./x"],
+        vec!["deploy", "frontend", "--project", "demo", "--environment", "staging"],
+        vec!["deploy", "backend", "--from-input", "./input"],
+        vec!["deployments", "activate", "frontend", "ver_1", "--wait"],
+        vec!["deployments", "rollback", "backend", "--to", "ver_1"],
+        vec!["deployments", "delete", "frontend"],
+        vec!["deployments", "--project", "demo", "delete", "backend", "--wait"],
     ];
     for signed_in in [false, true] {
         let dir = tempfile::tempdir().unwrap();
@@ -166,6 +173,32 @@ fn all_destructive_groups_refuse_without_requests_or_credentials() {
             assert!(output.stdout.is_empty(), "{args:?}");
             assert_eq!(server.requests.load(Ordering::SeqCst), 0, "{args:?}");
         }
+    }
+}
+
+/// `axiom deploy` checks the folder before registration, sign-in or any request: a bad or
+/// missing folder exits 1 with the fix, sending nothing (also with --no-activate, which needs
+/// no confirmation).
+#[test]
+fn deploy_preflight_fails_locally_without_requests() {
+    let server = Server::start();
+    let dir = tempfile::tempdir().unwrap();
+    sign_in(dir.path());
+    let cases: [(&[&str], &str); 4] = [
+        (&["deploy", "frontend", "--no-activate"], "axiom deploy: No build output found (looked for dist/, build/ and out/). Build your app first, or pass the folder: axiom deploy frontend ./dist"),
+        (&["deploy", "frontend", "./missing", "--no-activate"], "does not exist"),
+        (&["deploy", "frontend", "site", "--yes"], "has no index.html"),
+        (&["deploy", "backend", "--from-input", "./missing", "--yes"], "does not exist"),
+    ];
+    std::fs::create_dir(dir.path().join("site")).unwrap();
+    std::fs::write(dir.path().join("site/about.html"), "a").unwrap();
+    for (args, wanted) in cases {
+        let output = cli(&server, dir.path(), args);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(1), "{args:?}: {stderr}");
+        assert!(stderr.contains(wanted) && stderr.starts_with("axiom deploy: "), "{args:?}: {stderr}");
+        assert!(output.stdout.is_empty(), "{args:?}");
+        assert_eq!(server.requests.load(Ordering::SeqCst), 0, "{args:?}");
     }
 }
 

@@ -52,7 +52,8 @@ route such as `/settings` returns `index.html`. If your build has its own
 `404.html`, it is off and missing paths answer 404 instead; pass
 `--spa` or `--no-spa` to choose explicitly.
 
-The command:
+The command asks you to confirm once, before it sends anything (`--yes`
+skips the question), then:
 
 1. lists and hashes the files in the folder and checks them against the
    [upload rules](/tooling/cli-deployments#which-files-are-uploaded):
@@ -62,7 +63,7 @@ The command:
    other than `.well-known/` are skipped;
 2. uploads only the files Axiom does not already hold;
 3. waits until the new version is ready;
-4. asks you to confirm, then activates the version;
+4. activates the version;
 5. prints the URL.
 
 A bundle can hold up to 10,000 files and 1 GiB. The frontend is served as
@@ -81,8 +82,9 @@ axiom deploy backend
 The CLI packages the contract, plan and deployment file in the current
 directory into a data-only package input (the same output as
 `axiom server package --output-input`), uploads it, and waits while Axiom
-builds and checks the hosted backend with its own runtime. It then asks you
-to confirm, activates the version and prints the URL.
+builds and checks the hosted backend with its own runtime. It then
+activates the version and prints the URL. As for frontends, it asks you to
+confirm once, before it sends anything.
 
 To use other file names, pass `--contract`, `--plan` and `--deployment`. If
 you package the backend yourself, pass the folder:

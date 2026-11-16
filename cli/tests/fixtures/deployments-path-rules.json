@@ -1,0 +1,413 @@
+{
+ "about": "Frontend site-path rules shared by the CLI (cli/src/commands/deploy_bundle.rs site_path_problem) and the dashboard (static/js/deployments-core.js sitePathProblem). They are the server's rules exactly: axiom-backend internal/adapters/hosting/manifest.go ValidSitePath, forbiddenSegment and forbiddenName (contract amendment A4.5). allowed=false paths are refused before any request; the AxiomCore copy (cli/tests/fixtures) and the axiom-frontend copy (apps/dashboard/tests/fixtures) are byte-identical.",
+ "paths": [
+  {
+   "path": "/index.html",
+   "allowed": true
+  },
+  {
+   "path": "/assets/app.js",
+   "allowed": true
+  },
+  {
+   "path": "/.well-known/security.txt",
+   "allowed": true
+  },
+  {
+   "path": "/.well-known/apple-app-site-association",
+   "allowed": true
+  },
+  {
+   "path": "/credentials-page.html",
+   "allowed": true
+  },
+  {
+   "path": "/my.env.html",
+   "allowed": true
+  },
+  {
+   "path": "/.envrc",
+   "allowed": true
+  },
+  {
+   "path": "/.environment",
+   "allowed": true
+  },
+  {
+   "path": "/api.key/readme.txt",
+   "allowed": true
+  },
+  {
+   "path": "/vendor.map/x.js",
+   "allowed": true
+  },
+  {
+   "path": "/certs.pem/a.txt",
+   "allowed": true
+  },
+  {
+   "path": "/service-account.txt",
+   "allowed": true
+  },
+  {
+   "path": "/service-account/x.json",
+   "allowed": true
+  },
+  {
+   "path": "/id_rsa_keys/readme.txt",
+   "allowed": true
+  },
+  {
+   "path": "/.gitignore",
+   "allowed": true
+  },
+  {
+   "path": "/.htaccess.txt",
+   "allowed": true
+  },
+  {
+   "path": "/config/gcloud/x.txt",
+   "allowed": true
+  },
+  {
+   "path": "/gcloud/x.txt",
+   "allowed": true
+  },
+  {
+   "path": "/.config/other.txt",
+   "allowed": true
+  },
+  {
+   "path": "/x/_axiom/y.txt",
+   "allowed": true
+  },
+  {
+   "path": "/_axiomx/y.txt",
+   "allowed": true
+  },
+  {
+   "path": "/caf\u00e9.txt",
+   "allowed": true
+  },
+  {
+   "path": "/\u0130ndex.html",
+   "allowed": true
+  },
+  {
+   "path": "/a b.txt",
+   "allowed": true
+  },
+  {
+   "path": "/.git.txt",
+   "allowed": true
+  },
+  {
+   "path": "/git/HEAD",
+   "allowed": true
+  },
+  {
+   "path": "/a.pem.txt",
+   "allowed": true
+  },
+  {
+   "path": "/key.txt",
+   "allowed": true
+  },
+  {
+   "path": "/sitemap.xml",
+   "allowed": true
+  },
+  {
+   "path": "/mapping.json",
+   "allowed": true
+  },
+  {
+   "path": "/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/f.txt",
+   "allowed": true
+  },
+  {
+   "path": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "allowed": true
+  },
+  {
+   "path": "/_worker.js",
+   "allowed": false
+  },
+  {
+   "path": "/_headers",
+   "allowed": false
+  },
+  {
+   "path": "/_redirects",
+   "allowed": false
+  },
+  {
+   "path": "/_routes.json",
+   "allowed": false
+  },
+  {
+   "path": "/sub/_headers",
+   "allowed": false
+  },
+  {
+   "path": "/_Worker.JS",
+   "allowed": false
+  },
+  {
+   "path": "/.env",
+   "allowed": false
+  },
+  {
+   "path": "/.env.production",
+   "allowed": false
+  },
+  {
+   "path": "/sub/.ENV.local",
+   "allowed": false
+  },
+  {
+   "path": "/.npmrc",
+   "allowed": false
+  },
+  {
+   "path": "/.yarnrc",
+   "allowed": false
+  },
+  {
+   "path": "/.yarnrc.yml",
+   "allowed": false
+  },
+  {
+   "path": "/.netrc",
+   "allowed": false
+  },
+  {
+   "path": "/.git-credentials",
+   "allowed": false
+  },
+  {
+   "path": "/.htpasswd",
+   "allowed": false
+  },
+  {
+   "path": "/.htaccess",
+   "allowed": false
+  },
+  {
+   "path": "/.pgpass",
+   "allowed": false
+  },
+  {
+   "path": "/.dockercfg",
+   "allowed": false
+  },
+  {
+   "path": "/credentials",
+   "allowed": false
+  },
+  {
+   "path": "/Credentials.JSON",
+   "allowed": false
+  },
+  {
+   "path": "/secrets.json",
+   "allowed": false
+  },
+  {
+   "path": "/service-account.json",
+   "allowed": false
+  },
+  {
+   "path": "/service-account-prod.json",
+   "allowed": false
+  },
+  {
+   "path": "/assets/app.js.map",
+   "allowed": false
+  },
+  {
+   "path": "/x.MAP",
+   "allowed": false
+  },
+  {
+   "path": "/server.pem",
+   "allowed": false
+  },
+  {
+   "path": "/tls.key",
+   "allowed": false
+  },
+  {
+   "path": "/a.p12",
+   "allowed": false
+  },
+  {
+   "path": "/a.pfx",
+   "allowed": false
+  },
+  {
+   "path": "/a.jks",
+   "allowed": false
+  },
+  {
+   "path": "/a.keystore",
+   "allowed": false
+  },
+  {
+   "path": "/a.kdbx",
+   "allowed": false
+  },
+  {
+   "path": "/id_rsa",
+   "allowed": false
+  },
+  {
+   "path": "/id_rsa.pub",
+   "allowed": false
+  },
+  {
+   "path": "/id_dsa",
+   "allowed": false
+  },
+  {
+   "path": "/id_ecdsa",
+   "allowed": false
+  },
+  {
+   "path": "/id_ed25519",
+   "allowed": false
+  },
+  {
+   "path": "/keys/ID_ED25519.old",
+   "allowed": false
+  },
+  {
+   "path": "/\u0130D_RSA",
+   "allowed": false
+  },
+  {
+   "path": "/.git/HEAD",
+   "allowed": false
+  },
+  {
+   "path": "/a/.GIT/config",
+   "allowed": false
+  },
+  {
+   "path": "/.aws/credentials.txt",
+   "allowed": false
+  },
+  {
+   "path": "/.ssh/known_hosts",
+   "allowed": false
+  },
+  {
+   "path": "/.docker/config.json",
+   "allowed": false
+  },
+  {
+   "path": "/.gnupg/x",
+   "allowed": false
+  },
+  {
+   "path": "/.kube/config",
+   "allowed": false
+  },
+  {
+   "path": "/.g\u0130t/HEAD",
+   "allowed": false
+  },
+  {
+   "path": "/.config/gcloud/creds.json",
+   "allowed": false
+  },
+  {
+   "path": "/a/.CONFIG/GCloud/x.txt",
+   "allowed": false
+  },
+  {
+   "path": "/_axiom/x.js",
+   "allowed": false
+  },
+  {
+   "path": "/_AXIOM/x.txt",
+   "allowed": false
+  },
+  {
+   "path": "/_axiom",
+   "allowed": false
+  },
+  {
+   "path": "",
+   "allowed": false
+  },
+  {
+   "path": "/",
+   "allowed": false
+  },
+  {
+   "path": "index.html",
+   "allowed": false
+  },
+  {
+   "path": "//a.txt",
+   "allowed": false
+  },
+  {
+   "path": "/a/",
+   "allowed": false
+  },
+  {
+   "path": "/a/./b.txt",
+   "allowed": false
+  },
+  {
+   "path": "/a/../b.txt",
+   "allowed": false
+  },
+  {
+   "path": "/a\\b.txt",
+   "allowed": false
+  },
+  {
+   "path": "/a%2eb.txt",
+   "allowed": false
+  },
+  {
+   "path": "/a?b.txt",
+   "allowed": false
+  },
+  {
+   "path": "/a#b.txt",
+   "allowed": false
+  },
+  {
+   "path": "/a\u0007b.txt",
+   "allowed": false
+  },
+  {
+   "path": "/a\u007fb.txt",
+   "allowed": false
+  },
+  {
+   "path": "/a\u0085b.txt",
+   "allowed": false
+  },
+  {
+   "path": "/a\ufffdb.txt",
+   "allowed": false
+  },
+  {
+   "path": "/cafe\u0301.txt",
+   "allowed": false
+  },
+  {
+   "path": "/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/f.txt",
+   "allowed": false
+  },
+  {
+   "path": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "allowed": false
+  }
+ ]
+}

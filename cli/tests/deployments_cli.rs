@@ -202,3 +202,21 @@ fn deploy_backend_packages_the_current_project() {
     let journal: serde_json::Value = serde_json::from_slice(&std::fs::read(d.join(format!("deployments/demo-{ENV}-backend.json"))).unwrap()).unwrap();
     assert_eq!(journal["kind"], "backend");
 }
+
+/// A4.3: there is no source-map option; a source map in the build stops the deploy locally
+/// (exit 1, nothing sent), and the old flag is an unknown argument (exit 2, nothing sent).
+#[test]
+fn source_maps_are_refused_and_the_include_flag_is_gone() {
+    let server = Server::start();
+    let dir = signed_in();
+    std::fs::write(dir.path().join("dist/assets/app.js.map"), "{}").unwrap();
+    let out = cli(&server, dir.path(), &["deploy", "frontend", "--project", "demo", "--no-activate"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("/assets/app.js.map: source maps are not published"), "{stderr}");
+    let out = cli(&server, dir.path(), &["deploy", "frontend", "--include-source-maps", "--project", "demo", "--no-activate"]);
+    assert_eq!(out.status.code(), Some(2), "{}", String::from_utf8_lossy(&out.stderr));
+    let help = cli(&server, dir.path(), &["deploy", "frontend", "--help"]);
+    assert!(!String::from_utf8_lossy(&help.stdout).contains("source-maps"));
+    assert!(server.seen().is_empty(), "{:?}", server.seen());
+}

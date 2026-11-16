@@ -1552,16 +1552,18 @@ enum DeployTarget {
     /// Deploy a static site (your build output folder) and print its URL
     ///
     /// DIR defaults to the first of dist/, build/, out/. The folder must contain index.html.
-    /// `.env*` files, private keys, `_headers`/`_redirects`/`_worker.js` and the reserved
-    /// `/_axiom/` path are refused; dotfiles such as .DS_Store are skipped (.well-known/ is
-    /// kept); source maps need --include-source-maps. Rerunning the same build resumes an
-    /// interrupted deploy, or reports the live result.
+    /// The server's path rules are checked first: `.env` files, credential and private-key
+    /// files, `*.map` source maps, `.git/` and other credential folders,
+    /// `_headers`/`_redirects`/`_worker.js` and the reserved `/_axiom/` path are refused;
+    /// .DS_Store and Thumbs.db are skipped. Rerunning the same build resumes an interrupted
+    /// deploy, or reports the live result.
     Frontend(commands::deployments::FrontendArgs),
     /// Package this project's backend (or upload --from-input DIR) and print its API URL
     ///
     /// Without --from-input, packages backend.axiom (or axiom.axiom), its .server.json plan
     /// and deployment.json as `axiom server package … --output-input` does, then uploads that
-    /// data-only input; Axiom builds and seals it on the server.
+    /// data-only input (its input.json as the manifest, verbatim, and the files it lists);
+    /// Axiom seals it on the server.
     Backend(commands::deployments::BackendArgs),
     /// Upload a mock server configuration (.acore) to Axiom Cloud
     MockServer {

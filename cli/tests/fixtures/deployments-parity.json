@@ -23,6 +23,7 @@
           "size": 11
         }
       ],
+      "manifest_bytes": 403,
       "manifest_sha256": "70fb2d0fefcfc70e0f689445de2405b2e38ab93b965cddf2692d893a58a15ed3",
       "purpose": "static_bundle",
       "total_bytes": 25

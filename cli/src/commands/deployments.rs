@@ -81,9 +81,6 @@ pub struct FrontendArgs {
     /// Unknown paths answer 404 instead of index.html
     #[arg(long)]
     pub no_spa: bool,
-    /// Publish *.map source maps (they expose your original source; left out by default)
-    #[arg(long)]
-    pub include_source_maps: bool,
     #[command(flatten)]
     pub flags: DeployFlags,
 }
@@ -271,7 +268,7 @@ fn frontend_bundle(args: &FrontendArgs, cwd: &Path) -> Result<Bundle> {
         Some(d) => d.clone(),
         None => bundle::default_frontend_dir(cwd)?,
     };
-    bundle::frontend(&dir, spa_choice(args), args.include_source_maps)
+    bundle::frontend(&dir, spa_choice(args))
 }
 
 /// Check the folder and build the manifest; `axiom deploy frontend` exits 1 on failure.
@@ -612,7 +609,7 @@ async fn deploy_steps(ctx: &Ctx, kind: Kind, b: &Bundle, flags: &DeployFlags, r:
     if !j.upload_sealed {
         let upload = match j.upload_id.clone() {
             None => {
-                let body = bodies::create_upload(&b.manifest_sha256, kind.purpose(), &b.entries());
+                let body = bodies::create_upload(&b.manifest_sha256, b.manifest_bytes(), kind.purpose(), &b.entries());
                 let upload = ctx.client.deployment_create_upload(scope, kind, &body, &j.key("create_upload")).await?;
                 j.upload_id = Some(upload.id.clone());
                 j.step("create_upload", upload.state.clone().unwrap_or_default());

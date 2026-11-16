@@ -89,7 +89,7 @@ fn fixture_site() -> tempfile::TempDir {
 }
 
 fn manifest_sha(site: &Path) -> String {
-    bundle::frontend(site, Spa::Auto, false).unwrap().manifest_sha256
+    bundle::frontend(site, Spa::Auto).unwrap().manifest_sha256
 }
 
 fn slot(generation: i64, state: &str, active: Option<&str>) -> Value {
@@ -161,7 +161,7 @@ async fn deploy_frontend_uploads_builds_activates_and_prints_the_url() {
     let upload = one(format!("POST {B}/frontend/uploads"));
     assert_eq!(
         upload.body,
-        json!({"manifest_sha256": manifest, "total_bytes": 25, "file_count": 2, "purpose": "static_bundle", "files": [
+        json!({"manifest_sha256": manifest, "manifest_bytes": bundle::frontend(site.path(), Spa::Auto).unwrap().manifest_bytes(), "total_bytes": 25, "file_count": 2, "purpose": "static_bundle", "files": [
             {"sha256": bundle::sha256_hex(APP.as_bytes()), "size": 14}, {"sha256": html, "size": 11}]})
     );
     // PUTs carry the server's headers and bytes, never the session token.
@@ -278,6 +278,46 @@ async fn missing_upload_urls_and_server_errors_show_the_next_step() {
     assert_eq!(e, "There is no backend deployment in this environment yet. Deploy one with `axiom deploy backend`.");
 }
 
+/// A4.4: a code the CLI does not special-case prints the server's message with the code, for
+/// a sync error and for an operation's failure.message (the migrate hint reaches the user).
+#[tokio::test]
+async fn unknown_codes_print_the_server_message_for_sync_errors_and_operation_failures() {
+    const HINT: &str = "This backend was built for a different database schema than the environment's applied database head. Run `axiom database migrate` for this environment first, then deploy again.";
+    let input = backend_input();
+    let b = bundle::backend(input.path()).unwrap();
+    let cli = BackendCli::try_parse_from(argv(&["--from-input", input.path().to_str().unwrap(), "--project", "demo", "--environment", ENV, "--yes", "--json"])).unwrap();
+    // The sync 409 of version-create.
+    let h = Harness::new().await;
+    h.script(&format!("GET {B}/backend"), 404, not_found());
+    h.script(&format!("POST {B}/backend/uploads"), 201, json!({"id": "upl_b", "state": "sealed", "missing_hashes": []}));
+    h.script(&format!("POST {B}/backend/versions"), 409, json!({"schema": SCHEMA, "code": "AXDEPLOY_INCOMPATIBLE_SCHEMA", "message": HINT, "request_id": "req_7", "retryable": false, "details": {}}));
+    let e = deploy(&h.ctx, Kind::Backend, &b, &cli.args.flags).await.unwrap_err().to_string();
+    assert_eq!(e, format!("AXDEPLOY_INCOMPATIBLE_SCHEMA: {HINT} (request req_7)"));
+    // The same hint as the stored failure of the seal/prepare operation.
+    let h = Harness::new().await;
+    h.script(&format!("GET {B}/backend"), 404, not_found());
+    h.script(&format!("POST {B}/backend/uploads"), 201, json!({"id": "upl_b", "state": "sealed", "missing_hashes": []}));
+    h.script(&format!("POST {B}/backend/versions"), 202, json!({"version_id": "ver_b", "operation_id": "op_s"}));
+    h.script(&format!("GET {B}/backend/operations/op_s"), 200, json!({"operation_id": "op_s", "state": "failed", "failure": {"code": "AXDEPLOY_INCOMPATIBLE_SCHEMA", "message": HINT, "retryable": false}}));
+    let e = deploy(&h.ctx, Kind::Backend, &b, &cli.args.flags).await.unwrap_err().to_string();
+    assert!(e.contains(&format!("Operation op_s failed: AXDEPLOY_INCOMPATIBLE_SCHEMA: {HINT}")) && e.contains("axiom database migrate"), "{e}");
+}
+
+/// A package input folder as `axiom server package --output-input` writes it, plus a stray file.
+fn backend_input() -> tempfile::TempDir {
+    let input = tempfile::tempdir().unwrap();
+    let files = [("contract.axiom", "c"), ("contract.server.json", "{}"), ("deployment.json", "{}")];
+    let mut listed = serde_json::Map::new();
+    for (name, body) in files {
+        std::fs::write(input.path().join(name), body).unwrap();
+        listed.insert(name.into(), json!({"bytes": body.len(), "executable": false, "sha256": bundle::sha256_hex(body.as_bytes())}));
+    }
+    std::fs::write(input.path().join("stray.txt"), "not listed").unwrap();
+    let manifest = json!({"artifactReferences": {}, "files": listed, "format": "axiom-container-input/v1", "target": {"id": "container-amd64"}, "targetSha256": "a".repeat(64)});
+    std::fs::write(input.path().join("input.json"), manifest.to_string()).unwrap();
+    input
+}
+
 #[tokio::test]
 async fn a_failed_version_ends_the_intent_with_its_reason() {
     let site = fixture_site();
@@ -297,14 +337,14 @@ async fn a_failed_version_ends_the_intent_with_its_reason() {
 #[tokio::test]
 async fn deploy_backend_from_input_uploads_container_input() {
     let h = Harness::new().await;
-    let input = tempfile::tempdir().unwrap();
-    std::fs::write(input.path().join("contract.axiom"), "c").unwrap();
+    let input = backend_input();
     let b = bundle::backend(input.path()).unwrap();
     let file = bundle::sha256_hex(b"c");
+    let empty_json = bundle::sha256_hex(b"{}");
     let api = "https://demo-development-a1b2c3-api.axiomcore.page";
     let target = |sha: &str| json!({"sha256": sha, "url": format!("{}/r2/{sha}", h.base), "method": "PUT", "headers": {}});
     h.script(&format!("GET {B}/backend"), 404, not_found()).script(&format!("GET {B}/backend"), 200, json!({"generation": 1, "state": "empty", "url": api})).script(&format!("GET {B}/backend"), 200, json!({"generation": 2, "state": "active", "active_version_id": "ver_b", "url": api}));
-    h.script(&format!("POST {B}/backend/uploads"), 201, json!({"id": "upl_b", "state": "open", "missing_hashes": [file, b.manifest_sha256], "upload_urls": [target(&file), target(&b.manifest_sha256)]}));
+    h.script(&format!("POST {B}/backend/uploads"), 201, json!({"id": "upl_b", "state": "open", "missing_hashes": [file, b.manifest_sha256], "upload_urls": [target(&file), target(&b.manifest_sha256), target(&empty_json)]}));
     h.script(&format!("PUT /r2/{file}"), 200, json!({})).script(&format!("PUT /r2/{}", b.manifest_sha256), 200, json!({}));
     h.script(&format!("POST {B}/backend/uploads/upl_b/complete"), 200, json!({"id": "upl_b", "state": "sealed"}));
     h.script(&format!("POST {B}/backend/versions"), 202, json!({"version_id": "ver_b", "operation_id": "op_s"}));
@@ -316,7 +356,19 @@ async fn deploy_backend_from_input_uploads_container_input() {
     let prepared = backend_bundle(&cli.args, &h.ctx.cwd).unwrap();
     deploy(&h.ctx, Kind::Backend, &prepared.bundle, &cli.args.flags).await.unwrap();
     let up = &h.mock.seen(&format!("POST {B}/backend/uploads"))[0];
-    assert_eq!(up.body, json!({"manifest_sha256": b.manifest_sha256, "total_bytes": 1, "file_count": 1, "purpose": "container_input", "files": [{"sha256": file, "size": 1}]}));
+    // A4.1/A4.2: input.json is the manifest (digest and exact length); the content files are
+    // the three it lists (one entry each, the stray file left out), counted without it.
+    let input_json = std::fs::read(input.path().join("input.json")).unwrap();
+    assert_eq!(b.manifest, input_json);
+    assert_eq!(
+        up.body,
+        json!({"manifest_sha256": bundle::sha256_hex(&input_json), "manifest_bytes": input_json.len(), "total_bytes": 5, "file_count": 3, "purpose": "container_input",
+            "files": [{"sha256": file, "size": 1}, {"sha256": empty_json, "size": 2}, {"sha256": empty_json, "size": 2}]})
+    );
+    // Only what the server listed is uploaded: the manifest (byte for byte) and contract.axiom;
+    // the `{}` object it did not list is not sent although it has a URL.
+    assert_eq!(h.mock.seen(&format!("PUT /r2/{}", b.manifest_sha256))[0].raw, input_json);
+    assert!(h.mock.seen(&format!("PUT /r2/{empty_json}")).is_empty());
     assert_eq!(h.mock.seen(&format!("POST {B}/backend/versions"))[0].body, json!({"artifact": {"type": "container_input", "upload_id": "upl_b", "target": "container-amd64"}}));
     assert_eq!(h.mock.seen(&format!("POST {B}/backend/versions/ver_b/activate"))[0].if_match.as_deref(), Some("\"g1\""));
     assert_eq!(h.mock.seen(&format!("GET {B}/backend/operations/op_s")).len(), 2);

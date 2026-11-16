@@ -449,10 +449,9 @@ pub struct Outcome {
     pub activated: bool,
 }
 
-fn progress(quiet: bool, line: &str) {
-    if !quiet {
-        eprintln!("{line}");
-    }
+/// Progress and status lines go to stderr (also with --json, whose object is on stdout).
+fn progress(line: &str) {
+    eprintln!("{line}");
 }
 
 fn print_json(value: &impl Serialize) -> Result<()> {
@@ -536,7 +535,7 @@ fn ends_intent(error: &anyhow::Error) -> bool {
 }
 
 pub async fn deploy(ctx: &Ctx, kind: Kind, b: &Bundle, flags: &DeployFlags) -> Result<()> {
-    let quiet = flags.target.json;
+    let json = flags.target.json;
     let r = resolve(ctx, &flags.target).await?;
     let path = journal_path(ctx, &r.scope, kind);
     let previous = load_journal(&path).filter(|j| !flags.new && !j.failed && j.manifest_sha256 == b.manifest_sha256);
@@ -544,14 +543,14 @@ pub async fn deploy(ctx: &Ctx, kind: Kind, b: &Bundle, flags: &DeployFlags) -> R
         Some(j) if j.activated => {
             // This exact build is already live from an earlier run: report it.
             let out = outcome(&r, kind, j.version_id.clone(), j.activate_operation_id.clone(), j.url.clone(), Some("active".into()), true);
-            if quiet {
+            if json {
                 return print_json(&out);
             }
             println!("✓ This build is already deployed: version {} at {}. Pass --new to deploy it again.", opt(&j.version_id), opt(&j.url));
             return Ok(());
         }
         Some(j) => {
-            progress(quiet, &format!("Resuming the previous deploy of this build (version {}).", opt(&j.version_id)));
+            progress(&format!("Resuming the previous deploy of this build (version {}).", opt(&j.version_id)));
             j
         }
         None => {
@@ -579,7 +578,7 @@ pub async fn deploy(ctx: &Ctx, kind: Kind, b: &Bundle, flags: &DeployFlags) -> R
         }
     }
     let out = result?;
-    if quiet {
+    if json {
         return print_json(&out);
     }
     let version = opt(&out.version_id);
@@ -596,7 +595,6 @@ fn outcome(r: &Resolved, kind: Kind, version_id: Option<String>, operation_id: O
 }
 
 async fn deploy_steps(ctx: &Ctx, kind: Kind, b: &Bundle, flags: &DeployFlags, r: &Resolved, path: &Path, j: &mut Journal) -> Result<Outcome> {
-    let quiet = flags.target.json;
     let scope = &r.scope;
     if !j.upload_sealed {
         let upload = match j.upload_id.clone() {
@@ -618,7 +616,7 @@ async fn deploy_steps(ctx: &Ctx, kind: Kind, b: &Bundle, flags: &DeployFlags, r:
                 bail!("The upload {} before it finished. Re-run the deploy to start over.", if upload.state.as_deref() == Some("expired") { "expired" } else { "failed" });
             }
             _ => {
-                put_missing(ctx, scope, kind, b, upload, quiet).await?;
+                put_missing(ctx, scope, kind, b, upload).await?;
                 let sealed = ctx.client.deployment_complete_upload(scope, kind, &upload_id(j)?, &j.key("complete_upload")).await?;
                 if sealed.state.as_deref() != Some("sealed") {
                     return Err(DeployError::new(409, "AXDEPLOY_UPLOAD_NOT_SEALED").into());
@@ -641,9 +639,9 @@ async fn deploy_steps(ctx: &Ctx, kind: Kind, b: &Bundle, flags: &DeployFlags, r:
     }
     let version = j.version_id.clone().unwrap_or_default();
     if !j.version_ready {
-        progress(quiet, &format!("Preparing version {version}…"));
+        progress(&format!("Preparing version {version}…"));
         if let Some(op) = j.version_operation_id.clone() {
-            wait_op(ctx, scope, kind, &op, quiet, "Preparing").await?;
+            wait_op(ctx, scope, kind, &op, "Preparing").await?;
         }
         let v = ctx.client.deployment_version(scope, kind, &version).await?;
         match v.status.as_deref() {
@@ -669,10 +667,10 @@ async fn deploy_steps(ctx: &Ctx, kind: Kind, b: &Bundle, flags: &DeployFlags, r:
         };
         return Ok(outcome(r, kind, Some(version), j.version_operation_id.clone(), url, Some("ready".into()), false));
     }
-    progress(quiet, &format!("Activating version {version}…"));
+    progress(&format!("Activating version {version}…"));
     let intent = j.intent_id.clone();
     let manifest = j.manifest_sha256.clone();
-    let done = activate(ctx, scope, kind, &version, true, quiet, |generation| idempotency_key(&intent, "activate", &manifest, generation), |op| {
+    let done = activate(ctx, scope, kind, &version, true, |generation| idempotency_key(&intent, "activate", &manifest, generation), |op| {
         j.activate_operation_id = Some(op.to_string());
         let _ = save_journal(path, j);
     })
@@ -697,7 +695,7 @@ enum Source {
 /// PUT every missing object (deduplicated by hash) to its presigned URL, 4 at a time, with
 /// progress on stderr. Missing URLs (or a failed PUT, e.g. an expired URL) re-read the upload
 /// once for fresh URLs.
-async fn put_missing(ctx: &Ctx, scope: &Scope, kind: Kind, b: &Bundle, upload: Upload, quiet: bool) -> Result<()> {
+async fn put_missing(ctx: &Ctx, scope: &Scope, kind: Kind, b: &Bundle, upload: Upload) -> Result<()> {
     use futures::stream::{self, StreamExt};
     let mut sources: HashMap<&str, (Source, u64)> = HashMap::new();
     for f in &b.files {
@@ -713,7 +711,7 @@ async fn put_missing(ctx: &Ctx, scope: &Scope, kind: Kind, b: &Bundle, upload: U
         missing.dedup();
         if missing.is_empty() {
             if !refreshed {
-                progress(quiet, "All files are already uploaded.");
+                progress("All files are already uploaded.");
             }
             return Ok(());
         }
@@ -732,7 +730,7 @@ async fn put_missing(ctx: &Ctx, scope: &Scope, kind: Kind, b: &Bundle, upload: U
         let total_bytes: u64 = missing.iter().map(|h| sources[h.as_str()].1).sum();
         let done = AtomicUsize::new(0);
         let done_bytes = AtomicU64::new(0);
-        progress(quiet, &format!("Uploading {total} file{} ({})…", if total == 1 { "" } else { "s" }, bundle::human_bytes(total_bytes)));
+        progress(&format!("Uploading {total} file{} ({})…", if total == 1 { "" } else { "s" }, bundle::human_bytes(total_bytes)));
         let jobs = missing.iter().map(|h| (h.clone(), upload.target(h).cloned().unwrap_or_default(), sources[h.as_str()].0.clone()));
         let failures: Vec<anyhow::Error> = stream::iter(jobs)
             .map(|(hash, target, source)| {
@@ -753,7 +751,7 @@ async fn put_missing(ctx: &Ctx, scope: &Scope, kind: Kind, b: &Bundle, upload: U
                     ctx.client.deployment_put_object(&target, bytes).await?;
                     let n = done.fetch_add(1, Ordering::SeqCst) + 1;
                     let sent = done_bytes.fetch_add(size, Ordering::SeqCst) + size;
-                    if !quiet && terminal {
+                    if terminal {
                         eprint!("\rUploading {n}/{total} files ({})   ", bundle::human_bytes(sent));
                     }
                     Ok(())
@@ -763,11 +761,11 @@ async fn put_missing(ctx: &Ctx, scope: &Scope, kind: Kind, b: &Bundle, upload: U
             .filter_map(|r: Result<()>| async move { r.err() })
             .collect()
             .await;
-        if !quiet && terminal {
+        if terminal {
             eprintln!();
         }
         let Some(first) = failures.into_iter().next() else {
-            progress(quiet, &format!("Uploaded {total}/{total} files ({}).", bundle::human_bytes(total_bytes)));
+            progress(&format!("Uploaded {total}/{total} files ({}).", bundle::human_bytes(total_bytes)));
             return Ok(());
         };
         if refreshed || first.to_string().contains("changed while deploying") {
@@ -791,14 +789,14 @@ impl std::fmt::Display for OperationFailed {
 impl std::error::Error for OperationFailed {}
 
 /// Follow an operation to its end; a failed or cancelled one is an error with its reason.
-async fn wait_op(ctx: &Ctx, scope: &Scope, kind: Kind, op: &str, quiet: bool, doing: &str) -> Result<Operation> {
+async fn wait_op(ctx: &Ctx, scope: &Scope, kind: Kind, op: &str, doing: &str) -> Result<Operation> {
     let mut last_phase = String::new();
     let done = ctx
         .client
         .deployment_wait(scope, kind, op, ctx.poll, ctx.timeout, |o| {
             let phase = o.phase.clone().unwrap_or_else(|| o.state.clone());
             if phase != last_phase && !o.finished() {
-                progress(quiet, &format!("  {doing}: {}", clean(&phase)));
+                progress(&format!("  {doing}: {}", clean(&phase)));
                 last_phase = phase;
             }
         })
@@ -824,8 +822,7 @@ fn if_match(reply: &axiom_cloud::deployments::Reply<Slot>) -> Result<String> {
 /// Make `version` live: GET the slot for `If-Match`, POST activate (keyed by the generation
 /// it read), and follow the operation when `wait`. An activation of this version already in
 /// flight is followed instead of repeated; an already-live version is reported as such.
-#[allow(clippy::too_many_arguments)]
-async fn activate(ctx: &Ctx, scope: &Scope, kind: Kind, version: &str, wait: bool, quiet: bool, key: impl Fn(i64) -> String, mut started: impl FnMut(&str)) -> Result<Slot> {
+async fn activate(ctx: &Ctx, scope: &Scope, kind: Kind, version: &str, wait: bool, key: impl Fn(i64) -> String, mut started: impl FnMut(&str)) -> Result<Slot> {
     let current = slot(ctx, scope, kind).await?;
     let s = &current.body;
     if s.active_version_id.as_deref() == Some(version) && matches!(s.state.as_deref(), Some("active" | "degraded")) {
@@ -846,7 +843,7 @@ async fn activate(ctx: &Ctx, scope: &Scope, kind: Kind, version: &str, wait: boo
         s.state = Some("activating".into());
         return Ok(s);
     }
-    wait_op(ctx, scope, kind, &op, quiet, "Activating").await?;
+    wait_op(ctx, scope, kind, &op, "Activating").await?;
     let mut live = slot(ctx, scope, kind).await?.body;
     live.operation_id = Some(op);
     Ok(live)
@@ -940,7 +937,7 @@ pub async fn run(ctx: &Ctx, args: &DeploymentsArgs) -> Result<()> {
         }
         Action::Activate { kind, version, wait, .. } => {
             let kind = Kind::from(*kind);
-            let done = activate(ctx, scope, kind, version, *wait, json, |g| action_key("activate", scope, kind, version, g), |_| {}).await?;
+            let done = activate(ctx, scope, kind, version, *wait, |g| action_key("activate", scope, kind, version, g), |_| {}).await?;
             let live = *wait || (done.active_version_id.as_deref() == Some(version.as_str()) && matches!(done.state.as_deref(), Some("active" | "degraded")));
             finish_traffic(&r, kind, &done, live, json, &format!("{} is live", clean(version)), "Activation")
         }
@@ -954,7 +951,7 @@ pub async fn run(ctx: &Ctx, args: &DeploymentsArgs) -> Result<()> {
             let op = reply.body.operation_id.clone();
             let done = match (&op, wait) {
                 (Some(op), true) => {
-                    wait_op(ctx, scope, kind, op, json, "Rolling back").await?;
+                    wait_op(ctx, scope, kind, op, "Rolling back").await?;
                     let mut s = slot(ctx, scope, kind).await?.body;
                     s.operation_id = Some(op.clone());
                     s
@@ -973,7 +970,7 @@ pub async fn run(ctx: &Ctx, args: &DeploymentsArgs) -> Result<()> {
             let op = reply.body.operation_id.clone();
             let mut done = reply.body;
             if let (Some(op), true) = (&op, wait) {
-                wait_op(ctx, scope, kind, op, json, "Deleting").await?;
+                wait_op(ctx, scope, kind, op, "Deleting").await?;
                 done = ctx.client.deployment_slot(scope, kind).await?.map(|s| s.body).unwrap_or_default();
                 done.operation_id = Some(op.clone());
                 if done.state.is_none() {

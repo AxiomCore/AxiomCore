@@ -15,7 +15,7 @@ deployed from one shows up in the other. For a walkthrough, see
   Axiom-hosted deployments are open to invited projects only. For every
   other project, each command fails with `AXDEPLOY_DISABLED`. Custom domains,
   runtime and access logs, and usage metering are not available yet. These
-  commands are in CLI releases after 0.154.0; CLI 0.154.0 and earlier have
+  commands are in CLI 0.155.0 and later; CLI 0.154.0 and earlier have
   only `axiom deploy mock-server`.
 </StatusNote>
 
@@ -65,7 +65,6 @@ axiom deploy frontend [DIR] [OPTIONS]
 | `[DIR]` | directory | the first of `dist/`, `build/` and `out/` that exists | Built static site. It must contain `index.html`. |
 | `--spa` | flag | on, unless `DIR` has its own `404.html` | Single-page app fallback: a page path with no file returns `index.html`. |
 | `--no-spa` | flag | off | Paths with no file answer 404 instead of `index.html`. |
-| `--include-source-maps` | flag | off | Publish `*.map` files. They expose your original source. Without this flag, a source map in `DIR` stops the deploy. |
 | `--message` | text | none | Note stored with the version. |
 | `--no-activate` | flag | off | Stop once the version is ready. The URL keeps serving the current version. Activate it later with `axiom deployments activate`. No confirmation is needed. |
 | `--yes` | flag | off | Make the version live without asking. Required without a terminal unless you pass `--no-activate`. |
@@ -84,22 +83,28 @@ has been completed and verified.
 
 ### Which files are uploaded
 
+The path rules are the server's own, so a folder the CLI accepts is a folder
+the server accepts. The CLI checks every file path before it sends anything.
+
 | Path in `DIR` | Result |
 | --- | --- |
 | `index.html` | Required. Without it, the command stops before uploading. |
-| `_headers`, `_redirects`, `_worker.js` | Rejected. AxiomCore does not read provider control files, and a static frontend runs no server code. |
+| `_headers`, `_redirects`, `_worker.js`, `_routes.json` | Rejected. Axiom hosting does not read provider control files, and a static frontend runs no server code. |
 | Anything under `_axiom/` | Rejected. The `/_axiom/` path is reserved for the platform. |
 | `.env` and `.env.*` files | Rejected, so a secret file is not published by mistake. |
-| Private keys (`*.pem`, `*.key`, `id_rsa*`, `id_ed25519*`, `id_ecdsa*`) | Rejected. |
-| `*.map` | Rejected unless you pass `--include-source-maps`. |
-| `.well-known/` | Uploaded. |
-| Other dotfiles and dot folders, such as `.DS_Store` or `.git` | Skipped without a message. |
+| Private keys and keystores (`*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `*.kdbx`, `id_rsa*`, `id_dsa*`, `id_ecdsa*`, `id_ed25519*`) | Rejected. |
+| Credential and server configuration files (`.npmrc`, `.yarnrc`, `.yarnrc.yml`, `.netrc`, `.git-credentials`, `.htpasswd`, `.htaccess`, `.pgpass`, `.dockercfg`, `credentials`, `credentials.json`, `secrets.json`, `service-account*.json`) | Rejected. |
+| Source maps (`*.map`) | Rejected. Source maps expose your original source and are not published; turn off production source maps in your bundler, or delete the `.map` files from the build output. |
+| Anything under `.git/`, `.aws/`, `.ssh/`, `.docker/`, `.gnupg/`, `.kube/` or `.config/gcloud/` | Rejected. |
+| `.DS_Store` and `Thumbs.db` | Skipped without a message. |
+| Other dotfiles and dot folders, such as `.well-known/` or `.nojekyll` | Uploaded. |
+| A file type Axiom hosting does not serve, such as `.pdf` or `.php` | Rejected. Served types: web pages, CSS, JavaScript, JSON, XML, text (`.txt`, `.md`, `.csv`), images, fonts, WebAssembly, audio and video. A file without an extension is served as plain text. |
 | Symbolic links, and anything that is not a regular file or folder | Rejected. |
-| File names with backslashes or control characters | Rejected. |
+| Names with backslashes, `%`, `?`, `#` or control characters; paths over 1,024 bytes or 32 folders deep | Rejected. |
 | Two names that are equal once Unicode-normalised (NFC) | Rejected. Paths are NFC-normalised in the manifest. |
 
-Name rules ignore ASCII case. The private-key and source-map rules apply to
-file names only, so a folder such as `vendor.map/` is uploaded.
+Name rules ignore ASCII case. The file-name rules apply to the last part of
+the path only, so a folder such as `vendor.map/` or `api.key/` is uploaded.
 
 The dashboard applies the same rules to a folder you choose. A browser
 follows symbolic links when it reads a folder, so the dashboard uploads the
@@ -111,9 +116,9 @@ folder. Custom response headers and redirects are not configurable yet. Rejectio
 is a safety net, not a secret scanner: check what your build writes before
 you deploy it.
 
-During the pilot a deploy can list about 700 files, because the server caps
-each request at 64 KiB; a larger bundle gets `AXDEPLOY_BODY_TOO_LARGE`. The
-design limit is 10,000 files and 1 GiB per bundle.
+A deploy lists every file in one request of at most 1 MiB, which is about
+10,000 files; a larger list gets `AXDEPLOY_BODY_TOO_LARGE`. A bundle holds at
+most 10,000 files and 1 GiB.
 
 ## axiom deploy backend
 
@@ -143,8 +148,11 @@ needs other packaging options, run `axiom server package` yourself and pass
 the folder with `--from-input`.
 
 The package input is data only: your contract, server plan and the files they
-list, with no executable. Axiom builds the hosted backend from it with its
-own runtime. You cannot upload a container image, and local images built
+list, with no executable. The CLI uploads the folder's `input.json`, as the
+runtime wrote it, as the deployment's manifest, and exactly the files that
+`input.json` lists, each checked against its listed SHA-256 and size first;
+other files in the folder are not sent. Axiom seals the hosted backend from it
+with its own runtime. You cannot upload a container image, and local images built
 with `axiom server package --output` are not accepted.
 
 ## Resume
@@ -312,10 +320,14 @@ again, wait for the delete to finish; until then, a deploy reports
 
 ## Errors
 
-The CLI and the dashboard print the same next step for each error code.
-Errors print as `axiom deployments: <code>: <next step> (request <id>)`;
-unknown codes print `Deployment request failed (<code>).` as the next
-step. Include the request id when you report a problem.
+The CLI and the dashboard print the same next step for each error code in
+the table. Errors print as `axiom deployments: <code>: <next step> (request <id>)`.
+For any other code, the next step is the server's own message: for example,
+`AXDEPLOY_INCOMPATIBLE_SCHEMA` (HTTP 409) says to run `axiom database migrate`
+for the environment first, then deploy again. Without a message, the next
+step is `Deployment request failed (<code>).` A failed version or operation
+shows its code and the server's message the same way. Include the request id when
+you report a problem.
 
 | Code | HTTP | Next step |
 | --- | --- | --- |
@@ -335,7 +347,7 @@ step. Include the request id when you report a problem.
 | `AXDEPLOY_DIGEST_MISMATCH` | 422 | Uploaded files did not match the manifest. Re-run the deploy; if it repeats, check nothing is writing to the folder. |
 | `AXDEPLOY_TARGET_MISMATCH` | 422 | This artifact does not fit that deployment kind. |
 | `AXDEPLOY_INVALID_UPLOAD` | 400 | The bundle is too large or empty (limits: 10,000 files, 1 GiB). |
-| `AXDEPLOY_BODY_TOO_LARGE` | 413 | This bundle lists too many files for the pilot server (about 700 files per deploy). Reduce the number of files, or ask the Axiom team to raise the limit. |
+| `AXDEPLOY_BODY_TOO_LARGE` | 413 | This bundle lists too many files for one deploy request (the limit is 1 MiB of file list, about 10,000 files). Reduce the number of files. |
 | `AXDEPLOY_NETWORK` | none | Could not reach Axiom Cloud (network error or timeout). Check your connection and re-run; the deploy resumes where it stopped. |
 | `AXDEPLOY_UPLOAD_URLS_UNAVAILABLE` | none | The server did not issue upload URLs; hosting uploads are not enabled for this project. |
 | `AXDEPLOY_LOGS_UNAVAILABLE` | 503 | Runtime and access logs are not available yet; lifecycle logs are (`--stream lifecycle`). |

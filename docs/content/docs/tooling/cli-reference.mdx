@@ -83,7 +83,7 @@ Axiom Cloud; see [Cloud access and telemetry](#cloud-access-and-telemetry).
 | [Workspace commands](/tooling/cli-workspace) | `workspace`, in CLI 0.152.0 and later |
 | [Contract release commands](/tooling/cli-contract-releases) | `contract releases`, in CLI 0.152.0 and later |
 | [Sandbox commands](/tooling/cli-sandboxes) | `project sandboxes`, in CLI 0.154.0 and later (`project environments` in 0.152.0 and 0.153.0) |
-| [Deployment commands](/tooling/cli-deployments) | `deploy frontend`, `deploy backend` and `deployments`, in CLI releases after 0.154.0 (invite-only pilot) |
+| [Deployment commands](/tooling/cli-deployments) | `deploy frontend`, `deploy backend` and `deployments`, in CLI 0.155.0 and later (invite-only pilot) |
 
 <span id="ui-host-commands" />
 
@@ -118,8 +118,8 @@ secrets is **Experimental** and is not qualified with the published CLI. The
 | [`axiom pull`](/tooling/cli-build-and-run#axiom-pull) | Fetch a contract and generate a typed client. |
 | [`axiom package`](/tooling/cli-build-and-run#axiom-package) | Combine target-specific `.axiomapp` builds into one artifact. |
 | [`axiom release`](/tooling/cli-build-and-run#axiom-release) | Upload a backend contract to Axiom Cloud as an immutable version. |
-| [`axiom deploy`](/tooling/cli-build-and-run#axiom-deploy) | Save a Cloud mock configuration for the linked project; in CLI releases after 0.154.0, also [deploy a frontend or backend](/tooling/cli-deployments) to an Axiom-hosted URL. |
-| [`axiom deployments`](/tooling/cli-deployments#axiom-deployments) | List, activate, roll back, read logs of and delete Axiom-hosted deployments (CLI releases after 0.154.0, invite-only pilot). |
+| [`axiom deploy`](/tooling/cli-build-and-run#axiom-deploy) | Save a Cloud mock configuration for the linked project; in CLI 0.155.0 and later, also [deploy a frontend or backend](/tooling/cli-deployments) to an Axiom-hosted URL. |
+| [`axiom deployments`](/tooling/cli-deployments#axiom-deployments) | List, activate, roll back, read logs of and delete Axiom-hosted deployments (CLI 0.155.0 and later, invite-only pilot). |
 | [`axiom migrate`](/tooling/cli-build-and-run#axiom-migrate) | Convert a legacy backend contract into a new sibling source. |
 | [`axiom benchmark`](/tooling/cli-build-and-run#axiom-benchmark) | Measure local build and artifact-load times. |
 | [`axiom test`](/tooling/cli-testing#axiom-test) | Run the test suites declared in a contract. |
@@ -236,7 +236,7 @@ Local commands send nothing.
 
 | Location | Contents |
 | --- | --- |
-| CLI profile directory: `axiom` inside the OS configuration directory (for example `~/Library/Application Support/axiom` on macOS, `~/.config/axiom` on Linux) | `auth.json` (Cloud session and directory-to-project links), `access.json` (access registration and machine ID), `cache/` (the [`axiom cache`](/tooling/cli-project#axiom-cache) store), `deployments/` (the [deploy resume journal](/tooling/cli-deployments#resume), in CLI releases after 0.154.0). Owner-only permissions on Unix. |
+| CLI profile directory: `axiom` inside the OS configuration directory (for example `~/Library/Application Support/axiom` on macOS, `~/.config/axiom` on Linux) | `auth.json` (Cloud session and directory-to-project links), `access.json` (access registration and machine ID), `cache/` (the [`axiom cache`](/tooling/cli-project#axiom-cache) store), `deployments/` (the [deploy resume journal](/tooling/cli-deployments#resume), in CLI 0.155.0 and later). Owner-only permissions on Unix. |
 | `~/.axiom/bin/` | `acore-lsp` from `axiom install lsp-server`. |
 | `~/.acore/bin/` | Backend extractors. |
 | `.axiom/` in each project root | Generated, CLI-owned state: `contracts/` (build output), `baselines/` (diff baselines), `dev/` (development locks), `database/` (version catalog, default SQLite data, development key), `inspector/` (snapshots and runtime sessions). |

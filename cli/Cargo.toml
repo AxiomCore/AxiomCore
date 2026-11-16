@@ -39,6 +39,7 @@ lazy_static = "1.4"
 logos = "0.14"
 regex = "1.10"
 uuid = { version = "1.0", features = ["v4", "serde"] }
+unicode-normalization = "0.1.25"
 directories = "5.0"
 os_info = "=3.14.0"
 

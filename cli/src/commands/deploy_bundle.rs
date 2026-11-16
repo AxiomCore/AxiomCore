@@ -126,8 +126,8 @@ pub fn frontend(root: &Path, spa: Spa, include_source_maps: bool) -> Result<Bund
         bail!("{shown} is not a folder. Pass the build output folder: axiom deploy frontend ./dist");
     }
     let mut files = Vec::new();
-    walk(root, root, &mut files, &|rel, name| frontend_rule(rel, name, include_source_maps))?;
-    files.sort_by(|a, b| a.path.cmp(&b.path));
+    walk(root, root, "", &mut files, &|rel, name, is_dir| frontend_rule(rel, name, is_dir, include_source_maps))?;
+    sort_unique(&mut files)?;
     if !files.iter().any(|f| f.path == "/index.html") {
         bail!("{shown} has no index.html at its top level. Pass the folder that contains index.html (your build output), for example: axiom deploy frontend ./dist");
     }
@@ -175,8 +175,8 @@ pub fn backend(root: &Path) -> Result<Bundle> {
         bail!("{shown} is not a folder. Pass the folder written by `axiom server package … --output-input DIR`");
     }
     let mut files = Vec::new();
-    walk(root, root, &mut files, &|_, _| Ok(Visit::Keep))?;
-    files.sort_by(|a, b| a.path.cmp(&b.path));
+    walk(root, root, "", &mut files, &|_, _, _| Ok(Visit::Keep))?;
+    sort_unique(&mut files)?;
     if files.is_empty() {
         bail!("{shown} is empty. Pass the folder written by `axiom server package … --output-input DIR`");
     }
@@ -224,8 +224,10 @@ enum Visit {
     Skip,
 }
 
-/// Path rules of `axiom-static-bundle/v1` for one entry. `rel` is the manifest path.
-fn frontend_rule(rel: &str, name: &str, include_source_maps: bool) -> Result<Visit> {
+/// Path rules of `axiom-static-bundle/v1` for one entry. `rel` is the manifest path (NFC),
+/// `name` its last segment, `is_dir` whether the entry is a real folder. Name matching is
+/// ASCII case-insensitive; the key and source-map rules apply to files only.
+fn frontend_rule(rel: &str, name: &str, is_dir: bool, include_source_maps: bool) -> Result<Visit> {
     let lower = name.to_ascii_lowercase();
     if rel == "/_axiom" || rel.starts_with("/_axiom/") {
         bail!("{rel}: the /_axiom/ path is reserved for the platform. Rename that folder in your build.");
@@ -236,20 +238,26 @@ fn frontend_rule(rel: &str, name: &str, include_source_maps: bool) -> Result<Vis
     if lower.starts_with(".env") {
         bail!("{rel}: environment files can hold secrets and are never published. Remove it from the build output.");
     }
-    if lower.ends_with(".pem") || lower.ends_with(".key") || lower.starts_with("id_rsa") || lower.starts_with("id_ed25519") || lower.starts_with("id_ecdsa") {
+    if !is_dir && (lower.ends_with(".pem") || lower.ends_with(".key") || lower.starts_with("id_rsa") || lower.starts_with("id_ed25519") || lower.starts_with("id_ecdsa")) {
         bail!("{rel}: this looks like a private key and is never published. Remove it from the build output.");
     }
     if name.starts_with('.') && name != ".well-known" {
         // .DS_Store, .git, editor folders: never part of a site.
         return Ok(Visit::Skip);
     }
-    if lower.ends_with(".map") && !include_source_maps {
+    if !is_dir && lower.ends_with(".map") && !include_source_maps {
         bail!("{rel}: source maps publish your original source and are left out by default. Remove them from the build, or pass --include-source-maps to publish them.");
     }
     Ok(Visit::Keep)
 }
 
-fn walk(root: &Path, dir: &Path, out: &mut Vec<File>, rule: &dyn Fn(&str, &str) -> Result<Visit>) -> Result<()> {
+type Rule<'a> = &'a dyn Fn(&str, &str, bool) -> Result<Visit>;
+
+/// Collect the regular files under `root`. Manifest paths are built from NFC-normalised
+/// names (`rel_dir` is the normalised parent path, "" at the root); two entries that
+/// normalise to the same path are refused.
+fn walk(root: &Path, dir: &Path, rel_dir: &str, out: &mut Vec<File>, rule: Rule<'_>) -> Result<()> {
+    use unicode_normalization::UnicodeNormalization;
     let mut entries: Vec<_> = std::fs::read_dir(dir)
         .with_context(|| format!("cannot read {}", dir.display()))?
         .collect::<std::io::Result<_>>()
@@ -259,21 +267,20 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<File>, rule: &dyn Fn(&str, &str) 
         let path = entry.path();
         let name = entry.file_name();
         let shown = path.strip_prefix(root).unwrap_or(&path).display().to_string();
-        let name = name.to_str().with_context(|| format!("{shown}: file names must be UTF-8. Rename it."))?.to_string();
+        let name = name.to_str().with_context(|| format!("{shown}: file names must be UTF-8. Rename it."))?.nfc().collect::<String>();
         if name.contains('\\') || name.contains('\0') || name.chars().any(char::is_control) || name == "." || name == ".." {
             bail!("{shown}: file names cannot contain backslashes or control characters. Rename it.");
         }
-        let rel_parent = path.parent().and_then(|p| p.strip_prefix(root).ok()).map(|p| p.to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/")).unwrap_or_default();
-        let rel = if rel_parent.is_empty() { format!("/{name}") } else { format!("/{rel_parent}/{name}") };
-        if let Visit::Skip = rule(&rel, &name)? {
+        let rel = format!("{rel_dir}/{name}");
+        let meta = std::fs::symlink_metadata(&path).with_context(|| format!("cannot read {shown}"))?;
+        if let Visit::Skip = rule(&rel, &name, meta.is_dir())? {
             continue;
         }
-        let meta = std::fs::symlink_metadata(&path).with_context(|| format!("cannot read {shown}"))?;
         if meta.file_type().is_symlink() {
             bail!("{rel}: symbolic links are not deployed. Replace it with the real file (or folder) in the build output.");
         }
         if meta.is_dir() {
-            walk(root, &path, out, rule)?;
+            walk(root, &path, &rel, out, rule)?;
         } else if meta.is_file() {
             let bytes = std::fs::read(&path).with_context(|| format!("cannot read {shown}"))?;
             out.push(File { path: rel, source: path, sha256: sha256_hex(&bytes), size: bytes.len() as u64, content_type: None });
@@ -283,6 +290,16 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<File>, rule: &dyn Fn(&str, &str) 
         } else {
             bail!("{rel}: only regular files and folders are deployed. Remove it from the build output.");
         }
+    }
+    Ok(())
+}
+
+/// Sort by manifest path (byte order of the UTF-8 NFC path) and refuse duplicates, which
+/// only arise from names that differ before Unicode normalisation.
+fn sort_unique(files: &mut [File]) -> Result<()> {
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    if let Some(w) = files.windows(2).find(|w| w[0].path == w[1].path) {
+        bail!("{}: two files have this name once Unicode-normalised (NFC). Rename one of them.", w[0].path);
     }
     Ok(())
 }
@@ -385,6 +402,29 @@ mod tests {
         let link = tempfile::tempdir().unwrap();
         std::os::unix::fs::symlink(real.path(), link.path().join("dist")).unwrap();
         assert!(frontend(&link.path().join("dist"), Spa::Auto, false).unwrap_err().to_string().contains("not a folder"));
+    }
+
+    #[test]
+    fn key_and_map_rules_apply_to_files_not_folders() {
+        let d = site(&[("index.html", "a"), ("api.key/readme.txt", "x"), ("vendor.map/x.js", "x"), ("certs.pem/a.txt", "y")]);
+        let b = frontend(d.path(), Spa::Auto, false).unwrap();
+        let paths: Vec<_> = b.files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(paths, ["/api.key/readme.txt", "/certs.pem/a.txt", "/index.html", "/vendor.map/x.js"]);
+        // Names are NFC-normalised before the (ASCII case-insensitive) rules: the Kelvin
+        // sign U+212A normalises to K, so "x.\u{212A}EY" is the key file "x.KEY".
+        let d = site(&[("index.html", "a"), ("x.\u{212A}EY", "k")]);
+        assert!(frontend(d.path(), Spa::Auto, false).unwrap_err().to_string().contains("private key"));
+    }
+
+    #[test]
+    fn paths_are_nfc_normalised_and_normalised_duplicates_refused() {
+        // "é" decomposed (e + U+0301) becomes the precomposed U+00E9 in the manifest.
+        let d = site(&[("index.html", "a"), ("cafe\u{301}.txt", "x")]);
+        let b = frontend(d.path(), Spa::Auto, false).unwrap();
+        assert!(b.files.iter().any(|f| f.path == "/caf\u{e9}.txt"));
+        let d = site(&[("index.html", "a"), ("cafe\u{301}.txt", "x"), ("caf\u{e9}.txt", "y")]);
+        let e = frontend(d.path(), Spa::Auto, false).unwrap_err().to_string();
+        assert!(e.contains("Unicode-normalised"), "{e}");
     }
 
     #[test]

@@ -322,7 +322,11 @@ pub fn frontend(root: &Path, spa: Spa) -> Result<Bundle> {
 /// Every local check of a static site folder that needs no file contents.
 pub fn check_frontend(root: &Path, spa: Spa) -> Result<Checked> {
     let shown = root.display().to_string();
-    let meta = std::fs::symlink_metadata(root).with_context(|| format!("{shown} does not exist. Build your app first, or pass the folder: axiom deploy frontend ./dist"))?;
+    let meta = match std::fs::symlink_metadata(root) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => bail!("{shown} does not exist. Build your app first, or pass the folder: axiom deploy frontend ./dist"),
+        Err(e) => bail!("{shown} cannot be read ({}). Check the folder's permissions, or pass another folder: axiom deploy frontend ./dist", e.kind()),
+    };
     if !meta.is_dir() {
         bail!("{shown} is not a folder. Pass the build output folder: axiom deploy frontend ./dist");
     }
@@ -441,11 +445,11 @@ pub fn check_backend(root: &Path) -> Result<Checked> {
             bail!("{shown}/input.json lists {name:?}, which a package input cannot hold. {redo}.");
         }
         if listed.bytes > MAX_INPUT_FILE_BYTES {
-            bail!("{name}: {} is larger than the 16 MiB a backend input file may hold.", human_bytes(listed.bytes));
+            bail!("{name}: {} is larger than the 16 MiB a backend input file may hold. Keep large files out of the backend (serve them from the frontend or storage). {redo}.", human_bytes(listed.bytes));
         }
         total += listed.bytes;
         if total > MAX_INPUT_TOTAL_BYTES {
-            bail!("{shown} lists more than 512 MiB of files; a backend input holds at most 512 MiB.");
+            bail!("{shown} lists more than 512 MiB of files; a backend input holds at most 512 MiB. Keep large files out of the backend (serve them from the frontend or storage). {redo}.");
         }
         let source = root.join(name);
         // Every folder on the way must be a real folder (no symbolic link out of the input).

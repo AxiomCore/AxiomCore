@@ -393,7 +393,7 @@ has no HTTP status.
 | --- | --- |
 | `0` | The command finished. A deploy also printed the URL, unless you passed `--no-activate`. |
 | `1` | A local check failed (no project named or linked, a folder or file problem; nothing was sent), or a request failed. The message starts with `axiom deploy:` or `axiom deployments:` and gives the reason and the next step. |
-| `2` | Invalid command line, or a confirmation was needed without a terminal and `--yes` was not passed. No request was sent. |
+| `2` | Invalid command line, a confirmation was needed without a terminal and `--yes` was not passed (no request was sent), or you answered no at the prompt (the deployment was read once; nothing was changed). |
 
 ## API
 

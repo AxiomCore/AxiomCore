@@ -498,6 +498,10 @@ struct Journal {
     version_ready: bool,
     activate_operation_id: Option<String>,
     activated: bool,
+    /// Re-activations of this build after it stopped being live (rolled back, replaced).
+    /// Each uses a fresh activation key, so the server checks the original precondition
+    /// instead of replaying the first activation's stored success.
+    reactivations: u32,
     url: Option<String>,
     /// The intent ended without a live version; the next run starts a fresh one.
     failed: bool,
@@ -515,6 +519,23 @@ impl Journal {
     fn step(&mut self, step: &str, result: impl Into<String>) {
         self.steps.insert(step.into(), result.into());
     }
+}
+
+/// The activation step name: `activate`, then `activate-<n>` for the n-th re-activation.
+fn activation_step(reactivations: u32) -> String {
+    if reactivations == 0 { "activate".into() } else { format!("activate-{reactivations}") }
+}
+
+/// A finished activation is reported live only if the slot serves this version: a replayed
+/// or superseded activation can finish while another version is live.
+fn confirm_live(done: &Slot, version: &str, kind: Kind) -> Result<()> {
+    if done.active_version_id.as_deref() == Some(version) {
+        return Ok(());
+    }
+    bail!(
+        "Version {version} did not become live: the {kind} deployment now serves {}. Review with `axiom deployments status {kind}`, then run `axiom deployments activate {kind} {version}` to make it live.",
+        done.active_version_id.as_deref().unwrap_or("no version")
+    )
 }
 
 pub fn idempotency_key(intent: &str, step: &str, manifest_sha256: &str, generation: i64) -> String {
@@ -736,6 +757,7 @@ async fn deploy_from(ctx: &Ctx, kind: Kind, b: &Bundle, flags: &DeployFlags, r: 
                     progress(&format!("Version {} of this build is no longer live; activating it again.", opt(&j.version_id)));
                     j.activated = false;
                     j.activate_operation_id = None;
+                    j.reactivations += 1;
                     j
                 }
             }
@@ -866,8 +888,9 @@ async fn deploy_steps(ctx: &Ctx, kind: Kind, b: &Bundle, flags: &DeployFlags, r:
     // D2 §6: the activation's precondition is the generation read when this deploy started
     // (a slot created by this deploy starts at 1); it is never silently refreshed.
     let (intent, manifest, pinned, slot_id) = (j.intent_id.clone(), j.manifest_sha256.clone(), j.generation, j.slot_id.clone());
+    let step = activation_step(j.reactivations);
     let pin = move |now: &Slot| activation_generation(pinned, slot_id.as_deref(), now);
-    let done = activate(ctx, scope, kind, &version, true, Some(&pin), |g| idempotency_key(&intent, "activate", &manifest, g), |op| {
+    let done = activate(ctx, scope, kind, &version, true, Some(&pin), |g| idempotency_key(&intent, &step, &manifest, g), |op| {
         j.activate_operation_id = Some(op.to_string());
         let _ = save_journal(path, j);
     })
@@ -885,6 +908,12 @@ async fn deploy_steps(ctx: &Ctx, kind: Kind, b: &Bundle, flags: &DeployFlags, r:
         j.step("activate", "deployment deleted");
         save_journal(path, j)?;
         bail!("The {kind} deployment was deleted while this deploy ran. Run the deploy again to create a new one.");
+    }
+    if let Err(e) = confirm_live(&done, &version, kind) {
+        j.failed = true;
+        j.step("activate", "not live");
+        save_journal(path, j)?;
+        return Err(e);
     }
     j.activated = true;
     j.url = done.url.clone().or(j.url.take());

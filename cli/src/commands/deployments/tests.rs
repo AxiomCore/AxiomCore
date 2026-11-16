@@ -477,11 +477,14 @@ async fn every_deployments_command_sends_the_contract_requests() {
 async fn deploy_activation_keeps_its_original_generation_and_stops_on_412() {
     let h = Harness::new().await;
     let site = fixture_site();
-    // The slot is at g5 when the deploy starts; afterwards someone else's change moves it
-    // to g6 and serves ver_0. The mock does not check If-Match: the first activation is
-    // scripted 202, the second 412.
+    // The slot is at g5 when the deploy starts; the activation serves ver_2 at g6; afterwards
+    // someone else's change moves it to g7 and serves ver_0. The mock does not check If-Match:
+    // the first activation is scripted 202, the second 412.
+    // Reads: deploy start, before activating, after activating; then the rerun's reads.
     h.script(&format!("GET {B}/frontend"), 200, slot(5, "active", Some("ver_1")));
-    h.script(&format!("GET {B}/frontend"), 200, slot(6, "active", Some("ver_0")));
+    h.script(&format!("GET {B}/frontend"), 200, slot(5, "active", Some("ver_1")));
+    h.script(&format!("GET {B}/frontend"), 200, slot(6, "active", Some("ver_2")));
+    h.script(&format!("GET {B}/frontend"), 200, slot(7, "active", Some("ver_0")));
     script_deploy(&h, site.path(), false);
     h.script(&format!("POST {B}/frontend/versions/ver_2/activate"), 412, json!({"schema": SCHEMA, "code": "AXDEPLOY_PRECONDITION_FAILED", "request_id": "r9"}));
     h.deploy_frontend(site.path(), &["--yes"]).await.unwrap();
@@ -495,7 +498,11 @@ async fn deploy_activation_keeps_its_original_generation_and_stops_on_412() {
     assert!(e.contains("changed while you were deploying") && e.contains("axiom deployments activate frontend ver_2"), "{e}");
     let journal: Journal = serde_json::from_slice(&std::fs::read(h.ctx.journal_dir.join(format!("demo-{ENV}-frontend.json"))).unwrap()).unwrap();
     assert!(!journal.failed && journal.version_id.as_deref() == Some("ver_2"), "the journal keeps the version for a manual activate");
-    assert_eq!(h.mock.seen(&format!("POST {B}/frontend/versions/ver_2/activate"))[1].if_match.as_deref(), Some("\"g5\""));
+    let activations = h.mock.seen(&format!("POST {B}/frontend/versions/ver_2/activate"));
+    assert_eq!(activations[1].if_match.as_deref(), Some("\"g5\""));
+    // N1: the re-activation sends a fresh key, so a real server checks the precondition
+    // instead of replaying the first activation's stored success.
+    assert_ne!(activations[1].key, activations[0].key);
 }
 
 #[tokio::test]
@@ -782,6 +789,29 @@ fn the_activation_pin_is_the_start_generation_or_1_for_a_new_slot() {
     assert_eq!(activation_generation(3, None, &at(1)), 1, "an old journal's pin from a deleted slot");
     assert_eq!(activation_generation(3, None, &at(3)), 3);
     assert_eq!(activation_generation(3, None, &at(7)), 3);
+}
+
+/// N1: re-activating a build that is no longer live (rolled back) must not replay the first
+/// activation's stored success: each re-activation sends a fresh key, so the server checks
+/// the original precondition (412) instead of answering the old 202.
+#[test]
+fn a_reactivation_uses_a_fresh_activation_key() {
+    assert_eq!(activation_step(0), "activate");
+    let keys: std::collections::BTreeSet<String> = (0..3).map(|n| idempotency_key("intent", &activation_step(n), "m", 2)).collect();
+    assert_eq!(keys.len(), 3, "every re-activation has its own key");
+    assert_eq!(idempotency_key("intent", &activation_step(0), "m", 2), idempotency_key("intent", "activate", "m", 2), "first activation keeps the key older journals used");
+    let old: Journal = serde_json::from_value(json!({"intent_id": "i", "activated": true})).unwrap();
+    assert_eq!(old.reactivations, 0, "older journals load without the field");
+}
+
+/// N1: a finished activation is reported live only when the slot serves this version.
+#[test]
+fn an_activation_is_live_only_if_the_slot_serves_the_version() {
+    let at = |active: Option<&str>| Slot { active_version_id: active.map(Into::into), state: Some("active".into()), ..Default::default() };
+    assert!(confirm_live(&at(Some("ver_2")), "ver_2", Kind::Frontend).is_ok());
+    let e = confirm_live(&at(Some("ver_1")), "ver_2", Kind::Frontend).unwrap_err().to_string();
+    assert!(e.contains("ver_2 did not become live") && e.contains("now serves ver_1") && e.contains("axiom deployments activate frontend ver_2"), "{e}");
+    assert!(confirm_live(&at(None), "ver_2", Kind::Frontend).unwrap_err().to_string().contains("no version"));
 }
 
 /// A slot still being deleted: the deploy pins nothing from it, and H2's 409 says to wait.

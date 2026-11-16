@@ -13,7 +13,10 @@ pub struct Seen {
     pub query: Option<String>,
     pub bearer: Option<String>,
     pub key: Option<String>,
+    pub if_match: Option<String>,
     pub body: Value,
+    /// The raw request body (uploads are not JSON).
+    pub raw: Vec<u8>,
 }
 
 #[derive(Default)]
@@ -58,7 +61,9 @@ async fn handler(axum::extract::State(mock): axum::extract::State<Mock>, method:
         query: uri.query().map(str::to_string),
         bearer: header("authorization").and_then(|v| v.strip_prefix("Bearer ").map(str::to_string)),
         key: header("idempotency-key"),
+        if_match: header("if-match"),
         body: serde_json::from_slice(&body).unwrap_or(Value::Null),
+        raw: body.to_vec(),
     });
     let answer = match state.scripts.get_mut(&route) {
         Some(queue) if queue.len() > 1 => queue.pop_front(),

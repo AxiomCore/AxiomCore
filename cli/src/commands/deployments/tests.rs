@@ -1,0 +1,563 @@
+//! Every `axiom deploy` / `axiom deployments` command against the scripted loopback API:
+//! method, path, body, `Idempotency-Key` and `If-Match`. The parity session is written to
+//! `cli/tests/fixtures/deployments-parity.json` for the dashboard's recorder tests
+//! (regenerate with `AXIOM_UPDATE_FIXTURES=1`).
+use super::*;
+use crate::commands::cloud_mock::{Mock, Seen};
+use clap::Parser;
+
+const ENV: &str = "11111111-2222-3333-4444-555555555555";
+const B: &str = "/api/v1/projects/demo/environments/11111111-2222-3333-4444-555555555555/deployments";
+const URL: &str = "https://demo-development-a1b2c3.axiomcore.page";
+const HTML: &str = "<h1>hi</h1>";
+const APP: &str = "console.log(1)";
+
+#[derive(Parser)]
+struct FrontendCli {
+    #[command(flatten)]
+    args: FrontendArgs,
+}
+#[derive(Parser)]
+struct BackendCli {
+    #[command(flatten)]
+    args: BackendArgs,
+}
+#[derive(Parser)]
+struct DeploymentsCli {
+    #[command(flatten)]
+    args: DeploymentsArgs,
+}
+
+fn argv<'a>(rest: &[&'a str]) -> Vec<&'a str> {
+    std::iter::once("axiom").chain(rest.iter().copied()).collect()
+}
+
+struct Harness {
+    mock: Mock,
+    base: String,
+    ctx: Ctx,
+    _dir: tempfile::TempDir,
+}
+
+impl Harness {
+    async fn new() -> Self {
+        let mock = Mock::default();
+        let base = mock.start().await;
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = Ctx {
+            client: CloudClient::for_loopback(&base, "access".into(), "refresh".into()).unwrap(),
+            poll: Duration::from_millis(1),
+            timeout: Duration::from_secs(10),
+            journal_dir: dir.path().join("deployments"),
+            cwd: dir.path().to_path_buf(),
+        };
+        mock.script("GET /api/v1/projects", 200, json!([{"id": "p1", "slug": "demo", "name": "Demo", "visibility": "private", "created_at": "t", "updated_at": "t"}]));
+        Harness { mock, base, ctx, _dir: dir }
+    }
+    fn script(&self, route: &str, status: u16, body: Value) -> &Self {
+        self.mock.script(route, status, body);
+        self
+    }
+    /// Requests to the deployments API and the upload URLs (no project/environment lookups).
+    fn deployment_requests(&self) -> Vec<Seen> {
+        self.mock.requests().into_iter().filter(|s| s.route.contains("/deployments") || s.route.starts_with("PUT /r2/")).collect()
+    }
+    fn routes(&self) -> Vec<String> {
+        self.deployment_requests().into_iter().map(|s| s.route).collect()
+    }
+    async fn deploy_frontend(&self, site: &Path, extra: &[&str]) -> Result<()> {
+        let mut args = vec![site.to_str().unwrap(), "--project", "demo", "--environment", ENV];
+        args.extend_from_slice(extra);
+        let cli = FrontendCli::try_parse_from(argv(&args)).unwrap();
+        let b = frontend_bundle(&cli.args, &self.ctx.cwd)?;
+        deploy(&self.ctx, Kind::Frontend, &b, &cli.args.flags).await
+    }
+    async fn deployments(&self, args: &[&str]) -> Result<()> {
+        let mut full = vec!["--project", "demo", "--environment", ENV];
+        full.extend_from_slice(args);
+        let cli = DeploymentsCli::try_parse_from(argv(&full)).unwrap();
+        run(&self.ctx, &cli.args).await
+    }
+}
+
+fn fixture_site() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("assets")).unwrap();
+    std::fs::write(dir.path().join("index.html"), HTML).unwrap();
+    std::fs::write(dir.path().join("assets/app.js"), APP).unwrap();
+    dir
+}
+
+fn manifest_sha(site: &Path) -> String {
+    bundle::frontend(site, Spa::Auto, false).unwrap().manifest_sha256
+}
+
+fn slot(generation: i64, state: &str, active: Option<&str>) -> Value {
+    json!({"schema": SCHEMA, "deployment_id": "dpl_1", "kind": "frontend", "generation": generation, "state": state, "active_version_id": active, "url": URL, "updated_at": "2026-11-16T10:00:00Z"})
+}
+
+fn op(id: &str, state: &str) -> Value {
+    json!({"operation_id": id, "state": state, "phase": if state == "running" { "verifying" } else { "done" }})
+}
+
+fn not_found() -> Value {
+    json!({"schema": SCHEMA, "code": "AXDEPLOY_NOT_FOUND", "message": "not found", "request_id": "r1"})
+}
+
+/// Scripts one frontend deploy of the fixture site: upload `upl_1` asks for index.html and the
+/// manifest (twice, to check dedupe), version `ver_2` builds through `op_v`, activation `op_a`.
+fn script_deploy(h: &Harness, site: &Path, running_first: bool) {
+    let manifest = manifest_sha(site);
+    let html = bundle::sha256_hex(HTML.as_bytes());
+    let target = |sha: &str| json!({"sha256": sha, "url": format!("{}/r2/{sha}", h.base), "method": "PUT", "headers": {"x-amz-checksum-sha256": "c2hh"}, "expires_at": "2026-11-16T10:15:00Z"});
+    h.script(&format!("POST {B}/frontend/uploads"), 201, json!({"id": "upl_1", "state": "open", "missing_hashes": [html, manifest, html], "upload_urls": [target(&html), target(&manifest)]}));
+    h.script(&format!("PUT /r2/{html}"), 200, json!({}));
+    h.script(&format!("PUT /r2/{manifest}"), 200, json!({}));
+    h.script(&format!("POST {B}/frontend/uploads/upl_1/complete"), 200, json!({"id": "upl_1", "state": "sealed"}));
+    h.script(&format!("POST {B}/frontend/versions"), 202, json!({"deployment_id": "dpl_1", "generation": 1, "state": "empty", "version_id": "ver_2", "operation_id": "op_v", "url": URL}));
+    if running_first {
+        h.script(&format!("GET {B}/frontend/operations/op_v"), 200, op("op_v", "running"));
+    }
+    h.script(&format!("GET {B}/frontend/operations/op_v"), 200, op("op_v", "succeeded"));
+    h.script(&format!("GET {B}/frontend/versions/ver_2"), 200, json!({"id": "ver_2", "status": "ready", "manifest_sha256": manifest}));
+    h.script(&format!("POST {B}/frontend/versions/ver_2/activate"), 202, json!({"generation": 2, "state": "activating", "operation_id": "op_a", "desired_version_id": "ver_2", "url": URL}));
+    h.script(&format!("GET {B}/frontend/operations/op_a"), 200, op("op_a", "succeeded"));
+}
+
+#[tokio::test]
+async fn deploy_frontend_uploads_builds_activates_and_prints_the_url() {
+    let h = Harness::new().await;
+    let site = fixture_site();
+    let manifest = manifest_sha(site.path());
+    let html = bundle::sha256_hex(HTML.as_bytes());
+    h.script(&format!("GET {B}/frontend"), 404, not_found()).script(&format!("GET {B}/frontend"), 200, slot(1, "empty", None)).script(&format!("GET {B}/frontend"), 200, slot(2, "active", Some("ver_2")));
+    script_deploy(&h, site.path(), true);
+    h.deploy_frontend(site.path(), &["--yes", "--message", "first"]).await.unwrap();
+
+    let mut routes = h.routes();
+    // The two PUTs run concurrently.
+    routes[2..4].sort();
+    let mut puts = [format!("PUT /r2/{html}"), format!("PUT /r2/{manifest}")];
+    puts.sort();
+    let want: Vec<String> = [
+        format!("GET {B}/frontend"),
+        format!("POST {B}/frontend/uploads"),
+        puts[0].clone(),
+        puts[1].clone(),
+        format!("POST {B}/frontend/uploads/upl_1/complete"),
+        format!("POST {B}/frontend/versions"),
+        format!("GET {B}/frontend/operations/op_v"),
+        format!("GET {B}/frontend/operations/op_v"),
+        format!("GET {B}/frontend/versions/ver_2"),
+        format!("GET {B}/frontend"),
+        format!("POST {B}/frontend/versions/ver_2/activate"),
+        format!("GET {B}/frontend/operations/op_a"),
+        format!("GET {B}/frontend"),
+    ]
+    .to_vec();
+    assert_eq!(routes, want);
+
+    let one = |route: String| h.mock.seen(&route).remove(0);
+    let upload = one(format!("POST {B}/frontend/uploads"));
+    assert_eq!(
+        upload.body,
+        json!({"manifest_sha256": manifest, "total_bytes": 25, "file_count": 2, "purpose": "static_bundle", "files": [
+            {"sha256": bundle::sha256_hex(APP.as_bytes()), "size": 14}, {"sha256": html, "size": 11}]})
+    );
+    // PUTs carry the server's headers and bytes, never the session token.
+    let put = one(format!("PUT /r2/{html}"));
+    assert_eq!((put.raw.as_slice(), put.bearer.as_deref()), (HTML.as_bytes(), None));
+    let put = one(format!("PUT /r2/{manifest}"));
+    assert_eq!(bundle::sha256_hex(&put.raw), manifest);
+    assert!(String::from_utf8(put.raw).unwrap().starts_with(r#"{"schema":"axiom-static-bundle/v1","entrypoint":"/index.html","spa_fallback":true,"files":[{"path":"/assets/app.js""#));
+    assert_eq!(one(format!("POST {B}/frontend/uploads/upl_1/complete")).body, json!({}));
+    assert_eq!(one(format!("POST {B}/frontend/versions")).body, json!({"artifact": {"type": "static_bundle", "upload_id": "upl_1"}, "message": "first"}));
+    let activate = one(format!("POST {B}/frontend/versions/ver_2/activate"));
+    assert_eq!((activate.body.clone(), activate.if_match.as_deref()), (json!({}), Some("\"g1\"")));
+    // Every mutation is keyed; the keys are distinct, deterministic and hex SHA-256.
+    let keys: Vec<String> = h.deployment_requests().iter().filter(|s| s.route.starts_with("POST")).map(|s| s.key.clone().expect("Idempotency-Key")).collect();
+    assert_eq!(keys.len(), 4);
+    assert!(keys.iter().all(|k| k.len() == 64 && k.bytes().all(|b| b.is_ascii_hexdigit())));
+    let mut unique = keys.clone();
+    unique.dedup();
+    assert_eq!(unique.len(), 4);
+    let journal: Journal = serde_json::from_slice(&std::fs::read(h.ctx.journal_dir.join(format!("demo-{ENV}-frontend.json"))).unwrap()).unwrap();
+    assert_eq!(keys[0], idempotency_key(&journal.intent_id, "create_upload", &manifest, 0));
+    assert_eq!(keys[3], idempotency_key(&journal.intent_id, "activate", &manifest, 1));
+    assert!(journal.activated && journal.version_id.as_deref() == Some("ver_2") && journal.url.as_deref() == Some(URL));
+
+    // The same build again: reported, nothing sent to the deployments API.
+    let before = h.deployment_requests().len();
+    h.deploy_frontend(site.path(), &["--yes"]).await.unwrap();
+    assert_eq!(h.deployment_requests().len(), before);
+    // --new starts a fresh intent with new keys.
+    h.deploy_frontend(site.path(), &["--yes", "--new", "--json"]).await.unwrap();
+    let uploads = h.mock.seen(&format!("POST {B}/frontend/uploads"));
+    assert_eq!(uploads.len(), 2);
+    assert_ne!(uploads[0].key, uploads[1].key);
+}
+
+#[tokio::test]
+async fn deploy_frontend_no_activate_stops_at_ready_and_a_rerun_activates_that_version() {
+    let h = Harness::new().await;
+    let site = fixture_site();
+    for (generation, active) in [(4, "ver_1"), (4, "ver_1"), (5, "ver_2")] {
+        h.script(&format!("GET {B}/frontend"), 200, slot(generation, "active", Some(active)));
+    }
+    script_deploy(&h, site.path(), false);
+    h.deploy_frontend(site.path(), &["--no-activate", "--wait", "--json"]).await.unwrap();
+    let routes = h.routes();
+    assert!(!routes.iter().any(|r| r.ends_with("/activate")), "{routes:?}");
+    assert_eq!(routes.last().unwrap(), &format!("GET {B}/frontend/versions/ver_2"));
+    let first_upload = h.mock.seen(&format!("POST {B}/frontend/uploads"))[0].key.clone();
+    assert!(first_upload.is_some());
+
+    // Re-running without --no-activate resumes the journal: no new upload or version.
+    h.deploy_frontend(site.path(), &["--yes"]).await.unwrap();
+    assert_eq!(h.mock.seen(&format!("POST {B}/frontend/uploads")).len(), 1);
+    assert_eq!(h.mock.seen(&format!("POST {B}/frontend/versions")).len(), 1);
+    let activate = h.mock.seen(&format!("POST {B}/frontend/versions/ver_2/activate"));
+    assert_eq!(activate.len(), 1);
+    assert_eq!(activate[0].if_match.as_deref(), Some("\"g4\""));
+}
+
+#[tokio::test]
+async fn an_interrupted_deploy_resumes_with_the_same_keys() {
+    let site = fixture_site();
+    // Order the complete replies: 503 first, then sealed.
+    let h2 = Harness::new().await;
+    let manifest = manifest_sha(site.path());
+    let html = bundle::sha256_hex(HTML.as_bytes());
+    let target = |sha: &str| json!({"sha256": sha, "url": format!("{}/r2/{sha}", h2.base), "method": "PUT", "headers": {}});
+    h2.script(&format!("GET {B}/frontend"), 404, not_found());
+    h2.script(&format!("POST {B}/frontend/uploads"), 201, json!({"id": "upl_1", "state": "open", "missing_hashes": [html, manifest], "upload_urls": [target(&html), target(&manifest)]}));
+    h2.script(&format!("GET {B}/frontend/uploads/upl_1"), 200, json!({"id": "upl_1", "state": "open", "missing_hashes": []}));
+    h2.script(&format!("PUT /r2/{html}"), 200, json!({})).script(&format!("PUT /r2/{manifest}"), 200, json!({}));
+    h2.script(&format!("POST {B}/frontend/uploads/upl_1/complete"), 503, json!({"code": "AXDEPLOY_VERIFIER_UNAVAILABLE", "retryable": true}))
+        .script(&format!("POST {B}/frontend/uploads/upl_1/complete"), 200, json!({"id": "upl_1", "state": "sealed"}));
+    h2.script(&format!("POST {B}/frontend/versions"), 202, json!({"version_id": "ver_2", "operation_id": "op_v", "url": URL}));
+    h2.script(&format!("GET {B}/frontend/operations/op_v"), 200, op("op_v", "succeeded"));
+    h2.script(&format!("GET {B}/frontend/versions/ver_2"), 200, json!({"id": "ver_2", "status": "ready"}));
+    let e = h2.deploy_frontend(site.path(), &["--no-activate"]).await.unwrap_err().to_string();
+    assert!(e.contains("AXDEPLOY_VERIFIER_UNAVAILABLE") && e.contains("Try again in a minute"), "{e}");
+    h2.deploy_frontend(site.path(), &["--no-activate"]).await.unwrap();
+    // The rerun read the upload instead of creating another, and completed with the same key.
+    assert_eq!(h2.mock.seen(&format!("POST {B}/frontend/uploads")).len(), 1);
+    assert_eq!(h2.mock.seen(&format!("GET {B}/frontend/uploads/upl_1")).len(), 1);
+    let completes = h2.mock.seen(&format!("POST {B}/frontend/uploads/upl_1/complete"));
+    assert_eq!(completes.len(), 2);
+    assert_eq!(completes[0].key, completes[1].key);
+    assert_eq!(h2.mock.seen(&format!("GET {B}/frontend")).len(), 1, "the original generation is read once per intent");
+    // A different build starts a fresh intent.
+    std::fs::write(site.path().join("index.html"), "<h1>changed</h1>").unwrap();
+    let _ = h2.deploy_frontend(site.path(), &["--no-activate"]).await;
+    let uploads = h2.mock.seen(&format!("POST {B}/frontend/uploads"));
+    assert_eq!(uploads.len(), 2);
+    assert_ne!(uploads[0].body["manifest_sha256"], uploads[1].body["manifest_sha256"]);
+}
+
+#[tokio::test]
+async fn missing_upload_urls_and_server_errors_show_the_next_step() {
+    let h = Harness::new().await;
+    let site = fixture_site();
+    let html = bundle::sha256_hex(HTML.as_bytes());
+    h.script(&format!("GET {B}/frontend"), 404, not_found());
+    h.script(&format!("POST {B}/frontend/uploads"), 201, json!({"id": "upl_1", "state": "open", "missing_hashes": [html]}));
+    h.script(&format!("GET {B}/frontend/uploads/upl_1"), 200, json!({"id": "upl_1", "state": "open", "missing_hashes": [html]}));
+    let e = h.deploy_frontend(site.path(), &["--yes"]).await.unwrap_err().to_string();
+    assert!(e.contains("AXDEPLOY_UPLOAD_URLS_UNAVAILABLE") && e.contains("hosting uploads are not enabled"), "{e}");
+    assert_eq!(h.mock.seen(&format!("GET {B}/frontend/uploads/upl_1")).len(), 1);
+
+    let h = Harness::new().await;
+    h.script(&format!("GET {B}/frontend"), 503, json!({"schema": SCHEMA, "code": "AXDEPLOY_DISABLED", "request_id": "req_9", "retryable": false}));
+    let e = h.deploy_frontend(site.path(), &["--yes"]).await.unwrap_err().to_string();
+    assert_eq!(e, "AXDEPLOY_DISABLED: Deployments are not enabled for this project yet (invite-only pilot). Ask the Axiom team to add it. (request req_9)");
+    h.script(&format!("GET {B}/backend"), 404, not_found());
+    let e = h.deployments(&["status", "backend"]).await.unwrap_err().to_string();
+    assert_eq!(e, "There is no backend deployment in this environment yet. Deploy one with `axiom deploy backend`.");
+}
+
+#[tokio::test]
+async fn a_failed_version_ends_the_intent_with_its_reason() {
+    let site = fixture_site();
+    let h = Harness::new().await;
+    h.script(&format!("GET {B}/frontend"), 404, not_found());
+    let manifest = manifest_sha(site.path());
+    h.script(&format!("POST {B}/frontend/uploads"), 201, json!({"id": "upl_1", "state": "sealed", "missing_hashes": []}));
+    h.script(&format!("POST {B}/frontend/versions"), 202, json!({"version_id": "ver_2", "operation_id": "op_v"}));
+    h.script(&format!("GET {B}/frontend/operations/op_v"), 200, json!({"operation_id": "op_v", "state": "failed", "failure": {"code": "AXDEPLOY_DIGEST_MISMATCH", "message": "index.html"}}));
+    let e = h.deploy_frontend(site.path(), &["--yes"]).await.unwrap_err().to_string();
+    assert!(e.contains("Operation op_v failed: AXDEPLOY_DIGEST_MISMATCH: index.html. Uploaded files did not match the manifest."), "{e}");
+    let journal: Journal = serde_json::from_slice(&std::fs::read(h.ctx.journal_dir.join(format!("demo-{ENV}-frontend.json"))).unwrap()).unwrap();
+    assert_eq!(journal.manifest_sha256, manifest);
+    assert!(journal.failed && !journal.activated);
+}
+
+#[tokio::test]
+async fn deploy_backend_from_input_uploads_container_input() {
+    let h = Harness::new().await;
+    let input = tempfile::tempdir().unwrap();
+    std::fs::write(input.path().join("contract.axiom"), "c").unwrap();
+    let b = bundle::backend(input.path()).unwrap();
+    let file = bundle::sha256_hex(b"c");
+    let api = "https://demo-development-a1b2c3-api.axiomcore.page";
+    let target = |sha: &str| json!({"sha256": sha, "url": format!("{}/r2/{sha}", h.base), "method": "PUT", "headers": {}});
+    h.script(&format!("GET {B}/backend"), 404, not_found()).script(&format!("GET {B}/backend"), 200, json!({"generation": 1, "state": "empty", "url": api})).script(&format!("GET {B}/backend"), 200, json!({"generation": 2, "state": "active", "active_version_id": "ver_b", "url": api}));
+    h.script(&format!("POST {B}/backend/uploads"), 201, json!({"id": "upl_b", "state": "open", "missing_hashes": [file, b.manifest_sha256], "upload_urls": [target(&file), target(&b.manifest_sha256)]}));
+    h.script(&format!("PUT /r2/{file}"), 200, json!({})).script(&format!("PUT /r2/{}", b.manifest_sha256), 200, json!({}));
+    h.script(&format!("POST {B}/backend/uploads/upl_b/complete"), 200, json!({"id": "upl_b", "state": "sealed"}));
+    h.script(&format!("POST {B}/backend/versions"), 202, json!({"version_id": "ver_b", "operation_id": "op_s"}));
+    h.script(&format!("GET {B}/backend/operations/op_s"), 200, op("op_s", "running")).script(&format!("GET {B}/backend/operations/op_s"), 200, op("op_s", "succeeded"));
+    h.script(&format!("GET {B}/backend/versions/ver_b"), 200, json!({"id": "ver_b", "status": "ready"}));
+    h.script(&format!("POST {B}/backend/versions/ver_b/activate"), 202, json!({"operation_id": "op_ba"}));
+    h.script(&format!("GET {B}/backend/operations/op_ba"), 200, op("op_ba", "succeeded"));
+    let cli = BackendCli::try_parse_from(argv(&["--from-input", input.path().to_str().unwrap(), "--project", "demo", "--environment", ENV, "--yes", "--json"])).unwrap();
+    let prepared = backend_bundle(&cli.args, &h.ctx.cwd).unwrap();
+    deploy(&h.ctx, Kind::Backend, &prepared.bundle, &cli.args.flags).await.unwrap();
+    let up = &h.mock.seen(&format!("POST {B}/backend/uploads"))[0];
+    assert_eq!(up.body, json!({"manifest_sha256": b.manifest_sha256, "total_bytes": 1, "file_count": 1, "purpose": "container_input", "files": [{"sha256": file, "size": 1}]}));
+    assert_eq!(h.mock.seen(&format!("POST {B}/backend/versions"))[0].body, json!({"artifact": {"type": "container_input", "upload_id": "upl_b", "target": "container-amd64"}}));
+    assert_eq!(h.mock.seen(&format!("POST {B}/backend/versions/ver_b/activate"))[0].if_match.as_deref(), Some("\"g1\""));
+    assert_eq!(h.mock.seen(&format!("GET {B}/backend/operations/op_s")).len(), 2);
+    // Without --from-input and nothing to package, the error names the fixes.
+    let empty = tempfile::tempdir().unwrap();
+    let cli = BackendCli::try_parse_from(argv(&[])).unwrap();
+    let e = backend_bundle(&cli.args, empty.path()).err().unwrap().to_string();
+    assert!(e.contains("No backend contract found") && e.contains("--from-input"), "{e}");
+}
+
+/// list, status, versions, activate, rollback (previous and --to), logs, delete, health.
+#[tokio::test]
+async fn every_deployments_command_sends_the_contract_requests() {
+    let h = Harness::new().await;
+    h.script(&format!("GET {B}"), 200, json!({"items": [slot(3, "active", Some("ver_2"))], "next_cursor": null}));
+    h.script(&format!("GET {B}/frontend"), 200, json!({"generation": 3, "state": "active", "active_version_id": "ver_2", "previous_version_id": "ver_1", "operation_id": "op_last", "url": URL}));
+    h.script(&format!("GET {B}/frontend/operations/op_last"), 200, json!({"operation_id": "op_last", "action": "activate", "state": "failed", "failure": {"code": "AXDEPLOY_NOT_READY"}}));
+    h.script(&format!("GET {B}/frontend/versions"), 200, json!({"items": [{"id": "ver_2", "status": "ready", "created_at": "t2"}, {"id": "ver_1", "status": "ready", "created_at": "t1"}], "next_cursor": null}));
+    h.script(&format!("POST {B}/frontend/versions/ver_1/activate"), 202, json!({"operation_id": "op_1", "state": "activating"}));
+    h.script(&format!("GET {B}/frontend/operations/op_1"), 200, op("op_1", "succeeded"));
+    h.script(&format!("POST {B}/frontend/rollback"), 202, json!({"operation_id": "op_r", "state": "activating"}));
+    h.script(&format!("GET {B}/frontend/operations/op_r"), 200, op("op_r", "succeeded"));
+    h.script(&format!("GET {B}/frontend/logs"), 200, json!({"items": [{"id": "e1", "action": "activate", "step": "done", "version_id": "ver_2", "created_at": "t", "result": {"state": "succeeded"}}], "next_cursor": null}));
+    h.script(&format!("DELETE {B}/frontend"), 202, json!({"operation_id": "op_d", "state": "deleting"}));
+    h.script(&format!("GET {B}/frontend/health"), 200, json!({"deployment_id": "dpl_1", "health": "healthy"}));
+    for args in [
+        vec!["list"],
+        vec!["status", "frontend"],
+        vec!["show", "frontend", "--json"],
+        vec!["versions", "frontend"],
+        vec!["activate", "frontend", "ver_1", "--yes", "--wait"],
+        vec!["rollback", "frontend", "--yes"],
+        vec!["rollback", "frontend", "--to", "ver_1", "--yes", "--wait"],
+        vec!["logs", "frontend", "--since", "2026-11-16T09:00:00+01:00", "--version", "ver_2"],
+        vec!["logs", "frontend", "--stream", "runtime"],
+        vec!["delete", "frontend", "--yes"],
+        vec!["health", "frontend"],
+    ] {
+        h.deployments(&args).await.unwrap_or_else(|e| panic!("{args:?}: {e}"));
+    }
+    type Row = (String, Option<String>, Value, Option<String>, bool);
+    let seen: Vec<Row> =
+        h.deployment_requests().into_iter().map(|s| (s.route, s.query, s.body, s.if_match, s.key.is_some())).collect();
+    let get = |path: &str| (format!("GET {B}{path}"), None, Value::Null, None, false);
+    let want = vec![
+        get(""),
+        get("/frontend"),
+        get("/frontend/operations/op_last"),
+        get("/frontend"),
+        get("/frontend/operations/op_last"),
+        get("/frontend/versions"),
+        get("/frontend"),
+        // activate --wait
+        get("/frontend"),
+        (format!("POST {B}/frontend/versions/ver_1/activate"), None, json!({}), Some("\"g3\"".into()), true),
+        get("/frontend/operations/op_1"),
+        get("/frontend"),
+        // rollback (previous)
+        get("/frontend"),
+        (format!("POST {B}/frontend/rollback"), None, json!({}), Some("\"g3\"".into()), true),
+        // rollback --to --wait
+        get("/frontend"),
+        (format!("POST {B}/frontend/rollback"), None, json!({"to_version_id": "ver_1"}), Some("\"g3\"".into()), true),
+        get("/frontend/operations/op_r"),
+        get("/frontend"),
+        // logs
+        (format!("GET {B}/frontend/logs"), Some("stream=lifecycle&since=2026-11-16T08%3A00%3A00Z&version=ver_2".into()), Value::Null, None, false),
+        (format!("GET {B}/frontend/logs"), Some("stream=runtime".into()), Value::Null, None, false),
+        // delete (no body)
+        get("/frontend"),
+        (format!("DELETE {B}/frontend"), None, Value::Null, Some("\"g3\"".into()), true),
+        get("/frontend/health"),
+    ];
+    assert_eq!(seen, want);
+    let delete = &h.mock.seen(&format!("DELETE {B}/frontend"))[0];
+    assert!(delete.raw.is_empty());
+    // Rollback keys differ by target; the same request on the same generation repeats its key.
+    let rollbacks = h.mock.seen(&format!("POST {B}/frontend/rollback"));
+    assert_ne!(rollbacks[0].key, rollbacks[1].key);
+    h.deployments(&["rollback", "frontend", "--yes"]).await.unwrap();
+    assert_eq!(h.mock.seen(&format!("POST {B}/frontend/rollback"))[2].key, rollbacks[0].key);
+}
+
+#[tokio::test]
+async fn environment_names_resolve_through_configuration_environments() {
+    let h = Harness::new().await;
+    h.script("GET /api/v1/projects/demo/configuration-environments", 200, json!([{"id": ENV, "slug": "development"}]));
+    h.script(&format!("GET {B}"), 200, json!({"items": []}));
+    let cli = DeploymentsCli::try_parse_from(argv(&["list", "--project", "Demo"])).unwrap();
+    run(&h.ctx, &cli.args).await.unwrap();
+    assert_eq!(h.mock.seen("GET /api/v1/projects/demo/configuration-environments").len(), 1);
+    assert_eq!(h.mock.seen(&format!("GET {B}")).len(), 1);
+    assert_eq!(list_lines(&[], "development"), vec!["No deployments in development yet. Deploy with `axiom deploy frontend` or `axiom deploy backend`."]);
+}
+
+#[test]
+fn list_and_status_render_tables_and_failures() {
+    let s: Slot = serde_json::from_value(slot(3, "active", Some("ver_2"))).unwrap();
+    let lines = list_lines(std::slice::from_ref(&s), "development");
+    assert_eq!(lines[0], format!("KIND      STATE   ACTIVE VERSION  {:<w$}  UPDATED", "URL", w = URL.len()));
+    assert_eq!(lines[1], format!("frontend  active  ver_2           {URL}  2026-11-16T10:00:00Z"));
+    let o: Operation = serde_json::from_value(json!({"operation_id": "op_1", "action": "activate", "state": "failed", "failure": {"code": "AXDEPLOY_NOT_READY", "message": "probe"}})).unwrap();
+    let text = status_lines(Kind::Frontend, &s, Some(&o)).join("\n");
+    assert!(text.contains(&format!("URL:       {URL}")) && text.contains("Last operation: op_1 activate failed"), "{text}");
+    assert!(text.contains("Failure:   AXDEPLOY_NOT_READY: probe. That version is not ready. Check it with `axiom deployments versions`."), "{text}");
+}
+
+#[test]
+fn since_and_until_take_durations_or_rfc3339() {
+    let now = chrono::DateTime::parse_from_rfc3339("2026-11-16T12:00:00Z").unwrap().with_timezone(&chrono::Utc);
+    assert_eq!(parse_time_at("10m", "--since", now).unwrap(), "2026-11-16T11:50:00Z");
+    assert_eq!(parse_time_at("1h", "--since", now).unwrap(), "2026-11-16T11:00:00Z");
+    assert_eq!(parse_time_at("2d", "--since", now).unwrap(), "2026-11-14T12:00:00Z");
+    assert_eq!(parse_time_at("30s", "--since", now).unwrap(), "2026-11-16T11:59:30Z");
+    assert_eq!(parse_time_at("2026-11-16T09:00:00+01:00", "--until", now).unwrap(), "2026-11-16T08:00:00Z");
+    for bad in ["10", "m", "10w", "yesterday", "-5m", "99999999999999d"] {
+        assert!(parse_time_at(bad, "--since", now).unwrap_err().to_string().starts_with("--since takes"), "{bad}");
+    }
+}
+
+#[test]
+fn confirmation_covers_traffic_changes_only() {
+    let parse = |a: &[&str]| DeploymentsCli::try_parse_from(argv(a)).unwrap().args;
+    assert_eq!(asks_first(&parse(&["activate", "frontend", "ver_1"])), Some(false));
+    assert_eq!(asks_first(&parse(&["rollback", "backend", "--yes"])), Some(true));
+    assert_eq!(asks_first(&parse(&["delete", "frontend"])), Some(false));
+    for read in [vec!["list"], vec!["status", "frontend"], vec!["versions", "frontend"], vec!["logs", "frontend"], vec!["health", "backend"]] {
+        assert_eq!(asks_first(&parse(&read)), None, "{read:?}");
+    }
+    assert_eq!(action_question(&parse(&["--project", "demo", "--environment", "staging", "delete", "frontend"])).unwrap(), "Delete the frontend deployment of project demo (staging)? Its URL stops serving.");
+    assert_eq!(action_question(&parse(&["rollback", "backend"])).unwrap(), "Roll the backend of the linked project (development) back to the previous version?");
+    let t = parse(&["--project", "demo", "list"]).target;
+    assert_eq!(deploy_question(Kind::Frontend, Some(Path::new("./dist")), &t), "Deploy ./dist as the frontend of project demo (development) and make it live?");
+    // The D2 §8 live-checklist invocations parse.
+    for line in [
+        vec!["list", "--project", "p", "--environment", "e", "--json"],
+        vec!["activate", "frontend", "ver_1", "--project", "p", "--environment", "e", "--yes", "--wait"],
+        vec!["logs", "frontend", "--project", "p", "--environment", "e", "--since", "10m"],
+        vec!["rollback", "frontend", "--to", "ver_0", "--project", "p", "--environment", "e", "--yes", "--wait"],
+        vec!["delete", "frontend", "--project", "p", "--environment", "e", "--yes", "--wait"],
+    ] {
+        DeploymentsCli::try_parse_from(argv(&line)).unwrap_or_else(|e| panic!("{line:?}: {e}"));
+    }
+    let f = FrontendCli::try_parse_from(argv(&["./fixture-dist", "--project", "p", "--environment", "e", "--no-activate", "--wait", "--json"])).unwrap();
+    assert!(f.args.flags.no_activate && f.args.flags.target.json);
+    assert!(FrontendCli::try_parse_from(argv(&["--spa", "--no-spa"])).is_err());
+}
+
+/// The scripted session the dashboard must reproduce: deploy the fixture site → activate the
+/// previous version → roll back → delete. Ids are normalised to placeholders.
+#[tokio::test]
+async fn parity_session_matches_the_recorded_fixture() {
+    let h = Harness::new().await;
+    let site = fixture_site();
+    let g = |n: i64, active: &str| slot(n, "active", Some(active));
+    for (status, body) in [(404, not_found()), (200, slot(1, "empty", None)), (200, g(2, "ver_2")), (200, g(2, "ver_2")), (200, g(3, "ver_1")), (200, g(3, "ver_1")), (200, g(4, "ver_2")), (200, g(4, "ver_2")), (404, not_found())] {
+        h.script(&format!("GET {B}/frontend"), status, body);
+    }
+    script_deploy(&h, site.path(), false);
+    h.script(&format!("POST {B}/frontend/versions/ver_1/activate"), 202, json!({"operation_id": "op_b", "state": "activating"}));
+    h.script(&format!("GET {B}/frontend/operations/op_b"), 200, op("op_b", "succeeded"));
+    h.script(&format!("POST {B}/frontend/rollback"), 202, json!({"operation_id": "op_r", "state": "activating"}));
+    h.script(&format!("GET {B}/frontend/operations/op_r"), 200, op("op_r", "succeeded"));
+    h.script(&format!("DELETE {B}/frontend"), 202, json!({"operation_id": "op_d", "state": "deleting"}));
+    h.script(&format!("GET {B}/frontend/operations/op_d"), 200, op("op_d", "succeeded"));
+
+    h.deploy_frontend(site.path(), &["--yes", "--json"]).await.unwrap();
+    h.deployments(&["activate", "frontend", "ver_1", "--yes", "--wait", "--json"]).await.unwrap();
+    h.deployments(&["rollback", "frontend", "--yes", "--wait", "--json"]).await.unwrap();
+    h.deployments(&["delete", "frontend", "--yes", "--wait", "--json"]).await.unwrap();
+
+    let mut records: Vec<Entry> = h.deployment_requests().iter().map(record).collect();
+    // Concurrent PUTs: order each run by object hash.
+    let mut i = 0;
+    while i < records.len() {
+        let mut j = i;
+        while j < records.len() && records[j].action == "put_object" {
+            j += 1;
+        }
+        records[i..j].sort_by(|a, b| a.object_sha256.cmp(&b.object_sha256));
+        i = j.max(i + 1);
+    }
+    let text = serde_json::to_string_pretty(&records).unwrap() + "\n";
+    let text = text.replace("upl_1", "<upload_id>").replace("ver_2", "<version_id>").replace("ver_1", "<previous_version_id>");
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/deployments-parity.json");
+    if std::env::var_os("AXIOM_UPDATE_FIXTURES").is_some() {
+        std::fs::write(&path, &text).unwrap();
+    }
+    let recorded = std::fs::read_to_string(&path).expect("tests/fixtures/deployments-parity.json (regenerate with AXIOM_UPDATE_FIXTURES=1)");
+    assert_eq!(recorded, text, "the parity fixture is stale; regenerate it with AXIOM_UPDATE_FIXTURES=1 and update the dashboard");
+}
+
+/// Field order of each fixture entry.
+#[derive(Serialize)]
+struct Entry {
+    action: &'static str,
+    method: String,
+    path: String,
+    body: Value,
+    if_match: Option<String>,
+    idempotency_key: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    object_sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bytes: Option<usize>,
+    /// The canonical manifest, when this PUT uploads it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    manifest: Option<String>,
+}
+
+fn record(s: &Seen) -> Entry {
+    let (method, path) = s.route.split_once(' ').unwrap();
+    let rest = path.strip_prefix(B).unwrap_or(path);
+    let segments: Vec<&str> = rest.trim_start_matches('/').split('/').collect();
+    let action = match (method, segments.as_slice()) {
+        ("PUT", _) => "put_object",
+        ("GET", [_kind]) => "slot",
+        ("DELETE", [_kind]) => "delete",
+        ("POST", [_, "uploads"]) => "create_upload",
+        ("POST", [_, "uploads", _, "complete"]) => "complete_upload",
+        ("POST", [_, "versions"]) => "create_version",
+        ("GET", [_, "versions", _]) => "version",
+        ("POST", [_, "versions", _, "activate"]) => "activate",
+        ("POST", [_, "rollback"]) => "rollback",
+        ("GET", [_, "operations", _]) => "operation",
+        other => panic!("unrecorded request {other:?}"),
+    };
+    let put = method == "PUT";
+    let text = String::from_utf8(s.raw.clone()).ok().filter(|t| t.starts_with("{\"schema\":"));
+    let mut path = path.to_string();
+    for op in ["op_v", "op_a", "op_b", "op_r", "op_d"] {
+        path = path.replace(&format!("/{op}"), "/<operation_id>");
+    }
+    Entry {
+        action,
+        method: method.into(),
+        path: if put { "<upload_urls[sha256].url>".into() } else { path },
+        body: if put { Value::Null } else { s.body.clone() },
+        if_match: s.if_match.clone(),
+        idempotency_key: s.key.is_some(),
+        object_sha256: put.then(|| bundle::sha256_hex(&s.raw)),
+        bytes: put.then_some(s.raw.len()),
+        manifest: if put { text } else { None },
+    }
+}

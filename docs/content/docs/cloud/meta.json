@@ -2,6 +2,7 @@
   "title": "Axiom Cloud",
   "pages": [
     "index",
+    "deploy-to-axiom",
     "project-management",
     "releases-and-environments",
     "secrets",

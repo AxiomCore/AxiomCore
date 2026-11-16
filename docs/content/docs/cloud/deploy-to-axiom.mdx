@@ -1,0 +1,225 @@
+---
+title: Deploy to Axiom
+description: Put a static frontend and an Axiom backend on Axiom-hosted URLs with one CLI command each or from the dashboard, then redeploy, roll back, delete and run deploys in CI.
+pageType: tutorial
+---
+
+Deploy a built frontend and an Axiom backend to Axiom-hosted URLs with one
+command each, or from the dashboard's **Deployments** page. Both surfaces use
+the same API, so you can deploy from the CLI and roll back in the dashboard.
+
+<StatusNote status="experimental" title="Invite-only pilot">
+  Axiom-hosted deployments are open to invited projects only. Other projects
+  get `AXDEPLOY_DISABLED`; ask the Axiom team to add yours. Custom domains,
+  runtime and access logs, and usage metering are not available yet. URLs,
+  limits and command output can change during the pilot.
+</StatusNote>
+
+## Prerequisites
+
+- An Axiom CLI release after 0.154.0 (see [Install the Axiom CLI](/getting-started/installation)).
+  CLI 0.154.0 and earlier have no `axiom deploy frontend`, `axiom deploy backend` or `axiom deployments`.
+- An Axiom Cloud project that is in the pilot, and the **Maintainer** role
+  or higher on it. A protected environment needs **Owner**.
+- `axiom login`, and a directory linked to the project with
+  `axiom project link` (or pass `--project` to every command).
+- For a frontend: a static build, for example the `dist/` folder that
+  `npm run build` writes. It must contain `index.html`.
+- For a backend: a compiled Axiom backend contract (`backend.axiom` or
+  `axiom.axiom`), its server plan (`backend.server.json`, written by
+  `axiom build` beside the contract) and a `deployment.json` from
+  `axiom server deployment`. They must package for the `container-amd64`
+  target. See [Deployment targets](/backend/deployment).
+
+Commands deploy to the `development` environment unless you pass
+`--environment`. Each project environment has its own frontend and backend
+URLs.
+
+## Deploy a frontend
+
+From your frontend project, after building it:
+
+```bash title="Terminal: your frontend project"
+npm run build
+axiom deploy frontend
+```
+
+With no folder named, the CLI uses the first of `dist/`, `build/` and `out/`
+that exists. To name it, pass it: `axiom deploy frontend ./dist`.
+
+Single-page app routing is on by default: a page reload on a client-side
+route such as `/settings` returns `index.html`. If your build has its own
+`404.html`, it is off and missing paths answer 404 instead; pass
+`--spa` or `--no-spa` to choose explicitly.
+
+The command:
+
+1. lists and hashes the files in the folder and checks them against the
+   [upload rules](/tooling/cli-deployments#which-files-are-uploaded):
+   `index.html` is required; `.env*` files, private keys, `_headers`,
+   `_redirects`, `_worker.js` and anything under `_axiom/` are rejected, and
+   so are source maps unless you pass `--include-source-maps`; dotfiles
+   other than `.well-known/` are skipped;
+2. uploads only the files Axiom does not already hold;
+3. waits until the new version is ready;
+4. asks you to confirm, then activates the version;
+5. prints the URL.
+
+A bundle can hold up to 10,000 files and 1 GiB. The frontend is served as
+static files only: there is no server-side rendering and no server code.
+Values your build baked in, such as an API base URL, are served as they
+are, so build once per environment.
+
+## Deploy a backend
+
+From your backend project:
+
+```bash title="Terminal: your backend project"
+axiom deploy backend
+```
+
+The CLI packages the contract, plan and deployment file in the current
+directory into a data-only package input (the same output as
+`axiom server package --output-input`), uploads it, and waits while Axiom
+builds and checks the hosted backend with its own runtime. It then asks you
+to confirm, activates the version and prints the URL.
+
+To use other file names, pass `--contract`, `--plan` and `--deployment`. If
+you package the backend yourself, pass the folder:
+
+```bash title="Terminal: your backend project"
+axiom server package backend.axiom backend.server.json --deployment deployment.json --target container-amd64 --output-input package-input
+axiom deploy backend --from-input package-input
+```
+
+You cannot upload your own container image. The hosted backend always runs
+the Axiom runtime from your contract and server plan.
+
+## Open the URL
+
+Each deployment gets a fixed address on `axiomcore.page`:
+
+| Kind | URL |
+| --- | --- |
+| Frontend | `https://<project>-<environment>-<6 hex characters>.axiomcore.page` |
+| Backend | `https://<project>-<environment>-<6 hex characters>-api.axiomcore.page` |
+
+The address stays the same across redeploys and rollbacks. Open the URL in a browser, or check it:
+
+```bash title="Terminal"
+axiom deployments list
+axiom deployments status frontend
+```
+
+`list` shows both deployments of the environment with their state, URL and
+active version. `status` shows one in detail, including the last failure.
+
+## Redeploy, roll back and delete
+
+Run the same deploy command again after a change. Each deploy creates a new
+version; files that did not change are not uploaded again.
+
+If a deploy is interrupted, run the same command again. It resumes from the
+last finished step. Pass `--new` to start over as a fresh deploy.
+
+To stage a version without serving it, deploy with `--no-activate`, then
+activate it when you are ready:
+
+```bash title="Terminal"
+axiom deploy frontend --no-activate --message "pricing page"
+axiom deployments versions frontend
+axiom deployments activate frontend ver_example123
+```
+
+`ver_example123` stands for an id that `axiom deployments versions` prints.
+`activate`, `rollback` and `delete` return once the change is accepted; add
+`--wait` to return only when it is live or finished.
+
+To serve the previous version again, or a specific one:
+
+```bash title="Terminal"
+axiom deployments rollback frontend
+axiom deployments rollback frontend --to ver_example123
+```
+
+To see what happened, read the lifecycle log. Runtime and access logs are not
+available yet.
+
+```bash title="Terminal"
+axiom deployments logs backend --since 10m
+```
+
+To stop serving a deployment and delete it:
+
+```bash title="Terminal"
+axiom deployments delete frontend
+```
+
+The URL stops serving new requests once the delete finishes. Copies that
+browsers or caches already downloaded cannot be recalled.
+
+## Deploy from CI
+
+Commands that change what a URL serves ask for confirmation. In CI there is
+no terminal, so pass `--yes`; without it the command exits with status `2`
+and sends nothing. Add `--json` to get one JSON object on stdout (progress
+goes to stderr), and name the project and environment explicitly:
+
+```yaml title=".github/workflows/deploy.yml (excerpt)"
+      - run: npm ci && npm run build
+      - run: axiom deploy frontend ./dist --project my-app --environment staging --yes --json > deploy.json
+```
+
+The job acts as the account whose `axiom login` session the CLI uses, so
+that account needs the Maintainer role on the project (Owner for a protected
+environment). Treat the session like a password and keep it in your CI
+secret store.
+
+## Use the dashboard
+
+Open the project in the [Cloud Dashboard](https://app.axiomcore.dev) and
+choose **Deployments**, then the environment.
+
+- The **Frontend** and **Backend** cards show the URL, status, active version
+  and last deploy.
+- **Deploy** on the frontend card lets you choose your build folder and
+  uploads it with the same rules as the CLI.
+- **Deploy** on the backend card shows the CLI command to run, and accepts a
+  package input folder made with `axiom server package --output-input`.
+- The versions list has **Activate**, **Roll back** and **Delete**. Each
+  asks for confirmation.
+- While an operation runs, the page shows its live status. The lifecycle
+  log lists past operations.
+
+Errors show the same next step as the CLI.
+
+## Troubleshooting
+
+| Code | What to do |
+| --- | --- |
+| `AXDEPLOY_DISABLED` | Deployments are not enabled for this project yet (invite-only pilot). Ask the Axiom team to add it. |
+| `AXDEPLOY_UNAUTHORIZED` | Your session expired. Run `axiom login` (dashboard: sign in again). |
+| `AXDEPLOY_DENIED` | Your role cannot do this. Deploying needs Maintainer; protected environments need Owner. |
+| `AXDEPLOY_NOT_FOUND` | Nothing found here. Check the project and environment; `axiom deployments list` shows what exists. |
+| `AXDEPLOY_INVALID_UPLOAD` | The bundle is too large or empty (limits: 10,000 files, 1 GiB). |
+| `AXDEPLOY_DIGEST_MISMATCH` | Uploaded files did not match the manifest. Re-run the deploy; if it repeats, check nothing is writing to the folder. |
+| `AXDEPLOY_UPLOAD_NOT_SEALED`, `AXDEPLOY_UPLOAD_NOT_OPEN` | The upload did not finish. Re-run the deploy. |
+| `AXDEPLOY_IDEMPOTENCY_CONFLICT` | A different request reused this deploy's key. Re-run with `--new` to start a fresh deploy. |
+| `AXDEPLOY_PRECONDITION_FAILED` | The deployment changed since you read it. Re-run the command to act on the current state. |
+| `AXDEPLOY_NO_ROLLBACK_TARGET` | There is no previous version to roll back to. Pass `--to <version>` (see `axiom deployments versions`). |
+| `AXDEPLOY_NOT_READY` | That version is not ready. Check it with `axiom deployments versions`. |
+| `AXDEPLOY_NOT_RETAINED` | That version is no longer retained. Deploy again. |
+| `AXDEPLOY_DELETING` | This deployment is being deleted. Wait for the delete to finish, then deploy again. |
+| `AXDEPLOY_SUSPENDED` | This deployment is suspended. See `axiom deployments status` for the reason. |
+| `AXDEPLOY_LOGS_UNAVAILABLE` | Runtime and access logs are not available yet; lifecycle logs are (`--stream lifecycle`). |
+| `AXDEPLOY_UNAVAILABLE` and other 503 errors | The deployment service is busy. Try again in a minute. |
+
+A file rejected by the upload rules stops the deploy before anything is
+sent; the message names the path. The [error table in the reference](/tooling/cli-deployments#errors)
+lists every code.
+
+## Next steps
+
+- [Deployment commands](/tooling/cli-deployments): every option of `axiom deploy` and `axiom deployments`.
+- [Releases and environments](/cloud/releases-and-environments): how project environments are scoped.
+- [Deployment targets](/backend/deployment): package and run a backend on your own infrastructure instead.

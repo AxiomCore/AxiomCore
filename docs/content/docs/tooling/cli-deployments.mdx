@@ -1,0 +1,344 @@
+---
+title: Deployment commands
+description: Reference for axiom deploy frontend, axiom deploy backend and axiom deployments, the CLI commands that upload, activate, roll back, inspect and delete Axiom-hosted frontends and backends.
+pageType: reference
+---
+
+`axiom deploy frontend` and `axiom deploy backend` put a static frontend or an
+Axiom backend on an Axiom-hosted URL. `axiom deployments` lists, inspects,
+activates, rolls back and deletes what you deployed. The dashboard's
+**Deployments** page calls the same API with the same requests, so a version
+deployed from one shows up in the other. For a walkthrough, see
+[Deploy to Axiom](/cloud/deploy-to-axiom).
+
+<StatusNote status="experimental" title="Invite-only pilot">
+  Axiom-hosted deployments are open to invited projects only. For every
+  other project, each command fails with `AXDEPLOY_DISABLED`. Custom domains,
+  runtime and access logs, and usage metering are not available yet. These
+  commands are in CLI releases after 0.154.0; CLI 0.154.0 and earlier have
+  only `axiom deploy mock-server`.
+</StatusNote>
+
+Every command needs a prior `axiom login`. A project has one frontend and
+one backend **deployment** per project environment. A deployment keeps a list
+of **versions**; exactly one of them is active and serves the URL.
+
+## Shared options
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--project` | slug, name or id | the project linked with `axiom project link` | Cloud project. |
+| `--environment` | name, slug or id | `development` | Project environment, the same one `axiom secrets` uses. |
+| `--json` | flag | off | Print the result as JSON instead of text. |
+
+In `--json` mode, the result is one JSON object on stdout and progress goes
+to stderr.
+
+`<kind>` is `frontend` or `backend` in every `axiom deployments` command.
+The project and environment are checked against your account before any
+change is sent.
+
+## Confirmation and scripts
+
+These commands change what the URL serves, so they ask before they send
+anything:
+
+- `axiom deploy frontend` and `axiom deploy backend`, unless you pass `--no-activate`;
+- `axiom deployments activate`, `rollback` and `delete`.
+
+On a terminal, the prompt names the project, environment and kind; the
+default answer is no. `--yes` skips the prompt. Without a terminal (CI, a
+pipe or a script), `--yes` is required: without it, the command exits with
+status `2` and sends no request.
+
+## axiom deploy frontend
+
+Uploads a folder of built static files as a new frontend version, waits
+until the version is ready, activates it and prints the URL.
+
+```text title="Usage"
+axiom deploy frontend [DIR] [OPTIONS]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `[DIR]` | directory | the first of `dist/`, `build/` and `out/` that exists | Built static site. It must contain `index.html`. |
+| `--spa` | flag | on, unless `DIR` has its own `404.html` | Single-page app fallback: a page path with no file returns `index.html`. |
+| `--no-spa` | flag | off | Paths with no file answer 404 instead of `index.html`. |
+| `--include-source-maps` | flag | off | Publish `*.map` files. They expose your original source. Without this flag, a source map in `DIR` stops the deploy. |
+| `--message` | text | none | Note stored with the version. |
+| `--no-activate` | flag | off | Stop once the version is ready. The URL keeps serving the current version. Activate it later with `axiom deployments activate`. No confirmation is needed. |
+| `--yes` | flag | off | Make the version live without asking. Required without a terminal unless you pass `--no-activate`. |
+| `--wait` | flag | off | Accepted for scripts. A deploy always waits until the version is ready and, unless `--no-activate`, live. |
+| `--new` | flag | off | Start a fresh deploy instead of resuming or reporting the last one. See [Resume](#resume). |
+| `--json`, `--project`, `--environment` | | | See [Shared options](#shared-options). |
+
+The CLI checks the folder and builds the manifest before it signs in or
+sends anything, so a rule violation fails fast. A deploy waits up to 30
+minutes for each step.
+
+The CLI lists the files, hashes them and builds an `axiom-static-bundle/v1`
+manifest. It uploads only the files the server does not already hold for
+this deployment, so an unchanged asset is not sent twice.
+
+### Which files are uploaded
+
+| Path in `DIR` | Result |
+| --- | --- |
+| `index.html` | Required. Without it, the command stops before uploading. |
+| `_headers`, `_redirects`, `_worker.js` | Rejected. AxiomCore does not read provider control files, and a static frontend runs no server code. |
+| Anything under `_axiom/` | Rejected. The `/_axiom/` path is reserved for the platform. |
+| `.env` and `.env.*` files | Rejected, so a secret file is not published by mistake. |
+| Private keys (`*.pem`, `*.key`, `id_rsa*`, `id_ed25519*`, `id_ecdsa*`) | Rejected. |
+| `*.map` | Rejected unless you pass `--include-source-maps`. |
+| `.well-known/` | Uploaded. |
+| Other dotfiles and dot folders, such as `.DS_Store` or `.git` | Skipped without a message. |
+| Symbolic links, and anything that is not a regular file or folder | Rejected. |
+| File names with backslashes or control characters | Rejected. |
+
+When a file is rejected, the command names the path, says what to do and
+sends nothing. Remove it from the build output, or build into a clean
+folder. Custom response headers and redirects are not configurable yet. Rejection
+is a safety net, not a secret scanner: check what your build writes before
+you deploy it.
+
+A bundle can hold at most 10,000 files and 1 GiB.
+
+## axiom deploy backend
+
+Packages the backend project, uploads the package input, waits while Axiom
+builds and checks the hosted backend, activates it and prints the URL.
+
+```text title="Usage"
+axiom deploy backend [--contract <FILE>] [--plan <FILE>] [--deployment <FILE>] [OPTIONS]
+axiom deploy backend --from-input <DIR> [OPTIONS]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--contract` | path | `backend.axiom`, then `axiom.axiom`, in the current directory | Compiled backend contract to package. |
+| `--plan` | path | `<contract name>.server.json` beside the contract | Server plan that `axiom build` writes. |
+| `--deployment` | path | `deployment.json` in the current directory | Deployment file, as written by [`axiom server deployment`](/tooling/cli-server#axiom-server-deployment). |
+| `--from-input` | directory | none | Upload this package input instead of packaging. Create it with `axiom server package ... --target container-amd64 --output-input DIR`. Not combined with `--contract`, `--plan` or `--deployment`. |
+| `--message`, `--no-activate`, `--yes`, `--wait`, `--new` | | | As for [`axiom deploy frontend`](#axiom-deploy-frontend). |
+| `--json`, `--project`, `--environment` | | | See [Shared options](#shared-options). |
+
+Without `--from-input`, the command packages the contract, plan and
+deployment file for the `container-amd64` target into a temporary folder,
+with the same checks as `axiom server package --output-input` (see
+[axiom server package](/tooling/cli-server#axiom-server-package)). A missing
+file stops the command with the command that creates it. If your backend
+needs other packaging options, run `axiom server package` yourself and pass
+the folder with `--from-input`.
+
+The package input is data only: your contract, server plan and the files they
+list, with no executable. Axiom builds the hosted backend from it with its
+own runtime. You cannot upload a container image, and local images built
+with `axiom server package --output` are not accepted.
+
+## Resume
+
+Each deploy writes a local journal. If a deploy stops, because the network
+dropped or you pressed Ctrl+C, run the same command again: it continues
+from the last finished step and does not upload files or create versions a
+second time. When the earlier deploy of the same build had already
+activated its version, re-running reports that result instead of deploying
+again. A different build, a failed version or a refused request starts a
+fresh deploy on the next run.
+
+The journal lives in a `deployments` folder in the CLI profile directory
+(see [Files and directories](/tooling/cli-reference#files-and-directories)),
+one file per project, environment and kind. It is never written to your
+repository.
+
+To deploy the same files again as a new version, pass `--new`. Use it too
+when the CLI reports `AXDEPLOY_IDEMPOTENCY_CONFLICT`.
+
+## axiom deployments
+
+```text title="Usage"
+axiom deployments <COMMAND> [--project <PROJECT>] [--environment <ENV>] [--json]
+```
+
+| Subcommand | Purpose |
+| --- | --- |
+| [`list`](#axiom-deployments-list) | The frontend and backend deployments of the environment. |
+| [`status`](#axiom-deployments-status) | One deployment's state, URL and active version. Alias `show`. |
+| [`versions`](#axiom-deployments-versions) | The versions of one deployment. |
+| [`activate`](#axiom-deployments-activate) | Serve a ready version. |
+| [`rollback`](#axiom-deployments-rollback) | Serve the previous version or a chosen one. |
+| [`logs`](#axiom-deployments-logs) | Lifecycle events of one deployment. |
+| [`health`](#axiom-deployments-health) | Health of the live version. |
+| [`delete`](#axiom-deployments-delete) | Stop serving and delete one deployment. |
+
+`activate`, `rollback` and `delete` return once the server accepts the
+change and print the operation id. Add `--wait` to wait until the change is
+live (or the delete has finished); then the command prints the URL.
+
+### axiom deployments list
+
+Lists the deployments of the project environment with their kind, state,
+URL and active version.
+
+```text title="Usage"
+axiom deployments list [--project <PROJECT>] [--environment <ENV>] [--json]
+```
+
+### axiom deployments status
+
+Prints one deployment: its state, URL, active version, the version being
+activated, the last operation and any failure. `show` is an alias.
+
+```text title="Usage"
+axiom deployments status <kind> [--project <PROJECT>] [--environment <ENV>] [--json]
+```
+
+A deployment's state is one of `empty`, `activating`, `active`, `degraded`,
+`suspended`, `deleting` or `deleted`. For a kind that was never deployed in
+the environment, the command reports `AXDEPLOY_NOT_FOUND`.
+
+### axiom deployments versions
+
+Lists the versions of one deployment, newest first, with their id
+(`ver_...`) and status. `*` marks the live version.
+
+```text title="Usage"
+axiom deployments versions <kind> [--project <PROJECT>] [--environment <ENV>] [--json]
+```
+
+A version moves through `queued`, `verifying`, `building`, `provisioning`
+and `probing` to `ready`, or ends as `failed`. Only a `ready` version can be
+activated.
+
+### axiom deployments activate
+
+Makes a ready version the one the URL serves. Asks for confirmation.
+
+```text title="Usage"
+axiom deployments activate <kind> <version> [--wait] [--yes] [--project <PROJECT>] [--environment <ENV>] [--json]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<version>` | version id | required | A `ver_...` id from `axiom deployments versions`. |
+| `--wait` | flag | off | Wait until the version is live. |
+| `--yes` | flag | off | Do not ask. Required without a terminal. |
+
+### axiom deployments rollback
+
+Serves the previously active version again, or the version you name.
+Asks for confirmation.
+
+```text title="Usage"
+axiom deployments rollback <kind> [--to <version>] [--wait] [--yes] [--project <PROJECT>] [--environment <ENV>] [--json]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--to` | version id | the previously active version | Version to serve. It must be ready and still retained. |
+| `--wait` | flag | off | Wait until the rollback is live. |
+| `--yes` | flag | off | Do not ask. Required without a terminal. |
+
+A rollback is a new change to the deployment, so you can roll forward again
+with `activate`. With no previous version, the command reports
+`AXDEPLOY_NO_ROLLBACK_TARGET`.
+
+### axiom deployments logs
+
+Prints the lifecycle events of one deployment, oldest first: deploys,
+activations, rollbacks and deletes. Each line shows the time, action, step,
+version and result.
+
+```text title="Usage"
+axiom deployments logs <kind> [--since <TIME>] [--until <TIME>] [--version <VERSION>] [--stream <STREAM>] [--project <PROJECT>] [--environment <ENV>] [--json]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--since` | a duration ago (`30s`, `10m`, `1h`, `2d`) or an RFC 3339 time | none | First event time. |
+| `--until` | same as `--since` | none | Last event time. |
+| `--version` | version id | none | Only events of this version. |
+| `--stream` | `lifecycle`, `runtime`, `access` | `lifecycle` | Event stream. Only `lifecycle` is available today; `runtime` and `access` report `AXDEPLOY_LOGS_UNAVAILABLE`. |
+
+### axiom deployments health
+
+Prints the health that Axiom reports for the live version.
+
+```text title="Usage"
+axiom deployments health <kind> [--project <PROJECT>] [--environment <ENV>] [--json]
+```
+
+### axiom deployments delete
+
+Stops serving the deployment and deletes it. Asks for confirmation.
+
+```text title="Usage"
+axiom deployments delete <kind> [--wait] [--yes] [--project <PROJECT>] [--environment <ENV>] [--json]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--wait` | flag | off | Wait until the delete has finished. |
+| `--yes` | flag | off | Do not ask. Required without a terminal. |
+
+The URL stops serving new requests once the delete finishes. Files that a
+browser or another cache already downloaded cannot be recalled, so do not
+rely on delete to withdraw something that was public. To deploy the kind
+again, wait for the delete to finish; until then, a deploy reports
+`AXDEPLOY_DELETING`.
+
+## Errors
+
+The CLI and the dashboard print the same next step for each error code.
+Unknown codes print `Deployment request failed (<code>, request <id>).`;
+include the request id when you report a problem.
+
+| Code | HTTP | Next step |
+| --- | --- | --- |
+| `AXDEPLOY_DISABLED` | 503 | Deployments are not enabled for this project yet (invite-only pilot). Ask the Axiom team to add it. |
+| `AXDEPLOY_UNAUTHORIZED` | 401 | Your session expired. Run `axiom login` (dashboard: sign in again). |
+| `AXDEPLOY_NOT_FOUND` | 404 | Nothing found here. Check the project and environment; `axiom deployments list` shows what exists. |
+| `AXDEPLOY_DENIED` | 403 | Your role cannot do this. Deploying needs Maintainer; protected environments need Owner. |
+| `AXDEPLOY_PRECONDITION_FAILED` | 412 | The deployment changed since you read it. Re-run the command to act on the current state. |
+| `AXDEPLOY_NO_ROLLBACK_TARGET` | 409 | There is no previous version to roll back to. Pass `--to <version>` (see `axiom deployments versions`). |
+| `AXDEPLOY_NOT_READY` | 409 | That version is not ready. Check it with `axiom deployments versions`. |
+| `AXDEPLOY_NOT_RETAINED` | 409 | That version is no longer retained. Deploy again. |
+| `AXDEPLOY_SUSPENDED` | 409 | This deployment is suspended. See `axiom deployments status` for the reason. |
+| `AXDEPLOY_DELETING` | 409 | This deployment is being deleted. Wait for the delete to finish, then deploy again. |
+| `AXDEPLOY_UPLOAD_NOT_SEALED`, `AXDEPLOY_UPLOAD_NOT_OPEN` | 409 | The upload did not finish. Re-run the deploy. |
+| `AXDEPLOY_APPROVAL_REQUIRED` | 409 | This change needs an Owner's approval. |
+| `AXDEPLOY_IDEMPOTENCY_CONFLICT` | 409 | A different request reused this deploy's key. Re-run with `--new` to start a fresh deploy. |
+| `AXDEPLOY_DIGEST_MISMATCH` | 422 | Uploaded files did not match the manifest. Re-run the deploy; if it repeats, check nothing is writing to the folder. |
+| `AXDEPLOY_TARGET_MISMATCH` | 422 | This artifact does not fit that deployment kind. |
+| `AXDEPLOY_INVALID_UPLOAD` | 400 | The bundle is too large or empty (limits: 10,000 files, 1 GiB). |
+| `AXDEPLOY_UPLOAD_URLS_UNAVAILABLE` | none | The server did not issue upload URLs; hosting uploads are not enabled for this project. |
+| `AXDEPLOY_LOGS_UNAVAILABLE` | 503 | Runtime and access logs are not available yet; lifecycle logs are (`--stream lifecycle`). |
+| `AXDEPLOY_VERIFIER_UNAVAILABLE`, `AXDEPLOY_HOST_UNAVAILABLE`, `AXDEPLOY_UNAVAILABLE` | 503 | The deployment service is busy. Try again in a minute. |
+| rate limit | 429 | Too many deploys right now. Try again in the number of seconds the message gives (the `Retry-After` header). |
+
+`AXDEPLOY_UPLOAD_URLS_UNAVAILABLE` comes from the CLI, not the server, so it
+has no HTTP status.
+
+## Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| `0` | The command finished. A deploy also printed the URL, unless you passed `--no-activate`. |
+| `1` | The command or a request failed. The message starts with `axiom deploy:` or `axiom deployments:` and gives the reason and the next step. |
+| `2` | Invalid command line, or a confirmation was needed without a terminal and `--yes` was not passed. No request was sent. |
+
+## API
+
+The commands call the project deployment API under
+`/api/v1/projects/{project_slug}/environments/{environment_id}/deployments`,
+the same routes the dashboard uses. Each change carries an
+`Idempotency-Key` header, so a retried request is not applied twice, and
+each traffic change (`activate`, `rollback`, `delete`) carries the
+deployment's current generation in `If-Match`, so it never acts on a state
+you did not see.
+
+## Related pages
+
+- [Deploy to Axiom](/cloud/deploy-to-axiom): the task guide for the CLI and the dashboard.
+- [axiom server package](/tooling/cli-server#axiom-server-package): create a backend package input.
+- [axiom deploy mock-server](/tooling/cli-build-and-run#axiom-deploy-mock-server): save a Cloud mock configuration.

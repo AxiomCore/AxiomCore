@@ -4,14 +4,20 @@
 //! The dashboard sends the same requests; `cli/tests/fixtures/deployments-parity.json`
 //! records them.
 //!
-//! `axiom deploy` checks the folder and builds the manifest before any sign-in or request
-//! ([`prepare_frontend`], [`prepare_backend`]), then: create upload → PUT the missing objects
+//! `axiom deploy` checks the project link and the folder before any sign-in or request
+//! ([`prepare_frontend`], [`prepare_backend`]; an activating deploy without `--yes` and
+//! without a terminal is refused right after, still sending nothing). Then: one read of the
+//! deployment (a project outside the hosting pilot is told so here, before hashing,
+//! packaging or the y/N question) → hash the files and build the manifest → ask y/N on a
+//! terminal → create upload → PUT the missing objects
 //! to their presigned URLs → complete → create version → wait until ready → activate
 //! (unless `--no-activate`) with `If-Match` from the slot's `ETag` → wait → print the URL.
 //!
 //! Resume journal: `<CLI config dir>/deployments/<project>-<environment id>-<kind>.json`
 //! (beside `auth.json`, per user and per Cloud profile; never inside the repository). It holds
-//! the intent id, manifest SHA-256, original slot generation, upload/version/operation ids and
+//! the intent id, manifest SHA-256, original slot generation and deployment id (generation 0
+//! when no live slot existed: the slot this deploy creates starts at generation 1, and that is
+//! the activation's precondition), upload/version/operation ids and
 //! each step's result. Every mutation's `Idempotency-Key` is the hex SHA-256 of
 //! `intent|step|manifest_sha256|generation`, so a rerun after a crash or lost response
 //! replays the same requests instead of starting over. A rerun after a successful activation
@@ -246,12 +252,33 @@ pub(crate) fn ask(question: &str) -> bool {
 // ---------------------------------------------------------------------------------------
 // Local preflight (before registration, sign-in and any request)
 
-struct Prepared {
-    bundle: Bundle,
-    _temp: Option<tempfile::TempDir>,
+/// The local half of a deploy, checked in `main` before registration, sign-in or any request.
+pub enum Pending {
+    /// A folder that passed its checks; hashed after the pilot check.
+    Checked(bundle::Checked),
+    /// `axiom deploy backend` without `--from-input`: the files to package this project from.
+    Package { contract: PathBuf, plan: PathBuf, deployment: PathBuf },
 }
 
-static PREPARED: Mutex<Option<Prepared>> = Mutex::new(None);
+impl Pending {
+    /// Hash the checked folder (or package this project and check its input): the manifest
+    /// the upload is keyed by. The temporary folder of a packaged input lives as long as the
+    /// returned guard.
+    pub fn finish(self) -> Result<(Bundle, Option<tempfile::TempDir>)> {
+        match self {
+            Pending::Checked(c) => Ok((c.hash()?, None)),
+            Pending::Package { contract, plan, deployment } => {
+                let temp = tempfile::tempdir()?;
+                let input = temp.path().join("input");
+                axiom_server::container::package_input_only(&contract, &plan, &deployment, None, "container-amd64", &input, None)
+                    .with_context(|| "Packaging the backend failed (the same check as `axiom server package --output-input`)".to_string())?;
+                Ok((bundle::backend(&input)?, Some(temp)))
+            }
+        }
+    }
+}
+
+static PREPARED: Mutex<Option<Pending>> = Mutex::new(None);
 
 fn spa_choice(args: &FrontendArgs) -> Spa {
     if args.spa {
@@ -263,31 +290,55 @@ fn spa_choice(args: &FrontendArgs) -> Spa {
     }
 }
 
-fn frontend_bundle(args: &FrontendArgs, cwd: &Path) -> Result<Bundle> {
+/// The project comes from `--project` or the link of this directory; without either the
+/// deploy cannot start, which is said before any question or request.
+pub(crate) fn check_link(t: &Target, cwd: &Path) -> Result<()> {
+    if t.project.as_deref().map(str::trim).is_some_and(|p| !p.is_empty()) {
+        return Ok(());
+    }
+    match crate::auth_store::get_project_id(cwd)? {
+        Some(_) => Ok(()),
+        None => bail!("This directory is not linked to an Axiom project. Link it with `axiom project link` (after `axiom login`), or pass --project <slug>."),
+    }
+}
+
+fn frontend_pending(args: &FrontendArgs, cwd: &Path) -> Result<Pending> {
     let dir = match &args.dir {
         Some(d) => d.clone(),
         None => bundle::default_frontend_dir(cwd)?,
     };
-    bundle::frontend(&dir, spa_choice(args))
+    Ok(Pending::Checked(bundle::check_frontend(&dir, spa_choice(args))?))
 }
 
-/// Check the folder and build the manifest; `axiom deploy frontend` exits 1 on failure.
+#[cfg(test)]
+fn frontend_bundle(args: &FrontendArgs, cwd: &Path) -> Result<Bundle> {
+    Ok(frontend_pending(args, cwd)?.finish()?.0)
+}
+
+/// The link and the folder (no file is read): `axiom deploy frontend` exits 1 on failure.
 pub fn prepare_frontend(args: &FrontendArgs) -> Result<()> {
-    let built = frontend_bundle(args, &std::env::current_dir()?)?;
-    *PREPARED.lock().unwrap() = Some(Prepared { bundle: built, _temp: None });
+    let cwd = std::env::current_dir()?;
+    check_link(&args.flags.target, &cwd)?;
+    *PREPARED.lock().unwrap() = Some(frontend_pending(args, &cwd)?);
     Ok(())
 }
 
-/// Package (or check `--from-input`) and build the manifest, all locally.
+/// The link, then `--from-input` (its input.json and the files it lists) or the files to
+/// package this project from, all locally.
 pub fn prepare_backend(args: &BackendArgs) -> Result<()> {
-    let prepared = backend_bundle(args, &std::env::current_dir()?)?;
-    *PREPARED.lock().unwrap() = Some(prepared);
+    let cwd = std::env::current_dir()?;
+    check_link(&args.flags.target, &cwd)?;
+    *PREPARED.lock().unwrap() = Some(backend_pending(args, &cwd)?);
     Ok(())
 }
 
-fn backend_bundle(args: &BackendArgs, cwd: &Path) -> Result<Prepared> {
+/// What `axiom deploy backend` packages itself (no flags needed): the hint every
+/// package-input error ends with.
+const PACKAGE_HINT: &str = "or upload a folder you packaged yourself: `axiom server package <contract> <plan> --deployment <file> --target container-amd64 --output-input <dir>`, then `axiom deploy backend --from-input <dir>`";
+
+fn backend_pending(args: &BackendArgs, cwd: &Path) -> Result<Pending> {
     if let Some(dir) = &args.from_input {
-        return Ok(Prepared { bundle: bundle::backend(dir)?, _temp: None });
+        return Ok(Pending::Checked(bundle::check_backend(dir)?));
     }
     let found = |given: &Option<PathBuf>, candidates: &[&str]| -> Option<PathBuf> {
         match given {
@@ -295,9 +346,10 @@ fn backend_bundle(args: &BackendArgs, cwd: &Path) -> Result<Prepared> {
             None => candidates.iter().map(|c| cwd.join(c)).find(|p| p.is_file()),
         }
     };
-    let contract = found(&args.contract, &["backend.axiom", "axiom.axiom"]).context(
-        "No backend contract found (looked for backend.axiom and axiom.axiom). Build it with `axiom build --out backend.axiom`, pass --contract, or upload a packaged input: axiom deploy backend --from-input DIR",
-    )?;
+    let contract = found(&args.contract, &["backend.axiom", "axiom.axiom"]).filter(|p| p.is_file()).with_context(|| match &args.contract {
+        Some(p) => format!("No backend contract at {}. Build it with `axiom build --out backend.axiom` and pass that file to --contract, {PACKAGE_HINT}.", p.display()),
+        None => format!("No backend contract found (looked for backend.axiom and axiom.axiom). Build it with `axiom build --out backend.axiom` and run `axiom deploy backend` again (it packages the project itself), pass --contract <file>, {PACKAGE_HINT}."),
+    })?;
     let plan = match &args.plan {
         Some(p) => p.clone(),
         None => {
@@ -306,19 +358,25 @@ fn backend_bundle(args: &BackendArgs, cwd: &Path) -> Result<Prepared> {
         }
     };
     if !plan.is_file() {
-        bail!("No server plan at {} (written by `axiom build` beside the contract). Pass --plan, or upload a packaged input: axiom deploy backend --from-input DIR", plan.display());
+        bail!("No server plan at {} (`axiom build` writes it beside the contract). Build again and run `axiom deploy backend`, pass --plan <file>, {PACKAGE_HINT}.", plan.display());
     }
-    let deployment = found(&args.deployment, &["deployment.json"]).filter(|p| p.is_file()).context(
-        "No deployment.json found. Create it with `axiom server deployment <contract> <plan> --output deployment.json`, pass --deployment, or upload a packaged input: axiom deploy backend --from-input DIR",
-    )?;
-    let temp = tempfile::tempdir()?;
-    let input = temp.path().join("input");
-    axiom_server::container::package_input_only(&contract, &plan, &deployment, None, "container-amd64", &input, None)
-        .with_context(|| "Packaging the backend failed (the same check as `axiom server package --output-input`)".to_string())?;
-    Ok(Prepared { bundle: bundle::backend(&input)?, _temp: Some(temp) })
+    let deployment = found(&args.deployment, &["deployment.json"]).filter(|p| p.is_file()).with_context(|| {
+        format!(
+            "No deployment file found ({}). Create it with `axiom server deployment {} {} --output deployment.json` and run `axiom deploy backend` again, pass --deployment <file>, {PACKAGE_HINT}.",
+            args.deployment.as_deref().map(|p| format!("looked for {}", p.display())).unwrap_or_else(|| "looked for deployment.json".into()),
+            contract.display(),
+            plan.display()
+        )
+    })?;
+    Ok(Pending::Package { contract, plan, deployment })
 }
 
-fn take_prepared() -> Option<Prepared> {
+#[cfg(test)]
+fn backend_bundle(args: &BackendArgs, cwd: &Path) -> Result<Bundle> {
+    Ok(backend_pending(args, cwd)?.finish()?.0)
+}
+
+fn take_prepared() -> Option<Pending> {
     PREPARED.lock().unwrap().take()
 }
 
@@ -337,7 +395,8 @@ pub struct Ctx {
 impl Ctx {
     pub fn from_profile() -> Result<Self> {
         Ok(Self {
-            client: crate::auth_store::authenticated_cloud_client()?,
+            // Only the sentence: the missing auth file's "os error 2" is no help.
+            client: crate::auth_store::authenticated_cloud_client().map_err(|e| anyhow!(sign_in_error(&e)))?,
             poll: Duration::from_secs(2),
             timeout: Duration::from_secs(30 * 60),
             journal_dir: crate::auth_store::get_config_dir()?.join("deployments"),
@@ -352,7 +411,7 @@ struct Resolved {
 }
 
 async fn resolve(ctx: &Ctx, t: &Target) -> Result<Resolved> {
-    let projects = ctx.client.list_projects().await.map_err(|_| anyhow!("Could not list your projects. Check that you are signed in (`axiom login`) and try again."))?;
+    let projects = ctx.client.list_projects().await.map_err(|e| anyhow!(projects_error(&e)))?;
     let slug = match t.project.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
         Some(p) => super::auth::pick_project(&projects, p)?,
         None => {
@@ -368,6 +427,53 @@ async fn resolve(ctx: &Ctx, t: &Target) -> Result<Resolved> {
     Ok(Resolved { scope: Scope::new(slug, environment_id), environment: t.environment.trim().to_string() })
 }
 
+/// No usable saved session, in one sentence: none saved (or signed out), or the saved one
+/// cannot be read (without the OS error number).
+fn sign_in_error(e: &anyhow::Error) -> String {
+    let unreadable = e.chain().filter_map(|c| c.downcast_ref::<std::io::Error>()).find(|io| io.kind() != std::io::ErrorKind::NotFound);
+    match unreadable {
+        Some(io) => {
+            let reason = io.to_string();
+            let reason = reason.find(" (os error").map(|i| reason[..i].to_string()).unwrap_or(reason);
+            format!("Could not read your saved Axiom sign-in ({}). Run `axiom login` again, then re-run this command.", clean(&reason.to_lowercase()))
+        }
+        None if e.chain().any(|c| c.is::<serde_json::Error>()) => "Your saved Axiom sign-in is damaged. Run `axiom login` again, then re-run this command.".into(),
+        None => "Not signed in to Axiom Cloud. Run `axiom login`, then re-run this command.".into(),
+    }
+}
+
+/// Why the project list could not be read, in one sentence: the network (with the reason, no
+/// OS error numbers), the session, or the server's answer.
+fn projects_error(e: &anyhow::Error) -> String {
+    let network = e.chain().filter_map(|c| c.downcast_ref::<reqwest::Error>()).find(|r| r.is_connect() || r.is_timeout() || r.is_request());
+    if let Some(r) = network {
+        let reason = if r.is_timeout() {
+            "timed out".to_string()
+        } else {
+            let root = e.root_cause().to_string();
+            let root = match root.find(" (os error") {
+                Some(i) => root[..i].to_string(),
+                None => root,
+            };
+            let root = clean(root.trim());
+            if root.is_empty() { "connection failed".into() } else { root.to_lowercase() }
+        };
+        return format!("Could not reach Axiom Cloud ({reason}). Check your connection (and AXIOM_CLOUD_URL if you set it), then re-run.");
+    }
+    let text = format!("{e:#}");
+    let lower = text.to_lowercase();
+    // A refresh that could not be sent is the network, not the session.
+    if lower.contains("failed to send") || lower.contains("error sending request") || lower.contains("connection refused") || lower.contains("timed out") {
+        return "Could not reach Axiom Cloud (connection failed). Check your connection (and AXIOM_CLOUD_URL if you set it), then re-run.".into();
+    }
+    if lower.contains("401") || lower.contains("unauthorized") || lower.contains("unable to authenticate") || lower.contains("not logged in") {
+        return "Not signed in to Axiom Cloud (the session expired or was revoked). Run `axiom login`, then re-run this command.".into();
+    }
+    let detail = clean(text.strip_prefix("Failed to list projects: ").unwrap_or(&text));
+    let detail: String = if detail.trim_start().starts_with('<') { "an unexpected web page".into() } else { detail.chars().take(200).collect() };
+    format!("Axiom Cloud did not return your projects ({}). Try again in a minute.", if detail.is_empty() { "no reason given" } else { &detail })
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 struct Journal {
@@ -377,8 +483,14 @@ struct Journal {
     kind: String,
     intent_id: String,
     manifest_sha256: String,
-    /// Slot generation when this intent started (0: no slot yet).
+    /// Slot generation when this intent started; 0 when there was no live slot (none, or
+    /// only a deleted/deleting one): the slot this deploy creates starts at 1.
     generation: i64,
+    /// `deployment_id` of the live slot `generation` was read from (`None`: no live slot, or a
+    /// journal written by an earlier build without this field).
+    slot_id: Option<String>,
+    /// `deployment_id` of the slot the version was created on (from the create-version reply).
+    version_slot_id: Option<String>,
     upload_id: Option<String>,
     upload_sealed: bool,
     version_id: Option<String>,
@@ -502,21 +614,46 @@ fn failure_text(failure: &Value) -> String {
 // Deploy
 
 pub async fn handle_frontend(args: &FrontendArgs) -> Result<()> {
-    let prepared = match take_prepared() {
+    let pending = match take_prepared() {
         Some(p) => p,
-        None => Prepared { bundle: frontend_bundle(args, &std::env::current_dir()?)?, _temp: None },
+        None => frontend_pending(args, &std::env::current_dir()?)?,
     };
     let ctx = Ctx::from_profile()?;
-    deploy(&ctx, Kind::Frontend, &prepared.bundle, &args.flags).await
+    let question = asks(&args.flags).then(|| deploy_question(Kind::Frontend, args.dir.as_deref(), &args.flags.target));
+    deploy_pending(&ctx, Kind::Frontend, pending, &args.flags, question.as_deref(), ask).await
 }
 
 pub async fn handle_backend(args: &BackendArgs) -> Result<()> {
-    let prepared = match take_prepared() {
+    let pending = match take_prepared() {
         Some(p) => p,
-        None => backend_bundle(args, &std::env::current_dir()?)?,
+        None => backend_pending(args, &std::env::current_dir()?)?,
     };
     let ctx = Ctx::from_profile()?;
-    deploy(&ctx, Kind::Backend, &prepared.bundle, &args.flags).await
+    let question = asks(&args.flags).then(|| deploy_question(Kind::Backend, args.from_input.as_deref(), &args.flags.target));
+    deploy_pending(&ctx, Kind::Backend, pending, &args.flags, question.as_deref(), ask).await
+}
+
+/// Whether the deploy asks y/N (it makes a version live and `--yes` was not given). Without a
+/// terminal `main` has already refused it.
+pub(crate) fn asks(flags: &DeployFlags) -> bool {
+    !flags.no_activate && !flags.yes
+}
+
+/// The deploy after the local checks: resolve the project, read the deployment once (a project
+/// outside the hosting pilot stops here), hash or package, ask, then [`deploy_from`].
+pub async fn deploy_pending(ctx: &Ctx, kind: Kind, pending: Pending, flags: &DeployFlags, question: Option<&str>, ask: impl FnOnce(&str) -> bool) -> Result<()> {
+    let r = resolve(ctx, &flags.target).await?;
+    let start = ctx.client.deployment_slot(&r.scope, kind).await?;
+    if kind == Kind::Backend && matches!(pending, Pending::Package { .. }) {
+        progress("Packaging the backend…");
+    }
+    let (b, _temp) = pending.finish()?;
+    if let Some(question) = question {
+        if !ask(question) {
+            return Err(crate::commands::auth::Exit { code: 2, message: "cancelled; nothing was changed".into() }.into());
+        }
+    }
+    deploy_from(ctx, kind, &b, flags, r, start).await
 }
 
 /// Whether a failed step ends the intent (the next run starts a fresh one) rather than
@@ -531,17 +668,61 @@ fn ends_intent(error: &anyhow::Error) -> bool {
     }
 }
 
+/// A deploy of a hashed bundle (no question): resolve, read the deployment, [`deploy_from`].
 pub async fn deploy(ctx: &Ctx, kind: Kind, b: &Bundle, flags: &DeployFlags) -> Result<()> {
-    let json = flags.target.json;
     let r = resolve(ctx, &flags.target).await?;
+    let start = ctx.client.deployment_slot(&r.scope, kind).await?;
+    deploy_from(ctx, kind, b, flags, r, start).await
+}
+
+/// A live slot: present and neither deleted nor being deleted. `GET …/{kind}` answers the
+/// newest deleted slot when no live one exists (axiom-backend `findSlot`), and creating an
+/// upload then makes a new slot at generation 1 (`ensureSlot`).
+fn live(slot: Option<&Slot>) -> Option<&Slot> {
+    slot.filter(|s| !matches!(s.state.as_deref(), Some("deleted" | "deleting")))
+}
+
+/// Whether a journal's upload and version still belong to the live slot. With no live slot
+/// (the deployment was deleted since) or another one, the journal's steps would act on a
+/// deleted slot, and a replayed activation would answer the old success, so the deploy
+/// starts afresh. A journal without slot ids (an earlier build) is resumed while a live slot
+/// exists.
+fn same_slot(j: &Journal, now: Option<&Slot>) -> bool {
+    let Some(now) = now else {
+        return false;
+    };
+    match (j.version_slot_id.as_deref().or(j.slot_id.as_deref()), now.deployment_id.as_deref()) {
+        (Some(was), Some(is)) => was == is,
+        _ => true,
+    }
+}
+
+/// The `If-Match` generation of this deploy's activation, given the slot read now: the
+/// generation read when the intent started, never silently refreshed (D2 §6), or 1 when no
+/// live slot existed then (the slot this deploy created starts at 1). A journal written
+/// by an earlier build (no `slot_id`) may hold the generation of a deleted slot; a pinned
+/// generation above the current slot's cannot be this slot's (generations only grow), so it
+/// is read as "no live slot then" and pins 1.
+fn activation_generation(pinned: i64, slot_id: Option<&str>, now: &Slot) -> i64 {
+    if pinned <= 0 {
+        return 1;
+    }
+    match (slot_id, now.generation) {
+        (None, Some(current)) if current < pinned => 1,
+        _ => pinned,
+    }
+}
+
+async fn deploy_from(ctx: &Ctx, kind: Kind, b: &Bundle, flags: &DeployFlags, r: Resolved, start: Option<axiom_cloud::deployments::Reply<Slot>>) -> Result<()> {
+    let json = flags.target.json;
     let path = journal_path(ctx, &r.scope, kind);
-    let previous = load_journal(&path).filter(|j| !flags.new && !j.failed && j.manifest_sha256 == b.manifest_sha256);
+    let now = live(start.as_ref().map(|s| &s.body));
+    let previous = load_journal(&path).filter(|j| !flags.new && !j.failed && j.manifest_sha256 == b.manifest_sha256 && same_slot(j, now));
     let mut j = match previous {
         Some(mut j) if j.activated => {
             // This exact build went live in an earlier run. Report it only if the server
             // still serves it; otherwise make it live again under the original precondition.
-            let live = ctx.client.deployment_slot(&r.scope, kind).await?.map(|s| s.body);
-            match live {
+            match start.map(|s| s.body) {
                 Some(s) if s.active_version_id.is_some() && s.active_version_id == j.version_id && matches!(s.state.as_deref(), Some("active" | "degraded")) => {
                     let url = s.url.clone().or(j.url.clone());
                     let out = outcome(&r, kind, j.version_id.clone(), j.activate_operation_id.clone(), url.clone(), s.state.clone(), true);
@@ -564,7 +745,9 @@ pub async fn deploy(ctx: &Ctx, kind: Kind, b: &Bundle, flags: &DeployFlags) -> R
             j
         }
         None => {
-            let generation = ctx.client.deployment_slot(&r.scope, kind).await?.and_then(|s| s.body.generation).unwrap_or(0);
+            let slot = live(start.as_ref().map(|s| &s.body));
+            let generation = slot.and_then(|s| s.generation).unwrap_or(0);
+            let slot_id = slot.and_then(|s| s.deployment_id.clone());
             let j = Journal {
                 schema: JOURNAL_SCHEMA.into(),
                 project: r.scope.project.clone(),
@@ -573,6 +756,7 @@ pub async fn deploy(ctx: &Ctx, kind: Kind, b: &Bundle, flags: &DeployFlags) -> R
                 intent_id: uuid::Uuid::new_v4().to_string(),
                 manifest_sha256: b.manifest_sha256.clone(),
                 generation,
+                slot_id,
                 ..Default::default()
             };
             save_journal(&path, &j)?;
@@ -643,6 +827,7 @@ async fn deploy_steps(ctx: &Ctx, kind: Kind, b: &Bundle, flags: &DeployFlags, r:
         let version = reply.body.version_id.clone().or_else(|| reply.body.desired_version_id.clone()).ok_or_else(|| anyhow!("AXDEPLOY_INVALID_RESPONSE: the server did not return a version id"))?;
         j.version_id = Some(version);
         j.version_operation_id = reply.body.operation_id.clone();
+        j.version_slot_id = reply.body.deployment_id.clone();
         j.url = reply.body.url.clone();
         j.step("create_version", reply.body.state.clone().unwrap_or_default());
         save_journal(path, j)?;
@@ -680,9 +865,9 @@ async fn deploy_steps(ctx: &Ctx, kind: Kind, b: &Bundle, flags: &DeployFlags, r:
     progress(&format!("Activating version {version}…"));
     // D2 §6: the activation's precondition is the generation read when this deploy started
     // (a slot created by this deploy starts at 1); it is never silently refreshed.
-    let generation = j.generation.max(1);
-    let key = idempotency_key(&j.intent_id, "activate", &j.manifest_sha256, generation);
-    let done = activate(ctx, scope, kind, &version, true, Some(generation), |_| key.clone(), |op| {
+    let (intent, manifest, pinned, slot_id) = (j.intent_id.clone(), j.manifest_sha256.clone(), j.generation, j.slot_id.clone());
+    let pin = move |now: &Slot| activation_generation(pinned, slot_id.as_deref(), now);
+    let done = activate(ctx, scope, kind, &version, true, Some(&pin), |g| idempotency_key(&intent, "activate", &manifest, g), |op| {
         j.activate_operation_id = Some(op.to_string());
         let _ = save_journal(path, j);
     })
@@ -694,6 +879,13 @@ async fn deploy_steps(ctx: &Ctx, kind: Kind, b: &Bundle, flags: &DeployFlags, r:
         ),
         _ => e,
     })?;
+    // Belt and braces: never report a deleted deployment as live.
+    if matches!(done.state.as_deref(), Some("deleted" | "deleting")) {
+        j.failed = true;
+        j.step("activate", "deployment deleted");
+        save_journal(path, j)?;
+        bail!("The {kind} deployment was deleted while this deploy ran. Run the deploy again to create a new one.");
+    }
     j.activated = true;
     j.url = done.url.clone().or(j.url.take());
     j.step("activate", "active");
@@ -838,12 +1030,12 @@ fn if_match(reply: &axiom_cloud::deployments::Reply<Slot>) -> Result<String> {
     reply.etag.clone().or_else(|| reply.body.etag()).ok_or_else(|| anyhow!("AXDEPLOY_INVALID_RESPONSE: the deployment has no generation (ETag)"))
 }
 
-/// Make `version` live: GET the slot, POST activate with `If-Match` (the `pinned`
-/// generation when given, else the one just read), and follow the operation when `wait`.
+/// Make `version` live: GET the slot, POST activate with `If-Match` (the generation `pinned`
+/// derives from the slot just read when given, else that slot's own), and follow the operation when `wait`.
 /// An activation of this version already in flight is followed instead of repeated; an
 /// already-live version is reported as such.
 #[allow(clippy::too_many_arguments)]
-async fn activate(ctx: &Ctx, scope: &Scope, kind: Kind, version: &str, wait: bool, pinned: Option<i64>, key: impl Fn(i64) -> String, mut started: impl FnMut(&str)) -> Result<Slot> {
+async fn activate(ctx: &Ctx, scope: &Scope, kind: Kind, version: &str, wait: bool, pinned: Option<&dyn Fn(&Slot) -> i64>, key: impl Fn(i64) -> String, mut started: impl FnMut(&str)) -> Result<Slot> {
     let current = slot(ctx, scope, kind).await?;
     let s = &current.body;
     if s.active_version_id.as_deref() == Some(version) && matches!(s.state.as_deref(), Some("active" | "degraded")) {
@@ -853,7 +1045,10 @@ async fn activate(ctx: &Ctx, scope: &Scope, kind: Kind, version: &str, wait: boo
         s.operation_id.clone().unwrap_or_default()
     } else {
         let (tag, generation) = match pinned {
-            Some(g) => (format!("\"g{g}\""), g),
+            Some(pin) => {
+                let g = pin(s);
+                (format!("\"g{g}\""), g)
+            }
             None => (if_match(&current)?, s.generation.unwrap_or(0)),
         };
         let reply = ctx.client.deployment_activate(scope, kind, version, &tag, &key(generation)).await?;

@@ -5,8 +5,11 @@
 //! (`axiom server package --output-input`, `axiom-container-input/v1`), uploaded verbatim with
 //! the files it lists (contract amendment A4.2).
 //!
-//! Nothing here signs in or sends a request: `axiom deploy` runs it before registration,
-//! sign-in or any network call, so a bad folder fails fast with a fix to apply.
+//! Nothing here signs in or sends a request. `axiom deploy` runs the folder checks
+//! ([`check_frontend`], [`check_backend`]: names, path rules, content types, sizes, without
+//! reading any file) before registration, sign-in or any network call, so a bad folder fails
+//! fast with a fix to apply; [`Checked::hash`] then reads and hashes the files once the
+//! project is known to be in the hosting pilot.
 use anyhow::{bail, Context, Result};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -158,47 +161,89 @@ fn go_lower(s: &str) -> String {
 /// `ValidSitePath`, `forbiddenSegment`, `forbiddenName`; contract amendment A4.5): `None` when
 /// the server accepts `path`, else what to do. The shared fixture
 /// `tests/fixtures/deployments-path-rules.json` pins both this and the dashboard copy.
-pub fn site_path_problem(path: &str) -> Option<&'static str> {
+pub fn site_path_problem(path: &str) -> Option<std::borrow::Cow<'static, str>> {
+    site_path_rule(path).map(|rule| match rule {
+        PathRule::Fixed(text) => std::borrow::Cow::Borrowed(text),
+        PathRule::NotNfc => std::borrow::Cow::Owned(not_nfc(path)),
+    })
+}
+
+enum PathRule {
+    Fixed(&'static str),
+    NotNfc,
+}
+
+/// The characters of `name` that Unicode NFC changes (combining marks, and singletons such
+/// as the Kelvin sign U+212A), as `U+XXXX`; every non-ASCII character when none stands out.
+pub fn non_nfc_chars(name: &str) -> String {
+    use unicode_normalization::{char::canonical_combining_class, UnicodeNormalization};
+    let code = |c: char| format!("U+{:04X}", c as u32);
+    let mut found: Vec<String> = name
+        .chars()
+        .filter(|&c| canonical_combining_class(c) != 0 || std::iter::once(c).nfc().ne(std::iter::once(c)))
+        .map(code)
+        .collect();
+    if found.is_empty() {
+        found = name.chars().filter(|c| !c.is_ascii()).map(code).collect();
+    }
+    found.dedup();
+    found.truncate(4);
+    found.join(", ")
+}
+
+/// What to do about a path that is not in Unicode NFC: the segment, the offending
+/// characters and the normalised name to use instead.
+fn not_nfc(path: &str) -> String {
+    use unicode_normalization::{is_nfc, UnicodeNormalization};
+    let name = path.split('/').find(|s| !is_nfc(s)).unwrap_or(path);
+    let normalised: String = name.nfc().collect();
+    format!(
+        "the name {name:?} is not in Unicode normal form NFC: it contains {} (a decomposed or combining character). Rename it to {normalised:?} (the same name with precomposed characters) and rebuild.",
+        non_nfc_chars(name)
+    )
+}
+
+fn site_path_rule(path: &str) -> Option<PathRule> {
     use unicode_normalization::is_nfc;
     const SYNTAX: &str = "file and folder names cannot contain backslashes, %, ?, # or control characters, or be empty, . or ... Rename it.";
     if path.len() < 2 || !path.starts_with('/') {
-        return Some(SYNTAX);
+        return Some(PathRule::Fixed(SYNTAX));
     }
     if path.len() > 1024 {
-        return Some("the path is longer than 1024 bytes. Shorten the file or folder names.");
+        return Some(PathRule::Fixed("the path is longer than 1024 bytes. Shorten the file or folder names."));
     }
     if !is_nfc(path) {
-        return Some("the name is not Unicode-normalised (NFC). Rename it.");
+        return Some(PathRule::NotNfc);
     }
     if path.chars().any(|c| matches!(c, '\\' | '%' | '?' | '#' | '\u{FFFD}') || c.is_control()) {
-        return Some(SYNTAX);
+        return Some(PathRule::Fixed(SYNTAX));
     }
     let segments: Vec<&str> = path[1..].split('/').collect();
     if segments.len() > 32 {
-        return Some("the path is nested more than 32 folders deep. Flatten the build output.");
+        return Some(PathRule::Fixed("the path is nested more than 32 folders deep. Flatten the build output."));
     }
     for (i, s) in segments.iter().enumerate() {
         if s.is_empty() || *s == "." || *s == ".." {
-            return Some(SYNTAX);
+            return Some(PathRule::Fixed(SYNTAX));
         }
         if matches!(go_lower(s).as_str(), ".git" | ".aws" | ".ssh" | ".docker" | ".gnupg" | ".kube")
             || (i > 0 && segments[i - 1].eq_ignore_ascii_case(".config") && s.eq_ignore_ascii_case("gcloud"))
         {
-            return Some("version-control and credential folders (.git, .aws, .ssh, .docker, .gnupg, .kube, .config/gcloud) are never published. Remove it from the build output.");
+            return Some(PathRule::Fixed("version-control and credential folders (.git, .aws, .ssh, .docker, .gnupg, .kube, .config/gcloud) are never published. Remove it from the build output."));
         }
     }
     if segments[0].eq_ignore_ascii_case("_axiom") {
-        return Some("the /_axiom/ path is reserved for the platform. Rename it in your build.");
+        return Some(PathRule::Fixed("the /_axiom/ path is reserved for the platform. Rename it in your build."));
     }
     let base = go_lower(segments[segments.len() - 1]);
     if matches!(base.as_str(), "_worker.js" | "_headers" | "_redirects" | "_routes.json") {
-        return Some("this provider control file is not used by Axiom hosting. Remove it from the build; single-page routing is the --spa flag, and headers/redirects are not configurable yet.");
+        return Some(PathRule::Fixed("this provider control file is not used by Axiom hosting. Remove it from the build; single-page routing is the --spa flag, and headers/redirects are not configurable yet."));
     }
     if base == ".env" || base.starts_with(".env.") {
-        return Some("environment files can hold secrets and are never published. Remove it from the build output.");
+        return Some(PathRule::Fixed("environment files can hold secrets and are never published. Remove it from the build output."));
     }
     if base.ends_with(".map") {
-        return Some("source maps are not published (they expose your original source). Remove the *.map files from the build output, for example by turning off production source maps in your bundler.");
+        return Some(PathRule::Fixed("source maps are not published (they expose your original source). Remove the *.map files from the build output, for example by turning off production source maps in your bundler."));
     }
     let credential = matches!(
         base.as_str(),
@@ -207,7 +252,7 @@ pub fn site_path_problem(path: &str) -> Option<&'static str> {
         || [".pem", ".key", ".p12", ".pfx", ".jks", ".keystore", ".kdbx"].iter().any(|e| base.ends_with(e))
         || ["id_rsa", "id_dsa", "id_ecdsa", "id_ed25519"].iter().any(|k| base.starts_with(k));
     if credential {
-        return Some("this looks like a credential, private key or server configuration file and is never published. Remove it from the build output.");
+        return Some(PathRule::Fixed("this looks like a credential, private key or server configuration file and is never published. Remove it from the build output."));
     }
     None
 }
@@ -221,8 +266,61 @@ pub fn default_frontend_dir(cwd: &Path) -> Result<PathBuf> {
         .with_context(|| "No build output found (looked for dist/, build/ and out/). Build your app first, or pass the folder: axiom deploy frontend ./dist".to_string())
 }
 
+/// A folder that passed every local check except the file digests: [`Checked::hash`] reads
+/// the files and builds the manifest.
+#[derive(Clone, Debug)]
+pub struct Checked {
+    root: PathBuf,
+    /// Sorted by path; `sha256` is empty for a frontend until hashed, the listed digest for a
+    /// backend.
+    files: Vec<File>,
+    what: CheckedKind,
+}
+
+#[derive(Clone, Debug)]
+enum CheckedKind {
+    Frontend { spa_fallback: bool },
+    /// `input.json` as read (the manifest, uploaded verbatim).
+    Backend { manifest: Vec<u8> },
+}
+
+impl Checked {
+    /// Read and hash every file and build the canonical manifest.
+    pub fn hash(self) -> Result<Bundle> {
+        let shown = self.root.display().to_string();
+        match self.what {
+            CheckedKind::Frontend { spa_fallback } => {
+                let mut files = self.files;
+                for f in &mut files {
+                    let bytes = std::fs::read(&f.source).with_context(|| format!("cannot read {}", f.path))?;
+                    f.size = bytes.len() as u64;
+                    f.sha256 = sha256_hex(&bytes);
+                }
+                // A file may have grown since the check.
+                limits(&files, &shown)?;
+                frontend_manifest(&self.root, files, spa_fallback)
+            }
+            CheckedKind::Backend { manifest } => {
+                let redo = BACKEND_REDO;
+                for f in &self.files {
+                    let bytes = std::fs::read(&f.source).with_context(|| format!("cannot read {shown}/{}", f.path))?;
+                    if sha256_hex(&bytes) != f.sha256 || bytes.len() as u64 != f.size {
+                        bail!("{shown}/{} does not match its digest in input.json (changed after packaging). {redo}.", f.path);
+                    }
+                }
+                Ok(finish(&self.root, self.files, manifest, None))
+            }
+        }
+    }
+}
+
 /// Check a static site folder and build its `axiom-static-bundle/v1` manifest.
 pub fn frontend(root: &Path, spa: Spa) -> Result<Bundle> {
+    check_frontend(root, spa)?.hash()
+}
+
+/// Every local check of a static site folder that needs no file contents.
+pub fn check_frontend(root: &Path, spa: Spa) -> Result<Checked> {
     let shown = root.display().to_string();
     let meta = std::fs::symlink_metadata(root).with_context(|| format!("{shown} does not exist. Build your app first, or pass the folder: axiom deploy frontend ./dist"))?;
     if !meta.is_dir() {
@@ -230,7 +328,7 @@ pub fn frontend(root: &Path, spa: Spa) -> Result<Bundle> {
     }
     let mut files = Vec::new();
     walk(root, root, "", &mut files, &frontend_rule)?;
-    sort_unique(&mut files)?;
+    sort_unique(root, &mut files)?;
     if !files.iter().any(|f| f.path == "/index.html") {
         bail!("{shown} has no index.html at its top level. Pass the folder that contains index.html (your build output), for example: axiom deploy frontend ./dist");
     }
@@ -243,6 +341,11 @@ pub fn frontend(root: &Path, spa: Spa) -> Result<Bundle> {
         Spa::Off => false,
         Spa::Auto => !files.iter().any(|f| f.path == "/404.html"),
     };
+    Ok(Checked { root: root.to_path_buf(), files, what: CheckedKind::Frontend { spa_fallback } })
+}
+
+fn frontend_manifest(root: &Path, files: Vec<File>, spa_fallback: bool) -> Result<Bundle> {
+    let shown = root.display().to_string();
     #[derive(Serialize)]
     struct Entry<'a> {
         path: &'a str,
@@ -278,6 +381,13 @@ pub fn frontend(root: &Path, spa: Spa) -> Result<Bundle> {
 /// against its listed digest and size (contract amendment A4.2). Other files in the folder are
 /// not uploaded.
 pub fn backend(root: &Path) -> Result<Bundle> {
+    check_backend(root)?.hash()
+}
+
+const BACKEND_REDO: &str = "Create it again with `axiom server package <contract> <plan> --deployment <file> --target container-amd64 --output-input <dir>`, or leave out --from-input so `axiom deploy backend` packages this project itself";
+
+/// Every local check of a package input folder except the file digests.
+pub fn check_backend(root: &Path) -> Result<Checked> {
     #[derive(serde::Deserialize)]
     struct Listed {
         sha256: String,
@@ -294,10 +404,10 @@ pub fn backend(root: &Path) -> Result<Bundle> {
         artifact_references: std::collections::BTreeMap<String, String>,
     }
     let shown = root.display().to_string();
-    let redo = "Create it again with `axiom server package … --output-input DIR`, or leave out --from-input to package this project";
+    let redo = BACKEND_REDO;
     let meta = std::fs::symlink_metadata(root).with_context(|| format!("{shown} does not exist. {redo}."))?;
     if !meta.is_dir() {
-        bail!("{shown} is not a folder. Pass the folder written by `axiom server package … --output-input DIR`.");
+        bail!("{shown} is not a folder. Pass the folder written by `axiom server package <contract> <plan> --deployment <file> --target container-amd64 --output-input <dir>`, or leave out --from-input so `axiom deploy backend` packages this project itself.");
     }
     let manifest_path = root.join("input.json");
     let manifest_meta = std::fs::symlink_metadata(&manifest_path).ok().filter(|m| m.is_file());
@@ -357,14 +467,9 @@ pub fn backend(root: &Path) -> Result<Bundle> {
         if !ok {
             bail!("{shown}/{name} is listed in input.json but is missing (or not a regular file inside the folder; symbolic links are not followed). {redo}.");
         }
-        let bytes = std::fs::read(&source).with_context(|| format!("cannot read {shown}/{name}"))?;
-        let sha256 = sha256_hex(&bytes);
-        if sha256 != listed.sha256 || bytes.len() as u64 != listed.bytes {
-            bail!("{shown}/{name} does not match its digest in input.json (changed after packaging). {redo}.");
-        }
-        files.push(File { path: name.clone(), source, sha256, size: listed.bytes, content_type: None });
+        files.push(File { path: name.clone(), source, sha256: listed.sha256.clone(), size: listed.bytes, content_type: None });
     }
-    Ok(finish(root, files, manifest, None))
+    Ok(Checked { root: root.to_path_buf(), files, what: CheckedKind::Backend { manifest } })
 }
 
 /// Package input bounds (axiom-backend hosting `ParseContainerInput`, axiom-runtime release.rs).
@@ -427,7 +532,7 @@ fn frontend_rule(rel: &str, name: &str, is_dir: bool) -> Result<Visit> {
     }
     if content_type(rel).is_none() {
         let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
-        bail!("{rel}: .{ext} files are not served by Axiom hosting yet (served: web pages, CSS, JavaScript, JSON, XML, text, images, fonts, WebAssembly, audio and video). Remove it from the build output.");
+        bail!("{rel}: .{ext} files are not served by Axiom hosting yet. In the pilot every file is served with a fixed, safe content type, and only web content has one: web pages, CSS, JavaScript, JSON, XML, text, images, fonts, WebAssembly, audio and video. Remove it from the build output (or move it out of the folder you deploy) and host it elsewhere, for example in object storage, linking to it from your site.");
     }
     Ok(Visit::Keep)
 }
@@ -466,8 +571,7 @@ fn walk(root: &Path, dir: &Path, rel_dir: &str, out: &mut Vec<File>, rule: Rule<
             if meta.len() > MAX_OBJECT_BYTES {
                 bail!("{rel}: {} is larger than the 64 MiB one file may be. Remove it from the build output or serve it from elsewhere.", human_bytes(meta.len()));
             }
-            let bytes = std::fs::read(&path).with_context(|| format!("cannot read {shown}"))?;
-            out.push(File { path: rel, source: path, sha256: sha256_hex(&bytes), size: bytes.len() as u64, content_type: None });
+            out.push(File { path: rel, source: path, sha256: String::new(), size: meta.len(), content_type: None });
             if out.len() > MAX_FILES {
                 bail!("{} has more than {MAX_FILES} files; a deployment holds at most {MAX_FILES}. Remove files you do not serve.", root.display());
             }
@@ -480,10 +584,20 @@ fn walk(root: &Path, dir: &Path, rel_dir: &str, out: &mut Vec<File>, rule: Rule<
 
 /// Sort by manifest path (byte order of the UTF-8 NFC path) and refuse duplicates, which
 /// only arise from names that differ before Unicode normalisation.
-fn sort_unique(files: &mut [File]) -> Result<()> {
+fn sort_unique(root: &Path, files: &mut [File]) -> Result<()> {
+    use unicode_normalization::is_nfc;
     files.sort_by(|a, b| a.path.cmp(&b.path));
     if let Some(w) = files.windows(2).find(|w| w[0].path == w[1].path) {
-        bail!("{}: two files have this name once Unicode-normalised (NFC). Rename one of them.", w[0].path);
+        // The names as they are on disk, relative to the folder; the culprit is the first
+        // segment (file or folder) that is not NFC.
+        let on_disk = |f: &File| f.source.strip_prefix(root).unwrap_or(&f.source).to_string_lossy().into_owned();
+        let (a, b) = (on_disk(&w[0]), on_disk(&w[1]));
+        let odd = [&a, &b].into_iter().flat_map(|p| p.split(std::path::MAIN_SEPARATOR)).find(|s| !is_nfc(s)).unwrap_or(&a).to_string();
+        bail!(
+            "{}: two files have this path once Unicode-normalised (NFC): {a:?} and {b:?}; {odd:?} contains {} (a decomposed or combining character). Delete or rename one of them.",
+            w[0].path,
+            non_nfc_chars(&odd)
+        );
     }
     Ok(())
 }
@@ -573,6 +687,8 @@ mod tests {
         // A file type the server does not serve is refused before any request.
         let pdf = err(&[("index.html", "a"), ("docs/guide.PDF", "%PDF")]);
         assert!(pdf.contains("/docs/guide.PDF: .pdf files are not served"), "{pdf}");
+        // Why, and what to do instead.
+        assert!(pdf.contains("fixed, safe content type") && pdf.contains("Remove it from the build output") && pdf.contains("host it elsewhere"), "{pdf}");
         let missing = frontend(Path::new("/definitely/not/here"), Spa::Auto).unwrap_err().to_string();
         assert!(missing.contains("does not exist") && missing.contains("axiom deploy frontend ./dist"), "{missing}");
     }
@@ -644,7 +760,36 @@ mod tests {
         assert!(b.files.iter().any(|f| f.path == "/caf\u{e9}.txt"));
         let d = site(&[("index.html", "a"), ("cafe\u{301}.txt", "x"), ("caf\u{e9}.txt", "y")]);
         let e = frontend(d.path(), Spa::Auto).unwrap_err().to_string();
-        assert!(e.contains("Unicode-normalised"), "{e}");
+        assert!(e.contains("Unicode-normalised") && e.contains("U+0301") && e.contains("Delete or rename one of them"), "{e}");
+        // The server-rule message names the character and the name to use.
+        let p = site_path_problem("/cafe\u{301}.txt").unwrap();
+        assert!(p.contains("U+0301") && p.contains("Rename it to \"caf\u{e9}.txt\""), "{p}");
+        assert!(site_path_problem("/\u{212A}.txt").unwrap().contains("U+212A"));
+        // A collision in a folder name names the folder's character.
+        let d = site(&[("index.html", "a"), ("cafe\u{301}/a.js", "x"), ("caf\u{e9}/a.js", "y")]);
+        let e = frontend(d.path(), Spa::Auto).unwrap_err().to_string();
+        assert!(e.contains(r#""cafe\u{301}" contains U+0301"#), "{e}");
+    }
+
+    /// The folder check reads no file; hashing does (after the pilot check in `axiom deploy`).
+    #[cfg(unix)]
+    #[test]
+    fn the_folder_check_reads_no_file_and_hashing_matches_frontend() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = site(&[("index.html", "<h1>hi</h1>"), ("a.js", "1")]);
+        let checked = check_frontend(d.path(), Spa::Auto).unwrap();
+        assert_eq!(checked.clone().hash().unwrap().manifest, frontend(d.path(), Spa::Auto).unwrap().manifest);
+        std::fs::set_permissions(d.path().join("a.js"), std::fs::Permissions::from_mode(0o000)).unwrap();
+        let checked = check_frontend(d.path(), Spa::Auto).unwrap();
+        if std::fs::read(d.path().join("a.js")).is_err() {
+            assert!(checked.hash().unwrap_err().to_string().contains("cannot read /a.js"));
+        }
+        std::fs::set_permissions(d.path().join("a.js"), std::fs::Permissions::from_mode(0o644)).unwrap();
+        // A backend input's digests are checked when hashing.
+        let (input, _) = input(&[("contract.axiom", "c"), ("contract.server.json", "{}"), ("deployment.json", "{}")], &[]);
+        let checked = check_backend(input.path()).unwrap();
+        std::fs::write(input.path().join("contract.axiom"), "x").unwrap();
+        assert!(checked.hash().unwrap_err().to_string().contains("does not match its digest"));
     }
 
     #[test]

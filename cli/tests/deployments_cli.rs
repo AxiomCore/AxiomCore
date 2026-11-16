@@ -159,7 +159,7 @@ fn deployments_list_and_typed_errors_through_the_binary() {
     assert_eq!(out.status.code(), Some(1));
     assert_eq!(
         String::from_utf8_lossy(&out.stderr).trim(),
-        "axiom deployments: AXDEPLOY_DISABLED: Deployments are not enabled for this project yet (invite-only pilot). Ask the Axiom team to add it. (request req_7)"
+        "axiom deployments: AXDEPLOY_DISABLED: This project is not in the Axiom hosting pilot yet (deployments are invite-only). Ask the Axiom team to add it. (request req_7)"
     );
     let out = cli(&server, dir.path(), &["deployments", "logs", "frontend", "--project", "demo", "--since", "yesterday"]);
     assert_eq!(out.status.code(), Some(1));
@@ -219,4 +219,35 @@ fn source_maps_are_refused_and_the_include_flag_is_gone() {
     let help = cli(&server, dir.path(), &["deploy", "frontend", "--help"]);
     assert!(!String::from_utf8_lossy(&help.stdout).contains("source-maps"));
     assert!(server.seen().is_empty(), "{:?}", server.seen());
+}
+
+/// S2: signed out, or the Cloud unreachable, each says so in one sentence (no OS error tail).
+#[test]
+fn signed_out_and_unreachable_are_told_apart() {
+    let server = Server::start();
+    let dir = signed_in();
+    std::fs::remove_file(dir.path().join("auth.json")).unwrap();
+    let out = cli(&server, dir.path(), &["deployments", "list", "--project", "demo"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("Not signed in") && stderr.contains("`axiom login`") && !stderr.contains("os error"), "{stderr}");
+
+    let dir = signed_in();
+    let closed = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", closed.local_addr().unwrap());
+    drop(closed);
+    let out = Command::new(env!("CARGO_BIN_EXE_axiom-cli"))
+        .args(["deploy", "frontend", "--project", "demo", "--no-activate"])
+        .current_dir(dir.path())
+        .env("AXIOM_CLOUD_URL", &url)
+        .env("AXIOM_LOCAL_PROFILE_DIR", dir.path())
+        .env("HOME", dir.path())
+        .env("CI", "true")
+        .env_remove("AXIOM_REFERRAL_CODE")
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("Could not reach Axiom Cloud (") && !stderr.contains("os error") && !stderr.contains("axiom login"), "{stderr}");
 }

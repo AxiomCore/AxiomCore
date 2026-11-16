@@ -202,7 +202,9 @@ async fn deploy_frontend_uploads_builds_activates_and_prints_the_url() {
 async fn deploy_frontend_no_activate_stops_at_ready_and_a_rerun_activates_that_version() {
     let h = Harness::new().await;
     let site = fixture_site();
-    for (generation, active) in [(4, "ver_1"), (4, "ver_1"), (5, "ver_2")] {
+    // Each run reads the slot once at the start (the pilot check); the rerun's activation
+    // reads it again.
+    for (generation, active) in [(4, "ver_1"), (4, "ver_1"), (4, "ver_1"), (5, "ver_2")] {
         h.script(&format!("GET {B}/frontend"), 200, slot(generation, "active", Some(active)));
     }
     script_deploy(&h, site.path(), false);
@@ -230,7 +232,8 @@ async fn an_interrupted_deploy_resumes_with_the_same_keys() {
     let manifest = manifest_sha(site.path());
     let html = bundle::sha256_hex(HTML.as_bytes());
     let target = |sha: &str| json!({"sha256": sha, "url": format!("{}/r2/{sha}", h2.base), "method": "PUT", "headers": {}});
-    h2.script(&format!("GET {B}/frontend"), 404, not_found());
+    // No slot at the start; the upload creates one (H2 ensureSlot), which the rerun reads.
+    h2.script(&format!("GET {B}/frontend"), 404, not_found()).script(&format!("GET {B}/frontend"), 200, slot(1, "empty", None));
     h2.script(&format!("POST {B}/frontend/uploads"), 201, json!({"id": "upl_1", "state": "open", "missing_hashes": [html, manifest], "upload_urls": [target(&html), target(&manifest)]}));
     h2.script(&format!("GET {B}/frontend/uploads/upl_1"), 200, json!({"id": "upl_1", "state": "open", "missing_hashes": []}));
     h2.script(&format!("PUT /r2/{html}"), 200, json!({})).script(&format!("PUT /r2/{manifest}"), 200, json!({}));
@@ -248,7 +251,10 @@ async fn an_interrupted_deploy_resumes_with_the_same_keys() {
     let completes = h2.mock.seen(&format!("POST {B}/frontend/uploads/upl_1/complete"));
     assert_eq!(completes.len(), 2);
     assert_eq!(completes[0].key, completes[1].key);
-    assert_eq!(h2.mock.seen(&format!("GET {B}/frontend")).len(), 1, "the original generation is read once per intent");
+    // One slot read per run (the pilot check); the resumed intent keeps its original generation.
+    assert_eq!(h2.mock.seen(&format!("GET {B}/frontend")).len(), 2);
+    let journal: Journal = serde_json::from_slice(&std::fs::read(h2.ctx.journal_dir.join(format!("demo-{ENV}-frontend.json"))).unwrap()).unwrap();
+    assert_eq!(journal.generation, 0);
     // A different build starts a fresh intent.
     std::fs::write(site.path().join("index.html"), "<h1>changed</h1>").unwrap();
     let _ = h2.deploy_frontend(site.path(), &["--no-activate"]).await;
@@ -272,7 +278,7 @@ async fn missing_upload_urls_and_server_errors_show_the_next_step() {
     let h = Harness::new().await;
     h.script(&format!("GET {B}/frontend"), 503, json!({"schema": SCHEMA, "code": "AXDEPLOY_DISABLED", "request_id": "req_9", "retryable": false}));
     let e = h.deploy_frontend(site.path(), &["--yes"]).await.unwrap_err().to_string();
-    assert_eq!(e, "AXDEPLOY_DISABLED: Deployments are not enabled for this project yet (invite-only pilot). Ask the Axiom team to add it. (request req_9)");
+    assert_eq!(e, "AXDEPLOY_DISABLED: This project is not in the Axiom hosting pilot yet (deployments are invite-only). Ask the Axiom team to add it. (request req_9)");
     h.script(&format!("GET {B}/backend"), 404, not_found());
     let e = h.deployments(&["status", "backend"]).await.unwrap_err().to_string();
     assert_eq!(e, "There is no backend deployment in this environment yet. Deploy one with `axiom deploy backend`.");
@@ -354,7 +360,7 @@ async fn deploy_backend_from_input_uploads_container_input() {
     h.script(&format!("GET {B}/backend/operations/op_ba"), 200, op("op_ba", "succeeded"));
     let cli = BackendCli::try_parse_from(argv(&["--from-input", input.path().to_str().unwrap(), "--project", "demo", "--environment", ENV, "--yes", "--json"])).unwrap();
     let prepared = backend_bundle(&cli.args, &h.ctx.cwd).unwrap();
-    deploy(&h.ctx, Kind::Backend, &prepared.bundle, &cli.args.flags).await.unwrap();
+    deploy(&h.ctx, Kind::Backend, &prepared, &cli.args.flags).await.unwrap();
     let up = &h.mock.seen(&format!("POST {B}/backend/uploads"))[0];
     // A4.1/A4.2: input.json is the manifest (digest and exact length); the content files are
     // the three it lists (one entry each, the stray file left out), counted without it.
@@ -377,6 +383,14 @@ async fn deploy_backend_from_input_uploads_container_input() {
     let cli = BackendCli::try_parse_from(argv(&[])).unwrap();
     let e = backend_bundle(&cli.args, empty.path()).err().unwrap().to_string();
     assert!(e.contains("No backend contract found") && e.contains("--from-input"), "{e}");
+    // Every package-input hint is a complete command (S3).
+    assert!(e.contains("axiom server package <contract> <plan> --deployment <file> --target container-amd64 --output-input <dir>") && e.contains("axiom deploy backend --from-input <dir>"), "{e}");
+    std::fs::write(empty.path().join("backend.axiom"), "c").unwrap();
+    let e = backend_bundle(&cli.args, empty.path()).err().unwrap().to_string();
+    assert!(e.contains("No server plan at") && e.contains("--target container-amd64 --output-input <dir>"), "{e}");
+    std::fs::write(empty.path().join("backend.server.json"), "{}").unwrap();
+    let e = backend_bundle(&cli.args, empty.path()).err().unwrap().to_string();
+    assert!(e.contains("axiom server deployment ") && e.contains("--output deployment.json") && e.contains("--output-input <dir>"), "{e}");
 }
 
 /// list, status, versions, activate, rollback (previous and --to), logs, delete, health.
@@ -655,4 +669,235 @@ fn logs_print_oldest_first() {
     oldest_first(&mut items);
     let ids: Vec<_> = items.iter().map(|e| e.id.clone().unwrap()).collect();
     assert_eq!(ids, ["e1", "e2a", "e2b", "e3"]);
+}
+
+/// H2's reply to `GET …/{kind}` after `axiom deployments delete`: the newest deleted slot
+/// (`findSlot` with live=false), its generation bumped by the delete, no URL.
+fn deleted_slot(generation: i64) -> Value {
+    json!({"schema": SCHEMA, "deployment_id": "dpl_old", "kind": "frontend", "generation": generation, "state": "deleted", "suspend_reason": null,
+        "active_version_id": "ver_1", "desired_version_id": "ver_1", "previous_version_id": null, "version": null, "operation_id": "op_d", "status_url": format!("{B}/frontend/operations/op_d"),
+        "url": null, "placement": {"policy": "apac-hint", "observed": null}, "health": {}, "quota": null, "failure": null, "created_at": "2026-11-16T09:00:00Z", "updated_at": "2026-11-16T10:00:00Z"})
+}
+
+/// H2's shared slot shape for the slot `ensureSlot` creates (generation 1, state empty).
+fn new_slot(generation: i64, state: &str, active: Option<&str>) -> Value {
+    json!({"schema": SCHEMA, "deployment_id": "dpl_new", "kind": "frontend", "generation": generation, "state": state, "suspend_reason": null,
+        "active_version_id": active, "desired_version_id": active, "previous_version_id": null, "version": null, "operation_id": null, "status_url": null,
+        "url": "https://demo-development-d4e5f6.axiomcore.page", "placement": {"policy": "apac-hint", "observed": null}, "health": {}, "quota": null, "failure": null,
+        "created_at": "2026-11-16T11:00:00Z", "updated_at": "2026-11-16T11:00:00Z"})
+}
+
+/// Scripts the upload, version and activation of a deploy onto the slot H2 creates after a
+/// delete; activate accepts only `If-Match: "g1"` (the new slot's generation), like H2.
+fn script_redeploy(h: &Harness, site: &Path) {
+    let manifest = manifest_sha(site);
+    let html = bundle::sha256_hex(HTML.as_bytes());
+    let app = bundle::sha256_hex(APP.as_bytes());
+    let target = |sha: &str| json!({"sha256": sha, "url": format!("{}/r2/{sha}", h.base), "method": "PUT", "headers": {"Content-Length": "11", "x-amz-checksum-sha256": "c2hh"}, "expires_at": "2026-11-16T11:15:00Z"});
+    h.script(&format!("POST {B}/frontend/uploads"), 201, json!({"id": "upl_9", "state": "open", "purpose": "static_bundle", "expires_at": "2026-11-16T12:00:00Z", "file_count": 2, "total_bytes": 25,
+        "missing_hashes": [app, html, manifest], "upload_urls": [target(&app), target(&html), target(&manifest)]}));
+    for sha in [&app, &html, &manifest] {
+        h.script(&format!("PUT /r2/{sha}"), 200, json!({}));
+    }
+    h.script(&format!("POST {B}/frontend/uploads/upl_9/complete"), 200, json!({"id": "upl_9", "state": "sealed", "purpose": "static_bundle", "missing_hashes": []}));
+    let mut created = new_slot(1, "empty", None);
+    created["version_id"] = json!("ver_9");
+    created["operation_id"] = json!("op_v9");
+    created["version"] = json!({"id": "ver_9", "status": "pending", "artifact": {"type": "static_bundle"}, "failure": null});
+    h.script(&format!("POST {B}/frontend/versions"), 202, created);
+    h.script(&format!("GET {B}/frontend/operations/op_v9"), 200, op("op_v9", "succeeded"));
+    h.script(&format!("GET {B}/frontend/versions/ver_9"), 200, json!({"id": "ver_9", "deployment_id": "dpl_new", "status": "ready", "manifest_sha256": manifest}));
+    h.mock.require_if_match(&format!("POST {B}/frontend/versions/ver_9/activate"), "\"g1\"");
+    let mut activating = new_slot(2, "activating", None);
+    activating["desired_version_id"] = json!("ver_9");
+    activating["version_id"] = json!("ver_9");
+    activating["operation_id"] = json!("op_a9");
+    h.script(&format!("POST {B}/frontend/versions/ver_9/activate"), 202, activating);
+    h.script(&format!("GET {B}/frontend/operations/op_a9"), 200, op("op_a9", "succeeded"));
+}
+
+/// M1: after `axiom deployments delete`, `GET …/frontend` answers the deleted slot (g3). The
+/// upload creates a new live slot at g1, so the activation pins g1, not the deleted slot's g3.
+#[tokio::test]
+async fn a_deploy_after_a_delete_activates_the_new_slot_at_generation_1() {
+    let h = Harness::new().await;
+    let site = fixture_site();
+    h.script(&format!("GET {B}/frontend"), 200, deleted_slot(3)) // deploy start
+        .script(&format!("GET {B}/frontend"), 200, new_slot(1, "empty", None)) // activate reads the slot
+        .script(&format!("GET {B}/frontend"), 200, new_slot(2, "active", Some("ver_9")));
+    script_redeploy(&h, site.path());
+    h.deploy_frontend(site.path(), &["--yes", "--json"]).await.unwrap();
+    let activations = h.mock.seen(&format!("POST {B}/frontend/versions/ver_9/activate"));
+    assert_eq!(activations.len(), 1);
+    assert_eq!(activations[0].if_match.as_deref(), Some("\"g1\""));
+    let journal: Journal = serde_json::from_slice(&std::fs::read(h.ctx.journal_dir.join(format!("demo-{ENV}-frontend.json"))).unwrap()).unwrap();
+    assert_eq!((journal.generation, journal.slot_id.as_deref()), (0, None), "no live slot when the deploy started");
+    assert_eq!(activations[0].key.as_deref(), Some(idempotency_key(&journal.intent_id, "activate", &journal.manifest_sha256, 1).as_str()));
+    assert!(journal.activated && !journal.failed);
+}
+
+/// M1, resumed: a journal an earlier CLI wrote pinned the deleted slot's g3 (no `slot_id`) and
+/// stopped at the 412. A plain rerun resumes that intent and activates with g1.
+#[tokio::test]
+async fn a_resumed_deploy_pinned_to_a_deleted_slot_recovers() {
+    let h = Harness::new().await;
+    let site = fixture_site();
+    let manifest = manifest_sha(site.path());
+    let stale = json!({"schema": JOURNAL_SCHEMA, "project": "demo", "environment_id": ENV, "kind": "frontend", "intent_id": "intent-old", "manifest_sha256": manifest,
+        "generation": 3, "upload_id": "upl_9", "upload_sealed": true, "version_id": "ver_9", "version_operation_id": "op_v9", "version_ready": true,
+        "activate_operation_id": null, "activated": false, "url": null, "failed": false, "steps": {"create_version": "empty"}});
+    std::fs::create_dir_all(&h.ctx.journal_dir).unwrap();
+    std::fs::write(h.ctx.journal_dir.join(format!("demo-{ENV}-frontend.json")), serde_json::to_vec(&stale).unwrap()).unwrap();
+    h.script(&format!("GET {B}/frontend"), 200, new_slot(1, "empty", None)).script(&format!("GET {B}/frontend"), 200, new_slot(1, "empty", None)).script(&format!("GET {B}/frontend"), 200, new_slot(2, "active", Some("ver_9")));
+    script_redeploy(&h, site.path());
+    h.deploy_frontend(site.path(), &["--yes"]).await.unwrap();
+    // Nothing re-uploaded or re-created: only the activation, with the new slot's generation.
+    assert!(h.mock.seen(&format!("POST {B}/frontend/uploads")).is_empty());
+    assert!(h.mock.seen(&format!("POST {B}/frontend/versions")).is_empty());
+    let activations = h.mock.seen(&format!("POST {B}/frontend/versions/ver_9/activate"));
+    assert_eq!(activations.len(), 1);
+    assert_eq!(activations[0].if_match.as_deref(), Some("\"g1\""));
+    assert_eq!(activations[0].key.as_deref(), Some(idempotency_key("intent-old", "activate", &manifest, 1).as_str()));
+
+    // The same stale pin on a slot that has since changed (someone activated: g2) still
+    // stops with the 412 and the manual next step, never a silent refresh.
+    let h = Harness::new().await;
+    std::fs::create_dir_all(&h.ctx.journal_dir).unwrap();
+    std::fs::write(h.ctx.journal_dir.join(format!("demo-{ENV}-frontend.json")), serde_json::to_vec(&stale).unwrap()).unwrap();
+    h.script(&format!("GET {B}/frontend"), 200, new_slot(2, "active", Some("ver_8")));
+    script_redeploy(&h, site.path());
+    h.mock.require_if_match(&format!("POST {B}/frontend/versions/ver_9/activate"), "\"g2\"");
+    let e = h.deploy_frontend(site.path(), &["--yes"]).await.unwrap_err().to_string();
+    assert!(e.contains("changed while you were deploying") && e.contains("axiom deployments activate frontend ver_9"), "{e}");
+    assert_eq!(h.mock.seen(&format!("POST {B}/frontend/versions/ver_9/activate"))[0].if_match.as_deref(), Some("\"g1\""));
+}
+
+#[test]
+fn the_activation_pin_is_the_start_generation_or_1_for_a_new_slot() {
+    let at = |g: i64| Slot { generation: Some(g), ..Default::default() };
+    assert_eq!(activation_generation(0, None, &at(1)), 1, "no live slot at the start");
+    assert_eq!(activation_generation(0, None, &at(4)), 1, "changed since: the 412 tells the user");
+    assert_eq!(activation_generation(5, Some("dpl_1"), &at(6)), 5, "never refreshed");
+    assert_eq!(activation_generation(5, Some("dpl_1"), &at(1)), 5, "a recorded slot keeps its pin");
+    assert_eq!(activation_generation(3, None, &at(1)), 1, "an old journal's pin from a deleted slot");
+    assert_eq!(activation_generation(3, None, &at(3)), 3);
+    assert_eq!(activation_generation(3, None, &at(7)), 3);
+}
+
+/// A slot still being deleted: the deploy pins nothing from it, and H2's 409 says to wait.
+#[tokio::test]
+async fn a_deploy_while_the_slot_is_being_deleted_says_to_wait() {
+    let h = Harness::new().await;
+    let site = fixture_site();
+    let mut deleting = deleted_slot(3);
+    deleting["state"] = json!("deleting");
+    h.script(&format!("GET {B}/frontend"), 200, deleting);
+    h.script(&format!("POST {B}/frontend/uploads"), 409, json!({"schema": SCHEMA, "code": "AXDEPLOY_DELETING", "message": "Deployment request could not be completed", "request_id": "r5", "retryable": false, "details": {}}));
+    let e = h.deploy_frontend(site.path(), &["--yes"]).await.unwrap_err().to_string();
+    assert!(e.contains("AXDEPLOY_DELETING") && e.contains("Wait for the delete to finish"), "{e}");
+    let journal: Journal = serde_json::from_slice(&std::fs::read(h.ctx.journal_dir.join(format!("demo-{ENV}-frontend.json"))).unwrap()).unwrap();
+    assert_eq!(journal.generation, 0);
+}
+
+/// A project outside the hosting pilot hears so from the first deployments read: before the
+/// files are hashed (a file removed after the folder check is never read) and before y/N.
+#[tokio::test]
+async fn a_project_outside_the_pilot_is_told_before_hashing_or_asking() {
+    let h = Harness::new().await;
+    let site = fixture_site();
+    let cli = FrontendCli::try_parse_from(argv(&[site.path().to_str().unwrap(), "--project", "demo", "--environment", ENV])).unwrap();
+    let pending = frontend_pending(&cli.args, &h.ctx.cwd).unwrap();
+    std::fs::remove_file(site.path().join("assets/app.js")).unwrap();
+    h.script(&format!("GET {B}/frontend"), 503, json!({"schema": SCHEMA, "code": "AXDEPLOY_DISABLED", "message": "Deployment request could not be completed", "request_id": "r3", "retryable": true, "details": {}}));
+    let e = deploy_pending(&h.ctx, Kind::Frontend, pending, &cli.args.flags, Some("Deploy?"), |_| panic!("asked before the pilot check")).await.unwrap_err().to_string();
+    assert!(e.starts_with("AXDEPLOY_DISABLED: This project is not in the Axiom hosting pilot yet"), "{e}");
+    assert_eq!(h.routes(), [format!("GET {B}/frontend")]);
+    h.script(&format!("GET {B}"), 503, json!({"schema": SCHEMA, "code": "AXDEPLOY_DISABLED", "request_id": "r4", "retryable": true}));
+    let e = h.deployments(&["list"]).await.unwrap_err().to_string();
+    assert!(e.contains("not in the Axiom hosting pilot yet"), "{e}");
+}
+
+/// On a terminal the question comes after the one read and the hashing; declining sends
+/// nothing else and exits 2.
+#[tokio::test]
+async fn declining_the_question_sends_nothing() {
+    let h = Harness::new().await;
+    let site = fixture_site();
+    let cli = FrontendCli::try_parse_from(argv(&[site.path().to_str().unwrap(), "--project", "demo", "--environment", ENV])).unwrap();
+    let pending = frontend_pending(&cli.args, &h.ctx.cwd).unwrap();
+    h.script(&format!("GET {B}/frontend"), 404, not_found());
+    let asked = std::cell::Cell::new(false);
+    let e = deploy_pending(&h.ctx, Kind::Frontend, pending, &cli.args.flags, Some("Deploy?"), |q| {
+        asked.set(q == "Deploy?");
+        false
+    })
+    .await
+    .unwrap_err();
+    assert!(asked.get());
+    assert_eq!(e.downcast_ref::<crate::commands::auth::Exit>().map(|x| x.code), Some(2));
+    assert_eq!(h.routes(), [format!("GET {B}/frontend")]);
+    assert!(!h.ctx.journal_dir.exists(), "no journal for a declined deploy");
+}
+
+/// S2: an unreachable Cloud is named as such, with the reason and without OS error numbers.
+#[tokio::test]
+async fn an_unreachable_cloud_is_not_reported_as_signed_out() {
+    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", closed.local_addr().unwrap());
+    drop(closed);
+    let client = CloudClient::for_loopback(&url, "access".into(), "refresh".into()).unwrap();
+    let e = client.list_projects().await.unwrap_err();
+    let text = projects_error(&e);
+    assert!(text.starts_with("Could not reach Axiom Cloud (") && !text.contains("os error") && !text.contains("axiom login"), "{text}");
+    let text = projects_error(&anyhow!("Failed to list projects: {{\"error\":\"unauthorized\"}}"));
+    assert!(text.starts_with("Not signed in to Axiom Cloud") && text.contains("`axiom login`"), "{text}");
+    let text = projects_error(&anyhow!("unable to authenticate (Error: Failed to send refresh token request)"));
+    assert!(text.starts_with("Could not reach Axiom Cloud"), "{text}");
+    let text = projects_error(&anyhow!("Failed to list projects: <html><body>session gateway</body></html>"));
+    assert_eq!(text, "Axiom Cloud did not return your projects (an unexpected web page). Try again in a minute.");
+    let text = projects_error(&anyhow!("Failed to list projects: upstream exploded"));
+    assert_eq!(text, "Axiom Cloud did not return your projects (upstream exploded). Try again in a minute.");
+}
+
+/// Review fix: the same build again after `axiom deployments delete` starts a fresh intent
+/// (new keys) instead of replaying the old activation onto the deleted slot.
+#[tokio::test]
+async fn the_same_build_after_a_delete_deploys_afresh() {
+    let h = Harness::new().await;
+    let site = fixture_site();
+    // First deploy onto live slot dpl_new (g1), then it is deleted (GET answers dpl_old-style
+    // deleted slot), then the same build again.
+    h.script(&format!("GET {B}/frontend"), 200, new_slot(1, "empty", None))
+        .script(&format!("GET {B}/frontend"), 200, new_slot(1, "empty", None))
+        .script(&format!("GET {B}/frontend"), 200, new_slot(2, "active", Some("ver_9")))
+        .script(&format!("GET {B}/frontend"), 200, deleted_slot(3))
+        .script(&format!("GET {B}/frontend"), 200, new_slot(1, "empty", None))
+        .script(&format!("GET {B}/frontend"), 200, new_slot(2, "active", Some("ver_9")));
+    script_redeploy(&h, site.path());
+    h.deploy_frontend(site.path(), &["--yes"]).await.unwrap();
+    let journal: Journal = serde_json::from_slice(&std::fs::read(h.ctx.journal_dir.join(format!("demo-{ENV}-frontend.json"))).unwrap()).unwrap();
+    assert_eq!((journal.slot_id.as_deref(), journal.version_slot_id.as_deref()), (Some("dpl_new"), Some("dpl_new")));
+    let first = journal.intent_id.clone();
+    h.deploy_frontend(site.path(), &["--yes"]).await.unwrap();
+    let uploads = h.mock.seen(&format!("POST {B}/frontend/uploads"));
+    assert_eq!(uploads.len(), 2, "a fresh upload after the delete");
+    assert_ne!(uploads[0].key, uploads[1].key);
+    let journal: Journal = serde_json::from_slice(&std::fs::read(h.ctx.journal_dir.join(format!("demo-{ENV}-frontend.json"))).unwrap()).unwrap();
+    assert_ne!(journal.intent_id, first);
+    let activations = h.mock.seen(&format!("POST {B}/frontend/versions/ver_9/activate"));
+    assert_eq!(activations.len(), 2);
+    assert_ne!(activations[0].key, activations[1].key, "no replay of the first activation");
+    assert_eq!(activations[1].if_match.as_deref(), Some("\"g1\""));
+}
+
+#[test]
+fn a_journal_resumes_only_on_its_own_live_slot() {
+    let j = |slot: Option<&str>, version: Option<&str>| Journal { slot_id: slot.map(Into::into), version_slot_id: version.map(Into::into), ..Default::default() };
+    let at = |id: &str, state: &str| Slot { deployment_id: Some(id.into()), state: Some(state.into()), generation: Some(1), ..Default::default() };
+    assert!(!same_slot(&j(Some("a"), Some("a")), None));
+    assert!(!same_slot(&j(None, None), live(Some(&at("a", "deleted")))));
+    assert!(same_slot(&j(Some("a"), Some("a")), Some(&at("a", "active"))));
+    assert!(!same_slot(&j(Some("a"), Some("a")), Some(&at("b", "active"))));
+    assert!(!same_slot(&j(None, Some("a")), Some(&at("b", "empty"))));
+    assert!(same_slot(&j(None, None), Some(&at("b", "empty"))), "an earlier build's journal resumes on a live slot");
 }

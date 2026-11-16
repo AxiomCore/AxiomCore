@@ -1732,8 +1732,11 @@ async fn main() -> anyhow::Result<()> {
         Commands::Mock(input) => {
             input.resolve(&std::env::current_dir()?)?;
         }
-        // The folder, path rules and manifest are checked before registration, sign-in
-        // or any request; a problem exits 1 with what to do.
+        // The project link, the folder and its path rules are checked before registration,
+        // sign-in or any request; a problem exits 1 with what to do. Only then is an
+        // activating deploy without --yes and without a terminal refused (exit 2, nothing
+        // sent). On a terminal the y/N question comes in the handler, after the one read that
+        // tells a project outside the hosting pilot so, and after hashing.
         Commands::Deploy { target } => {
             let prepared = match target {
                 DeployTarget::Frontend(args) => commands::deployments::prepare_frontend(args),
@@ -1744,16 +1747,14 @@ async fn main() -> anyhow::Result<()> {
                 eprintln!("axiom deploy: {error:#}");
                 std::process::exit(1);
             }
-            // The y/N question comes once the folder has passed its local checks, so a
-            // confirmed deploy is not then refused for a file rule.
-            let question = match target {
-                DeployTarget::Frontend(args) if !args.flags.no_activate && !args.flags.yes => Some(commands::deployments::deploy_question(axiom_cloud::deployments::Kind::Frontend, args.dir.as_deref(), &args.flags.target)),
-                DeployTarget::Backend(args) if !args.flags.no_activate && !args.flags.yes => Some(commands::deployments::deploy_question(axiom_cloud::deployments::Kind::Backend, args.from_input.as_deref(), &args.flags.target)),
-                _ => None,
+            let asks = match target {
+                DeployTarget::Frontend(args) => commands::deployments::asks(&args.flags),
+                DeployTarget::Backend(args) => commands::deployments::asks(&args.flags),
+                DeployTarget::MockServer { .. } => false,
             };
-            if let Some(question) = question {
-                if !commands::deployments::ask(&question) {
-                    eprintln!("axiom deploy: cancelled; nothing was changed");
+            if asks {
+                if let Err(error) = commands::auth::require_yes_or_terminal(false) {
+                    eprintln!("axiom deploy: {error}");
                     std::process::exit(2);
                 }
             }
@@ -1990,16 +1991,16 @@ fn confirmation_preflight(command: &Commands) {
         Commands::Project {
             action: ProjectAction::Archive { yes, .. },
         } => ("project archive", *yes),
-        // Deploys that make a version live, and traffic changes (`activate`, `rollback`,
-        // `delete`); `--no-activate` changes no traffic and needs no confirmation.
-        Commands::Deploy {
-            target: DeployTarget::Frontend(args),
-        } if !args.flags.no_activate => ("deploy", args.flags.yes),
-        Commands::Deploy {
-            target: DeployTarget::Backend(args),
-        } if !args.flags.no_activate => ("deploy", args.flags.yes),
+        // Traffic changes (`activate`, `rollback`, `delete`), after the local check that a
+        // project is named or linked. (`axiom deploy` is checked in `main`, after its folder.)
         Commands::Deployments(args) => match commands::deployments::asks_first(args) {
-            Some(yes) => ("deployments", yes),
+            Some(yes) => {
+                if let Err(error) = std::env::current_dir().map_err(anyhow::Error::from).and_then(|cwd| commands::deployments::check_link(&args.target, &cwd)) {
+                    eprintln!("axiom deployments: {error}");
+                    std::process::exit(1);
+                }
+                ("deployments", yes)
+            }
             None => return,
         },
         _ => return,

@@ -22,6 +22,8 @@ pub struct Seen {
 #[derive(Default)]
 struct State {
     scripts: HashMap<String, VecDeque<(u16, Value)>>,
+    /// Route → the only `If-Match` it accepts; any other answers 412 as axiom-backend does.
+    preconditions: HashMap<String, String>,
     seen: Vec<Seen>,
 }
 
@@ -41,6 +43,12 @@ impl Mock {
     }
     pub fn script(&self, route: &str, status: u16, body: Value) -> &Self {
         self.0.lock().unwrap().scripts.entry(route.to_string()).or_default().push_back((status, body));
+        self
+    }
+    /// Enforce `If-Match` on `route` like the server: anything but `etag` gets axiom-backend's
+    /// 412 `AXDEPLOY_PRECONDITION_FAILED` (without consuming a scripted reply).
+    pub fn require_if_match(&self, route: &str, etag: &str) -> &Self {
+        self.0.lock().unwrap().preconditions.insert(route.to_string(), etag.to_string());
         self
     }
     /// Every request, in order.
@@ -65,6 +73,12 @@ async fn handler(axum::extract::State(mock): axum::extract::State<Mock>, method:
         body: serde_json::from_slice(&body).unwrap_or(Value::Null),
         raw: body.to_vec(),
     });
+    if let Some(want) = state.preconditions.get(&route) {
+        if header("if-match").as_deref() != Some(want.as_str()) {
+            let body = json!({"schema": "axiom-deployments/v1", "code": "AXDEPLOY_PRECONDITION_FAILED", "message": "Deployment request could not be completed", "request_id": "req_412", "retryable": false, "details": {}});
+            return Response::builder().status(412).header("content-type", "application/json").body(axum::body::Body::from(body.to_string())).unwrap();
+        }
+    }
     let answer = match state.scripts.get_mut(&route) {
         Some(queue) if queue.len() > 1 => queue.pop_front(),
         Some(queue) => queue.front().cloned(),

@@ -182,7 +182,7 @@ axiom auth settings set [OPTIONS] --file <FILE>
 | Option | Value | Default | Meaning |
 | --- | --- | --- | --- |
 | `--file` | path | required | Settings JSON object, at most 32 KiB, with the current `revision`. `turnstile_secret` can only be set here. |
-| `--dry-run` | flag | off | Print the request that would be sent, with `turnstile_secret` shown as `(set from file)`, and send nothing. Needs no sign-in. |
+| `--dry-run` | flag | off | Check the file locally, print the request that would be sent with `turnstile_secret` shown as `(set from file)`, and send nothing. Needs no sign-in. |
 
 The file is refused (exit 2) without a numeric `revision` or when any field,
 at any depth, is a provider or SMTP secret: `secret`, a name ending in
@@ -191,6 +191,50 @@ at any depth, is a provider or SMTP secret: `secret`, a name ending in
 read-only fields `updated_at`, `turnstile_secret_set`, `stream_version` and
 `upgrade_pending` from `settings get` are dropped, so you can edit the
 output of `settings get` and send it back.
+
+**Refusals name the field.** When the server refuses a value, the command
+exits 2. The message names the refused field and a stable reason, but never
+the value you sent:
+
+```text title="stderr"
+axiom auth: AXAUTH_INVALID_REQUEST: the request was refused (HTTP 400); field `webauthn_rp_id`: reserved_domain
+```
+
+A list entry carries its index, for example `webauthn_origins[0]` or
+`allowed_origins[2]`. A rate limit carries its key, for example
+`rate_limits.email-ip`. The server reports the first refused field only.
+These are the passkey reasons you are most likely to see:
+
+| Field | Reason | Fix |
+| --- | --- | --- |
+| `webauthn_rp_id` | `reserved_domain` | Use your app's own registrable domain, such as `shop.example`. It can never be `axiomcore.dev` or a subdomain of it. |
+| `webauthn_rp_id` | `invalid_format` | Use a lowercase host name with no scheme or port, or `localhost`. |
+| `webauthn_origins[i]` | `not_in_allowed_origins` | Add the origin to `allowed_origins` as well. |
+| `webauthn_origins[i]` | `not_under_rp_id` | Make the origin's host `webauthn_rp_id` or a subdomain of it. |
+
+**Dry run checks.** `--dry-run` checks these rules locally:
+
+- `allowed_origins`: at most 32 distinct exact origins.
+- `webauthn_rp_id`: the relying party ID rules.
+- `webauthn_origins`: at most 8 distinct exact origins. Each one must be in
+  `allowed_origins` and under `webauthn_rp_id`.
+
+A file that breaks one of these rules exits 2 and nothing is sent. The
+message lists every refused field with the same field names and reasons as
+the server:
+
+```text title="stderr"
+axiom auth: AXAUTH_INVALID_REQUEST (dry run, checked locally; nothing was sent): the server would refuse this file
+  field `webauthn_rp_id`: reserved_domain (use your app's own registrable domain, never axiomcore.dev or a subdomain of it)
+```
+
+The dry run does not check any other settings rule, such as bounds,
+redirect URLs or captcha. The server checks every rule on save. A file that
+passes the dry run can still be refused, with the field named.
+
+In a branch environment, a passkey origin that is missing from
+`allowed_origins` is refused with `409` (branch outbound disabled) and no
+field.
 
 ```bash title="Terminal"
 axiom auth settings get --environment production --output settings.json

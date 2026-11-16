@@ -683,6 +683,19 @@ async fn run(args: &AuthArgs) -> Result<()> {
         Action::Settings { action: SettingsAction::Set { file, dry_run } } => {
             let body = settings_body(file)?;
             if *dry_run {
+                // The passkey relying-party rules the server applies, checked on the file alone
+                // (the server answers the same field and reason on save).
+                let refusals = settings_local_refusals(&body);
+                if !refusals.is_empty() {
+                    let lines: Vec<String> = refusals.iter().map(|(field, reason)| format!("  field `{field}`: {reason} ({})", refusal_hint(reason))).collect();
+                    return Err(usage(format!(
+                        "AXAUTH_INVALID_REQUEST (dry run, checked locally; nothing was sent): the server would refuse this file\n{}",
+                        lines.join("\n")
+                    )));
+                }
+                if !args.json {
+                    eprintln!("Dry run: nothing was sent. Checked locally: the file's shape, allowed_origins, and the passkey relying-party rules (webauthn_rp_id, webauthn_origins). The server checks every other settings rule on save and names any refused field.");
+                }
                 let mut shown = body.clone();
                 if shown.get("turnstile_secret").is_some_and(|v| !v.is_null()) {
                     shown["turnstile_secret"] = json!("(set from file)");
@@ -869,6 +882,86 @@ pub fn settings_put_body(current: &Value, changes: &Value) -> Value {
     }
     let body = SETTINGS_INPUT.iter().filter_map(|key| merged.get(*key).map(|value| (key.to_string(), value.clone()))).collect::<Map<_, _>>();
     Value::Object(body)
+}
+
+/// The `allowed_origins` and passkey relying-party refusals the server would answer for a
+/// settings file, as (field, reason) in its words (backend docs/auth-settings-errors.md). Only
+/// members present in the file are checked: an absent `webauthn_rp_id` keeps the stored one,
+/// which the file does not show. An absent `allowed_origins` is sent as none.
+pub fn settings_local_refusals(body: &Value) -> Vec<(String, &'static str)> {
+    static ALLOWED: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let allowed_shape = ALLOWED.get_or_init(|| regex::Regex::new(r"^https://[a-z0-9.-]+(:[0-9]{1,5})?$|^http://(localhost|127\.0\.0\.1)(:[0-9]{1,5})?$").expect("origin pattern"));
+    let mut out: Vec<(String, &'static str)> = vec![];
+    let strings = |v: &Value| v.as_array().map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect::<Vec<_>>());
+    let distinct = |list: &[String]| list.iter().enumerate().all(|(i, x)| !list[..i].contains(x));
+    let allowed = strings(&body["allowed_origins"]).unwrap_or_default();
+    if allowed.len() > 32 {
+        out.push(("allowed_origins".into(), "too_many"));
+    } else if !distinct(&allowed) {
+        out.push(("allowed_origins".into(), "duplicate"));
+    }
+    for (i, origin) in allowed.iter().enumerate() {
+        if !allowed_shape.is_match(origin) {
+            out.push((format!("allowed_origins[{i}]"), "invalid_origin"));
+        }
+    }
+    let rp_id = match body.get("webauthn_rp_id") {
+        Some(Value::String(id)) => match advanced::rp_id_refusal(id) {
+            Some(reason) => {
+                out.push(("webauthn_rp_id".into(), reason));
+                None
+            }
+            None => Some(id.as_str()),
+        },
+        Some(Value::Null) | None => None,
+        Some(_) => {
+            out.push(("webauthn_rp_id".into(), "invalid_type"));
+            None
+        }
+    };
+    let Some(origins) = body.get("webauthn_origins").and_then(strings) else { return out };
+    if origins.len() > 8 {
+        out.push(("webauthn_origins".into(), "too_many"));
+    } else if !distinct(&origins) {
+        out.push(("webauthn_origins".into(), "duplicate"));
+    }
+    if !origins.is_empty() && body.get("webauthn_rp_id").is_some_and(Value::is_null) {
+        out.push(("webauthn_rp_id".into(), "required_by_webauthn_origins"));
+    }
+    for (i, origin) in origins.iter().enumerate() {
+        let reason = if !advanced::exact_origin(origin) {
+            "invalid_origin"
+        } else if !allowed.contains(origin) {
+            "not_in_allowed_origins"
+        } else if rp_id.is_some_and(|id| {
+            // The host of the matched text (no URL parsing: the server accepts any 1-5 digit port).
+            let host = origin.split_once("://").map_or("", |(_, rest)| rest.split(':').next().unwrap_or(""));
+            host != id && !host.ends_with(&format!(".{id}"))
+        }) {
+            "not_under_rp_id"
+        } else {
+            continue;
+        };
+        out.push((format!("webauthn_origins[{i}]"), reason));
+    }
+    out
+}
+
+/// A short hint for a settings refusal reason (the server's `reason`).
+pub fn refusal_hint(reason: &str) -> &'static str {
+    match reason {
+        "reserved_domain" => "use your app's own registrable domain, never axiomcore.dev or a subdomain of it",
+        "invalid_format" => "a lowercase host name such as example.com, or localhost, with no scheme or port",
+        "too_long" => "too long",
+        "invalid_type" => "a string or null",
+        "too_many" => "too many entries",
+        "duplicate" => "an entry is repeated",
+        "invalid_origin" => "an exact origin: https://host[:port] or http://localhost[:port]; allowed_origins also takes http://127.0.0.1[:port]",
+        "not_in_allowed_origins" => "list it in allowed_origins too",
+        "not_under_rp_id" => "its host must be webauthn_rp_id or a subdomain of it",
+        "required_by_webauthn_origins" => "passkey origins need a webauthn_rp_id",
+        _ => "see the settings refusal reasons in the docs",
+    }
 }
 
 /// Fields `GET settings` returns that `PUT settings` does not accept.
@@ -1645,6 +1738,57 @@ mod tests {
         ] {
             let error = settings_body(&write(refused)).unwrap_err();
             assert_eq!(error.downcast_ref::<Exit>().unwrap().code, 2, "{refused}");
+        }
+    }
+
+    #[test]
+    fn settings_local_refusals_name_the_field_and_reason_the_server_answers() {
+        let base = || json!({"revision": 4, "allowed_origins": ["https://app.shop.example", "https://evil.example"], "webauthn_rp_id": "shop.example",
+            "webauthn_origins": ["https://app.shop.example"]});
+        assert!(settings_local_refusals(&base()).is_empty());
+        // A file without the passkey members (the stored ones are kept) has nothing to check.
+        assert!(settings_local_refusals(&json!({"revision": 4})).is_empty());
+        let many = |n: usize, f: &dyn Fn(usize) -> String| Value::from((0..n).map(f).collect::<Vec<_>>());
+        let cases: Vec<(&str, Value, &str, &str)> = vec![
+            ("live W6 platform rp", json!("w6-passkey.axiomcore.dev"), "webauthn_rp_id", "reserved_domain"),
+            ("apex platform rp", json!("axiomcore.dev"), "webauthn_rp_id", "reserved_domain"),
+            ("rp with a scheme", json!("https://shop.example"), "webauthn_rp_id", "invalid_format"),
+            ("rp too long", json!(format!("{}dev", "a.".repeat(127))), "webauthn_rp_id", "too_long"),
+            ("rp not a string", json!(5), "webauthn_rp_id", "invalid_type"),
+        ];
+        for (name, rp, field, reason) in cases {
+            let mut body = base();
+            body["webauthn_rp_id"] = rp;
+            assert!(settings_local_refusals(&body).contains(&(field.to_string(), reason)), "{name}: {:?}", settings_local_refusals(&body));
+        }
+        let cases: Vec<(&str, &str, Value, &str, &str)> = vec![
+            ("allowed too many", "allowed_origins", many(33, &|i| format!("https://o{i}.example")), "allowed_origins", "too_many"),
+            ("allowed duplicate", "allowed_origins", json!(["https://app.shop.example", "https://app.shop.example"]), "allowed_origins", "duplicate"),
+            ("allowed shape", "allowed_origins", json!(["https://app.shop.example", "http://app.shop.example"]), "allowed_origins[1]", "invalid_origin"),
+            ("origins too many", "webauthn_origins", many(9, &|i| format!("https://o{i}.shop.example")), "webauthn_origins", "too_many"),
+            ("origins duplicate", "webauthn_origins", json!(["https://app.shop.example", "https://app.shop.example"]), "webauthn_origins", "duplicate"),
+            ("origin shape", "webauthn_origins", json!(["http://app.shop.example"]), "webauthn_origins[0]", "invalid_origin"),
+            ("origin not allowed", "webauthn_origins", json!(["https://app.shop.example", "https://login.shop.example"]), "webauthn_origins[1]", "not_in_allowed_origins"),
+            ("origin other rp", "webauthn_origins", json!(["https://evil.example"]), "webauthn_origins[0]", "not_under_rp_id"),
+            ("rp cleared under origins", "webauthn_rp_id", Value::Null, "webauthn_rp_id", "required_by_webauthn_origins"),
+        ];
+        for (name, key, value, field, reason) in cases {
+            let mut body = base();
+            body[key] = value;
+            assert!(settings_local_refusals(&body).contains(&(field.to_string(), reason)), "{name}: {:?}", settings_local_refusals(&body));
+        }
+        let body = json!({"allowed_origins": ["https://evilshop.example"], "webauthn_rp_id": "shop.example", "webauthn_origins": ["https://evilshop.example"]});
+        assert_eq!(settings_local_refusals(&body), vec![("webauthn_origins[0]".to_string(), "not_under_rp_id")]);
+        // A port the server takes (any 1-5 digits) is not refused locally.
+        let body = json!({"allowed_origins": ["https://app.shop.example:99999"], "webauthn_rp_id": "shop.example", "webauthn_origins": ["https://app.shop.example:99999"]});
+        assert!(settings_local_refusals(&body).is_empty(), "{:?}", settings_local_refusals(&body));
+        // An absent allowed_origins is sent as none, so every passkey origin is refused.
+        let mut body = base();
+        body.as_object_mut().unwrap().remove("allowed_origins");
+        assert_eq!(settings_local_refusals(&body), vec![("webauthn_origins[0]".to_string(), "not_in_allowed_origins")]);
+        // Every reason has a hint of its own.
+        for reason in ["reserved_domain", "invalid_format", "too_long", "invalid_type", "too_many", "duplicate", "invalid_origin", "not_in_allowed_origins", "not_under_rp_id", "required_by_webauthn_origins"] {
+            assert_ne!(refusal_hint(reason), refusal_hint("unknown"), "{reason}");
         }
     }
 

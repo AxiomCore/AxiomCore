@@ -348,6 +348,33 @@ fn mfa_set_names_how_a_confirmed_change_turns_on_or_weakens_protection() {
 }
 
 #[test]
+fn settings_set_dry_run_names_the_field_the_server_would_refuse_and_sends_nothing() {
+    let directory = tempfile::tempdir().unwrap();
+    let (url, log) = cloud(settings(), None, json!({}));
+    let file = directory.path().join("settings.json");
+    // The live W6 refusal: a platform RP ID, and a passkey origin outside allowed_origins.
+    let mut body = settings();
+    body["webauthn_rp_id"] = json!("w6-passkey.axiomcore.dev");
+    body["webauthn_origins"] = json!(["https://w6-passkey.axiomcore.dev"]);
+    std::fs::write(&file, body.to_string()).unwrap();
+    let output = axiom(&url, directory.path(), &["settings", "set", "--file", file.to_str().unwrap(), "--dry-run"]);
+    assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+    let err = stderr(&output);
+    assert!(err.contains("nothing was sent") && err.contains("field `webauthn_rp_id`: reserved_domain"), "{err}");
+    assert!(err.contains("field `webauthn_origins[0]`: not_in_allowed_origins"), "{err}");
+    assert!(output.stdout.is_empty());
+    // A file that passes says what was checked, and still sends nothing.
+    std::fs::write(&file, settings().to_string()).unwrap();
+    let output = axiom(&url, directory.path(), &["settings", "set", "--file", file.to_str().unwrap(), "--dry-run"]);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert!(stderr(&output).contains("The server checks every other settings rule on save"), "{}", stderr(&output));
+    let printed: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(printed["dry_run"], true);
+    assert_eq!(printed["request"]["webauthn_rp_id"], "shop.example.com");
+    assert!(requests(&log).is_empty(), "{:?}", requests(&log));
+}
+
+#[test]
 fn refused_mfa_writes_map_to_the_dashboard_messages() {
     let directory = tempfile::tempdir().unwrap();
     let (url, _) = cloud(settings(), Some((400, r#"{"error":{"code":"AXAUTH_INVALID_REQUEST"}}"#.into())), json!({}));

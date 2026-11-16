@@ -1162,13 +1162,29 @@ pub fn mfa_weakening(settings: &Value, mfa: Option<&Value>, input: &Value) -> Ve
 
 /// A relying party ID the dashboard accepts: a host name (or localhost), never axiomcore.dev.
 fn rp_id_valid(id: &str) -> bool {
-    static HOST: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    let host = HOST.get_or_init(|| regex::Regex::new(r"^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$").expect("host pattern"));
-    let shaped = id == "localhost" || (id.len() <= 253 && host.is_match(id));
-    shaped && id != "axiomcore.dev" && !id.ends_with(".axiomcore.dev")
+    rp_id_refusal(id).is_none()
 }
 
-fn exact_origin(origin: &str) -> bool {
+/// Why the server refuses a relying party ID (its `webauthn_rp_id` reasons): `too_long`,
+/// `invalid_format` or `reserved_domain` (axiomcore.dev and its subdomains). `None` when valid.
+pub fn rp_id_refusal(id: &str) -> Option<&'static str> {
+    static HOST: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let host = HOST.get_or_init(|| regex::Regex::new(r"^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$").expect("host pattern"));
+    if id == "localhost" {
+        None
+    } else if id.len() > 253 {
+        Some("too_long")
+    } else if !host.is_match(id) {
+        Some("invalid_format")
+    } else if id == "axiomcore.dev" || id.ends_with(".axiomcore.dev") {
+        Some("reserved_domain")
+    } else {
+        None
+    }
+}
+
+/// A passkey origin the server accepts (`webauthn_origins`).
+pub fn exact_origin(origin: &str) -> bool {
     static ORIGIN: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     ORIGIN.get_or_init(|| regex::Regex::new(r"^(https://[a-z0-9.-]+(:[0-9]{1,5})?|http://localhost(:[0-9]{1,5})?)$").expect("origin pattern")).is_match(origin)
 }

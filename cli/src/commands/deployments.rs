@@ -540,14 +540,27 @@ pub async fn deploy(ctx: &Ctx, kind: Kind, b: &Bundle, flags: &DeployFlags) -> R
     let path = journal_path(ctx, &r.scope, kind);
     let previous = load_journal(&path).filter(|j| !flags.new && !j.failed && j.manifest_sha256 == b.manifest_sha256);
     let mut j = match previous {
-        Some(j) if j.activated => {
-            // This exact build is already live from an earlier run: report it.
-            let out = outcome(&r, kind, j.version_id.clone(), j.activate_operation_id.clone(), j.url.clone(), Some("active".into()), true);
-            if json {
-                return print_json(&out);
+        Some(mut j) if j.activated => {
+            // This exact build went live in an earlier run. Report it only if the server
+            // still serves it; otherwise make it live again under the original precondition.
+            let live = ctx.client.deployment_slot(&r.scope, kind).await?.map(|s| s.body);
+            match live {
+                Some(s) if s.active_version_id.is_some() && s.active_version_id == j.version_id && matches!(s.state.as_deref(), Some("active" | "degraded")) => {
+                    let url = s.url.clone().or(j.url.clone());
+                    let out = outcome(&r, kind, j.version_id.clone(), j.activate_operation_id.clone(), url.clone(), s.state.clone(), true);
+                    if json {
+                        return print_json(&out);
+                    }
+                    println!("✓ This build is already live: version {} at {}. Pass --new to deploy it again.", opt(&j.version_id), opt(&url));
+                    return Ok(());
+                }
+                _ => {
+                    progress(&format!("Version {} of this build is no longer live; activating it again.", opt(&j.version_id)));
+                    j.activated = false;
+                    j.activate_operation_id = None;
+                    j
+                }
             }
-            println!("✓ This build is already deployed: version {} at {}. Pass --new to deploy it again.", opt(&j.version_id), opt(&j.url));
-            return Ok(());
         }
         Some(j) => {
             progress(&format!("Resuming the previous deploy of this build (version {}).", opt(&j.version_id)));
@@ -668,13 +681,22 @@ async fn deploy_steps(ctx: &Ctx, kind: Kind, b: &Bundle, flags: &DeployFlags, r:
         return Ok(outcome(r, kind, Some(version), j.version_operation_id.clone(), url, Some("ready".into()), false));
     }
     progress(&format!("Activating version {version}…"));
-    let intent = j.intent_id.clone();
-    let manifest = j.manifest_sha256.clone();
-    let done = activate(ctx, scope, kind, &version, true, |generation| idempotency_key(&intent, "activate", &manifest, generation), |op| {
+    // D2 §6: the activation's precondition is the generation read when this deploy started
+    // (a slot created by this deploy starts at 1); it is never silently refreshed.
+    let generation = j.generation.max(1);
+    let key = idempotency_key(&j.intent_id, "activate", &j.manifest_sha256, generation);
+    let done = activate(ctx, scope, kind, &version, true, Some(generation), |_| key.clone(), |op| {
         j.activate_operation_id = Some(op.to_string());
         let _ = save_journal(path, j);
     })
-    .await?;
+    .await
+    .map_err(|e| match e.downcast_ref::<DeployError>() {
+        Some(d) if d.status == 412 => anyhow!(
+            "AXDEPLOY_PRECONDITION_FAILED: The deployment changed while you were deploying (someone activated, rolled back or deleted). Review with `axiom deployments status {kind}{hint}`, then make this version live with `axiom deployments activate {kind} {version}{hint}`.",
+            hint = flags_hint(&flags.target)
+        ),
+        _ => e,
+    })?;
     j.activated = true;
     j.url = done.url.clone().or(j.url.take());
     j.step("activate", "active");
@@ -819,10 +841,12 @@ fn if_match(reply: &axiom_cloud::deployments::Reply<Slot>) -> Result<String> {
     reply.etag.clone().or_else(|| reply.body.etag()).ok_or_else(|| anyhow!("AXDEPLOY_INVALID_RESPONSE: the deployment has no generation (ETag)"))
 }
 
-/// Make `version` live: GET the slot for `If-Match`, POST activate (keyed by the generation
-/// it read), and follow the operation when `wait`. An activation of this version already in
-/// flight is followed instead of repeated; an already-live version is reported as such.
-async fn activate(ctx: &Ctx, scope: &Scope, kind: Kind, version: &str, wait: bool, key: impl Fn(i64) -> String, mut started: impl FnMut(&str)) -> Result<Slot> {
+/// Make `version` live: GET the slot, POST activate with `If-Match` (the `pinned`
+/// generation when given, else the one just read), and follow the operation when `wait`.
+/// An activation of this version already in flight is followed instead of repeated; an
+/// already-live version is reported as such.
+#[allow(clippy::too_many_arguments)]
+async fn activate(ctx: &Ctx, scope: &Scope, kind: Kind, version: &str, wait: bool, pinned: Option<i64>, key: impl Fn(i64) -> String, mut started: impl FnMut(&str)) -> Result<Slot> {
     let current = slot(ctx, scope, kind).await?;
     let s = &current.body;
     if s.active_version_id.as_deref() == Some(version) && matches!(s.state.as_deref(), Some("active" | "degraded")) {
@@ -831,8 +855,10 @@ async fn activate(ctx: &Ctx, scope: &Scope, kind: Kind, version: &str, wait: boo
     let op = if s.desired_version_id.as_deref() == Some(version) && s.state.as_deref() == Some("activating") && s.operation_id.is_some() {
         s.operation_id.clone().unwrap_or_default()
     } else {
-        let tag = if_match(&current)?;
-        let generation = s.generation.unwrap_or(0);
+        let (tag, generation) = match pinned {
+            Some(g) => (format!("\"g{g}\""), g),
+            None => (if_match(&current)?, s.generation.unwrap_or(0)),
+        };
         let reply = ctx.client.deployment_activate(scope, kind, version, &tag, &key(generation)).await?;
         reply.body.operation_id.clone().ok_or_else(|| anyhow!("AXDEPLOY_INVALID_RESPONSE: the activation returned no operation"))?
     };
@@ -857,10 +883,13 @@ pub async fn handle(args: &DeploymentsArgs) -> Result<()> {
     run(&ctx, args).await
 }
 
-/// A standalone traffic action's key: deterministic for the same request on the same
-/// generation, so a retry after a lost response replays instead of repeating.
-fn action_key(action: &str, scope: &Scope, kind: Kind, target: &str, generation: i64) -> String {
-    bundle::sha256_hex(format!("{action}|{}|{}|{kind}|{target}|{generation}", scope.project, scope.environment_id).as_bytes())
+/// A standalone traffic action's `Idempotency-Key`: random for each invocation. A
+/// deterministic key would replay an earlier answer (the server keeps them 24 h) when a
+/// re-created slot reaches the same generation. A rerun after a lost response is a new
+/// request: its `If-Match` is re-read, so it acts on the current state (a second
+/// `rollback` rolls back again; a second `activate` of a live version is a no-op).
+fn action_key() -> String {
+    uuid::Uuid::new_v4().to_string()
 }
 
 pub async fn run(ctx: &Ctx, args: &DeploymentsArgs) -> Result<()> {
@@ -912,17 +941,25 @@ pub async fn run(ctx: &Ctx, args: &DeploymentsArgs) -> Result<()> {
         }
         Action::Versions { kind } => {
             let kind = Kind::from(*kind);
-            let page = ctx.client.deployment_versions(scope, kind, None).await?;
+            let mut versions = Vec::new();
+            let mut cursor: Option<String> = None;
+            for _ in 0..20 {
+                let page = ctx.client.deployment_versions(scope, kind, cursor.as_deref()).await?;
+                versions.extend(page.items);
+                cursor = page.next_cursor.filter(|c| !c.is_empty());
+                if cursor.is_none() {
+                    break;
+                }
+            }
             let live = ctx.client.deployment_slot(scope, kind).await?.and_then(|s| s.body.active_version_id);
             if json {
-                return print_json(&json!({"schema": SCHEMA, "active_version_id": live, "items": page.items, "next_cursor": page.next_cursor}));
+                return print_json(&json!({"schema": SCHEMA, "active_version_id": live, "items": versions, "next_cursor": cursor}));
             }
-            if page.items.is_empty() {
+            if versions.is_empty() {
                 println!("No {kind} versions yet. Deploy one with `axiom deploy {kind}`.");
                 return Ok(());
             }
-            let rows: Vec<Vec<String>> = page
-                .items
+            let rows: Vec<Vec<String>> = versions
                 .iter()
                 .map(|v| {
                     let mark = if live.as_deref() == Some(v.id.as_str()) { "*" } else { " " };
@@ -937,7 +974,8 @@ pub async fn run(ctx: &Ctx, args: &DeploymentsArgs) -> Result<()> {
         }
         Action::Activate { kind, version, wait, .. } => {
             let kind = Kind::from(*kind);
-            let done = activate(ctx, scope, kind, version, *wait, |g| action_key("activate", scope, kind, version, g), |_| {}).await?;
+            let key = action_key();
+            let done = activate(ctx, scope, kind, version, *wait, None, |_| key.clone(), |_| {}).await?;
             let live = *wait || (done.active_version_id.as_deref() == Some(version.as_str()) && matches!(done.state.as_deref(), Some("active" | "degraded")));
             finish_traffic(&r, kind, &done, live, json, &format!("{} is live", clean(version)), "Activation")
         }
@@ -945,8 +983,7 @@ pub async fn run(ctx: &Ctx, args: &DeploymentsArgs) -> Result<()> {
             let kind = Kind::from(*kind);
             let current = slot(ctx, scope, kind).await?;
             let tag = if_match(&current)?;
-            let generation = current.body.generation.unwrap_or(0);
-            let key = action_key("rollback", scope, kind, to.as_deref().unwrap_or("previous"), generation);
+            let key = action_key();
             let reply = ctx.client.deployment_rollback(scope, kind, to.as_deref(), &tag, &key).await?;
             let op = reply.body.operation_id.clone();
             let done = match (&op, wait) {
@@ -965,7 +1002,7 @@ pub async fn run(ctx: &Ctx, args: &DeploymentsArgs) -> Result<()> {
             let kind = Kind::from(*kind);
             let current = slot(ctx, scope, kind).await?;
             let tag = if_match(&current)?;
-            let key = action_key("delete", scope, kind, "", current.body.generation.unwrap_or(0));
+            let key = action_key();
             let reply = ctx.client.deployment_delete(scope, kind, &tag, &key).await?;
             let op = reply.body.operation_id.clone();
             let mut done = reply.body;
@@ -1005,6 +1042,8 @@ pub async fn run(ctx: &Ctx, args: &DeploymentsArgs) -> Result<()> {
                     break;
                 }
             }
+            // The server pages newest first; print oldest first, like a log.
+            oldest_first(&mut items);
             if json {
                 return print_json(&json!({"schema": SCHEMA, "items": items}));
             }
@@ -1055,6 +1094,11 @@ fn finish_traffic(r: &Resolved, kind: Kind, done: &Slot, waited: bool, json: boo
         println!("{what} requested (operation {}). Follow it with `axiom deployments status {kind}`, or pass --wait.", opt(&done.operation_id));
     }
     Ok(())
+}
+
+/// Lifecycle events in log order: oldest first by `created_at`, then id.
+pub fn oldest_first(items: &mut [axiom_cloud::deployments::LogEvent]) {
+    items.sort_by(|a, b| (a.created_at.as_deref(), a.id.as_deref()).cmp(&(b.created_at.as_deref(), b.id.as_deref())));
 }
 
 pub fn list_lines(items: &[Slot], environment: &str) -> Vec<String> {

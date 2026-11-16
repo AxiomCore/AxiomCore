@@ -186,10 +186,11 @@ async fn deploy_frontend_uploads_builds_activates_and_prints_the_url() {
     assert_eq!(keys[3], idempotency_key(&journal.intent_id, "activate", &manifest, 1));
     assert!(journal.activated && journal.version_id.as_deref() == Some("ver_2") && journal.url.as_deref() == Some(URL));
 
-    // The same build again: reported, nothing sent to the deployments API.
+    // The same build again: the server confirms it is still live (one slot read), nothing
+    // else is sent.
     let before = h.deployment_requests().len();
     h.deploy_frontend(site.path(), &["--yes"]).await.unwrap();
-    assert_eq!(h.deployment_requests().len(), before);
+    assert_eq!(h.routes()[before..], [format!("GET {B}/frontend")]);
     // --new starts a fresh intent with new keys.
     h.deploy_frontend(site.path(), &["--yes", "--new", "--json"]).await.unwrap();
     let uploads = h.mock.seen(&format!("POST {B}/frontend/uploads"));
@@ -392,11 +393,43 @@ async fn every_deployments_command_sends_the_contract_requests() {
     assert_eq!(seen, want);
     let delete = &h.mock.seen(&format!("DELETE {B}/frontend"))[0];
     assert!(delete.raw.is_empty());
-    // Rollback keys differ by target; the same request on the same generation repeats its key.
+    // Standalone traffic keys are fresh per invocation: the same request on the same
+    // generation (e.g. a re-created slot) never replays an earlier answer.
     let rollbacks = h.mock.seen(&format!("POST {B}/frontend/rollback"));
     assert_ne!(rollbacks[0].key, rollbacks[1].key);
     h.deployments(&["rollback", "frontend", "--yes"]).await.unwrap();
-    assert_eq!(h.mock.seen(&format!("POST {B}/frontend/rollback"))[2].key, rollbacks[0].key);
+    h.deployments(&["delete", "frontend", "--yes"]).await.unwrap();
+    let again = h.mock.seen(&format!("POST {B}/frontend/rollback"));
+    assert_eq!(again[2].if_match, again[0].if_match);
+    assert_ne!(again[2].key, again[0].key);
+    let deletes = h.mock.seen(&format!("DELETE {B}/frontend"));
+    assert_eq!(deletes[1].if_match, deletes[0].if_match);
+    assert_ne!(deletes[1].key, deletes[0].key);
+}
+
+#[tokio::test]
+async fn deploy_activation_keeps_its_original_generation_and_stops_on_412() {
+    let h = Harness::new().await;
+    let site = fixture_site();
+    // The slot is at g5 when the deploy starts; afterwards someone else's change moves it
+    // to g6 and serves ver_0. The mock does not check If-Match: the first activation is
+    // scripted 202, the second 412.
+    h.script(&format!("GET {B}/frontend"), 200, slot(5, "active", Some("ver_1")));
+    h.script(&format!("GET {B}/frontend"), 200, slot(6, "active", Some("ver_0")));
+    script_deploy(&h, site.path(), false);
+    h.script(&format!("POST {B}/frontend/versions/ver_2/activate"), 412, json!({"schema": SCHEMA, "code": "AXDEPLOY_PRECONDITION_FAILED", "request_id": "r9"}));
+    h.deploy_frontend(site.path(), &["--yes"]).await.unwrap();
+    let activations = h.mock.seen(&format!("POST {B}/frontend/versions/ver_2/activate"));
+    assert_eq!(activations[0].if_match.as_deref(), Some("\"g5\""), "the generation read when the deploy started, not the latest");
+    let journal: Journal = serde_json::from_slice(&std::fs::read(h.ctx.journal_dir.join(format!("demo-{ENV}-frontend.json"))).unwrap()).unwrap();
+    assert_eq!(activations[0].key.as_deref(), Some(idempotency_key(&journal.intent_id, "activate", &journal.manifest_sha256, 5).as_str()));
+    // The server now serves another version: a rerun of the same build does not claim it is
+    // live; it re-activates under the original precondition and the 412 says what to do.
+    let e = h.deploy_frontend(site.path(), &["--yes"]).await.unwrap_err().to_string();
+    assert!(e.contains("changed while you were deploying") && e.contains("axiom deployments activate frontend ver_2"), "{e}");
+    let journal: Journal = serde_json::from_slice(&std::fs::read(h.ctx.journal_dir.join(format!("demo-{ENV}-frontend.json"))).unwrap()).unwrap();
+    assert!(!journal.failed && journal.version_id.as_deref() == Some("ver_2"), "the journal keeps the version for a manual activate");
+    assert_eq!(h.mock.seen(&format!("POST {B}/frontend/versions/ver_2/activate"))[1].if_match.as_deref(), Some("\"g5\""));
 }
 
 #[tokio::test]
@@ -560,4 +593,14 @@ fn record(s: &Seen) -> Entry {
         bytes: put.then_some(s.raw.len()),
         manifest: if put { text } else { None },
     }
+}
+
+#[test]
+fn logs_print_oldest_first() {
+    let ev = |id: &str, at: &str| axiom_cloud::deployments::LogEvent { id: Some(id.into()), created_at: Some(at.into()), ..Default::default() };
+    // The server pages newest first.
+    let mut items = vec![ev("e3", "2026-11-16T10:00:02Z"), ev("e2b", "2026-11-16T10:00:01Z"), ev("e2a", "2026-11-16T10:00:01Z"), ev("e1", "2026-11-16T10:00:00Z")];
+    oldest_first(&mut items);
+    let ids: Vec<_> = items.iter().map(|e| e.id.clone().unwrap()).collect();
+    assert_eq!(ids, ["e1", "e2a", "e2b", "e3"]);
 }

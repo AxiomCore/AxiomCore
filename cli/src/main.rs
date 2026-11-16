@@ -1742,6 +1742,19 @@ async fn main() -> anyhow::Result<()> {
                 eprintln!("axiom deploy: {error:#}");
                 std::process::exit(1);
             }
+            // The y/N question comes once the folder has passed its local checks, so a
+            // confirmed deploy is not then refused for a file rule.
+            let question = match target {
+                DeployTarget::Frontend(args) if !args.flags.no_activate && !args.flags.yes => Some(commands::deployments::deploy_question(axiom_cloud::deployments::Kind::Frontend, args.dir.as_deref(), &args.flags.target)),
+                DeployTarget::Backend(args) if !args.flags.no_activate && !args.flags.yes => Some(commands::deployments::deploy_question(axiom_cloud::deployments::Kind::Backend, args.from_input.as_deref(), &args.flags.target)),
+                _ => None,
+            };
+            if let Some(question) = question {
+                if !commands::deployments::ask(&question) {
+                    eprintln!("axiom deploy: cancelled; nothing was changed");
+                    std::process::exit(2);
+                }
+            }
         }
         Commands::Release { file_path, .. } => {
             let artifact = file_path.clone().unwrap_or_else(default_backend_artifact);
@@ -1993,14 +2006,9 @@ fn confirmation_preflight(command: &Commands) {
         eprintln!("axiom {name}: {error}");
         std::process::exit(2);
     }
-    // On a terminal the y/N question naming project, environment and kind comes here too.
+    // On a terminal the y/N question naming project, environment and kind comes here too
+    // (for `axiom deploy`, after the folder's local checks in `main`).
     let question = match command {
-        Commands::Deploy {
-            target: DeployTarget::Frontend(args),
-        } => Some(commands::deployments::deploy_question(axiom_cloud::deployments::Kind::Frontend, args.dir.as_deref(), &args.flags.target)),
-        Commands::Deploy {
-            target: DeployTarget::Backend(args),
-        } => Some(commands::deployments::deploy_question(axiom_cloud::deployments::Kind::Backend, args.from_input.as_deref(), &args.flags.target)),
         Commands::Deployments(args) => commands::deployments::action_question(args),
         _ => None,
     };

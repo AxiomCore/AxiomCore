@@ -527,6 +527,7 @@ dependencies = [
  "redis",
  "reqwest 0.11.27",
  "rod-rs",
+ "rustls 0.21.12",
  "serde",
  "serde_jcs",
  "serde_json",

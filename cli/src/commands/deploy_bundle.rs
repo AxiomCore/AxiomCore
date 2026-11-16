@@ -15,6 +15,9 @@ use std::path::{Path, PathBuf};
 /// Server limits (CONTRACT `AXDEPLOY_INVALID_UPLOAD`), checked locally first.
 pub const MAX_FILES: usize = 10_000;
 pub const MAX_BYTES: u64 = 1 << 30;
+/// One object (axiom-backend `MaxUploadObjectBytes`) and a static manifest (`MaxManifestBytes`).
+pub const MAX_OBJECT_BYTES: u64 = 64 << 20;
+pub const MAX_MANIFEST_BYTES: usize = 8 << 20;
 
 pub const STATIC_SCHEMA: &str = "axiom-static-bundle/v1";
 pub const CONTAINER_SCHEMA: &str = "axiom-container-input/v1";
@@ -113,17 +116,22 @@ pub const CONTENT_TYPES: &[(&str, &str)] = &[
 ];
 
 /// The content type of a manifest path, or `None` for an extension Axiom hosting does not
-/// serve. The extension is what follows the last `.` of the name after its first character;
-/// a name without one (`README`, `/.nojekyll`) is `text/plain`, which the server allows on
-/// any name.
+/// serve. The extension is what follows the last `.` of the name, as the server reads it (Go
+/// `path.Ext`, so `/.json` has the extension `json`). A name without one (`README`, `foo.`)
+/// and a dotfile whose only dot leads (`/.nojekyll`) are `text/plain`, which the server
+/// allows on any extension it does not pin to another type (every pinned one is in the table).
 pub fn content_type(path: &str) -> Option<&'static str> {
     let name = path.rsplit('/').next().unwrap_or(path);
-    match name.rsplit_once('.').filter(|(stem, _)| !stem.is_empty()) {
+    match name.rsplit_once('.') {
         None if path == "/.well-known/apple-app-site-association" => Some("application/json"),
         None => Some("text/plain; charset=utf-8"),
-        Some((_, ext)) => {
+        Some((stem, ext)) => {
             let ext = ext.to_ascii_lowercase();
-            CONTENT_TYPES.iter().find(|(e, _)| *e == ext).map(|(_, t)| *t)
+            match CONTENT_TYPES.iter().find(|(e, _)| *e == ext) {
+                Some((_, t)) => Some(*t),
+                None if ext.is_empty() || stem.is_empty() => Some("text/plain; charset=utf-8"),
+                None => None,
+            }
         }
     }
 }
@@ -258,6 +266,9 @@ pub fn frontend(root: &Path, spa: Spa) -> Result<Bundle> {
             .map(|f| Entry { path: &f.path, sha256: &f.sha256, size: f.size, content_type: f.content_type.unwrap_or_default() })
             .collect(),
     })?;
+    if manifest.len() > MAX_MANIFEST_BYTES {
+        bail!("{shown}: the file list (manifest) would be larger than 8 MiB. Remove files you do not serve, or shorten long paths.");
+    }
     Ok(finish(root, files, manifest, Some(spa_fallback)))
 }
 
@@ -275,9 +286,12 @@ pub fn backend(root: &Path) -> Result<Bundle> {
         executable: bool,
     }
     #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
     struct Input {
         format: String,
         files: std::collections::BTreeMap<String, Listed>,
+        #[serde(default)]
+        artifact_references: std::collections::BTreeMap<String, String>,
     }
     let shown = root.display().to_string();
     let redo = "Create it again with `axiom server package … --output-input DIR`, or leave out --from-input to package this project";
@@ -298,8 +312,17 @@ pub fn backend(root: &Path) -> Result<Bundle> {
     if input.format != CONTAINER_SCHEMA {
         bail!("{shown}/input.json has format {:?}, not {CONTAINER_SCHEMA}. Update the Axiom CLI and package again.", input.format);
     }
-    if input.files.is_empty() || input.files.len() > MAX_INPUT_FILES {
-        bail!("{shown}/input.json lists {} files; a backend input holds 1 to {MAX_INPUT_FILES}. {redo}.", input.files.len());
+    if input.files.len() < 3 || input.files.len() > MAX_INPUT_FILES {
+        bail!("{shown}/input.json lists {} files; a backend input holds 3 to {MAX_INPUT_FILES}. {redo}.", input.files.len());
+    }
+    // The server's ParseContainerInput requires these and that every artifact reference is listed.
+    for required in ["contract.axiom", "contract.server.json", "deployment.json"] {
+        if !input.files.contains_key(required) {
+            bail!("{shown}/input.json does not list {required}, which every backend input holds. {redo}.");
+        }
+    }
+    if let Some(name) = input.artifact_references.values().find(|n| !input.files.contains_key(n.as_str())) {
+        bail!("{shown}/input.json references {name:?}, which it does not list. {redo}.");
     }
     let mut files = Vec::with_capacity(input.files.len());
     let mut total = 0u64;
@@ -315,9 +338,24 @@ pub fn backend(root: &Path) -> Result<Bundle> {
             bail!("{shown} lists more than 512 MiB of files; a backend input holds at most 512 MiB.");
         }
         let source = root.join(name);
-        let ok = std::fs::symlink_metadata(&source).map(|m| m.is_file()).unwrap_or(false);
+        // Every folder on the way must be a real folder (no symbolic link out of the input).
+        let segments: Vec<&str> = name.split('/').collect();
+        let mut at = root.to_path_buf();
+        let mut ok = true;
+        for (i, segment) in segments.iter().enumerate() {
+            at.push(segment);
+            let meta = std::fs::symlink_metadata(&at);
+            ok = match meta {
+                Ok(m) if i + 1 < segments.len() => m.is_dir(),
+                Ok(m) => m.is_file(),
+                Err(_) => false,
+            };
+            if !ok {
+                break;
+            }
+        }
         if !ok {
-            bail!("{shown}/{name} is listed in input.json but is missing (or not a regular file). {redo}.");
+            bail!("{shown}/{name} is listed in input.json but is missing (or not a regular file inside the folder; symbolic links are not followed). {redo}.");
         }
         let bytes = std::fs::read(&source).with_context(|| format!("cannot read {shown}/{name}"))?;
         let sha256 = sha256_hex(&bytes);
@@ -355,6 +393,9 @@ fn finish(root: &Path, files: Vec<File>, manifest: Vec<u8>, spa_fallback: Option
 }
 
 fn limits(files: &[File], shown: &str) -> Result<()> {
+    if let Some(f) = files.iter().find(|f| f.size > MAX_OBJECT_BYTES) {
+        bail!("{}: {} is larger than the 64 MiB one file may be. Remove it from the build output or serve it from elsewhere.", f.path, human_bytes(f.size));
+    }
     if files.len() > MAX_FILES {
         bail!("{shown} has {} files; a deployment holds at most {MAX_FILES}. Remove files you do not serve.", files.len());
     }
@@ -422,6 +463,9 @@ fn walk(root: &Path, dir: &Path, rel_dir: &str, out: &mut Vec<File>, rule: Rule<
         if meta.is_dir() {
             walk(root, &path, &rel, out, rule)?;
         } else if meta.is_file() {
+            if meta.len() > MAX_OBJECT_BYTES {
+                bail!("{rel}: {} is larger than the 64 MiB one file may be. Remove it from the build output or serve it from elsewhere.", human_bytes(meta.len()));
+            }
             let bytes = std::fs::read(&path).with_context(|| format!("cannot read {shown}"))?;
             out.push(File { path: rel, source: path, sha256: sha256_hex(&bytes), size: bytes.len() as u64, content_type: None });
             if out.len() > MAX_FILES {
@@ -489,6 +533,15 @@ mod tests {
         assert_eq!(b.manifest_sha256, sha256_hex(&b.manifest));
         assert_eq!(frontend(d.path(), Spa::Auto).unwrap().manifest, b.manifest);
         assert_eq!(b.total_bytes(), 1 + 14 + 11);
+    }
+
+    #[test]
+    fn files_over_64_mib_are_refused_locally() {
+        let d = site(&[("index.html", "a")]);
+        let big = std::fs::File::create(d.path().join("video.mp4")).unwrap();
+        big.set_len(MAX_OBJECT_BYTES + 1).unwrap();
+        let e = frontend(d.path(), Spa::Auto).unwrap_err().to_string();
+        assert!(e.contains("/video.mp4") && e.contains("64 MiB"), "{e}");
     }
 
     #[test]
@@ -636,22 +689,44 @@ mod tests {
         assert_eq!(b.spa_fallback, None);
     }
 
+    const MINIMAL: &[(&str, &str)] = &[("contract.axiom", "c"), ("contract.server.json", "{}"), ("deployment.json", "{}")];
+
+    #[cfg(unix)]
+    #[test]
+    fn backend_input_does_not_follow_symlinked_folders() {
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("x.json"), "{}").unwrap();
+        let mut files = MINIMAL.to_vec();
+        files.push(("files/x.json", "{}"));
+        let (d, _) = input(&files, &[]);
+        std::fs::remove_dir_all(d.path().join("files")).unwrap();
+        std::os::unix::fs::symlink(outside.path(), d.path().join("files")).unwrap();
+        let e = backend(d.path()).unwrap_err().to_string();
+        assert!(e.contains("files/x.json is listed in input.json but is missing") && e.contains("symbolic links are not followed"), "{e}");
+    }
+
     #[test]
     fn backend_input_problems_are_refused_locally() {
         let empty = tempfile::tempdir().unwrap();
         assert!(backend(empty.path()).unwrap_err().to_string().contains("has no input.json"));
-        let (d, _) = input(&[("contract.axiom", "c")], &[]);
+        let (d, _) = input(MINIMAL, &[]);
         std::fs::write(d.path().join("contract.axiom"), "changed").unwrap();
         assert!(backend(d.path()).unwrap_err().to_string().contains("does not match its digest"));
-        let (d, _) = input(&[("contract.axiom", "c")], &[]);
+        let (d, _) = input(MINIMAL, &[]);
         std::fs::remove_file(d.path().join("contract.axiom")).unwrap();
         assert!(backend(d.path()).unwrap_err().to_string().contains("is missing"));
         let d = site(&[("input.json", r#"{"format":"axiom-container-input/v0","files":{}}"#)]);
         assert!(backend(d.path()).unwrap_err().to_string().contains("not axiom-container-input/v1"));
         let d = site(&[("input.json", "not json")]);
         assert!(backend(d.path()).unwrap_err().to_string().contains("not a package input manifest"));
-        let (d, _) = input(&[("../escape", "c")], &[]);
+        // A traversal name in input.json (written by hand, so nothing lands outside the folder).
+        let d = site(&[("input.json", r#"{"format":"axiom-container-input/v1","files":{"../escape":{"sha256":"aa","bytes":1},"contract.axiom":{"sha256":"aa","bytes":1},"contract.server.json":{"sha256":"aa","bytes":1},"deployment.json":{"sha256":"aa","bytes":1}}}"#)]);
         assert!(backend(d.path()).unwrap_err().to_string().contains("cannot hold"));
+        // The server's minimum: three files, the three required names, listed artifact references.
+        let (d, _) = input(&[("contract.axiom", "c"), ("x.json", "{}"), ("y.json", "{}")], &[]);
+        assert!(backend(d.path()).unwrap_err().to_string().contains("does not list contract.server.json"));
+        let (d, _) = input(&[("contract.axiom", "c")], &[]);
+        assert!(backend(d.path()).unwrap_err().to_string().contains("holds 3 to 256"));
     }
 
     /// The real runtime's `--output-input` folder is accepted as it is written.
@@ -690,6 +765,11 @@ mod tests {
         assert_eq!(content_type("/x.map"), None);
         assert_eq!(content_type("/README"), Some("text/plain; charset=utf-8"));
         assert_eq!(content_type("/.well-known/apple-app-site-association"), Some("application/json"));
+        // As Go path.Ext: "/.json" has the pinned extension json; "/.nojekyll" and "foo." are text.
+        assert_eq!(content_type("/a/.json"), Some("application/json"));
+        assert_eq!(content_type("/.html"), Some("text/html; charset=utf-8"));
+        assert_eq!(content_type("/.nojekyll"), Some("text/plain; charset=utf-8"));
+        assert_eq!(content_type("/foo."), Some("text/plain; charset=utf-8"));
         // The dashboard's table is the same (pinned by its test against this fixture).
         let raw = include_str!("../../tests/fixtures/deployments-content-types.json");
         let fixture: serde_json::Value = serde_json::from_str(raw).unwrap();

@@ -83,8 +83,8 @@ has been completed and verified.
 
 ### Which files are uploaded
 
-The path rules are the server's own, so a folder the CLI accepts is a folder
-the server accepts. The CLI checks every file path before it sends anything.
+The path rules are the server's own: the CLI refuses exactly the paths the
+server refuses, and checks every file path before it sends anything.
 
 | Path in `DIR` | Result |
 | --- | --- |
@@ -118,7 +118,8 @@ you deploy it.
 
 A deploy lists every file in one request of at most 1 MiB, which is about
 10,000 files; a larger list gets `AXDEPLOY_BODY_TOO_LARGE`. A bundle holds at
-most 10,000 files and 1 GiB.
+most 10,000 files and 1 GiB, one file at most 64 MiB, and the manifest at
+most 8 MiB; the CLI checks these before it uploads.
 
 ## axiom deploy backend
 
@@ -151,7 +152,9 @@ The package input is data only: your contract, server plan and the files they
 list, with no executable. The CLI uploads the folder's `input.json`, as the
 runtime wrote it, as the deployment's manifest, and exactly the files that
 `input.json` lists, each checked against its listed SHA-256 and size first;
-other files in the folder are not sent. Axiom seals the hosted backend from it
+other files in the folder are not sent. The input must list at least
+`contract.axiom`, `contract.server.json` and `deployment.json`, and no listed
+file may be reached through a symbolic link. Axiom seals the hosted backend from it
 with its own runtime. You cannot upload a container image, and local images built
 with `axiom server package --output` are not accepted.
 
@@ -326,7 +329,9 @@ For any other code, the next step is the server's own message: for example,
 `AXDEPLOY_INCOMPATIBLE_SCHEMA` (HTTP 409) says to run `axiom database migrate`
 for the environment first, then deploy again. Without a message, the next
 step is `Deployment request failed (<code>).` A failed version or operation
-shows its code and the server's message the same way. Include the request id when
+shows its code and the server's message the same way; for a code in the
+table, the CLI adds its next step after the message, and the dashboard shows
+the next step only. Include the request id when
 you report a problem.
 
 | Code | HTTP | Next step |

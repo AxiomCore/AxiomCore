@@ -367,9 +367,14 @@ pub fn prepare_backend(args: &BackendArgs) -> Result<()> {
 pub(crate) fn backend_env(args: &BackendArgs, pending: &Pending) -> Result<env::Env> {
     let usage = |message: String| -> anyhow::Error { crate::commands::auth::Exit { code: 2, message }.into() };
     let values = env::collect(&args.env, args.env_file.as_deref()).map_err(usage)?;
-    // An unreadable or malformed deployment.json is reported by packaging (or by the server
-    // for --from-input); the name rules still apply.
-    let deployment = std::fs::read(pending.deployment_file()).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok());
+    // A missing deployment.json is reported by packaging; one that exists but cannot be read
+    // would make the precheck check nothing, so it stops here.
+    let file = pending.deployment_file();
+    let deployment = match std::fs::read(&file) {
+        Ok(bytes) => Some(serde_json::from_slice::<Value>(&bytes).map_err(|e| usage(format!("{} is not valid JSON ({e}). Fix it, then deploy again.", file.display())))?),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(usage(format!("Could not read {} ({}). Check its permissions, then deploy again.", file.display(), e.kind()))),
+    };
     let checked = env::precheck(&values, deployment.as_ref()).map_err(usage)?;
     if !checked.unreferenced.is_empty() {
         let (list, verb) = (checked.unreferenced.join(", "), if checked.unreferenced.len() == 1 { "is" } else { "are" });
@@ -959,7 +964,7 @@ async fn deploy_steps(ctx: &Ctx, kind: Kind, b: &Bundle, flags: &DeployFlags, r:
                 j.step("version", "failed");
                 save_journal(path, j)?;
                 let why = v.failure.as_ref().map(failure_text).unwrap_or_else(|| "no reason given".into());
-                bail!("Version {version} failed: {why}. Fix it and deploy again; `axiom deployments logs {kind}` shows the steps.");
+                bail!("Version {version} failed: {}. Fix it and deploy again; `axiom deployments logs {kind}` shows the steps.", why.trim_end_matches('.'));
             }
             other => bail!("Version {version} is still {}; check it with `axiom deployments versions {kind}` and re-run the deploy to continue.", other.unwrap_or("pending")),
         }
@@ -1133,7 +1138,7 @@ async fn wait_op(ctx: &Ctx, scope: &Scope, kind: Kind, op: &str, doing: &str) ->
         "succeeded" => Ok(done),
         state => {
             let why = done.failure.as_ref().map(failure_text).unwrap_or_else(|| "no reason given".into());
-            Err(OperationFailed(format!("Operation {} {state}: {why}. See `axiom deployments status {kind}` and `axiom deployments logs {kind}`.", clean(op))).into())
+            Err(OperationFailed(format!("Operation {} {state}: {}. See `axiom deployments status {kind}` and `axiom deployments logs {kind}`.", clean(op), why.trim_end_matches('.'))).into())
         }
     }
 }

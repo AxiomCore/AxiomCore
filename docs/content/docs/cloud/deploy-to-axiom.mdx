@@ -105,7 +105,7 @@ axiom deploy backend --env-file .env.production
 
 `--env NAME=VALUE` can be repeated and wins over the same name in
 `--env-file`, a dotenv file of `NAME=VALUE` lines. Before it packages or
-sends anything, the CLI checks that every `env:NAME` in the deployment
+sends anything, the CLI checks that every environment name in the deployment
 file's bindings has a value. If one is missing, it stops with exit status
 `2` and names it, for example `Missing configuration for this backend:
 GREETING (bound by greeting). Pass it with --env GREETING=... or --env-file

@@ -42,6 +42,14 @@ pub fn refused(key: &str) -> Option<String> {
     None
 }
 
+/// The map's size as Go's `json.Marshal` writes it (what the server measures): serde_json
+/// writes `<`, `>`, `&`, U+2028 and U+2029 as they are; Go escapes them (`\u003c`: +5 bytes,
+/// `\u2028`: +3 bytes). Every other escape is the same in both.
+pub fn go_json_len(env: &Env) -> usize {
+    let extra = |s: &str| s.chars().map(|c| match c { '<' | '>' | '&' => 5, '\u{2028}' | '\u{2029}' => 3, _ => 0 }).sum::<usize>();
+    serde_json::to_vec(env).map(|b| b.len()).unwrap_or(usize::MAX).saturating_add(env.iter().map(|(k, v)| extra(k) + extra(v)).sum())
+}
+
 /// The server's checks on the whole map, locally.
 pub fn validate(env: &Env) -> Result<(), String> {
     let bad: Vec<String> = env.keys().filter_map(|k| refused(k)).collect();
@@ -52,7 +60,7 @@ pub fn validate(env: &Env) -> Result<(), String> {
     if env.len() > MAX_KEYS {
         return Err(format!("Too many configuration values: {} given, at most {MAX_KEYS}.", env.len()));
     }
-    let bytes = serde_json::to_vec(env).map(|b| b.len()).unwrap_or(usize::MAX);
+    let bytes = go_json_len(env);
     if bytes > MAX_JSON_BYTES {
         return Err(format!("The configuration values are too large: {bytes} bytes as JSON, at most {MAX_JSON_BYTES} (32 KiB)."));
     }
@@ -86,12 +94,32 @@ pub fn parse_dotenv(text: &str) -> Result<Env, String> {
 
 fn unquote(value: &str) -> Result<String, &'static str> {
     let Some(first) = value.chars().next().filter(|c| *c == '"' || *c == '\'') else {
-        return Ok(value.to_string());
+        // ` # note` after an unquoted value is a comment; `a#b` (no space before #) is kept.
+        let cut = value.char_indices().find(|&(i, c)| c == '#' && value[..i].ends_with(char::is_whitespace)).map(|(i, _)| i);
+        return Ok(cut.map(|i| value[..i].trim_end()).unwrap_or(value).to_string());
     };
-    if value.len() < 2 || !value.ends_with(first) {
-        return Err("the quote around the value is not closed");
+    // The closing quote: the first unescaped `first` after the opening one.
+    let mut close = None;
+    let mut escaped = false;
+    for (i, c) in value.char_indices().skip(1) {
+        if first == '"' && !escaped && c == '\\' {
+            escaped = true;
+            continue;
+        }
+        if c == first && !escaped {
+            close = Some(i);
+            break;
+        }
+        escaped = false;
     }
-    let inner = &value[1..value.len() - 1];
+    let Some(close) = close else {
+        return Err("the quote around the value is not closed");
+    };
+    let rest = value[close + 1..].trim_start();
+    if !rest.is_empty() && !rest.starts_with('#') {
+        return Err("only a # comment may follow the closing quote");
+    }
+    let inner = &value[1..close];
     if first == '\'' {
         return Ok(inner.to_string());
     }
@@ -144,13 +172,16 @@ pub fn collect(flags: &[String], file: Option<&Path>) -> Result<Env, String> {
     Ok(env)
 }
 
-/// Every `env:NAME` in `bindings[*].configuration` (any depth), with the bindings that use it.
-/// Protected spellings such as `env:secret:…` are not environment names and are skipped.
+/// Every environment name referenced in `bindings[*].configuration` (any depth), with the
+/// bindings that use it. As in the runtime, every configuration value is a reference and the
+/// `env:` prefix is optional (`"GREETING"` and `"env:GREETING"` both read GREETING); protected
+/// spellings (`secret:…`, `config:…`) are not environment names and are skipped.
 pub fn references(deployment: &Value) -> BTreeMap<String, BTreeSet<String>> {
     fn walk(v: &Value, binding: &str, out: &mut BTreeMap<String, BTreeSet<String>>) {
         match v {
             Value::String(s) => {
-                if let Some(name) = s.strip_prefix("env:").filter(|n| is_name(n)) {
+                let name = s.strip_prefix("env:").unwrap_or(s);
+                if is_name(name) {
                     out.entry(name.to_string()).or_default().insert(binding.to_string());
                 }
             }
@@ -228,6 +259,9 @@ mod tests {
         assert_eq!(parse_dotenv("=1").unwrap_err(), "line 1 has no name before =");
         assert_eq!(parse_dotenv("A=\"open").unwrap_err(), "line 1 (A): the quote around the value is not closed");
         assert_eq!(parse_dotenv("A='").unwrap_err(), "line 1 (A): the quote around the value is not closed");
+        let commented = parse_dotenv("A=\"x # kept\" # note\nB=plain # note\nC='y' #c\nD=a#b\n").unwrap();
+        assert_eq!((commented["A"].as_str(), commented["B"].as_str(), commented["C"].as_str(), commented["D"].as_str()), ("x # kept", "plain", "y", "a#b"));
+        assert_eq!(parse_dotenv("A=\"x\"y").unwrap_err(), "line 1 (A): only a # comment may follow the closing quote");
     }
 
     #[test]
@@ -262,17 +296,22 @@ mod tests {
         let edge = Env::from([("A".into(), "x".repeat(MAX_JSON_BYTES - 8))]);
         assert_eq!(serde_json::to_vec(&edge).unwrap().len(), MAX_JSON_BYTES);
         assert!(validate(&edge).is_ok());
+        // Measured like Go's json.Marshal: & < > are 6 bytes each, U+2028 is 6 bytes.
+        let amps = Env::from([("A".into(), "&".repeat(6000))]);
+        assert_eq!(go_json_len(&amps), 8 + 6000 * 6);
+        assert!(validate(&amps).unwrap_err().starts_with("The configuration values are too large: 36008 bytes"));
+        assert_eq!(go_json_len(&Env::from([("A".into(), "<\u{2028}é".into())])), 8 + 6 + 6 + 2);
     }
 
     #[test]
     fn references_come_from_binding_configuration_only() {
         let deployment = json!({"bindings": {
-            "greeting": {"provider": "publicConfiguration", "configuration": {"greeting": "env:GREETING", "plain": "hello", "nested": {"list": ["env:REGION"]}}},
+            "greeting": {"provider": "publicConfiguration", "configuration": {"greeting": "env:GREETING", "bare": "MODE", "words": "not a name", "nested": {"list": ["env:REGION"]}}},
             "store": {"provider": "typed", "configuration": {"region": "env:REGION", "key": "env:secret:credential"}, "secrets": {"key": "env:DB_SECRET"}},
             "empty": {"provider": "x"}
         }, "configuration": {"other": "env:IGNORED"}});
         let refs = references(&deployment);
-        assert_eq!(refs.keys().collect::<Vec<_>>(), ["GREETING", "REGION"]);
+        assert_eq!(refs.keys().collect::<Vec<_>>(), ["GREETING", "MODE", "REGION"]);
         assert_eq!(refs["REGION"].iter().collect::<Vec<_>>(), ["greeting", "store"]);
         assert!(references(&json!({})).is_empty());
         assert!(references(&json!({"bindings": []})).is_empty());

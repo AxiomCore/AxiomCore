@@ -185,7 +185,7 @@ variable, written `env:NAME`:
 }
 ```
 
-The hosted backend gets these values only from the deploy. Pass them with
+Every configuration value names an environment variable; the `env:` prefix is optional (`"GREETING"` reads GREETING too). The hosted backend gets these values only from the deploy. Pass them with
 `--env` or `--env-file` (CLI 0.156.0 and later):
 
 ```bash title="Terminal: your backend project"
@@ -196,13 +196,13 @@ axiom deploy backend --env-file .env.production
 The file holds `NAME=VALUE` lines. Blank lines and lines starting with `#`
 are skipped, `export ` before a name is allowed, and a value may be wrapped
 in single or double quotes (inside double quotes, `\n`, `\"` and `\\` are
-escapes). A `#` later in a line is part of the value. When a name appears
+escapes). A `#` with a space before it starts a comment (`A=x # note`, `A="x" # note`); `a#b` keeps its `#`. When a name appears
 twice, the later value wins, and `--env` wins over the file. The CLI never
 reads `.env` on its own: pass the file you mean.
 
 Before it hashes, packages or sends anything, the CLI reads the deployment
 file being deployed (the one it packages, or the `deployment.json` in the
-`--from-input` folder) and collects every `env:NAME` in
+`--from-input` folder) and collects every environment name in
 `bindings.*.configuration`. If one has no value, the command exits with
 status `2` and names it:
 

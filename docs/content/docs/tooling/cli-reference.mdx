@@ -83,7 +83,7 @@ Axiom Cloud; see [Cloud access and telemetry](#cloud-access-and-telemetry).
 | [Workspace commands](/tooling/cli-workspace) | `workspace`, in CLI 0.152.0 and later |
 | [Contract release commands](/tooling/cli-contract-releases) | `contract releases`, in CLI 0.152.0 and later |
 | [Sandbox commands](/tooling/cli-sandboxes) | `project sandboxes`, in CLI 0.154.0 and later (`project environments` in 0.152.0 and 0.153.0) |
-| [Deployment commands](/tooling/cli-deployments) | `deploy frontend`, `deploy backend` and `deployments`, in CLI 0.155.0 and later (invite-only pilot) |
+| [Deployment commands](/tooling/cli-deployments) | `deploy frontend`, `deploy backend` and `deployments`, in CLI 0.155.0 and later (invite-only pilot); `deploy backend --env`/`--env-file` configuration values in CLI 0.156.0 and later |
 
 <span id="ui-host-commands" />
 
@@ -118,7 +118,7 @@ secrets is **Experimental** and is not qualified with the published CLI. The
 | [`axiom pull`](/tooling/cli-build-and-run#axiom-pull) | Fetch a contract and generate a typed client. |
 | [`axiom package`](/tooling/cli-build-and-run#axiom-package) | Combine target-specific `.axiomapp` builds into one artifact. |
 | [`axiom release`](/tooling/cli-build-and-run#axiom-release) | Upload a backend contract to Axiom Cloud as an immutable version. |
-| [`axiom deploy`](/tooling/cli-build-and-run#axiom-deploy) | Save a Cloud mock configuration for the linked project; in CLI 0.155.0 and later, also [deploy a frontend or backend](/tooling/cli-deployments) to an Axiom-hosted URL. |
+| [`axiom deploy`](/tooling/cli-build-and-run#axiom-deploy) | Save a Cloud mock configuration for the linked project; in CLI 0.155.0 and later, also [deploy a frontend or backend](/tooling/cli-deployments) to an Axiom-hosted URL; in CLI 0.156.0 and later, `deploy backend --env NAME=VALUE` and `--env-file` pass [configuration values](/tooling/cli-deployments#configuration-values). |
 | [`axiom deployments`](/tooling/cli-deployments#axiom-deployments) | List, activate, roll back, read logs of and delete Axiom-hosted deployments (CLI 0.155.0 and later, invite-only pilot). |
 | [`axiom migrate`](/tooling/cli-build-and-run#axiom-migrate) | Convert a legacy backend contract into a new sibling source. |
 | [`axiom benchmark`](/tooling/cli-build-and-run#axiom-benchmark) | Measure local build and artifact-load times. |

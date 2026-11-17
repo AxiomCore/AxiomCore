@@ -17,6 +17,8 @@ const B: &str = "/api/v1/projects/demo/environments/11111111-2222-3333-4444-5555
 struct Server {
     url: String,
     seen: Arc<Mutex<Vec<String>>>,
+    /// `METHOD path` and the request body, in order.
+    bodies: Arc<Mutex<Vec<(String, String)>>>,
     stop: Arc<AtomicBool>,
     worker: Option<std::thread::JoinHandle<()>>,
 }
@@ -63,8 +65,9 @@ impl Server {
         listener.set_nonblocking(true).unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let seen = Arc::new(Mutex::new(Vec::new()));
+        let bodies = Arc::new(Mutex::new(Vec::new()));
         let stop = Arc::new(AtomicBool::new(false));
-        let (log, done) = (seen.clone(), stop.clone());
+        let (log, body_log, done) = (seen.clone(), bodies.clone(), stop.clone());
         let worker = std::thread::spawn(move || {
             while !done.load(Ordering::SeqCst) {
                 let (mut stream, _) = match listener.accept() {
@@ -97,14 +100,19 @@ impl Server {
                 let target = first.next().unwrap_or("").to_string();
                 let path = target.split('?').next().unwrap_or("").to_string();
                 log.lock().unwrap().push(format!("{method} {path}"));
+                body_log.lock().unwrap().push((format!("{method} {path}"), String::from_utf8_lossy(&body).to_string()));
                 let (status, response) = reply(&method, &path);
                 let _ = write!(stream, "HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}", response.len());
             }
         });
-        Self { url, seen, stop, worker: Some(worker) }
+        Self { url, seen, bodies, stop, worker: Some(worker) }
     }
     fn seen(&self) -> Vec<String> {
         self.seen.lock().unwrap().clone()
+    }
+    /// The JSON bodies sent to `METHOD path`.
+    fn bodies(&self, route: &str) -> Vec<serde_json::Value> {
+        self.bodies.lock().unwrap().iter().filter(|(r, _)| r == route).map(|(_, b)| serde_json::from_str(b).unwrap()).collect()
     }
 }
 
@@ -290,4 +298,72 @@ fn a_superseded_activation_is_not_reported_live_and_a_rerun_does_not_override_it
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(!out.status.success() && stderr.contains("did not become live"), "{stderr}");
     assert_eq!((posts("/versions"), posts("/activate")), (1, 2));
+}
+
+/// A package input folder (as `axiom server package --output-input` writes it) whose
+/// deployment.json binds configuration to `env:GREETING`.
+fn greeting_input(dir: &std::path::Path) -> std::path::PathBuf {
+    use sha2::Digest;
+    let input = dir.join("input");
+    std::fs::create_dir_all(&input).unwrap();
+    let deployment = r#"{"bindings":{"greeting":{"configuration":{"greeting":"env:GREETING"},"provider":"publicConfiguration"}}}"#;
+    let mut listed = serde_json::Map::new();
+    for (name, body) in [("contract.axiom", "c"), ("contract.server.json", "{}"), ("deployment.json", deployment)] {
+        std::fs::write(input.join(name), body).unwrap();
+        let sha: String = sha2::Sha256::digest(body.as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
+        listed.insert(name.into(), serde_json::json!({"bytes": body.len(), "executable": false, "sha256": sha}));
+    }
+    let manifest = serde_json::json!({"artifactReferences": {}, "files": listed, "format": "axiom-container-input/v1", "target": {"id": "container-amd64"}, "targetSha256": "a".repeat(64)});
+    std::fs::write(input.join("input.json"), manifest.to_string()).unwrap();
+    input
+}
+
+/// F1: a backend whose deployment.json binds `env:GREETING` is refused locally without a
+/// value (exit 2, no request at all), and deploys with `--env`/`--env-file`, sending `env` in
+/// create-version; only the names reach the output, only a hash reaches the journal.
+#[test]
+fn deploy_backend_env_is_prechecked_and_sent_with_the_version() {
+    let server = Server::start();
+    let dir = signed_in();
+    let d = dir.path();
+    let input = greeting_input(d);
+    let input = input.to_str().unwrap();
+
+    let out = cli(&server, d, &["deploy", "backend", "--from-input", input, "--project", "demo", "--no-activate"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert_eq!(
+        stderr.trim(),
+        "axiom deploy: Missing configuration for this backend: GREETING (bound by greeting). Pass it with --env GREETING=... or --env-file .env, then deploy again."
+    );
+    let out = cli(&server, d, &["deploy", "backend", "--from-input", input, "--project", "demo", "--no-activate", "--env", "GREETING=hi", "--env", "API_KEY=x"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert!(stderr.contains("Invalid configuration name: API_KEY looks like a secret") && stderr.contains("`axiom secrets`"), "{stderr}");
+    assert!(server.seen().is_empty(), "nothing is sent before the precheck passes: {:?}", server.seen());
+
+    // A dotenv file plus a flag that overrides it; EXTRA is bound by nothing (noted, sent).
+    std::fs::write(d.join(".env"), "# hosted configuration\nGREETING='from file'\nEXTRA=1\n").unwrap();
+    let out = cli(&server, d, &["deploy", "backend", "--from-input", input, "--project", "demo", "--no-activate", "--json", "--env-file", ".env", "--env", "GREETING=Hello from the CLI"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert!(stderr.contains("Note: EXTRA is not bound by any configuration in deployment.json; sent anyway."), "{stderr}");
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(value["env_keys"], serde_json::json!(["EXTRA", "GREETING"]));
+    let versions = server.bodies(&format!("POST {B}/backend/versions"));
+    assert_eq!(versions.len(), 1, "{:?}", server.seen());
+    assert_eq!(versions[0]["env"], serde_json::json!({"GREETING": "Hello from the CLI", "EXTRA": "1"}));
+    assert_eq!(versions[0]["artifact"]["type"], "container_input");
+    let journal = std::fs::read_to_string(d.join(format!("deployments/demo-{ENV}-backend.json"))).unwrap();
+    assert!(!journal.contains("Hello from the CLI") && !journal.contains("EXTRA"), "{journal}");
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&journal).unwrap()["env_sha256"].as_str().map(str::len), Some(64));
+
+    // Human output names the keys, never the values. Other values are a fresh intent.
+    let out = cli(&server, d, &["deploy", "backend", "--from-input", input, "--project", "demo", "--no-activate", "--env", "GREETING=changed"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(stdout.contains("  Configuration: GREETING") && !stdout.contains("changed"), "{stdout}");
+    let versions = server.bodies(&format!("POST {B}/backend/versions"));
+    assert_eq!(versions.len(), 2);
+    assert_eq!(versions[1]["env"], serde_json::json!({"GREETING": "changed"}));
 }

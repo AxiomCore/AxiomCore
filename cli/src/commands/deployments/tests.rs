@@ -933,3 +933,65 @@ fn a_journal_resumes_only_on_its_own_live_slot() {
     assert!(!same_slot(&j(None, Some("a")), Some(&at("b", "empty"))));
     assert!(same_slot(&j(None, None), Some(&at("b", "empty"))), "an earlier build's journal resumes on a live slot");
 }
+
+/// F1: the precheck reads the deployment.json being packaged; a missing value is a usage
+/// error (exit 2) and a given one is returned for create-version.
+#[test]
+fn backend_env_checks_the_packaged_deployment_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let deployment = dir.path().join("deployment.json");
+    std::fs::write(&deployment, r#"{"bindings":{"greeting":{"provider":"publicConfiguration","configuration":{"greeting":"env:GREETING"}}}}"#).unwrap();
+    let pending = Pending::Package { contract: dir.path().join("backend.axiom"), plan: dir.path().join("backend.server.json"), deployment };
+    let cli = BackendCli::try_parse_from(argv(&["--project", "demo"])).unwrap();
+    let e = backend_env(&cli.args, &pending).unwrap_err();
+    assert_eq!(e.downcast_ref::<crate::commands::auth::Exit>().map(|x| x.code), Some(2));
+    assert_eq!(e.to_string(), "Missing configuration for this backend: GREETING (bound by greeting). Pass it with --env GREETING=... or --env-file .env, then deploy again.");
+    let cli = BackendCli::try_parse_from(argv(&["--project", "demo", "--env", "GREETING=hi"])).unwrap();
+    assert_eq!(backend_env(&cli.args, &pending).unwrap(), env::Env::from([("GREETING".into(), "hi".into())]));
+    // --env belongs to the backend; a frontend deploy has no such flag.
+    assert!(FrontendCli::try_parse_from(argv(&["--env", "A=1"])).is_err());
+}
+
+/// F1: a server refusal of the values ends the intent with the rules in plain words.
+#[tokio::test]
+async fn invalid_env_from_the_server_ends_the_intent() {
+    let input = backend_input();
+    let b = bundle::backend(input.path()).unwrap();
+    let cli = BackendCli::try_parse_from(argv(&["--from-input", input.path().to_str().unwrap(), "--project", "demo", "--environment", ENV, "--no-activate"])).unwrap();
+    let flags = DeployFlags { env: env::Env::from([("GREETING".into(), "hi".into())]), ..cli.args.flags.clone() };
+    let h = Harness::new().await;
+    h.script(&format!("GET {B}/backend"), 404, not_found());
+    h.script(&format!("POST {B}/backend/uploads"), 201, json!({"id": "upl_b", "state": "sealed", "missing_hashes": []}));
+    h.script(&format!("POST {B}/backend/versions"), 400, json!({"schema": SCHEMA, "code": "AXDEPLOY_INVALID_ENV", "request_id": "req_e", "retryable": false}));
+    let e = deploy(&h.ctx, Kind::Backend, &b, &flags).await.unwrap_err().to_string();
+    assert_eq!(e, format!("AXDEPLOY_INVALID_ENV: Axiom refused the configuration values (--env, --env-file). {}. Update the Axiom CLI (`axiom update`) for the current checks. (request req_e)", env::RULES));
+    assert_eq!(h.mock.seen(&format!("POST {B}/backend/versions"))[0].body["env"], json!({"GREETING": "hi"}));
+    let journal: Journal = serde_json::from_slice(&std::fs::read(h.ctx.journal_dir.join(format!("demo-{ENV}-backend.json"))).unwrap()).unwrap();
+    assert!(journal.failed && journal.env_sha256 == env::fingerprint(&flags.env));
+}
+
+/// F1: the values are part of the deploy: the same build with the same values resumes the
+/// intent (no second version); other values start a fresh one.
+#[tokio::test]
+async fn other_env_values_start_a_fresh_intent() {
+    let input = backend_input();
+    let b = bundle::backend(input.path()).unwrap();
+    let cli = BackendCli::try_parse_from(argv(&["--from-input", input.path().to_str().unwrap(), "--project", "demo", "--environment", ENV, "--no-activate"])).unwrap();
+    let with = |value: &str| DeployFlags { env: env::Env::from([("GREETING".into(), value.into())]), ..cli.args.flags.clone() };
+    let h = Harness::new().await;
+    h.script(&format!("GET {B}/backend"), 200, json!({"deployment_id": "dpl_b", "generation": 1, "state": "active", "active_version_id": "ver_0", "url": URL}));
+    h.script(&format!("POST {B}/backend/uploads"), 201, json!({"id": "upl_b", "state": "sealed", "missing_hashes": []}));
+    h.script(&format!("POST {B}/backend/versions"), 202, json!({"deployment_id": "dpl_b", "version_id": "ver_b", "operation_id": "op_s", "url": URL}));
+    h.script(&format!("GET {B}/backend/operations/op_s"), 200, op("op_s", "succeeded"));
+    h.script(&format!("GET {B}/backend/versions/ver_b"), 200, json!({"id": "ver_b", "status": "ready"}));
+    let versions = || h.mock.seen(&format!("POST {B}/backend/versions"));
+    deploy(&h.ctx, Kind::Backend, &b, &with("a")).await.unwrap();
+    deploy(&h.ctx, Kind::Backend, &b, &with("a")).await.unwrap();
+    assert_eq!(versions().len(), 1, "same build and values: resumed");
+    deploy(&h.ctx, Kind::Backend, &b, &with("b")).await.unwrap();
+    assert_eq!(versions().len(), 2, "other values: a fresh intent");
+    assert_eq!(versions()[1].body["env"], json!({"GREETING": "b"}));
+    assert_ne!(versions()[0].key, versions()[1].key);
+    let journal = std::fs::read_to_string(h.ctx.journal_dir.join(format!("demo-{ENV}-backend.json"))).unwrap();
+    assert!(journal.contains(&env::fingerprint(&with("b").env)) && !journal.contains("GREETING"), "{journal}");
+}

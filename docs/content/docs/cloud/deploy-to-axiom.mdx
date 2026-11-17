@@ -94,8 +94,34 @@ hosted backend with its own runtime. It then
 activates the version and prints the URL. As for frontends, it asks you to
 confirm once, before it sends anything.
 
+If your deployment file binds configuration to environment variables
+(`"greeting": "env:GREETING"`), give the values with the deploy (CLI 0.156.0
+and later):
+
+```bash title="Terminal: your backend project"
+axiom deploy backend --env GREETING="Hello from Axiom"
+axiom deploy backend --env-file .env.production
+```
+
+`--env NAME=VALUE` can be repeated and wins over the same name in
+`--env-file`, a dotenv file of `NAME=VALUE` lines. Before it packages or
+sends anything, the CLI checks that every `env:NAME` in the deployment
+file's bindings has a value. If one is missing, it stops with exit status
+`2` and names it, for example `Missing configuration for this backend:
+GREETING (bound by greeting). Pass it with --env GREETING=... or --env-file
+.env, then deploy again.` Names starting with `AXIOM_`, `PORT`, and names
+containing `PROXY`, `TOKEN`, `PASSWORD`, `SECRET` or `CREDENTIAL` or ending
+in `_KEY`, are refused. The deploy result lists the names it sent, not the
+values. See [Configuration values](/tooling/cli-deployments#configuration-values).
+
+<Callout type="warn" title="Configuration values are public">
+  `--env` values are sealed into the deployment as public configuration.
+  Do not pass secrets this way: keep them in [secrets](/cloud/secrets).
+</Callout>
+
 To use other file names, pass `--contract`, `--plan` and `--deployment`. If
-you package the backend yourself, pass the folder:
+you package the backend yourself, pass the folder (the `--env` values work
+the same way):
 
 ```bash title="Terminal: your backend project"
 axiom server package backend.axiom backend.server.json --deployment deployment.json --target container-amd64 --output-input package-input

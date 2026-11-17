@@ -42,8 +42,23 @@ fn reply(method: &str, path: &str) -> (u16, String) {
     (if method == "POST" && path.ends_with("/versions") { 202 } else { 200 }, body)
 }
 
+/// Someone rolled back to ver_0 (generation 2) while this deploy ran: the activation
+/// finishes, but the slot still serves ver_0.
+fn reply_superseded(method: &str, path: &str) -> (u16, String) {
+    let b = |rest: &str| format!("{B}{rest}");
+    match (method, path) {
+        ("GET", p) if p == b("/frontend") => (200, r#"{"deployment_id":"dpl_1","kind":"frontend","generation":2,"state":"active","active_version_id":"ver_0","url":"https://demo-development-a1b2c3.axiomcore.page"}"#.into()),
+        ("POST", p) if p == b("/frontend/versions/ver_1/activate") => (202, r#"{"deployment_id":"dpl_1","generation":2,"state":"active","active_version_id":"ver_0","operation_id":"op_a"}"#.into()),
+        ("GET", p) if p == b("/frontend/operations/op_a") => (200, r#"{"operation_id":"op_a","state":"succeeded"}"#.into()),
+        _ => reply(method, path),
+    }
+}
+
 impl Server {
     fn start() -> Self {
+        Self::start_with(reply)
+    }
+    fn start_with(reply: fn(&str, &str) -> (u16, String)) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
@@ -250,4 +265,29 @@ fn signed_out_and_unreachable_are_told_apart() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(1), "{stderr}");
     assert!(stderr.contains("Could not reach Axiom Cloud (") && !stderr.contains("os error") && !stderr.contains("axiom login"), "{stderr}");
+}
+
+#[test]
+fn a_superseded_activation_is_not_reported_live_and_a_rerun_does_not_override_it() {
+    let server = Server::start_with(reply_superseded);
+    let dir = signed_in();
+    let run = || cli(&server, dir.path(), &["deploy", "frontend", "--project", "demo", "--yes"]);
+    let posts = |suffix: &str| server.seen().iter().filter(|r| r.starts_with("POST") && r.ends_with(suffix)).count();
+    let out = run();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{stderr}");
+    assert!(stderr.contains("Version ver_1 did not become live: the frontend deployment now serves ver_0"), "{stderr}");
+    assert!(stderr.contains("axiom deployments activate frontend ver_1 --project demo"), "{stderr}");
+    assert!(!String::from_utf8_lossy(&out.stdout).contains("live"), "{}", String::from_utf8_lossy(&out.stdout));
+    let journal: serde_json::Value = serde_json::from_slice(&std::fs::read(dir.path().join(format!("deployments/demo-{ENV}-frontend.json"))).unwrap()).unwrap();
+    assert_ne!(journal["failed"].as_bool(), Some(true), "{journal}");
+    assert_ne!(journal["activated"].as_bool(), Some(true), "{journal}");
+    assert_eq!((posts("/versions"), posts("/activate")), (1, 1));
+
+    // A plain rerun resumes the same intent: no new version, the same activation, and it
+    // stops again rather than undoing the rollback.
+    let out = run();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success() && stderr.contains("did not become live"), "{stderr}");
+    assert_eq!((posts("/versions"), posts("/activate")), (1, 2));
 }

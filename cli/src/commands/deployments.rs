@@ -528,12 +528,12 @@ fn activation_step(reactivations: u32) -> String {
 
 /// A finished activation is reported live only if the slot serves this version: a replayed
 /// or superseded activation can finish while another version is live.
-fn confirm_live(done: &Slot, version: &str, kind: Kind) -> Result<()> {
+fn confirm_live(done: &Slot, version: &str, kind: Kind, hint: &str) -> Result<()> {
     if done.active_version_id.as_deref() == Some(version) {
         return Ok(());
     }
     bail!(
-        "Version {version} did not become live: the {kind} deployment now serves {}. Review with `axiom deployments status {kind}`, then run `axiom deployments activate {kind} {version}` to make it live.",
+        "Version {version} did not become live: the {kind} deployment now serves {}. Review with `axiom deployments status {kind}{hint}`, then run `axiom deployments activate {kind} {version}{hint}` to make it live.",
         done.active_version_id.as_deref().unwrap_or("no version")
     )
 }
@@ -909,8 +909,9 @@ async fn deploy_steps(ctx: &Ctx, kind: Kind, b: &Bundle, flags: &DeployFlags, r:
         save_journal(path, j)?;
         bail!("The {kind} deployment was deleted while this deploy ran. Run the deploy again to create a new one.");
     }
-    if let Err(e) = confirm_live(&done, &version, kind) {
-        j.failed = true;
+    if let Err(e) = confirm_live(&done, &version, kind, &flags_hint(&flags.target)) {
+        // Like a 412, keep the intent: a plain rerun replays this activation and stops
+        // again, instead of starting a new deploy that would undo the change made meanwhile.
         j.step("activate", "not live");
         save_journal(path, j)?;
         return Err(e);

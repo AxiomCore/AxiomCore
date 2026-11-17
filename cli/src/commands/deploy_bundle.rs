@@ -10,7 +10,7 @@
 //! reading any file) before registration, sign-in or any network call, so a bad folder fails
 //! fast with a fix to apply; [`Checked::hash`] then reads and hashes the files once the
 //! project is known to be in the hosting pilot.
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -292,7 +292,7 @@ impl Checked {
             CheckedKind::Frontend { spa_fallback } => {
                 let mut files = self.files;
                 for f in &mut files {
-                    let bytes = std::fs::read(&f.source).with_context(|| format!("cannot read {}", f.path))?;
+                    let bytes = std::fs::read(&f.source).map_err(|e| unreadable(&f.path, e))?;
                     f.size = bytes.len() as u64;
                     f.sha256 = sha256_hex(&bytes);
                 }
@@ -303,7 +303,7 @@ impl Checked {
             CheckedKind::Backend { manifest } => {
                 let redo = BACKEND_REDO;
                 for f in &self.files {
-                    let bytes = std::fs::read(&f.source).with_context(|| format!("cannot read {shown}/{}", f.path))?;
+                    let bytes = std::fs::read(&f.source).map_err(|e| unreadable(&format!("{shown}/{}", f.path), e))?;
                     if sha256_hex(&bytes) != f.sha256 || bytes.len() as u64 != f.size {
                         bail!("{shown}/{} does not match its digest in input.json (changed after packaging). {redo}.", f.path);
                     }
@@ -421,7 +421,7 @@ pub fn check_backend(root: &Path) -> Result<Checked> {
     if manifest_meta.len() > MAX_INPUT_JSON_BYTES {
         bail!("{shown}/input.json is larger than 16 MiB. {redo}.");
     }
-    let manifest = std::fs::read(&manifest_path).with_context(|| format!("cannot read {shown}/input.json"))?;
+    let manifest = std::fs::read(&manifest_path).map_err(|e| unreadable(&format!("{shown}/input.json"), e))?;
     let input: Input = serde_json::from_slice(&manifest).with_context(|| format!("{shown}/input.json is not a package input manifest. {redo}."))?;
     if input.format != CONTAINER_SCHEMA {
         bail!("{shown}/input.json has format {:?}, not {CONTAINER_SCHEMA}. Update the Axiom CLI and package again.", input.format);
@@ -543,15 +543,21 @@ fn frontend_rule(rel: &str, name: &str, is_dir: bool) -> Result<Visit> {
 
 type Rule<'a> = &'a dyn Fn(&str, &str, bool) -> Result<Visit>;
 
+/// A file or folder that exists but cannot be read, said without the raw OS error.
+fn unreadable(shown: &str, e: std::io::Error) -> anyhow::Error {
+    anyhow!("cannot read {shown} ({}). Check its permissions, or move it out of the folder you deploy.", e.kind())
+}
+
 /// Collect the regular files under `root`. Manifest paths are built from NFC-normalised
 /// names (`rel_dir` is the normalised parent path, "" at the root); two entries that
 /// normalise to the same path are refused.
 fn walk(root: &Path, dir: &Path, rel_dir: &str, out: &mut Vec<File>, rule: Rule<'_>) -> Result<()> {
     use unicode_normalization::UnicodeNormalization;
+    let dir_shown = dir.strip_prefix(root).ok().map(|p| p.display().to_string()).filter(|p| !p.is_empty()).unwrap_or_else(|| dir.display().to_string());
     let mut entries: Vec<_> = std::fs::read_dir(dir)
-        .with_context(|| format!("cannot read {}", dir.display()))?
+        .map_err(|e| unreadable(&dir_shown, e))?
         .collect::<std::io::Result<_>>()
-        .with_context(|| format!("cannot read {}", dir.display()))?;
+        .map_err(|e| unreadable(&dir_shown, e))?;
     entries.sort_by_key(|e| e.file_name());
     for entry in entries {
         let path = entry.path();
@@ -562,7 +568,7 @@ fn walk(root: &Path, dir: &Path, rel_dir: &str, out: &mut Vec<File>, rule: Rule<
             bail!("{shown}: file names cannot contain backslashes or control characters. Rename it.");
         }
         let rel = format!("{rel_dir}/{name}");
-        let meta = std::fs::symlink_metadata(&path).with_context(|| format!("cannot read {shown}"))?;
+        let meta = std::fs::symlink_metadata(&path).map_err(|e| unreadable(&shown, e))?;
         if meta.file_type().is_symlink() {
             bail!("{rel}: symbolic links are not deployed. Replace it with the real file (or folder) in the build output.");
         }

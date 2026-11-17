@@ -808,10 +808,12 @@ fn a_reactivation_uses_a_fresh_activation_key() {
 #[test]
 fn an_activation_is_live_only_if_the_slot_serves_the_version() {
     let at = |active: Option<&str>| Slot { active_version_id: active.map(Into::into), state: Some("active".into()), ..Default::default() };
-    assert!(confirm_live(&at(Some("ver_2")), "ver_2", Kind::Frontend).is_ok());
-    let e = confirm_live(&at(Some("ver_1")), "ver_2", Kind::Frontend).unwrap_err().to_string();
+    assert!(confirm_live(&at(Some("ver_2")), "ver_2", Kind::Frontend, "").is_ok());
+    let e = confirm_live(&at(Some("ver_1")), "ver_2", Kind::Frontend, "").unwrap_err().to_string();
     assert!(e.contains("ver_2 did not become live") && e.contains("now serves ver_1") && e.contains("axiom deployments activate frontend ver_2"), "{e}");
-    assert!(confirm_live(&at(None), "ver_2", Kind::Frontend).unwrap_err().to_string().contains("no version"));
+    assert!(confirm_live(&at(None), "ver_2", Kind::Frontend, "").unwrap_err().to_string().contains("no version"));
+    let e = confirm_live(&at(Some("ver_1")), "ver_2", Kind::Frontend, " --project demo").unwrap_err().to_string();
+    assert!(e.contains("status frontend --project demo") && e.contains("activate frontend ver_2 --project demo"), "{e}");
 }
 
 /// A slot still being deleted: the deploy pins nothing from it, and H2's 409 says to wait.

@@ -545,7 +545,22 @@ type Rule<'a> = &'a dyn Fn(&str, &str, bool) -> Result<Visit>;
 
 /// A file or folder that exists but cannot be read, said without the raw OS error.
 fn unreadable(shown: &str, e: std::io::Error) -> anyhow::Error {
-    anyhow!("cannot read {shown} ({}). Check its permissions, or move it out of the folder you deploy.", e.kind())
+    match e.kind() {
+        std::io::ErrorKind::PermissionDenied => anyhow!("cannot read {shown} (permission denied). Check its permissions, or move it out of the folder you deploy."),
+        std::io::ErrorKind::NotFound => anyhow!("cannot read {shown}: it disappeared while deploying. Make sure nothing is changing the folder, then deploy again."),
+        kind => anyhow!("cannot read {shown} ({kind}). Deploy again; if it repeats, move it out of the folder you deploy."),
+    }
+}
+
+#[cfg(test)]
+mod unreadable_tests {
+    #[test]
+    fn read_errors_name_the_path_without_the_os_error() {
+        let denied = super::unreadable("sub", std::io::Error::from_raw_os_error(13)).to_string();
+        assert_eq!(denied, "cannot read sub (permission denied). Check its permissions, or move it out of the folder you deploy.");
+        let gone = super::unreadable("/a.js", std::io::Error::from(std::io::ErrorKind::NotFound)).to_string();
+        assert!(gone.contains("disappeared") && !gone.contains("permissions") && !gone.contains("os error"), "{gone}");
+    }
 }
 
 /// Collect the regular files under `root`. Manifest paths are built from NFC-normalised

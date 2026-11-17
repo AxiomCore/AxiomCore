@@ -1744,8 +1744,10 @@ async fn main() -> anyhow::Result<()> {
                 DeployTarget::MockServer { .. } => Ok(()),
             };
             if let Err(error) = prepared {
+                // A usage problem (e.g. a missing or refused --env value) exits 2.
+                let code = error.downcast_ref::<commands::auth::Exit>().map_or(1, |e| e.code);
                 eprintln!("axiom deploy: {error:#}");
-                std::process::exit(1);
+                std::process::exit(code);
             }
             let asks = match target {
                 DeployTarget::Frontend(args) => commands::deployments::asks(&args.flags),

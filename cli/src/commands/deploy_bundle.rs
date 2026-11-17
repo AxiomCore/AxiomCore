@@ -285,6 +285,11 @@ enum CheckedKind {
 }
 
 impl Checked {
+    /// The on-disk source of a listed backend input file (its `input.json` name, e.g. `deployment.json`).
+    pub fn source_of(&self, path: &str) -> Option<&Path> {
+        self.files.iter().find(|f| f.path == path).map(|f| f.source.as_path())
+    }
+
     /// Read and hash every file and build the canonical manifest.
     pub fn hash(self) -> Result<Bundle> {
         let shown = self.root.display().to_string();

@@ -148,6 +148,8 @@ axiom deploy backend --from-input <DIR> [OPTIONS]
 | `--plan` | path | `<contract name>.server.json` beside the contract | Server plan that `axiom build` writes. |
 | `--deployment` | path | `deployment.json` in the current directory | Deployment file, as written by [`axiom server deployment`](/tooling/cli-server#axiom-server-deployment). |
 | `--from-input` | directory | none | Upload this package input instead of packaging. Create it with `axiom server package <contract> <plan> --deployment <file> --target container-amd64 --output-input <dir>`. Not combined with `--contract`, `--plan` or `--deployment`. Usually not needed: without it, `axiom deploy backend` packages the project itself. |
+| `--env` | `NAME=VALUE` | none | Configuration value for an `env:NAME` binding in the deployment file. Repeat it for each value. Overrides the same name from `--env-file`. CLI 0.156.0 and later. |
+| `--env-file` | path | none | Read configuration values from a dotenv file. CLI 0.156.0 and later. |
 | `--message`, `--no-activate`, `--yes`, `--wait`, `--new` | | | As for [`axiom deploy frontend`](#axiom-deploy-frontend). |
 | `--json`, `--project`, `--environment` | | | See [Shared options](#shared-options). |
 
@@ -169,6 +171,72 @@ file may be reached through a symbolic link. Axiom seals the hosted backend from
 with its own runtime. You cannot upload a container image, and local images built
 with `axiom server package --output` are not accepted.
 
+### Configuration values
+
+A deployment file can bind a binding's configuration to an environment
+variable, written `env:NAME`:
+
+```json title="deployment.json (excerpt)"
+"bindings": {
+  "greeting": {
+    "provider": "publicConfiguration",
+    "configuration": { "greeting": "env:GREETING" }
+  }
+}
+```
+
+Every configuration value names an environment variable; the `env:` prefix is optional (`"GREETING"` reads GREETING too). The hosted backend gets these values only from the deploy. Pass them with
+`--env` or `--env-file` (CLI 0.156.0 and later):
+
+```bash title="Terminal: your backend project"
+axiom deploy backend --env GREETING="Hello from Axiom"
+axiom deploy backend --env-file .env.production
+```
+
+The file holds `NAME=VALUE` lines. Blank lines and lines starting with `#`
+are skipped, `export ` before a name is allowed, and a value may be wrapped
+in single or double quotes (inside double quotes, `\n`, `\"` and `\\` are
+escapes). A `#` with a space before it starts a comment (`A=x # note`, `A="x" # note`); `a#b` keeps its `#`. When a name appears
+twice, the later value wins, and `--env` wins over the file. The CLI never
+reads `.env` on its own: pass the file you mean.
+
+Before it hashes, packages or sends anything, the CLI reads the deployment
+file being deployed (the one it packages, or the `deployment.json` in the
+`--from-input` folder) and collects every environment name in
+`bindings.*.configuration`. If one has no value, the command exits with
+status `2` and names it:
+
+```text
+axiom deploy: Missing configuration for this backend: GREETING (bound by greeting). Pass it with --env GREETING=... or --env-file .env, then deploy again.
+```
+
+Names follow the server's rules, and the CLI checks them first (exit status
+`2`, nothing sent):
+
+- letters, digits and `_`, not starting with a digit;
+- not `PORT`, and not starting with `AXIOM_` (any case): the hosting runtime
+  sets those;
+- not containing `PROXY`, `TOKEN`, `PASSWORD`, `SECRET` or `CREDENTIAL`, and
+  not ending in `_KEY` (any case);
+- at most 64 values, and at most 32 KiB for all names and values together
+  as JSON.
+
+A value no binding uses is still sent; the CLI prints one `Note:` line that
+lists such names.
+
+<Callout type="warn" title="Configuration values are public">
+  The values are sealed into the version's signed launch manifest as
+  configuration. They are not secrets and are not stored as secrets. Keep
+  API keys, passwords and tokens in [secrets](/cloud/secrets) and bind them
+  as secrets, not with `--env`.
+</Callout>
+
+The values are part of what is deployed: the result lists the names (never
+the values), as a `Configuration:` line, or `env_keys` in `--json` output.
+A rerun with other values creates a new version (see [Resume](#resume)). The
+server answers names it refuses with `AXDEPLOY_INVALID_ENV` (HTTP 400, or
+413 when too large).
+
 ## Resume
 
 Each deploy writes a local journal. If a deploy stops, because the network
@@ -184,7 +252,9 @@ activate it again under the deploy's original precondition, which fails
 with `AXDEPLOY_PRECONDITION_FAILED` and the `axiom deployments activate`
 command to run after you review. A different build, a failed version, a
 refused request, or a deployment that was deleted (or replaced) since the
-earlier run starts a fresh deploy on the next run.
+earlier run starts a fresh deploy on the next run. For a backend, so do
+other configuration values (`--env`, `--env-file`): the journal keeps a
+SHA-256 hash of the sorted values, never the values themselves.
 
 The activation of a deploy always uses the deployment generation read when
 the deploy started. If someone activates, rolls back or deletes while your
@@ -377,6 +447,7 @@ you report a problem.
 | `AXDEPLOY_DIGEST_MISMATCH` | 422 | Uploaded files did not match the manifest. Re-run the deploy; if it repeats, check nothing is writing to the folder. |
 | `AXDEPLOY_TARGET_MISMATCH` | 422 | This artifact does not fit that deployment kind. |
 | `AXDEPLOY_INVALID_UPLOAD` | 400 | The server refused the upload (limits: 10,000 files, 64 MiB per file, 1 GiB in total), followed by the server's reason, for example which field is missing. |
+| `AXDEPLOY_INVALID_ENV` | 400, 413 | Axiom refused the configuration values (`--env`, `--env-file`), followed by the name rules. The CLI checks the same rules first, so this means it is out of date: run `axiom update`. |
 | `AXDEPLOY_BODY_TOO_LARGE` | 413 | This bundle lists too many files for one deploy request (the limit is 1 MiB of file list, about 10,000 files). Reduce the number of files. |
 | `AXDEPLOY_NETWORK` | none | Could not reach Axiom Cloud (network error or timeout). Check your connection and re-run; the deploy resumes where it stopped. |
 | `AXDEPLOY_UPLOAD_URLS_UNAVAILABLE` | none | The server did not issue upload URLs; hosting uploads are not enabled for this project. |
@@ -393,7 +464,7 @@ has no HTTP status.
 | --- | --- |
 | `0` | The command finished. A deploy also printed the URL, unless you passed `--no-activate`. |
 | `1` | A local check failed (no project named or linked, a folder or file problem; nothing was sent), or a request failed. The message starts with `axiom deploy:` or `axiom deployments:` and gives the reason and the next step. |
-| `2` | Invalid command line, a confirmation was needed without a terminal and `--yes` was not passed (no request was sent), or you answered no at the prompt (the deployment was read once; nothing was changed). |
+| `2` | Invalid command line (including a missing or refused `--env` value for `axiom deploy backend`; nothing was sent), a confirmation was needed without a terminal and `--yes` was not passed (no request was sent), or you answered no at the prompt (the deployment was read once; nothing was changed). |
 
 ## API
 

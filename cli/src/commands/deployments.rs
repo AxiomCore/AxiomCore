@@ -23,6 +23,11 @@
 //! replays the same requests instead of starting over. A rerun after a successful activation
 //! reports that result; `--new` (or a different build) starts a fresh intent; a version that
 //! failed, or a refused request, ends the intent so the next run starts fresh.
+//!
+//! `axiom deploy backend --env/--env-file` ([`env`]): the values are checked against the
+//! deployment.json's `env:NAME` bindings before anything is hashed or sent, travel as `env`
+//! in create-version, and are part of the intent: the journal keeps only their SHA-256
+//! (`env_sha256`), and other values start a fresh intent.
 use super::deploy_bundle::{self as bundle, Bundle, Spa};
 use anyhow::{anyhow, bail, Context, Result};
 use axiom_cloud::deployments::{bodies, next_step, DeployError, Kind, LogQuery, Operation, Scope, Slot, Upload};
@@ -75,6 +80,10 @@ pub struct DeployFlags {
     pub new: bool,
     #[command(flatten)]
     pub target: Target,
+    /// Configuration values sent with the version (`axiom deploy backend --env/--env-file`,
+    /// resolved in [`prepare_backend`]); always empty for a frontend.
+    #[arg(skip)]
+    pub env: env::Env,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -105,6 +114,12 @@ pub struct BackendArgs {
     /// Deployment file (default: deployment.json)
     #[arg(long, conflicts_with = "from_input")]
     pub deployment: Option<PathBuf>,
+    /// Value for an `env:NAME` configuration binding in deployment.json, as NAME=VALUE (repeatable; overrides --env-file). Public configuration, not for secrets
+    #[arg(long = "env", value_name = "NAME=VALUE")]
+    pub env: Vec<String>,
+    /// Read configuration values from a dotenv file (NAME=VALUE lines, # comments)
+    #[arg(long, value_name = "PATH")]
+    pub env_file: Option<PathBuf>,
     #[command(flatten)]
     pub flags: DeployFlags,
 }
@@ -276,9 +291,19 @@ impl Pending {
             }
         }
     }
+
+    /// The deployment.json this deploy uploads: the one packaged, or the one in the
+    /// `--from-input` folder.
+    fn deployment_file(&self) -> PathBuf {
+        match self {
+            Pending::Checked(c) => c.source_of("deployment.json").map(Path::to_path_buf).unwrap_or_default(),
+            Pending::Package { deployment, .. } => deployment.clone(),
+        }
+    }
 }
 
-static PREPARED: Mutex<Option<Pending>> = Mutex::new(None);
+/// The checked deploy and, for a backend, its configuration values.
+static PREPARED: Mutex<Option<(Pending, env::Env)>> = Mutex::new(None);
 
 fn spa_choice(args: &FrontendArgs) -> Spa {
     if args.spa {
@@ -319,17 +344,43 @@ fn frontend_bundle(args: &FrontendArgs, cwd: &Path) -> Result<Bundle> {
 pub fn prepare_frontend(args: &FrontendArgs) -> Result<()> {
     let cwd = std::env::current_dir()?;
     check_link(&args.flags.target, &cwd)?;
-    *PREPARED.lock().unwrap() = Some(frontend_pending(args, &cwd)?);
+    *PREPARED.lock().unwrap() = Some((frontend_pending(args, &cwd)?, env::Env::new()));
     Ok(())
 }
 
 /// The link, then `--from-input` (its input.json and the files it lists) or the files to
-/// package this project from, all locally.
+/// package this project from, all locally; then the configuration values against the
+/// `env:NAME` references of the deployment.json being deployed ([`backend_env`]).
 pub fn prepare_backend(args: &BackendArgs) -> Result<()> {
     let cwd = std::env::current_dir()?;
     check_link(&args.flags.target, &cwd)?;
-    *PREPARED.lock().unwrap() = Some(backend_pending(args, &cwd)?);
+    let pending = backend_pending(args, &cwd)?;
+    let values = backend_env(args, &pending)?;
+    *PREPARED.lock().unwrap() = Some((pending, values));
     Ok(())
+}
+
+/// `--env-file` then `--env`, checked with the server's name rules and against every
+/// `env:NAME` in `bindings[*].configuration` of the deployment.json being deployed, before any
+/// hashing, sign-in or request. A refused name or a missing value exits 2; values no binding
+/// uses are noted on stderr and sent anyway.
+pub(crate) fn backend_env(args: &BackendArgs, pending: &Pending) -> Result<env::Env> {
+    let usage = |message: String| -> anyhow::Error { crate::commands::auth::Exit { code: 2, message }.into() };
+    let values = env::collect(&args.env, args.env_file.as_deref()).map_err(usage)?;
+    // A missing deployment.json is reported by packaging; one that exists but cannot be read
+    // would make the precheck check nothing, so it stops here.
+    let file = pending.deployment_file();
+    let deployment = match std::fs::read(&file) {
+        Ok(bytes) => Some(serde_json::from_slice::<Value>(&bytes).map_err(|e| usage(format!("{} is not valid JSON ({e}). Fix it, then deploy again.", file.display())))?),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(usage(format!("Could not read {} ({}). Check its permissions, then deploy again.", file.display(), e.kind()))),
+    };
+    let checked = env::precheck(&values, deployment.as_ref()).map_err(usage)?;
+    if !checked.unreferenced.is_empty() {
+        let (list, verb) = (checked.unreferenced.join(", "), if checked.unreferenced.len() == 1 { "is" } else { "are" });
+        progress(&format!("Note: {list} {verb} not bound by any configuration in deployment.json; sent anyway."));
+    }
+    Ok(values)
 }
 
 /// What `axiom deploy backend` packages itself (no flags needed): the hint every
@@ -376,7 +427,7 @@ fn backend_bundle(args: &BackendArgs, cwd: &Path) -> Result<Bundle> {
     Ok(backend_pending(args, cwd)?.finish()?.0)
 }
 
-fn take_prepared() -> Option<Pending> {
+fn take_prepared() -> Option<(Pending, env::Env)> {
     PREPARED.lock().unwrap().take()
 }
 
@@ -483,6 +534,9 @@ struct Journal {
     kind: String,
     intent_id: String,
     manifest_sha256: String,
+    /// [`env::fingerprint`] of the configuration values this intent sends (never the
+    /// values); empty for none. Different values start a fresh intent.
+    env_sha256: String,
     /// Slot generation when this intent started; 0 when there was no live slot (none, or
     /// only a deleted/deleting one): the slot this deploy creates starts at 1.
     generation: i64,
@@ -577,6 +631,9 @@ pub struct Outcome {
     pub url: Option<String>,
     pub state: Option<String>,
     pub activated: bool,
+    /// Backend only: the configuration names sent with the version (never the values).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub env_keys: Option<Vec<String>>,
 }
 
 /// Progress and status lines go to stderr (also with --json, whose object is on stdout).
@@ -636,7 +693,7 @@ fn failure_text(failure: &Value) -> String {
 
 pub async fn handle_frontend(args: &FrontendArgs) -> Result<()> {
     let pending = match take_prepared() {
-        Some(p) => p,
+        Some((p, _)) => p,
         None => frontend_pending(args, &std::env::current_dir()?)?,
     };
     let ctx = Ctx::from_profile()?;
@@ -645,13 +702,18 @@ pub async fn handle_frontend(args: &FrontendArgs) -> Result<()> {
 }
 
 pub async fn handle_backend(args: &BackendArgs) -> Result<()> {
-    let pending = match take_prepared() {
-        Some(p) => p,
-        None => backend_pending(args, &std::env::current_dir()?)?,
+    let (pending, values) = match take_prepared() {
+        Some(prepared) => prepared,
+        None => {
+            let pending = backend_pending(args, &std::env::current_dir()?)?;
+            let values = backend_env(args, &pending)?;
+            (pending, values)
+        }
     };
     let ctx = Ctx::from_profile()?;
     let question = asks(&args.flags).then(|| deploy_question(Kind::Backend, args.from_input.as_deref(), &args.flags.target));
-    deploy_pending(&ctx, Kind::Backend, pending, &args.flags, question.as_deref(), ask).await
+    let flags = DeployFlags { env: values, ..args.flags.clone() };
+    deploy_pending(&ctx, Kind::Backend, pending, &flags, question.as_deref(), ask).await
 }
 
 /// Whether the deploy asks y/N (it makes a version live and `--yes` was not given). Without a
@@ -738,7 +800,10 @@ async fn deploy_from(ctx: &Ctx, kind: Kind, b: &Bundle, flags: &DeployFlags, r: 
     let json = flags.target.json;
     let path = journal_path(ctx, &r.scope, kind);
     let now = live(start.as_ref().map(|s| &s.body));
-    let previous = load_journal(&path).filter(|j| !flags.new && !j.failed && j.manifest_sha256 == b.manifest_sha256 && same_slot(j, now));
+    let env_sha256 = env::fingerprint(&flags.env);
+    // Backend only: the names sent, for the result (never the values).
+    let env_keys: Option<Vec<String>> = (kind == Kind::Backend).then(|| flags.env.keys().cloned().collect());
+    let previous = load_journal(&path).filter(|j| !flags.new && !j.failed && j.manifest_sha256 == b.manifest_sha256 && j.env_sha256 == env_sha256 && same_slot(j, now));
     let mut j = match previous {
         Some(mut j) if j.activated => {
             // This exact build went live in an earlier run. Report it only if the server
@@ -746,11 +811,12 @@ async fn deploy_from(ctx: &Ctx, kind: Kind, b: &Bundle, flags: &DeployFlags, r: 
             match start.map(|s| s.body) {
                 Some(s) if s.active_version_id.is_some() && s.active_version_id == j.version_id && matches!(s.state.as_deref(), Some("active" | "degraded")) => {
                     let url = s.url.clone().or(j.url.clone());
-                    let out = outcome(&r, kind, j.version_id.clone(), j.activate_operation_id.clone(), url.clone(), s.state.clone(), true);
+                    let out = Outcome { env_keys, ..outcome(&r, kind, j.version_id.clone(), j.activate_operation_id.clone(), url.clone(), s.state.clone(), true) };
                     if json {
                         return print_json(&out);
                     }
                     println!("✓ This build is already live: version {} at {}. Pass --new to deploy it again.", opt(&j.version_id), opt(&url));
+                    print_env_keys(&out);
                     return Ok(());
                 }
                 _ => {
@@ -777,6 +843,7 @@ async fn deploy_from(ctx: &Ctx, kind: Kind, b: &Bundle, flags: &DeployFlags, r: 
                 kind: kind.to_string(),
                 intent_id: uuid::Uuid::new_v4().to_string(),
                 manifest_sha256: b.manifest_sha256.clone(),
+                env_sha256,
                 generation,
                 slot_id,
                 ..Default::default()
@@ -793,7 +860,7 @@ async fn deploy_from(ctx: &Ctx, kind: Kind, b: &Bundle, flags: &DeployFlags, r: 
             let _ = save_journal(&path, &j);
         }
     }
-    let out = result?;
+    let out = Outcome { env_keys, ..result? };
     if json {
         return print_json(&out);
     }
@@ -803,11 +870,19 @@ async fn deploy_from(ctx: &Ctx, kind: Kind, b: &Bundle, flags: &DeployFlags, r: 
     } else {
         println!("Version {version} is ready. Activate it with: axiom deployments activate {kind} {version}{}", flags_hint(&flags.target));
     }
+    print_env_keys(&out);
     Ok(())
 }
 
+/// The configuration names a backend version was deployed with (never the values).
+fn print_env_keys(out: &Outcome) {
+    if let Some(keys) = out.env_keys.as_ref().filter(|k| !k.is_empty()) {
+        println!("  Configuration: {}", keys.join(", "));
+    }
+}
+
 fn outcome(r: &Resolved, kind: Kind, version_id: Option<String>, operation_id: Option<String>, url: Option<String>, state: Option<String>, activated: bool) -> Outcome {
-    Outcome { schema: SCHEMA, kind: kind.to_string(), project: r.scope.project.clone(), environment: r.environment.clone(), version_id, operation_id, url, state, activated }
+    Outcome { schema: SCHEMA, kind: kind.to_string(), project: r.scope.project.clone(), environment: r.environment.clone(), version_id, operation_id, url, state, activated, env_keys: None }
 }
 
 async fn deploy_steps(ctx: &Ctx, kind: Kind, b: &Bundle, flags: &DeployFlags, r: &Resolved, path: &Path, j: &mut Journal) -> Result<Outcome> {
@@ -844,8 +919,25 @@ async fn deploy_steps(ctx: &Ctx, kind: Kind, b: &Bundle, flags: &DeployFlags, r:
         save_journal(path, j)?;
     }
     if j.version_id.is_none() {
-        let body = bodies::create_version(kind, &upload_id(j)?, flags.message.as_deref());
-        let reply = ctx.client.deployment_create_version(scope, kind, &body, &j.key("create_version")).await?;
+        let mut body = bodies::create_version(kind, &upload_id(j)?, flags.message.as_deref());
+        if kind == Kind::Backend && !flags.env.is_empty() {
+            body["env"] = json!(flags.env);
+        }
+        let reply = match ctx.client.deployment_create_version(scope, kind, &body, &j.key("create_version")).await {
+            Ok(reply) => reply,
+            Err(e) => match e.downcast_ref::<DeployError>() {
+                // The local precheck mirrors these rules, so this means the server's rules
+                // changed. The intent ends; the next run (with other values) starts fresh.
+                Some(d) if d.code == "AXDEPLOY_INVALID_ENV" => {
+                    j.failed = true;
+                    j.step("create_version", "AXDEPLOY_INVALID_ENV");
+                    save_journal(path, j)?;
+                    let request = d.request_id.as_deref().filter(|id| !id.is_empty()).map(|id| format!(" (request {})", clean(id))).unwrap_or_default();
+                    bail!("AXDEPLOY_INVALID_ENV: Axiom refused the configuration values (--env, --env-file). {}. Update the Axiom CLI (`axiom update`) for the current checks.{request}", env::RULES);
+                }
+                _ => return Err(e),
+            },
+        };
         let version = reply.body.version_id.clone().or_else(|| reply.body.desired_version_id.clone()).ok_or_else(|| anyhow!("AXDEPLOY_INVALID_RESPONSE: the server did not return a version id"))?;
         j.version_id = Some(version);
         j.version_operation_id = reply.body.operation_id.clone();
@@ -872,7 +964,7 @@ async fn deploy_steps(ctx: &Ctx, kind: Kind, b: &Bundle, flags: &DeployFlags, r:
                 j.step("version", "failed");
                 save_journal(path, j)?;
                 let why = v.failure.as_ref().map(failure_text).unwrap_or_else(|| "no reason given".into());
-                bail!("Version {version} failed: {why}. Fix it and deploy again; `axiom deployments logs {kind}` shows the steps.");
+                bail!("Version {version} failed: {}. Fix it and deploy again; `axiom deployments logs {kind}` shows the steps.", why.trim_end_matches('.'));
             }
             other => bail!("Version {version} is still {}; check it with `axiom deployments versions {kind}` and re-run the deploy to continue.", other.unwrap_or("pending")),
         }
@@ -1046,7 +1138,7 @@ async fn wait_op(ctx: &Ctx, scope: &Scope, kind: Kind, op: &str, doing: &str) ->
         "succeeded" => Ok(done),
         state => {
             let why = done.failure.as_ref().map(failure_text).unwrap_or_else(|| "no reason given".into());
-            Err(OperationFailed(format!("Operation {} {state}: {why}. See `axiom deployments status {kind}` and `axiom deployments logs {kind}`.", clean(op))).into())
+            Err(OperationFailed(format!("Operation {} {state}: {}. See `axiom deployments status {kind}` and `axiom deployments logs {kind}`.", clean(op), why.trim_end_matches('.'))).into())
         }
     }
 }
@@ -1401,6 +1493,8 @@ fn parse_time_at(value: &str, flag: &str, now: chrono::DateTime<chrono::Utc>) ->
     let at = chrono::DateTime::parse_from_rfc3339(v).map_err(|_| bad())?;
     Ok(at.with_timezone(&chrono::Utc).to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
 }
+
+pub mod env;
 
 #[cfg(test)]
 mod tests;

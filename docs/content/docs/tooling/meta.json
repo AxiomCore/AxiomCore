@@ -5,6 +5,7 @@
     "cli-project",
     "cli-workspace",
     "cli-sandboxes",
+    "cli-deployments",
     "cli-build-and-run",
     "cli-testing",
     "cli-server",

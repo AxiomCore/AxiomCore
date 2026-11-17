@@ -326,10 +326,17 @@ enum Commands {
     Branch(commands::branch::BranchArgs),
     /// Workspace settings, members, invitations, notifications, billing and onboarding
     Workspace(commands::workspace::WorkspaceArgs),
+    /// Deploy a built frontend or this project's backend to Axiom hosting
+    ///
+    /// Checks the folder locally first, uploads only the files the server does not have,
+    /// waits until the new version is ready and makes it live (unless --no-activate).
+    /// Making a version live asks first; pass --yes without a terminal.
     Deploy {
         #[command(subcommand)]
         target: DeployTarget,
     },
+    /// Hosted deployments of an environment: list, status, versions, activate, rollback, logs, delete
+    Deployments(commands::deployments::DeploymentsArgs),
     /// Diff Acore files to see what changed
     Diff {
         /// The main acore file (or the old file if file2 is provided)
@@ -1542,6 +1549,23 @@ enum UiHostAction {
 
 #[derive(Subcommand)]
 enum DeployTarget {
+    /// Deploy a static site (your build output folder) and print its URL
+    ///
+    /// DIR defaults to the first of dist/, build/, out/. The folder must contain index.html.
+    /// The server's path rules are checked first: `.env` files, credential and private-key
+    /// files, `*.map` source maps, `.git/` and other credential folders,
+    /// `_headers`/`_redirects`/`_worker.js` and the reserved `/_axiom/` path are refused;
+    /// .DS_Store and Thumbs.db are skipped. Rerunning the same build resumes an interrupted
+    /// deploy, or reports the live result.
+    Frontend(commands::deployments::FrontendArgs),
+    /// Package this project's backend (or upload --from-input DIR) and print its API URL
+    ///
+    /// Without --from-input, packages backend.axiom (or axiom.axiom), its .server.json plan
+    /// and deployment.json as `axiom server package … --output-input` does, then uploads that
+    /// data-only input (its input.json as the manifest, verbatim, and the files it lists);
+    /// Axiom seals it on the server.
+    Backend(commands::deployments::BackendArgs),
+    /// Upload a mock server configuration (.acore) to Axiom Cloud
     MockServer {
         /// Optional path to the .acore file. If omitted, uses axiom.acore in current directory.
         file: Option<PathBuf>,
@@ -1708,6 +1732,33 @@ async fn main() -> anyhow::Result<()> {
         Commands::Mock(input) => {
             input.resolve(&std::env::current_dir()?)?;
         }
+        // The project link, the folder and its path rules are checked before registration,
+        // sign-in or any request; a problem exits 1 with what to do. Only then is an
+        // activating deploy without --yes and without a terminal refused (exit 2, nothing
+        // sent). On a terminal the y/N question comes in the handler, after the one read that
+        // tells a project outside the hosting pilot so, and after hashing.
+        Commands::Deploy { target } => {
+            let prepared = match target {
+                DeployTarget::Frontend(args) => commands::deployments::prepare_frontend(args),
+                DeployTarget::Backend(args) => commands::deployments::prepare_backend(args),
+                DeployTarget::MockServer { .. } => Ok(()),
+            };
+            if let Err(error) = prepared {
+                eprintln!("axiom deploy: {error:#}");
+                std::process::exit(1);
+            }
+            let asks = match target {
+                DeployTarget::Frontend(args) => commands::deployments::asks(&args.flags),
+                DeployTarget::Backend(args) => commands::deployments::asks(&args.flags),
+                DeployTarget::MockServer { .. } => false,
+            };
+            if asks {
+                if let Err(error) = commands::auth::require_yes_or_terminal(false) {
+                    eprintln!("axiom deploy: {error}");
+                    std::process::exit(2);
+                }
+            }
+        }
         Commands::Release { file_path, .. } => {
             let artifact = file_path.clone().unwrap_or_else(default_backend_artifact);
             if artifact.is_file() {
@@ -1847,6 +1898,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Serve(..) => "serve",
         Commands::Mock(..) => "mock",
         Commands::Deploy { .. } => "deploy",
+        Commands::Deployments(..) => "deployments",
         Commands::Test { .. } => "test",
         Commands::Eval {
             file: _,
@@ -1939,11 +1991,35 @@ fn confirmation_preflight(command: &Commands) {
         Commands::Project {
             action: ProjectAction::Archive { yes, .. },
         } => ("project archive", *yes),
+        // Traffic changes (`activate`, `rollback`, `delete`), after the local check that a
+        // project is named or linked. (`axiom deploy` is checked in `main`, after its folder.)
+        Commands::Deployments(args) => match commands::deployments::asks_first(args) {
+            Some(yes) => {
+                if let Err(error) = std::env::current_dir().map_err(anyhow::Error::from).and_then(|cwd| commands::deployments::check_link(&args.target, &cwd)) {
+                    eprintln!("axiom deployments: {error}");
+                    std::process::exit(1);
+                }
+                ("deployments", yes)
+            }
+            None => return,
+        },
         _ => return,
     };
     if let Err(error) = commands::auth::require_yes_or_terminal(yes) {
         eprintln!("axiom {name}: {error}");
         std::process::exit(2);
+    }
+    // On a terminal the y/N question naming project, environment and kind comes here too
+    // (for `axiom deploy`, after the folder's local checks in `main`).
+    let question = match command {
+        Commands::Deployments(args) => commands::deployments::action_question(args),
+        _ => None,
+    };
+    if let Some(question) = question.filter(|_| !yes) {
+        if !commands::deployments::ask(&question) {
+            eprintln!("axiom {name}: cancelled; nothing was changed");
+            std::process::exit(2);
+        }
     }
     // On a terminal the typed `archive <PROJECT>` prompt itself comes here, before the
     // registration gate, sign-in, the project lookup or any request.
@@ -3116,6 +3192,12 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
         Commands::Serve(input) => commands::serve::handle(input.clone()).await,
         Commands::Mock(input) => commands::mock::handle(input.clone()).await,
         Commands::Deploy { target } => match target {
+            DeployTarget::Frontend(args) => {
+                deploy_exit(commands::deployments::handle_frontend(args).await)
+            }
+            DeployTarget::Backend(args) => {
+                deploy_exit(commands::deployments::handle_backend(args).await)
+            }
             DeployTarget::MockServer { file } => {
                 let path = file
                     .clone()
@@ -3123,6 +3205,7 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                 commands::deploy::handle_deploy_mock_server(path).await
             }
         },
+        Commands::Deployments(args) => deploy_exit(commands::deployments::handle(args).await),
         Commands::Repl => {
             tokio::task::spawn_blocking(|| {
                 acore::repl::run_repl();
@@ -3412,6 +3495,22 @@ fn normalize_validator_yaml(raw_spec: &str) -> String {
     } else {
         raw_spec.to_string()
     }
+}
+
+/// A deploy or deployments failure prints `axiom <command>: <reason and next step>` and exits 1
+/// (usage errors keep their own exit code).
+fn deploy_exit(result: anyhow::Result<()>) -> anyhow::Result<()> {
+    result.map_err(|error| {
+        if error.downcast_ref::<commands::auth::Exit>().is_some() {
+            error
+        } else {
+            commands::auth::Exit {
+                code: 1,
+                message: format!("{error:#}"),
+            }
+            .into()
+        }
+    })
 }
 
 fn default_backend_artifact() -> PathBuf {

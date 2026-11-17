@@ -252,7 +252,7 @@ dependencies = [
 
 [[package]]
 name = "axiom-cli"
-version = "0.154.0"
+version = "0.155.0"
 dependencies = [
  "acore",
  "acore-diff",
@@ -314,6 +314,7 @@ dependencies = [
  "tower-http 0.5.2",
  "tui-input",
  "tui-textarea",
+ "unicode-normalization",
  "url",
  "uuid",
  "zeroize",

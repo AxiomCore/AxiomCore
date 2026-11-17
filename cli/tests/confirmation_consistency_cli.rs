@@ -144,12 +144,21 @@ fn all_destructive_groups_refuse_without_requests_or_credentials() {
         vec!["intel", "observability", "sources", "revoke", id],
         vec!["intel", "pull-requests", "update", "1", "--body", "{}"],
         vec!["intel", "settings", "update", "--name", "Renamed"],
+        // `deploy` and `deployments` check the project (and the folder) locally first; see
+        // `deploy_checks_the_project_and_folder_before_refusing_for_yes`.
+        vec!["deploy", "frontend", "--project", "demo", "--environment", "staging"],
+        vec!["deploy", "backend", "--from-input", "./input", "--project", "demo"],
+        vec!["deployments", "activate", "frontend", "ver_1", "--wait", "--project", "demo"],
+        vec!["deployments", "rollback", "backend", "--to", "ver_1", "--project", "demo"],
+        vec!["deployments", "delete", "frontend", "--project", "demo"],
+        vec!["deployments", "--project", "demo", "delete", "backend", "--wait"],
     ];
     for signed_in in [false, true] {
         let dir = tempfile::tempdir().unwrap();
         if signed_in {
             sign_in(dir.path());
         }
+        deploy_inputs(dir.path());
         for args in &cases {
             let output = cli(&server, dir.path(), args);
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -166,6 +175,81 @@ fn all_destructive_groups_refuse_without_requests_or_credentials() {
             assert!(output.stdout.is_empty(), "{args:?}");
             assert_eq!(server.requests.load(Ordering::SeqCst), 0, "{args:?}");
         }
+    }
+}
+
+/// A build folder (`dist/`) and a package input (`input/`) that pass the local checks.
+fn deploy_inputs(dir: &std::path::Path) {
+    std::fs::create_dir_all(dir.join("dist")).unwrap();
+    std::fs::write(dir.join("dist/index.html"), "<h1>hi</h1>").unwrap();
+    std::fs::create_dir_all(dir.join("input")).unwrap();
+    let mut files = serde_json::Map::new();
+    for (name, body) in [("contract.axiom", "c"), ("contract.server.json", "{}"), ("deployment.json", "{}")] {
+        std::fs::write(dir.join("input").join(name), body).unwrap();
+        let sha = sha2_hex(body.as_bytes());
+        files.insert(name.into(), serde_json::json!({"bytes": body.len(), "executable": false, "sha256": sha}));
+    }
+    let manifest = serde_json::json!({"artifactReferences": {}, "files": files, "format": "axiom-container-input/v1", "target": {"id": "container-amd64"}, "targetSha256": "a".repeat(64)});
+    std::fs::write(dir.join("input/input.json"), manifest.to_string()).unwrap();
+}
+
+fn sha2_hex(bytes: &[u8]) -> String {
+    use sha2::Digest;
+    hex::encode(sha2::Sha256::digest(bytes))
+}
+
+/// Local checks come before the `--yes` refusal: a deploy (or traffic change) with no
+/// project named or linked, or a bad folder, exits 1 with the fix instead of asking for
+/// --yes; with both in order the refusal follows. Nothing is sent either way.
+#[test]
+fn deploy_checks_the_project_and_folder_before_refusing_for_yes() {
+    let server = Server::start();
+    let dir = tempfile::tempdir().unwrap();
+    sign_in(dir.path());
+    deploy_inputs(dir.path());
+    let unlinked = "This directory is not linked to an Axiom project. Link it with `axiom project link` (after `axiom login`), or pass --project <slug>.";
+    let cases: [(&[&str], i32, &str); 6] = [
+        (&["deploy", "frontend"], 1, unlinked),
+        (&["deploy", "backend", "--from-input", "input"], 1, unlinked),
+        (&["deployments", "delete", "frontend"], 1, unlinked),
+        (&["deploy", "frontend", "./x", "--project", "demo"], 1, "./x does not exist"),
+        (&["deploy", "frontend", "--project", "demo"], 2, "pass --yes to confirm without a prompt"),
+        (&["deploy", "backend", "--from-input", "input", "--project", "demo"], 2, "pass --yes to confirm without a prompt"),
+    ];
+    for (args, code, wanted) in cases {
+        let output = cli(&server, dir.path(), args);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(code), "{args:?}: {stderr}");
+        assert!(stderr.starts_with(&format!("axiom {}: ", args[0])) && stderr.contains(wanted), "{args:?}: {stderr}");
+        assert_eq!(server.requests.load(Ordering::SeqCst), 0, "{args:?}");
+    }
+}
+
+/// `axiom deploy` checks the folder before registration, sign-in or any request: a bad or
+/// missing folder exits 1 with the fix, sending nothing (also with --no-activate, which needs
+/// no confirmation).
+#[test]
+fn deploy_preflight_fails_locally_without_requests() {
+    let server = Server::start();
+    let dir = tempfile::tempdir().unwrap();
+    sign_in(dir.path());
+    let cases: [(&[&str], &str); 4] = [
+        (&["deploy", "frontend", "--no-activate"], "axiom deploy: No build output found (looked for dist/, build/ and out/). Build your app first, or pass the folder: axiom deploy frontend ./dist"),
+        (&["deploy", "frontend", "./missing", "--no-activate"], "does not exist"),
+        (&["deploy", "frontend", "site", "--yes"], "has no index.html"),
+        (&["deploy", "backend", "--from-input", "./missing", "--yes"], "does not exist"),
+    ];
+    std::fs::create_dir(dir.path().join("site")).unwrap();
+    std::fs::write(dir.path().join("site/about.html"), "a").unwrap();
+    for (args, wanted) in cases {
+        let args = [args, &["--project", "demo"][..]].concat();
+        let args = args.as_slice();
+        let output = cli(&server, dir.path(), args);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(1), "{args:?}: {stderr}");
+        assert!(stderr.contains(wanted) && stderr.starts_with("axiom deploy: "), "{args:?}: {stderr}");
+        assert!(output.stdout.is_empty(), "{args:?}");
+        assert_eq!(server.requests.load(Ordering::SeqCst), 0, "{args:?}");
     }
 }
 

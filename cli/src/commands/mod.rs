@@ -17,6 +17,8 @@ pub mod database_runtime;
 pub mod database_sqlite;
 pub mod dependencies;
 pub mod deploy;
+pub mod deploy_bundle;
+pub mod deployments;
 pub mod diff;
 pub mod doctor;
 pub mod domain;

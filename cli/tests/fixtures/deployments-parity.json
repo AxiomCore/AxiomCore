@@ -1,0 +1,220 @@
+[
+  {
+    "action": "slot",
+    "method": "GET",
+    "path": "/api/v1/projects/demo/environments/11111111-2222-3333-4444-555555555555/deployments/frontend",
+    "body": null,
+    "if_match": null,
+    "idempotency_key": false
+  },
+  {
+    "action": "create_upload",
+    "method": "POST",
+    "path": "/api/v1/projects/demo/environments/11111111-2222-3333-4444-555555555555/deployments/frontend/uploads",
+    "body": {
+      "file_count": 2,
+      "files": [
+        {
+          "sha256": "0a286891c11c056e1ab5bfc25bf5d6b2f5b06d38eac10944f678fd8a2e70c393",
+          "size": 14
+        },
+        {
+          "sha256": "e7fbb6fbbf4ce294913eb62b53ff03a7546649cfdc0d824d9e3a2b4541502f7f",
+          "size": 11
+        }
+      ],
+      "manifest_bytes": 403,
+      "manifest_sha256": "70fb2d0fefcfc70e0f689445de2405b2e38ab93b965cddf2692d893a58a15ed3",
+      "purpose": "static_bundle",
+      "total_bytes": 25
+    },
+    "if_match": null,
+    "idempotency_key": true
+  },
+  {
+    "action": "put_object",
+    "method": "PUT",
+    "path": "<upload_urls[sha256].url>",
+    "body": null,
+    "if_match": null,
+    "idempotency_key": false,
+    "object_sha256": "70fb2d0fefcfc70e0f689445de2405b2e38ab93b965cddf2692d893a58a15ed3",
+    "bytes": 403,
+    "manifest": "{\"schema\":\"axiom-static-bundle/v1\",\"entrypoint\":\"/index.html\",\"spa_fallback\":true,\"files\":[{\"path\":\"/assets/app.js\",\"sha256\":\"0a286891c11c056e1ab5bfc25bf5d6b2f5b06d38eac10944f678fd8a2e70c393\",\"size\":14,\"content_type\":\"text/javascript; charset=utf-8\"},{\"path\":\"/index.html\",\"sha256\":\"e7fbb6fbbf4ce294913eb62b53ff03a7546649cfdc0d824d9e3a2b4541502f7f\",\"size\":11,\"content_type\":\"text/html; charset=utf-8\"}]}"
+  },
+  {
+    "action": "put_object",
+    "method": "PUT",
+    "path": "<upload_urls[sha256].url>",
+    "body": null,
+    "if_match": null,
+    "idempotency_key": false,
+    "object_sha256": "e7fbb6fbbf4ce294913eb62b53ff03a7546649cfdc0d824d9e3a2b4541502f7f",
+    "bytes": 11
+  },
+  {
+    "action": "complete_upload",
+    "method": "POST",
+    "path": "/api/v1/projects/demo/environments/11111111-2222-3333-4444-555555555555/deployments/frontend/uploads/<upload_id>/complete",
+    "body": {},
+    "if_match": null,
+    "idempotency_key": true
+  },
+  {
+    "action": "create_version",
+    "method": "POST",
+    "path": "/api/v1/projects/demo/environments/11111111-2222-3333-4444-555555555555/deployments/frontend/versions",
+    "body": {
+      "artifact": {
+        "type": "static_bundle",
+        "upload_id": "<upload_id>"
+      }
+    },
+    "if_match": null,
+    "idempotency_key": true
+  },
+  {
+    "action": "operation",
+    "method": "GET",
+    "path": "/api/v1/projects/demo/environments/11111111-2222-3333-4444-555555555555/deployments/frontend/operations/<operation_id>",
+    "body": null,
+    "if_match": null,
+    "idempotency_key": false
+  },
+  {
+    "action": "version",
+    "method": "GET",
+    "path": "/api/v1/projects/demo/environments/11111111-2222-3333-4444-555555555555/deployments/frontend/versions/<version_id>",
+    "body": null,
+    "if_match": null,
+    "idempotency_key": false
+  },
+  {
+    "action": "slot",
+    "method": "GET",
+    "path": "/api/v1/projects/demo/environments/11111111-2222-3333-4444-555555555555/deployments/frontend",
+    "body": null,
+    "if_match": null,
+    "idempotency_key": false
+  },
+  {
+    "action": "activate",
+    "method": "POST",
+    "path": "/api/v1/projects/demo/environments/11111111-2222-3333-4444-555555555555/deployments/frontend/versions/<version_id>/activate",
+    "body": {},
+    "if_match": "\"g1\"",
+    "idempotency_key": true
+  },
+  {
+    "action": "operation",
+    "method": "GET",
+    "path": "/api/v1/projects/demo/environments/11111111-2222-3333-4444-555555555555/deployments/frontend/operations/<operation_id>",
+    "body": null,
+    "if_match": null,
+    "idempotency_key": false
+  },
+  {
+    "action": "slot",
+    "method": "GET",
+    "path": "/api/v1/projects/demo/environments/11111111-2222-3333-4444-555555555555/deployments/frontend",
+    "body": null,
+    "if_match": null,
+    "idempotency_key": false
+  },
+  {
+    "action": "slot",
+    "method": "GET",
+    "path": "/api/v1/projects/demo/environments/11111111-2222-3333-4444-555555555555/deployments/frontend",
+    "body": null,
+    "if_match": null,
+    "idempotency_key": false
+  },
+  {
+    "action": "activate",
+    "method": "POST",
+    "path": "/api/v1/projects/demo/environments/11111111-2222-3333-4444-555555555555/deployments/frontend/versions/<previous_version_id>/activate",
+    "body": {},
+    "if_match": "\"g2\"",
+    "idempotency_key": true
+  },
+  {
+    "action": "operation",
+    "method": "GET",
+    "path": "/api/v1/projects/demo/environments/11111111-2222-3333-4444-555555555555/deployments/frontend/operations/<operation_id>",
+    "body": null,
+    "if_match": null,
+    "idempotency_key": false
+  },
+  {
+    "action": "slot",
+    "method": "GET",
+    "path": "/api/v1/projects/demo/environments/11111111-2222-3333-4444-555555555555/deployments/frontend",
+    "body": null,
+    "if_match": null,
+    "idempotency_key": false
+  },
+  {
+    "action": "slot",
+    "method": "GET",
+    "path": "/api/v1/projects/demo/environments/11111111-2222-3333-4444-555555555555/deployments/frontend",
+    "body": null,
+    "if_match": null,
+    "idempotency_key": false
+  },
+  {
+    "action": "rollback",
+    "method": "POST",
+    "path": "/api/v1/projects/demo/environments/11111111-2222-3333-4444-555555555555/deployments/frontend/rollback",
+    "body": {},
+    "if_match": "\"g3\"",
+    "idempotency_key": true
+  },
+  {
+    "action": "operation",
+    "method": "GET",
+    "path": "/api/v1/projects/demo/environments/11111111-2222-3333-4444-555555555555/deployments/frontend/operations/<operation_id>",
+    "body": null,
+    "if_match": null,
+    "idempotency_key": false
+  },
+  {
+    "action": "slot",
+    "method": "GET",
+    "path": "/api/v1/projects/demo/environments/11111111-2222-3333-4444-555555555555/deployments/frontend",
+    "body": null,
+    "if_match": null,
+    "idempotency_key": false
+  },
+  {
+    "action": "slot",
+    "method": "GET",
+    "path": "/api/v1/projects/demo/environments/11111111-2222-3333-4444-555555555555/deployments/frontend",
+    "body": null,
+    "if_match": null,
+    "idempotency_key": false
+  },
+  {
+    "action": "delete",
+    "method": "DELETE",
+    "path": "/api/v1/projects/demo/environments/11111111-2222-3333-4444-555555555555/deployments/frontend",
+    "body": null,
+    "if_match": "\"g4\"",
+    "idempotency_key": true
+  },
+  {
+    "action": "operation",
+    "method": "GET",
+    "path": "/api/v1/projects/demo/environments/11111111-2222-3333-4444-555555555555/deployments/frontend/operations/<operation_id>",
+    "body": null,
+    "if_match": null,
+    "idempotency_key": false
+  },
+  {
+    "action": "slot",
+    "method": "GET",
+    "path": "/api/v1/projects/demo/environments/11111111-2222-3333-4444-555555555555/deployments/frontend",
+    "body": null,
+    "if_match": null,
+    "idempotency_key": false
+  }
+]

@@ -206,7 +206,7 @@ file being deployed (the one it packages, or the `deployment.json` in the
 `bindings.*.configuration`. If one has no value, the command exits with
 status `2` and names it:
 
-```text
+```text title="Missing configuration (exit status 2)"
 axiom deploy: Missing configuration for this backend: GREETING (bound by greeting). Pass it with --env GREETING=... or --env-file .env, then deploy again.
 ```
 

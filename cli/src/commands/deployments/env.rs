@@ -86,6 +86,8 @@ pub fn parse_dotenv(text: &str) -> Result<Env, String> {
         if key.is_empty() {
             return Err(format!("line {n} has no name before ="));
         }
+        // `A= # note`: a comment right after `=` (with a space before #) leaves an empty value.
+        let value = if value.starts_with(char::is_whitespace) && value.trim_start().starts_with('#') { "" } else { value };
         let value = unquote(value.trim()).map_err(|e| format!("line {n} ({}): {e}", super::clean(key)))?;
         env.insert(key.to_string(), value);
     }
@@ -262,6 +264,8 @@ mod tests {
         let commented = parse_dotenv("A=\"x # kept\" # note\nB=plain # note\nC='y' #c\nD=a#b\n").unwrap();
         assert_eq!((commented["A"].as_str(), commented["B"].as_str(), commented["C"].as_str(), commented["D"].as_str()), ("x # kept", "plain", "y", "a#b"));
         assert_eq!(parse_dotenv("A=\"x\"y").unwrap_err(), "line 1 (A): only a # comment may follow the closing quote");
+        let empty = parse_dotenv("A= # note\nB=#kept\n").unwrap();
+        assert_eq!((empty["A"].as_str(), empty["B"].as_str()), ("", "#kept"));
     }
 
     #[test]

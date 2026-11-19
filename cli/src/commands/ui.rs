@@ -2357,6 +2357,7 @@ pub async fn handle_build_with_packages(
     package_lock: Option<PathBuf>,
 ) -> Result<()> {
     let target = parse_target(&target)?;
+    prepare_derived_extension_exports(&source, target)?;
     let result = if let Some(package_lock) = package_lock {
         let text = read_ui_source(&source)?;
         let result = axiom_ui::compile_ui_source_with_package_lock_at_path(
@@ -2755,7 +2756,50 @@ fn compile_path(source: &Path, lock: PathBuf, target: UiTarget) -> Result<UiComp
     Ok(result)
 }
 
+/// X7c build seam (w1-d2 item 5): an extension whose `AxiomDeps.toml` table
+/// omits both `exports` and `interface` gets its exports from the guest at
+/// build time. Before Acore that binds it is compiled, build (or reuse the
+/// cached build of) every such extension whose exports are not yet recorded
+/// in `AxiomDeps.lock`, or whose entry is stale; the build records them.
+fn prepare_derived_extension_exports(source: &Path, target: UiTarget) -> Result<()> {
+    let root = source
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let deps = root.join("AxiomDeps.toml");
+    if !deps.is_file() {
+        return Ok(());
+    }
+    let Ok(manifest) = axiom_lib::extension_source::read_extension_source_manifest(&deps) else {
+        // Not an extension manifest; the UI compiler reports its own errors.
+        return Ok(());
+    };
+    let derived = axiom_lib::extension_source::derive_extension_exports(&deps).unwrap_or_default();
+    let package = package_target(target);
+    for (alias, reference) in &manifest.extensions {
+        if !reference.exports.is_empty()
+            || reference.interface.is_some()
+            || derived.contains_key(alias)
+            || !reference.targets.contains(&package)
+        {
+            continue;
+        }
+        build_source_extension(&SourceBuildOptions {
+            deps: deps.clone(),
+            alias: alias.clone(),
+            output_root: PathBuf::from(".axiom/extensions"),
+            target: package,
+            clean: false,
+        })
+        .with_context(|| {
+            format!("AXIOM_EXTENSION_SOURCE_BUILD: build `{alias}` to derive its exports (AxiomDeps.toml lists neither `exports` nor `interface`)")
+        })?;
+    }
+    Ok(())
+}
+
 fn compile_path_unchecked(source: &Path, lock: PathBuf, target: UiTarget) -> Result<UiCompilation> {
+    prepare_derived_extension_exports(source, target)?;
     let lock = if lock == Path::new(".axiom/axiom.ui.lock.json") {
         axiom_lib::project_state::ui_lock(&axiom_lib::project_state::root(source))
     } else {

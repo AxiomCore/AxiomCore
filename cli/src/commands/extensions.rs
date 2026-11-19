@@ -863,11 +863,14 @@ pub struct RunUiOptions {
     pub scenario_name: Option<String>,
     /// Invocation deadline (default 1000 ms).
     pub deadline_ms: u64,
+    /// X9d: record a dev replay tape of the invocation into this directory
+    /// (dev builds of the CLI only, see `x9d-replay-tape.md`).
+    pub record_tape: Option<PathBuf>,
 }
 
 impl Default for RunUiOptions {
     fn default() -> Self {
-        Self { snapshots: Vec::new(), scenario: None, scenario_name: None, deadline_ms: 1_000 }
+        Self { snapshots: Vec::new(), scenario: None, scenario_name: None, deadline_ms: 1_000, record_tape: None }
     }
 }
 
@@ -903,6 +906,12 @@ struct RunScenario {
     input: serde_json::Value,
     #[serde(default)]
     ui: Option<RunUiSnapshot>,
+    /// X9d: a scenario made from a dev replay tape (`axiom extensions replay
+    /// --to-scenario`). When present the run is tape-backed: the recorded
+    /// ABI input and snapshots, host replies from the tape (no real host
+    /// call), and the outcome must equal the recorded one.
+    #[serde(default)]
+    replay: Option<serde_json::Value>,
 }
 
 /// The export, input and UI snapshots one run uses, and the evidence digests
@@ -913,10 +922,12 @@ struct RunInputs {
     input: String,
     snapshots: Vec<(String, RunUiSnapshot, String)>,
     scenario: Option<serde_json::Value>,
+    /// X9d: the verified tape of a replay scenario.
+    replay: Option<Box<axiom_extension_broker::ReplayTape>>,
 }
 
 fn run_inputs(alias: &str, export: Option<String>, input: String, ui: &RunUiOptions) -> Result<RunInputs> {
-    let mut inputs = RunInputs { export, input, snapshots: Vec::new(), scenario: None };
+    let mut inputs = RunInputs { export, input, snapshots: Vec::new(), scenario: None, replay: None };
     if let Some(path) = &ui.scenario {
         let bytes = fs::read(path).with_context(|| format!("AXIOM_EXTENSION_REFERENCE_HOST: read {}", path.display()))?;
         let suite: RunScenarioSuite = serde_json::from_slice(&bytes)
@@ -935,6 +946,14 @@ fn run_inputs(alias: &str, export: Option<String>, input: String, ui: &RunUiOpti
             "fileSha256": hex::encode(Sha256::digest(&bytes)),
             "name": scenario.name,
         }));
+        if let Some(tape) = scenario.replay {
+            let tape = axiom_extension_broker::ReplayTape::from_bytes(&serde_json::to_vec(&tape)?)
+                .with_context(|| format!("AXIOM_EXTENSION_REPLAY_TAPE: scenario `{}` in {}", scenario.name, path.display()))?;
+            if tape.invocation.export != scenario.export {
+                bail!("AXIOM_EXTENSION_REPLAY_TAPE: scenario `{}` names export `{}` but its tape recorded `{}`", scenario.name, scenario.export, tape.invocation.export);
+            }
+            inputs.replay = Some(Box::new(tape));
+        }
         inputs.export = Some(scenario.export);
         inputs.input = serde_json::to_string(&scenario.input)?;
         if let Some(snapshot) = scenario.ui {
@@ -994,7 +1013,7 @@ pub async fn handle_run(
     audit_out: Option<PathBuf>,
     ui: RunUiOptions,
 ) -> Result<()> {
-    let RunInputs { export, input, snapshots: ui_snapshots, scenario } = run_inputs(&alias, export, input, &ui)?;
+    let RunInputs { export, input, snapshots: ui_snapshots, scenario, replay } = run_inputs(&alias, export, input, &ui)?;
     if export.is_none() && !ui_snapshots.is_empty() {
         bail!("AXIOM_EXTENSION_REFERENCE_HOST: --snapshot needs --export (or --scenario)");
     }
@@ -1029,18 +1048,6 @@ pub async fn handle_run(
     let loaded = load_verified_extension_target(&manifest, &alias, target)?;
     let authority_lock_sha256 = hex::encode(Sha256::digest(&loaded.authority_lock_bytes));
     let package_lock_sha256 = hex::encode(Sha256::digest(&loaded.package_lock_bytes));
-    let DecodedAxiomPackage::Package(package) = decode_axiom_package(&loaded.package_bytes)? else {
-        bail!("AXIOM_EXTENSION_REFERENCE_HOST: legacy extension packages cannot execute");
-    };
-    let PackageContents::Extension(ExtensionPackagePayload::V2(executable)) = &package.contents
-    else {
-        bail!("AXIOM_EXTENSION_REFERENCE_HOST: selected package is not axiom-extension/v2");
-    };
-    let authority_lock = decode_authority_lock(&loaded.authority_lock_bytes)?;
-    let effective = axiom_lib::extension_authority::EffectiveTargetAuthority {
-        permissions: loaded.effective.permissions.clone(),
-        budgets: loaded.effective.budgets.clone(),
-    };
     let services = Arc::new(DeterministicHost::default());
     let state_fixture_sha256 = state.as_ref().map(|path| file_sha256(path)).transpose()?;
     if let Some(path) = state.as_ref() {
@@ -1054,47 +1061,23 @@ pub async fn handle_run(
             .with_context(|| format!("AXIOM_EXTENSION_REFERENCE_HOST: define UI scope `{scope}` (also seeded by --state?)"))?;
         guest_snapshots.push(guest_snapshot(scope, snapshot)?);
     }
-    let kernel = SandboxKernel::new(KernelPolicy::default())?;
-    let authorized = AuthorizedModule::verify_brokered(
-        &loaded.application,
-        &package.package,
-        executable,
-        &package.targets,
-        &authority_lock,
-        target,
-        &loaded.module_bytes,
-        &KernelPolicy::default(),
-        false,
-    )?;
-    let host = match executable.sdk.language.as_str() {
-        "typescript" => TargetExtensionHost::load_typescript(
-            HostProfile::backend(),
-            authorized,
-            &effective,
-            Arc::clone(&services),
-            1,
-            executable.limits.max_effects,
-            executable.limits.max_stream_batch,
-        )?,
-        "python" => TargetExtensionHost::load_python(
-            HostProfile::backend(),
-            authorized,
-            &effective,
-            Arc::clone(&services),
-            1,
-            executable.limits.max_effects,
-            executable.limits.max_stream_batch,
-        )?,
-        _ => TargetExtensionHost::load(
-            HostProfile::backend(),
-            &kernel,
-            authorized,
-            &effective,
-            Arc::clone(&services),
-            1,
-            executable.limits.max_effects,
-            executable.limits.max_stream_batch,
-        )?,
+    // A scenario recorded from a replay tape runs tape-backed (X9d).
+    if let Some(tape) = replay {
+        return super::extension_replay::run_tape_scenario(&loaded, target, *tape, ui.deadline_ms).await;
+    }
+    let ReferenceHost { host, kernel: _kernel, sdk, .. } = load_reference_host(&loaded, target, Arc::clone(&services), ui.deadline_ms)?;
+    let recorder = match &ui.record_tape {
+        Some(directory) => Some(
+            host.enable_dev_replay_tape(axiom_extension_host::DevReplayTapeOptions {
+                directory: directory.clone(),
+                sensitive: axiom_extension_broker::SensitivePolicy::Refuse,
+                sdk: Some(sdk),
+                alias: Some(alias.clone()),
+                allow_release_build_recording_of_real_user_data: false,
+            })
+            .context("AXIOM_EXTENSION_REPLAY_TAPE: --record-tape")?,
+        ),
+        None => None,
     };
     let export = export.expect("checked above");
     let input_json: serde_json::Value = serde_json::from_str(&input)
@@ -1192,6 +1175,18 @@ pub async fn handle_run(
     if ui.deadline_ms != RunUiOptions::default().deadline_ms {
         audit["execution"]["deadlineMs"] = ui.deadline_ms.into();
     }
+    // X9d: where the dev replay tape went (absent without --record-tape).
+    if let (Some(recorder), Some(directory)) = (&recorder, &ui.record_tape) {
+        audit["execution"]["replayTape"] = match recorder.last_outcome() {
+            Some(axiom_extension_broker::RecordOutcome::Written { file, bytes }) => {
+                serde_json::json!({"status": "written", "file": directory.join(file), "bytes": bytes})
+            }
+            Some(axiom_extension_broker::RecordOutcome::Refused(error)) => {
+                serde_json::json!({"status": "refused", "error": error.to_string()})
+            }
+            other => serde_json::json!({"status": format!("{other:?}")}),
+        };
+    }
     if let Some(path) = audit_out {
         let bytes = serde_jcs::to_vec(&audit)?;
         fs::write(&path, bytes)
@@ -1261,7 +1256,90 @@ fn seed_reference_state(host: &DeterministicHost, path: &std::path::Path) -> Res
     Ok(())
 }
 
-fn now_unix_ms() -> u64 {
+/// The verified server reference host for `loaded` over `services` (shared by
+/// `axiom extensions run` and the X9d tape-backed replay).
+pub(crate) struct ReferenceHost<H: axiom_extension_broker::HostServices> {
+    pub host: TargetExtensionHost<H>,
+    /// Keeps the Wasmi kernel of a core-Wasm guest alive with its host.
+    pub kernel: SandboxKernel,
+    /// `<language>@<sdk version>` of the package.
+    pub sdk: String,
+    pub module_sha256: String,
+}
+
+pub(crate) fn load_reference_host<H: axiom_extension_broker::HostServices>(
+    loaded: &axiom_lib::extension_workflow::LoadedExtensionTarget,
+    target: PackageTarget,
+    services: Arc<H>,
+    deadline_ms: u64,
+) -> Result<ReferenceHost<H>> {
+    let DecodedAxiomPackage::Package(package) = decode_axiom_package(&loaded.package_bytes)? else {
+        bail!("AXIOM_EXTENSION_REFERENCE_HOST: legacy extension packages cannot execute");
+    };
+    let PackageContents::Extension(ExtensionPackagePayload::V2(executable)) = &package.contents
+    else {
+        bail!("AXIOM_EXTENSION_REFERENCE_HOST: selected package is not axiom-extension/v2");
+    };
+    let authority_lock = decode_authority_lock(&loaded.authority_lock_bytes)?;
+    let effective = axiom_lib::extension_authority::EffectiveTargetAuthority {
+        permissions: loaded.effective.permissions.clone(),
+        budgets: loaded.effective.budgets.clone(),
+    };
+    // The reference host's policy deadline is the ceiling of the package's
+    // `limits.deadlineMs` (effective = min of the two). `--deadline-ms`
+    // raises it for this run (w3-b; the default run is unchanged).
+    let policy = KernelPolicy { deadline_ms: KernelPolicy::default().deadline_ms.max(deadline_ms), ..KernelPolicy::default() };
+    let kernel = SandboxKernel::new(policy.clone())?;
+    let authorized = AuthorizedModule::verify_brokered(
+        &loaded.application,
+        &package.package,
+        executable,
+        &package.targets,
+        &authority_lock,
+        target,
+        &loaded.module_bytes,
+        &policy,
+        false,
+    )?;
+    let host = match executable.sdk.language.as_str() {
+        "typescript" => TargetExtensionHost::load_typescript(
+            HostProfile::backend(),
+            authorized,
+            &effective,
+            Arc::clone(&services),
+            1,
+            executable.limits.max_effects,
+            executable.limits.max_stream_batch,
+        )?,
+        "python" => TargetExtensionHost::load_python(
+            HostProfile::backend(),
+            authorized,
+            &effective,
+            Arc::clone(&services),
+            1,
+            executable.limits.max_effects,
+            executable.limits.max_stream_batch,
+        )?,
+        _ => TargetExtensionHost::load(
+            HostProfile::backend(),
+            &kernel,
+            authorized,
+            &effective,
+            Arc::clone(&services),
+            1,
+            executable.limits.max_effects,
+            executable.limits.max_stream_batch,
+        )?,
+    };
+    Ok(ReferenceHost {
+        host,
+        kernel,
+        sdk: format!("{}@{}", executable.sdk.language, executable.sdk.version),
+        module_sha256: executable.module.sha256.clone(),
+    })
+}
+
+pub(crate) fn now_unix_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -1303,7 +1381,7 @@ fn json_to_value(value: serde_json::Value) -> Result<Value> {
     })
 }
 
-fn value_to_json(value: Value) -> serde_json::Value {
+pub(crate) fn value_to_json(value: Value) -> serde_json::Value {
     match value {
         Value::Null => serde_json::Value::Null,
         Value::Bool(value) => value.into(),
@@ -1329,7 +1407,7 @@ fn value_to_json(value: Value) -> serde_json::Value {
     }
 }
 
-fn parse_target(value: &str) -> Result<PackageTarget> {
+pub(crate) fn parse_target(value: &str) -> Result<PackageTarget> {
     match value {
         "android" => Ok(PackageTarget::Android),
         "ios" => Ok(PackageTarget::Ios),

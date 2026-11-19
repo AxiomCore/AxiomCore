@@ -1248,7 +1248,35 @@ enum ExtensionsAction {
         #[arg(long, requires = "scenario")]
         scenario_name: Option<String>,
         /// Invocation deadline in milliseconds (debug builds of the managed
-        /// engines can need more than the default)
+        /// engines can need more than the default). It also raises the
+        /// reference host's deadline ceiling; the package's signed
+        /// `limits.deadlineMs` (`[extensions.<alias>.budgets] deadlineMs`)
+        /// still applies
+        #[arg(long, default_value_t = 1_000)]
+        deadline_ms: u64,
+        /// Record a dev replay tape of the invocation into this directory
+        /// (dev builds of the CLI only; see `axiom extensions replay`)
+        #[arg(long)]
+        record_tape: Option<PathBuf>,
+    },
+    /// Re-run a dev replay tape against the current build through the real
+    /// kernel and broker with a tape-backed host (no real host calls); exit 0
+    /// when identical, otherwise name the first difference (X9d)
+    Replay {
+        /// A tape recorded by a dev host (`*.axtape.json`)
+        tape: PathBuf,
+        #[arg(long, default_value = "AxiomExtensions.toml")]
+        manifest: PathBuf,
+        /// Extension alias (default: the one the tape recorded)
+        #[arg(long)]
+        alias: Option<String>,
+        #[arg(long, default_value = "server")]
+        target: String,
+        /// Write the tape as a scenario for `axiom extensions run --scenario`
+        /// instead of replaying it
+        #[arg(long)]
+        to_scenario: Option<PathBuf>,
+        /// Invocation deadline in milliseconds
         #[arg(long, default_value_t = 1_000)]
         deadline_ms: u64,
     },
@@ -2530,6 +2558,7 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                 scenario,
                 scenario_name,
                 deadline_ms,
+                record_tape,
             } => {
                 commands::extensions::handle_run(
                     manifest.clone(),
@@ -2544,7 +2573,19 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                         scenario: scenario.clone(),
                         scenario_name: scenario_name.clone(),
                         deadline_ms: *deadline_ms,
+                        record_tape: record_tape.clone(),
                     },
+                )
+                .await
+            }
+            ExtensionsAction::Replay { tape, manifest, alias, target, to_scenario, deadline_ms } => {
+                commands::extension_replay::handle_replay(
+                    tape.clone(),
+                    manifest.clone(),
+                    alias.clone(),
+                    target.clone(),
+                    to_scenario.clone(),
+                    *deadline_ms,
                 )
                 .await
             }

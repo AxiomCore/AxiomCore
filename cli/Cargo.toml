@@ -12,9 +12,11 @@ axiom-cloud = { path = "../../axiom-cloud" }
 axiom-extractor = { path = "../../axiom-extractor" }
 axiom-build = { path = "../../axiom-build" }
 axiom-ui = { path = "../../axiom-ui" }
-axiom-extension-host = { path = "../../axiom-runtime/extensions/host" }
+# X9d: `dev-replay-tape` gives `axiom extensions replay` its in-memory replay
+# recorder; the CLI is a developer tool (production hosts never enable it).
+axiom-extension-host = { path = "../../axiom-runtime/extensions/host", features = ["dev-replay-tape"] }
 axiom-extension-abi = { path = "../../axiom-runtime/extensions/abi" }
-axiom-extension-broker = { path = "../../axiom-runtime/extensions/broker" }
+axiom-extension-broker = { path = "../../axiom-runtime/extensions/broker", features = ["dev-replay-tape"] }
 axiom-extension-kernel = { path = "../../axiom-runtime/extensions/kernel" }
 acore = { path = "../../acore" }
 acore-diff = { path = "../../acore-diff" }

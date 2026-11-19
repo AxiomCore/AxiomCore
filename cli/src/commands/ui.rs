@@ -2888,10 +2888,20 @@ fn print_diagnostics(source: &Path, diagnostics: &[axiom_ui::UiDiagnostic]) {
             .as_deref()
             .map(|path| source.parent().unwrap_or_else(|| Path::new(".")).join(path))
             .unwrap_or_else(|| source.to_path_buf());
+        // w1-p D2: `file:line:column` for people; `--json` output keeps the
+        // byte spans. An offset that does not fit the file (unreadable, or a
+        // span outside it) is printed as before, `file:@byte`.
+        let location = std::fs::read_to_string(&diagnostic_source)
+            .ok()
+            .and_then(|text| line_column(&text, diagnostic.span.start))
+            .map_or_else(
+                || format!("@{}", diagnostic.span.start),
+                |(line, column)| format!("{line}:{column}"),
+            );
         eprintln!(
             "{}:{}:{}: {} {}",
             diagnostic_source.display(),
-            diagnostic.span.start,
+            location,
             diagnostic.code,
             match diagnostic.severity {
                 axiom_ui::UiDiagnosticSeverity::Error => "error",
@@ -2900,6 +2910,18 @@ fn print_diagnostics(source: &Path, diagnostics: &[axiom_ui::UiDiagnostic]) {
             diagnostic.message
         );
     }
+}
+
+/// 1-based line and column (in characters) of a byte offset, or `None` when
+/// the offset is past the end or not on a character boundary.
+pub(crate) fn line_column(text: &str, offset: usize) -> Option<(usize, usize)> {
+    if offset > text.len() || !text.is_char_boundary(offset) {
+        return None;
+    }
+    let before = &text[..offset];
+    let line = before.matches('\n').count() + 1;
+    let column = before.rsplit('\n').next().unwrap_or("").chars().count() + 1;
+    Some((line, column))
 }
 
 fn report_reload(event: &HotReloadEvent) {
@@ -5997,6 +6019,19 @@ all compiler output in memory.
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// w1-p D2: human diagnostics print `file:line:column`.
+    #[test]
+    fn d2_diagnostic_locations_are_line_and_column() {
+        let text = "module a\n  action é = x\nwrites";
+        assert_eq!(line_column(text, 0), Some((1, 1)));
+        assert_eq!(line_column(text, 9), Some((2, 1)));
+        assert_eq!(line_column(text, text.find('=').unwrap()), Some((2, 12)));
+        assert_eq!(line_column(text, text.find("writes").unwrap()), Some((3, 1)));
+        assert_eq!(line_column(text, text.len()), Some((3, 7)));
+        assert_eq!(line_column(text, text.len() + 1), None);
+        assert_eq!(line_column(text, text.find('é').unwrap() + 1), None);
+    }
 
     #[test]
     fn default_package_lock_discovery_and_watch_paths_survive_migration() {

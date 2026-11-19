@@ -598,7 +598,7 @@ mod format_permissions_tests {
             &axiom_lib::project_state::deps_lock(root), "pricing", &["apply".into()]).unwrap();
         let notes = explain_canonical_change(with, &without, &deps).unwrap();
         assert!(notes[0].contains("equals the derived exports"), "{notes:?}");
-        let other = without.replace("targets = [\"web\"]\n\n", "targets = [\"web\", \"ios\"]\n\n");
+        let other = without.replace("targets = [\"web\"]\n\n", "targets = [\"ios\", \"web\"]\n\n");
         let notes = explain_canonical_change(with, &other, &deps).unwrap();
         assert!(notes.iter().any(|note| note.contains("beyond `exports`")), "{notes:?}");
     }

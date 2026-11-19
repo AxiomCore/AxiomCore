@@ -907,6 +907,7 @@ struct RunScenario {
 
 /// The export, input and UI snapshots one run uses, and the evidence digests
 /// for the audit (the snapshot values themselves are never exported).
+#[derive(Debug)]
 struct RunInputs {
     export: Option<String>,
     input: String,

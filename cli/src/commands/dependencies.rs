@@ -78,6 +78,21 @@ pub(crate) fn explain_canonical_change(before: &str, after: &str, after_path: &P
     Ok(notes)
 }
 
+/// w1-p D6: one summary line per manifest for deprecated-but-valid forms
+/// (the editor shows them per item). `None` when there is nothing to say.
+pub(crate) fn deprecation_summary(path: &Path, source: &str) -> Option<String> {
+    let aliases = axiom_lib::deps_manifest::permission_shorthand_candidates(source);
+    (!aliases.is_empty()).then(|| {
+        format!(
+            "hint: {}: {} extension(s) ({}) use long-form permissions where the shorthand applies; `axiom dependencies format --permissions shorthand --write` rewrites them [{}]",
+            path.display(),
+            aliases.len(),
+            aliases.join(", "),
+            axiom_lib::deps_manifest::PERMISSIONS_SHORTHAND_HINT
+        )
+    })
+}
+
 pub async fn handle_check(deps: PathBuf, json: bool, against: Option<PathBuf>) -> Result<()> {
     let source =
         std::fs::read_to_string(&deps).with_context(|| format!("read {}", deps.display()))?;
@@ -112,10 +127,17 @@ pub async fn handle_check(deps: PathBuf, json: bool, against: Option<PathBuf>) -
         if let Some((before, changes)) = &review {
             report["against"] = serde_json::json!({"canonicalSha256": before, "changes": changes});
         }
+        let shorthand = axiom_lib::deps_manifest::permission_shorthand_candidates(&source);
+        if !shorthand.is_empty() {
+            report["hints"] = serde_json::json!([{"code": axiom_lib::deps_manifest::PERMISSIONS_SHORTHAND_HINT, "extensions": shorthand}]);
+        }
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
         println!("Valid AxiomDeps.toml v2: {}", deps.display());
         println!("Canonical manifest: {}", digest_hex(&canonical));
+        if let Some(summary) = deprecation_summary(&deps, &source) {
+            eprintln!("{summary}");
+        }
         if let Some((before, changes)) = &review {
             if changes.is_empty() {
                 println!("Canonical manifest unchanged from {before}.");

@@ -579,6 +579,12 @@ async fn prepare_extensions(root: &Path, source: &Path, frozen: bool) -> Result<
     // Each release below builds its extension, which derives and records
     // omitted `exports` (or refreshes a stale entry) before binding (P4).
     let extensions = resolve_extension_sources_allow_pending_exports(&deps)?;
+    if let Some(summary) = fs::read_to_string(&deps)
+        .ok()
+        .and_then(|text| crate::commands::dependencies::deprecation_summary(&deps, &text))
+    {
+        eprintln!("{summary}");
+    }
     let application = development_application(&deps, source)?;
     for alias in extensions.keys() {
         crate::commands::extensions::handle_source_release(

@@ -72,6 +72,23 @@ pub(crate) fn explain_canonical_change(before: &str, after: &str, after_path: &P
             notes.push(format!("extension `{alias}`: exports changed from [{}] to [{}]", listed.join(", "), now.join(", ")));
         }
     }
+    // w3-b: requested budgets (`maxRounds`, `deadlineMs`): an increase is a
+    // reviewed permission increase, as in the authority diff.
+    let (before_manifest, after_manifest) = (parse_axiom_deps_v2(before)?, parse_axiom_deps_v2(after)?);
+    for (alias, extension) in &after_manifest.extensions {
+        let Some(earlier) = before_manifest.extensions.get(alias) else { continue };
+        let (old, new) = (earlier.budgets, extension.budgets);
+        for (name, previous, current) in [
+            ("maxRounds", u64::from(old.max_rounds_or_default()), u64::from(new.max_rounds_or_default())),
+            ("deadlineMs", old.deadline_ms_or_default(), new.deadline_ms_or_default()),
+        ] {
+            if current > previous {
+                notes.push(format!("extension `{alias}`: budgets.{name} {previous} -> {current}: permission increase (needs review)"));
+            } else if current < previous {
+                notes.push(format!("extension `{alias}`: budgets.{name} {previous} -> {current}: reduced"));
+            }
+        }
+    }
     if without_exports(before)? != without_exports(after)? {
         notes.push("other declarations changed as well (the canonical manifest differs beyond `exports`)".into());
     }
@@ -601,6 +618,23 @@ mod format_permissions_tests {
         let other = without.replace("targets = [\"web\"]\n\n", "targets = [\"ios\", \"web\"]\n\n");
         let notes = explain_canonical_change(with, &other, &deps).unwrap();
         assert!(notes.iter().any(|note| note.contains("beyond `exports`")), "{notes:?}");
+    }
+
+    /// w3-b: raising `deadlineMs` (or `maxRounds`) is named as a permission
+    /// increase in the review; lowering it as a reduction.
+    #[test]
+    fn budget_increases_are_named_as_permission_increases() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("logic")).unwrap();
+        std::fs::write(dir.path().join("logic/pricing.rs"), "pub fn pricing() {}\n").unwrap();
+        let deps = dir.path().join("AxiomDeps.toml");
+        let base = "format = \"axiom-deps/v2\"\ntargets = [\"web\"]\n\n[extensions.pricing]\nlanguage = \"rust\"\nsource = \"logic/pricing.rs\"\nexports = [\"apply\"]\ntargets = [\"web\"]\n";
+        let longer = format!("{base}\n[extensions.pricing.budgets]\nmaxRounds = 4\ndeadlineMs = 10000\n");
+        let notes = explain_canonical_change(base, &longer, &deps).unwrap();
+        assert!(notes.iter().any(|n| n.contains("budgets.deadlineMs 1000 -> 10000: permission increase")), "{notes:?}");
+        assert!(notes.iter().any(|n| n.contains("budgets.maxRounds 1 -> 4: permission increase")), "{notes:?}");
+        let notes = explain_canonical_change(&longer, base, &deps).unwrap();
+        assert!(notes.iter().any(|n| n.contains("budgets.deadlineMs 10000 -> 1000: reduced")), "{notes:?}");
     }
 
     /// w1-p D7: `--permissions long|shorthand|preserve` reaches the formatter

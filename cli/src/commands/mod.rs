@@ -24,6 +24,7 @@ pub mod doctor;
 pub mod domain;
 pub mod editor;
 pub mod editor_workflows;
+pub mod extension_replay;
 pub mod extensions;
 pub mod init;
 pub mod inspector;

@@ -338,11 +338,15 @@ pub async fn handle_check_source(
                 serde_json::json!({"format":"acore-package-source-check/v1","passed":false,"diagnostics":compilation.diagnostics})
             );
         }
+        let text = std::fs::read_to_string(&source).unwrap_or_default();
         for diagnostic in &compilation.diagnostics {
             eprintln!(
                 "{}:{}: {} {}",
                 source.display(),
-                diagnostic.span.start,
+                crate::commands::ui::line_column(&text, diagnostic.span.start).map_or_else(
+                    || format!("@{}", diagnostic.span.start),
+                    |(line, column)| format!("{line}:{column}")
+                ),
                 diagnostic.code,
                 diagnostic.message
             );

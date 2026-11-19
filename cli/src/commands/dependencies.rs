@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
@@ -8,12 +9,91 @@ use axiom_lib::authored_dependencies::{
 };
 use axiom_lib::deps_manifest::{
     axiom_deps_completions, axiom_deps_hover, axiom_deps_schema, canonical_axiom_deps_v2_bytes,
-    diagnose_axiom_deps, format_axiom_deps_v2, migrate_axiom_deps_to_v2, parse_axiom_deps_v2,
+    diagnose_axiom_deps, migrate_axiom_deps_to_v2, parse_axiom_deps_v2,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-pub async fn handle_check(deps: PathBuf, json: bool) -> Result<()> {
+/// w1-p D9: why the canonical manifest digest differs from an earlier
+/// manifest. The canonical form is what the author wrote, so omitting an
+/// `exports` list that equals the derived one changes the digest; the review
+/// names that instead of showing a bare digest change.
+pub(crate) fn explain_canonical_change(before: &str, after: &str, after_path: &Path) -> Result<Vec<String>> {
+    if canonical_axiom_deps_v2_bytes(before)? == canonical_axiom_deps_v2_bytes(after)? {
+        return Ok(Vec::new());
+    }
+    fn exports(value: &toml::Value) -> BTreeMap<String, Vec<String>> {
+        value
+            .get("extensions")
+            .and_then(toml::Value::as_table)
+            .map(|extensions| {
+                extensions
+                    .iter()
+                    .map(|(alias, table)| {
+                        let mut list = table
+                            .get("exports")
+                            .and_then(toml::Value::as_array)
+                            .map(|items| items.iter().filter_map(|item| item.as_str().map(str::to_string)).collect::<Vec<_>>())
+                            .unwrap_or_default();
+                        list.sort();
+                        (alias.clone(), list)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+    fn without_exports(source: &str) -> Result<toml::Value> {
+        let mut value = toml::Value::try_from(parse_axiom_deps_v2(source)?)?;
+        if let Some(extensions) = value.get_mut("extensions").and_then(toml::Value::as_table_mut) {
+            for (_, table) in extensions.iter_mut() {
+                if let Some(table) = table.as_table_mut() {
+                    table.remove("exports");
+                }
+            }
+        }
+        Ok(value)
+    }
+    let (before_value, after_value) = (toml::Value::try_from(parse_axiom_deps_v2(before)?)?, toml::Value::try_from(parse_axiom_deps_v2(after)?)?);
+    let (before_exports, after_exports) = (exports(&before_value), exports(&after_value));
+    let derived = axiom_lib::extension_source::derive_extension_exports(after_path).ok();
+    let mut notes = Vec::new();
+    for (alias, listed) in &before_exports {
+        let Some(now) = after_exports.get(alias) else { continue };
+        if listed == now {
+            continue;
+        }
+        if now.is_empty() {
+            match derived.as_ref().and_then(|derived| derived.get(alias)) {
+                Some(list) if list == listed => notes.push(format!("extension `{alias}`: exports now derived; the removed list [{}] equals the derived exports, so the binding and authority are unchanged", listed.join(", "))),
+                Some(list) => notes.push(format!("extension `{alias}`: exports now derived as [{}], which differs from the removed list [{}]", list.join(", "), listed.join(", "))),
+                None => notes.push(format!("extension `{alias}`: exports now derived (removed [{}]); the derived list is not recorded yet, build the extension to record it", listed.join(", "))),
+            }
+        } else {
+            notes.push(format!("extension `{alias}`: exports changed from [{}] to [{}]", listed.join(", "), now.join(", ")));
+        }
+    }
+    if without_exports(before)? != without_exports(after)? {
+        notes.push("other declarations changed as well (the canonical manifest differs beyond `exports`)".into());
+    }
+    Ok(notes)
+}
+
+/// w1-p D6: one summary line per manifest for deprecated-but-valid forms
+/// (the editor shows them per item). `None` when there is nothing to say.
+pub(crate) fn deprecation_summary(path: &Path, source: &str) -> Option<String> {
+    let aliases = axiom_lib::deps_manifest::permission_shorthand_candidates(source);
+    (!aliases.is_empty()).then(|| {
+        format!(
+            "hint: {}: {} extension(s) ({}) use long-form permissions where the shorthand applies; `axiom dependencies format --permissions shorthand --write` rewrites them [{}]",
+            path.display(),
+            aliases.len(),
+            aliases.join(", "),
+            axiom_lib::deps_manifest::PERMISSIONS_SHORTHAND_HINT
+        )
+    })
+}
+
+pub async fn handle_check(deps: PathBuf, json: bool, against: Option<PathBuf>) -> Result<()> {
     let source =
         std::fs::read_to_string(&deps).with_context(|| format!("read {}", deps.display()))?;
     let diagnostics = diagnose_axiom_deps(&source);
@@ -25,24 +105,49 @@ pub async fn handle_check(deps: PathBuf, json: bool) -> Result<()> {
     }
     let manifest = parse_axiom_deps_v2(&source)?;
     let canonical = canonical_axiom_deps_v2_bytes(&source)?;
+    let review = match &against {
+        Some(path) => {
+            let before = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+            Some((digest_hex(&canonical_axiom_deps_v2_bytes(&before)?), explain_canonical_change(&before, &source, &deps)?))
+        }
+        None => None,
+    };
     if json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "status": "valid",
-                "path": deps,
-                "format": manifest.format,
-                "canonicalSha256": digest_hex(&canonical),
-                "contracts": manifest.contracts.len(),
-                "packages": manifest.packages.len(),
-                "extensions": manifest.extensions.len(),
-                "environments": manifest.dependency_environments.len(),
-                "registries": manifest.dependency_registries.len(),
-            }))?
-        );
+        let mut report = serde_json::json!({
+            "status": "valid",
+            "path": deps,
+            "format": manifest.format,
+            "canonicalSha256": digest_hex(&canonical),
+            "contracts": manifest.contracts.len(),
+            "packages": manifest.packages.len(),
+            "extensions": manifest.extensions.len(),
+            "environments": manifest.dependency_environments.len(),
+            "registries": manifest.dependency_registries.len(),
+        });
+        if let Some((before, changes)) = &review {
+            report["against"] = serde_json::json!({"canonicalSha256": before, "changes": changes});
+        }
+        let shorthand = axiom_lib::deps_manifest::permission_shorthand_candidates(&source);
+        if !shorthand.is_empty() {
+            report["hints"] = serde_json::json!([{"code": axiom_lib::deps_manifest::PERMISSIONS_SHORTHAND_HINT, "extensions": shorthand}]);
+        }
+        println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
         println!("Valid AxiomDeps.toml v2: {}", deps.display());
         println!("Canonical manifest: {}", digest_hex(&canonical));
+        if let Some(summary) = deprecation_summary(&deps, &source) {
+            eprintln!("{summary}");
+        }
+        if let Some((before, changes)) = &review {
+            if changes.is_empty() {
+                println!("Canonical manifest unchanged from {before}.");
+            } else {
+                println!("Canonical manifest changed from {before}:");
+                for change in changes {
+                    println!("  - {change}");
+                }
+            }
+        }
         println!(
             "{} contract(s), {} Axiom package(s), {} extension(s), {} build environment(s).",
             manifest.contracts.len(),
@@ -54,10 +159,34 @@ pub async fn handle_check(deps: PathBuf, json: bool) -> Result<()> {
     Ok(())
 }
 
-pub async fn handle_format(deps: PathBuf, check: bool, write: bool) -> Result<()> {
+/// `axiom dependencies format --permissions` (w1-p D7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum PermissionsArg {
+    Long,
+    Shorthand,
+    Preserve,
+}
+
+impl From<PermissionsArg> for axiom_lib::deps_manifest::PermissionStyle {
+    fn from(value: PermissionsArg) -> Self {
+        match value {
+            PermissionsArg::Long => Self::Long,
+            PermissionsArg::Shorthand => Self::Shorthand,
+            PermissionsArg::Preserve => Self::Preserve,
+        }
+    }
+}
+
+pub async fn handle_format(
+    deps: PathBuf,
+    check: bool,
+    write: bool,
+    permissions: PermissionsArg,
+) -> Result<()> {
     let source =
         std::fs::read_to_string(&deps).with_context(|| format!("read {}", deps.display()))?;
-    let formatted = format_axiom_deps_v2(&source)?;
+    let formatted =
+        axiom_lib::deps_manifest::format_axiom_deps_v2_with_style(&source, permissions.into())?;
     if check {
         if source != formatted {
             bail!(
@@ -438,6 +567,62 @@ fn split_package_spec(spec: &str) -> Result<(String, String)> {
         bail!("give the package as <name>@<exact version>, for example zod@4.1.12");
     }
     Ok((name.to_string(), version.to_string()))
+}
+
+#[cfg(test)]
+mod format_permissions_tests {
+    use super::*;
+
+    const MANIFEST: &str = "format = \"axiom-deps/v2\"\ntargets = [\"server\"]\n\n[extensions.pricing]\nlanguage = \"python\"\nsource = \"guest.py\"\nexports = [\"call\"]\ntargets = [\"server\"]\n\n[extensions.pricing.permissions]\nresources = [\n{ kind = \"resource\", import = {namespace = \"secrets\", operation = \"payment\", mode = \"call\"}, resource = {type = \"secret-use\", name = \"payment\"}}\n]\n\n[extensions.pricing.permissions.ui-state.cart]\nread = [\"subtotal_cents\"]\n";
+
+    /// w1-p D9: the canonical digest is sensitive to an omitted `exports`
+    /// list (the manifest is what the author wrote); the review says
+    /// "exports now derived" instead of a bare digest change.
+    #[test]
+    fn d9_review_names_exports_now_derived() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("logic")).unwrap();
+        std::fs::write(root.join("logic/pricing.rs"), "pub fn pricing() {}\n").unwrap();
+        let with = "format = \"axiom-deps/v2\"\ntargets = [\"web\"]\n\n[extensions.pricing]\nlanguage = \"rust\"\nsource = \"logic/pricing.rs\"\nexports = [\"apply\"]\ntargets = [\"web\"]\n";
+        let without = with.replace("exports = [\"apply\"]\n", "");
+        let deps = root.join("AxiomDeps.toml");
+        std::fs::write(&deps, &without).unwrap();
+        assert_ne!(canonical_axiom_deps_v2_bytes(with).unwrap(), canonical_axiom_deps_v2_bytes(&without).unwrap());
+        assert!(explain_canonical_change(with, with, &deps).unwrap().is_empty());
+        let notes = explain_canonical_change(with, &without, &deps).unwrap();
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        assert!(notes[0].contains("exports now derived") && notes[0].contains("not recorded yet"), "{notes:?}");
+        // After a build recorded the derived list (in .axiom/AxiomDeps.lock).
+        axiom_lib::authored_dependencies::record_derived_extension_exports(
+            &axiom_lib::project_state::deps_lock(root), "pricing", &["apply".into()]).unwrap();
+        let notes = explain_canonical_change(with, &without, &deps).unwrap();
+        assert!(notes[0].contains("equals the derived exports"), "{notes:?}");
+        let other = without.replace("targets = [\"web\"]\n\n", "targets = [\"ios\", \"web\"]\n\n");
+        let notes = explain_canonical_change(with, &other, &deps).unwrap();
+        assert!(notes.iter().any(|note| note.contains("beyond `exports`")), "{notes:?}");
+    }
+
+    /// w1-p D7: `--permissions long|shorthand|preserve` reaches the formatter
+    /// and both conversions round-trip through `--write` and `--check`.
+    #[tokio::test]
+    async fn d7_format_permissions_option_converts_both_ways() {
+        let dir = tempfile::tempdir().unwrap();
+        let deps = dir.path().join("AxiomDeps.toml");
+        std::fs::write(&deps, MANIFEST).unwrap();
+        handle_format(deps.clone(), false, true, PermissionsArg::Preserve).await.unwrap();
+        let long = std::fs::read_to_string(&deps).unwrap();
+        assert!(long.contains("resources") && long.contains("ui-state"), "{long}");
+        handle_format(deps.clone(), false, true, PermissionsArg::Shorthand).await.unwrap();
+        let short = std::fs::read_to_string(&deps).unwrap();
+        assert!(short.contains("secrets = [\"payment\"]") && short.contains("permissions.ui.cart") && !short.contains("resources"), "{short}");
+        // Preserve keeps the shorthand; --check agrees in that style only.
+        handle_format(deps.clone(), true, false, PermissionsArg::Preserve).await.unwrap();
+        handle_format(deps.clone(), true, false, PermissionsArg::Shorthand).await.unwrap();
+        assert!(handle_format(deps.clone(), true, false, PermissionsArg::Long).await.is_err());
+        handle_format(deps.clone(), false, true, PermissionsArg::Long).await.unwrap();
+        assert_eq!(std::fs::read_to_string(&deps).unwrap(), long);
+    }
 }
 
 #[cfg(test)]

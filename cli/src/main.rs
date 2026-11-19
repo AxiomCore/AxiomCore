@@ -1247,6 +1247,10 @@ enum ExtensionsAction {
         /// Scenario to run from --scenario (optional when it has one).
         #[arg(long, requires = "scenario")]
         scenario_name: Option<String>,
+        /// Invocation deadline in milliseconds (debug builds of the managed
+        /// engines can need more than the default)
+        #[arg(long, default_value_t = 1_000)]
+        deadline_ms: u64,
     },
 }
 
@@ -2525,6 +2529,7 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                 snapshots,
                 scenario,
                 scenario_name,
+                deadline_ms,
             } => {
                 commands::extensions::handle_run(
                     manifest.clone(),
@@ -2538,6 +2543,7 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                         snapshots: snapshots.clone(),
                         scenario: scenario.clone(),
                         scenario_name: scenario_name.clone(),
+                        deadline_ms: *deadline_ms,
                     },
                 )
                 .await

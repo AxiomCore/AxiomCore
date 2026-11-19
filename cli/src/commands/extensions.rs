@@ -856,11 +856,19 @@ pub async fn handle_test(manifest: PathBuf) -> Result<()> {
 
 /// UI inputs of `axiom extensions run` (w1-p D8): `--snapshot` and
 /// `--scenario` (the X7 golden-harness scenario format).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct RunUiOptions {
     pub snapshots: Vec<String>,
     pub scenario: Option<PathBuf>,
     pub scenario_name: Option<String>,
+    /// Invocation deadline (default 1000 ms).
+    pub deadline_ms: u64,
+}
+
+impl Default for RunUiOptions {
+    fn default() -> Self {
+        Self { snapshots: Vec::new(), scenario: None, scenario_name: None, deadline_ms: 1_000 }
+    }
 }
 
 /// One UI snapshot: what the guest reads and what the host holds.
@@ -1098,7 +1106,7 @@ pub async fn handle_run(
                 export: export.clone(),
                 input,
                 snapshots: guest_snapshots,
-                deadline_unix_ms: now_unix_ms().saturating_add(1_000),
+                deadline_unix_ms: now_unix_ms().saturating_add(ui.deadline_ms),
             },
             InvocationContext::default(),
         )
@@ -1179,6 +1187,9 @@ pub async fn handle_run(
     }
     if let Some(scenario) = scenario {
         audit["execution"]["scenario"] = scenario;
+    }
+    if ui.deadline_ms != RunUiOptions::default().deadline_ms {
+        audit["execution"]["deadlineMs"] = ui.deadline_ms.into();
     }
     if let Some(path) = audit_out {
         let bytes = serde_jcs::to_vec(&audit)?;
@@ -1341,7 +1352,7 @@ mod tests {
              "ui": {"scope": "forecast", "revision": 3, "read": ["label"], "value": {"label": "x", "hidden": 1}}},
             {"name": "plain", "export": "assess", "input": null}
         ]}).to_string()).unwrap();
-        let options = |name: Option<&str>| RunUiOptions { snapshots: vec![], scenario: Some(scenario.clone()), scenario_name: name.map(str::to_string) };
+        let options = |name: Option<&str>| RunUiOptions { snapshots: vec![], scenario: Some(scenario.clone()), scenario_name: name.map(str::to_string), ..Default::default() };
         let inputs = run_inputs("risk", None, "null".into(), &options(Some("healthy"))).unwrap();
         assert_eq!(inputs.export.as_deref(), Some("assess"));
         assert_eq!(inputs.input, r#"{"total":20}"#);
@@ -1360,7 +1371,7 @@ mod tests {
         // --snapshot <scope>=<file>
         let file = dir.path().join("cart.json");
         fs::write(&file, r#"{"revision": 2, "read": ["subtotal"], "value": {"subtotal": 5, "total": 5}}"#).unwrap();
-        let snapshot = |argument: String| RunUiOptions { snapshots: vec![argument], scenario: None, scenario_name: None };
+        let snapshot = |argument: String| RunUiOptions { snapshots: vec![argument], ..Default::default() };
         let inputs = run_inputs("pricing", Some("apply".into()), "1".into(), &snapshot(format!("ui:cart={}", file.display()))).unwrap();
         assert_eq!(inputs.snapshots[0].0, "cart");
         assert_eq!(inputs.snapshots[0].1.revision, 2);

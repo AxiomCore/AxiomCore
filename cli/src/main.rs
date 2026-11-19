@@ -1233,6 +1233,20 @@ enum ExtensionsAction {
         /// explicit path in addition to the readable terminal report.
         #[arg(long)]
         audit_out: Option<PathBuf>,
+        /// UI snapshot handed to the guest, `<scope>=<file.json>` (repeatable).
+        /// The file holds `{"revision": n, "read": [fields], "value": {...}}`;
+        /// the guest sees the `read` fields, and the reference host holds
+        /// `value`, so proposed patches are committed and audited.
+        #[arg(long = "snapshot", value_name = "SCOPE=FILE")]
+        snapshots: Vec<String>,
+        /// Scenario file in the X7 golden-harness format (`{"alias", "scenarios":
+        /// [{"name", "export", "input", "ui"}]}`); supplies --export, --input
+        /// and the snapshot of the scenario chosen with --scenario-name.
+        #[arg(long, conflicts_with_all = ["export", "input"])]
+        scenario: Option<PathBuf>,
+        /// Scenario to run from --scenario (optional when it has one).
+        #[arg(long, requires = "scenario")]
+        scenario_name: Option<String>,
     },
 }
 
@@ -1244,6 +1258,10 @@ enum DependenciesAction {
         deps: PathBuf,
         #[arg(long)]
         json: bool,
+        /// Review against an earlier AxiomDeps.toml: explain why the canonical
+        /// digest changed (for example "exports now derived")
+        #[arg(long)]
+        against: Option<PathBuf>,
     },
     /// Canonically format a v2 manifest
     Format {
@@ -1255,6 +1273,11 @@ enum DependenciesAction {
         /// Replace the manifest after successful validation
         #[arg(long)]
         write: bool,
+        /// How extension permissions are spelled: `long` (`resources`,
+        /// `ui-state.<scope>`), `shorthand` (`network.<op>`, `secrets`,
+        /// `ui.<scope>` where they apply), or `preserve` the file's choice
+        #[arg(long, value_enum, default_value = "preserve")]
+        permissions: commands::dependencies::PermissionsArg,
     },
     /// Convert a supported v1 manifest to the strict v2 schema
     Migrate {
@@ -1285,8 +1308,9 @@ enum DependenciesAction {
     Resolve {
         #[arg(long, default_value = "AxiomDeps.toml")]
         deps: PathBuf,
-        #[arg(long, default_value = ".axiom/AxiomDeps.lock")]
-        lock: PathBuf,
+        /// Lock to write [default: `.axiom/AxiomDeps.lock` beside `--deps`]
+        #[arg(long)]
+        lock: Option<PathBuf>,
         #[arg(long)]
         cache: Option<PathBuf>,
         #[arg(long, default_value = ".axiom/dependencies")]
@@ -2498,6 +2522,9 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                 input,
                 state,
                 audit_out,
+                snapshots,
+                scenario,
+                scenario_name,
             } => {
                 commands::extensions::handle_run(
                     manifest.clone(),
@@ -2507,16 +2534,21 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                     input.clone(),
                     state.clone(),
                     audit_out.clone(),
+                    commands::extensions::RunUiOptions {
+                        snapshots: snapshots.clone(),
+                        scenario: scenario.clone(),
+                        scenario_name: scenario_name.clone(),
+                    },
                 )
                 .await
             }
         },
         Commands::Dependencies { action } => match action {
-            DependenciesAction::Check { deps, json } => {
-                commands::dependencies::handle_check(deps.clone(), *json).await
+            DependenciesAction::Check { deps, json, against } => {
+                commands::dependencies::handle_check(deps.clone(), *json, against.clone()).await
             }
-            DependenciesAction::Format { deps, check, write } => {
-                commands::dependencies::handle_format(deps.clone(), *check, *write).await
+            DependenciesAction::Format { deps, check, write, permissions } => {
+                commands::dependencies::handle_format(deps.clone(), *check, *write, *permissions).await
             }
             DependenciesAction::Migrate { deps, out, write } => {
                 commands::dependencies::handle_migrate(deps.clone(), out.clone(), *write).await
@@ -2539,7 +2571,13 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             } => {
                 commands::dependencies::handle_resolve(
                     deps.clone(),
-                    lock.clone(),
+                    lock.clone().unwrap_or_else(|| {
+                        axiom_lib::project_state::deps_lock(
+                            deps.parent()
+                                .filter(|parent| !parent.as_os_str().is_empty())
+                                .unwrap_or_else(|| std::path::Path::new(".")),
+                        )
+                    }),
                     cache.clone(),
                     workspace_view.clone(),
                     *locked,

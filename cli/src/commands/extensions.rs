@@ -26,7 +26,7 @@ use axiom_lib::{
         TargetPolicy, APPLICATION_GRANT_SCHEMA, TARGET_POLICY_SCHEMA,
     },
     extension_binding::generate_extension_binding,
-    extension_source::resolve_extension_sources,
+    extension_source::{resolve_extension_sources, resolve_extension_sources_allow_pending_exports},
     extension_workflow::{
         diff_extension_authority, extension_graph, inspect_extension,
         load_verified_extension_target, require_extension_diff_approval, verify_extension_workflow,
@@ -469,14 +469,17 @@ pub async fn handle_source_release(
     if workflow.parent() != Some(project_root) {
         bail!("source release workflow must be written at the AxiomDeps.toml project root");
     }
-    let sources = resolve_extension_sources(&deps)?;
-    let source = sources
+    // An extension that omits `exports` derives them at build time (X7c): it
+    // resolves with pending exports before the build, and strictly after the
+    // build recorded them in `.axiom/AxiomDeps.lock` (P4).
+    let pending = resolve_extension_sources_allow_pending_exports(&deps)?;
+    let pending_source = pending
         .get(&alias)
         .with_context(|| format!("AxiomDeps.toml has no extension `{alias}`"))?;
-    if !source.dependencies.is_empty() {
+    if !pending_source.dependencies.is_empty() {
         bail!("source release currently requires dependency modules to be released separately before `{alias}`");
     }
-    let target = *source
+    let target = *pending_source
         .targets
         .first()
         .context("source extension declares no targets")?;
@@ -487,6 +490,10 @@ pub async fn handle_source_release(
         target,
         clean,
     })?;
+    let sources = resolve_extension_sources(&deps)?;
+    let source = sources
+        .get(&alias)
+        .with_context(|| format!("AxiomDeps.toml has no extension `{alias}`"))?;
     let package_bytes = fs::read(&build.package)?;
     let DecodedAxiomPackage::Package(package) = decode_axiom_package(&package_bytes)? else {
         bail!("source build produced a legacy package");
@@ -847,6 +854,127 @@ pub async fn handle_test(manifest: PathBuf) -> Result<()> {
     Ok(())
 }
 
+/// UI inputs of `axiom extensions run` (w1-p D8): `--snapshot` and
+/// `--scenario` (the X7 golden-harness scenario format).
+#[derive(Debug, Clone, Default)]
+pub struct RunUiOptions {
+    pub snapshots: Vec<String>,
+    pub scenario: Option<PathBuf>,
+    pub scenario_name: Option<String>,
+}
+
+/// One UI snapshot: what the guest reads and what the host holds.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RunUiSnapshot {
+    #[serde(default)]
+    scope: Option<String>,
+    #[serde(default = "default_snapshot_revision")]
+    revision: u64,
+    read: Vec<String>,
+    value: serde_json::Map<String, serde_json::Value>,
+}
+
+fn default_snapshot_revision() -> u64 {
+    1
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RunScenarioSuite {
+    alias: String,
+    scenarios: Vec<RunScenario>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RunScenario {
+    name: String,
+    export: String,
+    #[serde(default)]
+    input: serde_json::Value,
+    #[serde(default)]
+    ui: Option<RunUiSnapshot>,
+}
+
+/// The export, input and UI snapshots one run uses, and the evidence digests
+/// for the audit (the snapshot values themselves are never exported).
+struct RunInputs {
+    export: Option<String>,
+    input: String,
+    snapshots: Vec<(String, RunUiSnapshot, String)>,
+    scenario: Option<serde_json::Value>,
+}
+
+fn run_inputs(alias: &str, export: Option<String>, input: String, ui: &RunUiOptions) -> Result<RunInputs> {
+    let mut inputs = RunInputs { export, input, snapshots: Vec::new(), scenario: None };
+    if let Some(path) = &ui.scenario {
+        let bytes = fs::read(path).with_context(|| format!("AXIOM_EXTENSION_REFERENCE_HOST: read {}", path.display()))?;
+        let suite: RunScenarioSuite = serde_json::from_slice(&bytes)
+            .with_context(|| format!("AXIOM_EXTENSION_REFERENCE_HOST: parse scenario file {}", path.display()))?;
+        if suite.alias != alias {
+            bail!("AXIOM_EXTENSION_REFERENCE_HOST: scenario file {} is for extension `{}`, not `{alias}`", path.display(), suite.alias);
+        }
+        let names = suite.scenarios.iter().map(|scenario| scenario.name.clone()).collect::<Vec<_>>();
+        let scenario = match &ui.scenario_name {
+            Some(name) => suite.scenarios.into_iter().find(|scenario| &scenario.name == name),
+            None if suite.scenarios.len() == 1 => suite.scenarios.into_iter().next(),
+            None => bail!("AXIOM_EXTENSION_REFERENCE_HOST: {} has several scenarios; choose one with --scenario-name ({})", path.display(), names.join(", ")),
+        }
+        .with_context(|| format!("AXIOM_EXTENSION_REFERENCE_HOST: no scenario `{}` in {} ({})", ui.scenario_name.as_deref().unwrap_or(""), path.display(), names.join(", ")))?;
+        inputs.scenario = Some(serde_json::json!({
+            "fileSha256": hex::encode(Sha256::digest(&bytes)),
+            "name": scenario.name,
+        }));
+        inputs.export = Some(scenario.export);
+        inputs.input = serde_json::to_string(&scenario.input)?;
+        if let Some(snapshot) = scenario.ui {
+            let scope = snapshot.scope.clone().context("AXIOM_EXTENSION_REFERENCE_HOST: a scenario `ui` names its `scope`")?;
+            let digest = hex::encode(Sha256::digest(serde_jcs::to_vec(&serde_json::json!({"revision": snapshot.revision, "read": snapshot.read, "value": snapshot.value}))?));
+            inputs.snapshots.push((scope, snapshot, digest));
+        }
+    }
+    for argument in &ui.snapshots {
+        let (scope, path) = argument
+            .split_once('=')
+            .filter(|(scope, path)| !scope.is_empty() && !path.is_empty())
+            .with_context(|| format!("AXIOM_EXTENSION_REFERENCE_HOST: --snapshot expects <scope>=<file.json>, got `{argument}`"))?;
+        let scope = scope.strip_prefix("ui:").unwrap_or(scope).to_string();
+        let bytes = fs::read(path).with_context(|| format!("AXIOM_EXTENSION_REFERENCE_HOST: read snapshot {path}"))?;
+        let snapshot: RunUiSnapshot = serde_json::from_slice(&bytes)
+            .with_context(|| format!("AXIOM_EXTENSION_REFERENCE_HOST: parse snapshot {path} (expected {{\"revision\", \"read\", \"value\"}})"))?;
+        if snapshot.scope.as_ref().is_some_and(|named| named != &scope) {
+            bail!("AXIOM_EXTENSION_REFERENCE_HOST: snapshot {path} names scope `{}`, not `{scope}`", snapshot.scope.as_deref().unwrap_or(""));
+        }
+        inputs.snapshots.push((scope, snapshot, hex::encode(Sha256::digest(&bytes))));
+    }
+    let mut seen = BTreeSet::new();
+    for (scope, snapshot, _) in &inputs.snapshots {
+        if !seen.insert(scope.clone()) {
+            bail!("AXIOM_EXTENSION_REFERENCE_HOST: UI scope `{scope}` has more than one snapshot");
+        }
+        for field in &snapshot.read {
+            if !snapshot.value.contains_key(field) {
+                bail!("AXIOM_EXTENSION_REFERENCE_HOST: snapshot of `{scope}` reads `{field}`, which its `value` lacks");
+            }
+        }
+    }
+    Ok(inputs)
+}
+
+/// The guest-visible snapshot: the `read` fields only (the host redacts to
+/// effective read paths in the same way).
+fn guest_snapshot(scope: &str, snapshot: &RunUiSnapshot) -> Result<axiom_extension_abi::Snapshot> {
+    let mut fields = snapshot
+        .read
+        .iter()
+        .map(|name| Ok(Field { name: name.clone(), value: json_to_value(snapshot.value[name].clone())? }))
+        .collect::<Result<Vec<_>>>()?;
+    fields.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(axiom_extension_abi::Snapshot { resource: format!("ui:{scope}"), revision: snapshot.revision, value: Value::Record(fields) })
+}
+
+#[allow(clippy::too_many_arguments)]
 pub async fn handle_run(
     manifest: PathBuf,
     alias: String,
@@ -855,7 +983,12 @@ pub async fn handle_run(
     input: String,
     state: Option<PathBuf>,
     audit_out: Option<PathBuf>,
+    ui: RunUiOptions,
 ) -> Result<()> {
+    let RunInputs { export, input, snapshots: ui_snapshots, scenario } = run_inputs(&alias, export, input, &ui)?;
+    if export.is_none() && !ui_snapshots.is_empty() {
+        bail!("AXIOM_EXTENSION_REFERENCE_HOST: --snapshot needs --export (or --scenario)");
+    }
     let report = inspect_extension(&manifest, &alias)?;
     let target = parse_target(&target)?;
     let authority = report
@@ -903,6 +1036,14 @@ pub async fn handle_run(
     let state_fixture_sha256 = state.as_ref().map(|path| file_sha256(path)).transpose()?;
     if let Some(path) = state.as_ref() {
         seed_reference_state(&services, &path)?;
+    }
+    let mut guest_snapshots = Vec::new();
+    for (scope, snapshot, _) in &ui_snapshots {
+        services
+            .state_store()
+            .define_ui(scope, json_to_value(serde_json::Value::Object(snapshot.value.clone()))?, Vec::new())
+            .with_context(|| format!("AXIOM_EXTENSION_REFERENCE_HOST: define UI scope `{scope}` (also seeded by --state?)"))?;
+        guest_snapshots.push(guest_snapshot(scope, snapshot)?);
     }
     let kernel = SandboxKernel::new(KernelPolicy::default())?;
     let authorized = AuthorizedModule::verify_brokered(
@@ -956,7 +1097,7 @@ pub async fn handle_run(
             Invocation {
                 export: export.clone(),
                 input,
-                snapshots: Vec::new(),
+                snapshots: guest_snapshots,
                 deadline_unix_ms: now_unix_ms().saturating_add(1_000),
             },
             InvocationContext::default(),
@@ -1025,6 +1166,20 @@ pub async fn handle_run(
             },
         },
     });
+    // w1-p D8: digests only, like the input and the state fixture; absent
+    // when unused, so audits of runs without UI inputs are unchanged.
+    let mut audit = audit;
+    if !ui_snapshots.is_empty() {
+        audit["execution"]["uiSnapshots"] = serde_json::json!(ui_snapshots
+            .iter()
+            .map(|(scope, snapshot, sha256)| serde_json::json!({
+                "scope": scope, "revision": snapshot.revision, "sha256": sha256,
+            }))
+            .collect::<Vec<_>>());
+    }
+    if let Some(scenario) = scenario {
+        audit["execution"]["scenario"] = scenario;
+    }
     if let Some(path) = audit_out {
         let bytes = serde_jcs::to_vec(&audit)?;
         fs::write(&path, bytes)
@@ -1175,6 +1330,45 @@ fn parse_target(value: &str) -> Result<PackageTarget> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// w1-p D8: `--snapshot` and `--scenario` (golden-harness format).
+    #[test]
+    fn d8_run_ui_inputs_from_snapshots_and_scenarios() {
+        let dir = tempfile::tempdir().unwrap();
+        let scenario = dir.path().join("risk.json");
+        fs::write(&scenario, serde_json::json!({"alias": "risk", "scenarios": [
+            {"name": "healthy", "export": "assess", "input": {"total": 20},
+             "ui": {"scope": "forecast", "revision": 3, "read": ["label"], "value": {"label": "x", "hidden": 1}}},
+            {"name": "plain", "export": "assess", "input": null}
+        ]}).to_string()).unwrap();
+        let options = |name: Option<&str>| RunUiOptions { snapshots: vec![], scenario: Some(scenario.clone()), scenario_name: name.map(str::to_string) };
+        let inputs = run_inputs("risk", None, "null".into(), &options(Some("healthy"))).unwrap();
+        assert_eq!(inputs.export.as_deref(), Some("assess"));
+        assert_eq!(inputs.input, r#"{"total":20}"#);
+        assert_eq!(inputs.snapshots.len(), 1);
+        let (scope, snapshot, _) = &inputs.snapshots[0];
+        assert_eq!(scope, "forecast");
+        // The guest sees only the read fields.
+        let guest = guest_snapshot(scope, snapshot).unwrap();
+        assert_eq!(guest.resource, "ui:forecast");
+        assert_eq!(guest.revision, 3);
+        assert_eq!(guest.value, Value::Record(vec![Field { name: "label".into(), value: Value::String("x".into()) }]));
+        assert_eq!(inputs.scenario.unwrap()["name"], "healthy");
+        assert!(run_inputs("risk", None, "null".into(), &options(None)).unwrap_err().to_string().contains("--scenario-name"));
+        assert!(run_inputs("risk", None, "null".into(), &options(Some("missing"))).is_err());
+        assert!(run_inputs("pricing", None, "null".into(), &options(Some("plain"))).unwrap_err().to_string().contains("not `pricing`"));
+        // --snapshot <scope>=<file>
+        let file = dir.path().join("cart.json");
+        fs::write(&file, r#"{"revision": 2, "read": ["subtotal"], "value": {"subtotal": 5, "total": 5}}"#).unwrap();
+        let snapshot = |argument: String| RunUiOptions { snapshots: vec![argument], scenario: None, scenario_name: None };
+        let inputs = run_inputs("pricing", Some("apply".into()), "1".into(), &snapshot(format!("ui:cart={}", file.display()))).unwrap();
+        assert_eq!(inputs.snapshots[0].0, "cart");
+        assert_eq!(inputs.snapshots[0].1.revision, 2);
+        assert!(run_inputs("pricing", None, "1".into(), &snapshot("cart".into())).is_err());
+        assert!(run_inputs("pricing", None, "1".into(), &RunUiOptions { snapshots: vec![format!("cart={}", file.display()), format!("cart={}", file.display())], ..Default::default() }).unwrap_err().to_string().contains("more than one"));
+        fs::write(&file, r#"{"read": ["missing"], "value": {}}"#).unwrap();
+        assert!(run_inputs("pricing", None, "1".into(), &snapshot(format!("cart={}", file.display()))).unwrap_err().to_string().contains("lacks"));
+    }
 
     #[test]
     fn target_names_are_closed() {

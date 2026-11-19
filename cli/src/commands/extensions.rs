@@ -636,9 +636,9 @@ pub async fn handle_source_release(
                 dependencies: Vec::new(),
                 runtime: RuntimeIdentities {
                     engine: match executable.sdk.language.as_str() {
-                        "typescript" => "javy@9.1.0+wasmi@2.0.0",
-                        "python" => "axiom-python-aot-javy@0.1.0+javy@9.1.0+wasmi@2.0.0",
-                        _ => "wasmi@2.0.0",
+                        "typescript" => "javy@9.1.0+wasmi@2.0.2",
+                        "python" => "axiom-python-aot-javy@0.1.0+javy@9.1.0+wasmi@2.0.2",
+                        _ => "wasmi@2.0.2",
                     }
                     .into(),
                     broker: "axiom-extension-broker@0.1.0".into(),

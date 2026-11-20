@@ -165,7 +165,7 @@ reach your computer over plain HTTP during development.
 2. In `android/app/src/main/AndroidManifest.xml`, add the internet permission
    inside `<manifest>`:
 
-   ```xml title="android/app/src/main/AndroidManifest.xml (excerpt)"
+   ```html title="android/app/src/main/AndroidManifest.xml (excerpt)"
    <uses-permission android:name="android.permission.INTERNET"/>
    ```
 
@@ -173,14 +173,14 @@ reach your computer over plain HTTP during development.
    Replace `android/app/src/debug/AndroidManifest.xml` and add a network
    security config:
 
-   ```xml title="android/app/src/debug/AndroidManifest.xml"
+   ```html title="android/app/src/debug/AndroidManifest.xml"
    <manifest xmlns:android="http://schemas.android.com/apk/res/android">
        <uses-permission android:name="android.permission.INTERNET"/>
        <application android:networkSecurityConfig="@xml/network_security_config"/>
    </manifest>
    ```
 
-   ```xml title="android/app/src/debug/res/xml/network_security_config.xml"
+   ```html title="android/app/src/debug/res/xml/network_security_config.xml"
    <?xml version="1.0" encoding="utf-8"?>
    <network-security-config>
        <domain-config cleartextTrafficPermitted="true">
@@ -202,7 +202,7 @@ the runtime framework and checks its SHA-256 the first time you build.
    `macos/Runner/DebugProfile.entitlements` and
    `macos/Runner/Release.entitlements`:
 
-   ```xml title="macos/Runner/DebugProfile.entitlements (excerpt)"
+   ```html title="macos/Runner/DebugProfile.entitlements (excerpt)"
    <key>com.apple.security.network.client</key>
    <true/>
    ```

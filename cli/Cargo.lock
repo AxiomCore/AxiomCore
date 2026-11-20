@@ -233,6 +233,7 @@ dependencies = [
  "heck 0.4.1",
  "hex",
  "indicatif",
+ "proc-macro2",
  "quote",
  "reqwest 0.11.27",
  "serde",
@@ -247,6 +248,7 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "toml",
+ "unicode-normalization",
  "wasmparser 0.240.0",
  "zip",
 ]

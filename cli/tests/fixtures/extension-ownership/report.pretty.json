@@ -1,0 +1,180 @@
+{
+  "format": "axiom-extension-ownership/v1",
+  "mode": "development",
+  "takenAtUnixMs": 1795131083508,
+  "extensions": [
+    {
+      "alias": "rounds.v11",
+      "instanceId": 1,
+      "identity": {
+        "application": "w3d",
+        "extension": "rounds.v11",
+        "extensionVersion": "1.0.0",
+        "moduleSha256": "224b6ddfd34c1bc64fdf47ba8fca11784774a68b04333de788fa087a57492bd8",
+        "abiVersion": "1.1",
+        "engine": "wasmi",
+        "engineVersion": "2.0.2",
+        "profile": "backend",
+        "target": "server"
+      },
+      "extensionNode": "extension:adc5b73643731f8832dd607e",
+      "openScopes": 5,
+      "closedScopes": 1,
+      "scopes": [
+        {
+          "id": 1,
+          "kind": "app",
+          "origin": "broker",
+          "parent": null,
+          "state": "open",
+          "ageMs": 321,
+          "childCount": 1,
+          "children": [
+            2
+          ],
+          "handles": {
+            "streams": 0,
+            "subscriptions": 0,
+            "secrets": 0,
+            "total": 0
+          },
+          "pendingFinalizers": 0,
+          "pendingHostOperations": 0,
+          "suspendedRounds": 0
+        },
+        {
+          "id": 2,
+          "kind": "extension",
+          "origin": "broker",
+          "parent": 1,
+          "state": "open",
+          "ageMs": 321,
+          "childCount": 1,
+          "children": [
+            3
+          ],
+          "handles": {
+            "streams": 0,
+            "subscriptions": 0,
+            "secrets": 0,
+            "total": 0
+          },
+          "pendingFinalizers": 0,
+          "pendingHostOperations": 0,
+          "suspendedRounds": 0
+        },
+        {
+          "id": 3,
+          "kind": "instance",
+          "origin": "broker",
+          "parent": 2,
+          "state": "open",
+          "ageMs": 321,
+          "childCount": 1,
+          "children": [
+            4
+          ],
+          "handles": {
+            "streams": 0,
+            "subscriptions": 0,
+            "secrets": 0,
+            "total": 0
+          },
+          "pendingFinalizers": 0,
+          "pendingHostOperations": 0,
+          "suspendedRounds": 0,
+          "budgets": {
+            "maxHostCalls": 64,
+            "maxReadBytes": 65536,
+            "maxWriteBytes": 65536,
+            "maxMutations": 16,
+            "maxEvents": 16,
+            "maxConcurrentStreams": 4,
+            "maxRounds": 4
+          }
+        },
+        {
+          "id": 4,
+          "kind": "invocation",
+          "origin": "broker",
+          "parent": 3,
+          "state": "open",
+          "ageMs": 118,
+          "childCount": 1,
+          "children": [
+            6
+          ],
+          "handles": {
+            "streams": 0,
+            "subscriptions": 0,
+            "secrets": 1,
+            "total": 1
+          },
+          "pendingFinalizers": 0,
+          "pendingHostOperations": 0,
+          "suspendedRounds": 1,
+          "usage": {
+            "fuelUsed": 1133819,
+            "hostCalls": 2,
+            "readBytes": 2,
+            "writeBytes": 21,
+            "mutations": 0,
+            "events": 0,
+            "rounds": 2,
+            "maxRounds": 4,
+            "deadlineRemainingMs": 19882
+          },
+          "graph": {
+            "export": "rounds.v11.run",
+            "exportNode": "extension-export:b62f667b728518e186a6aba6"
+          }
+        },
+        {
+          "id": 6,
+          "kind": "round",
+          "origin": "broker",
+          "parent": 4,
+          "state": "open",
+          "ageMs": 50,
+          "childCount": 0,
+          "children": [],
+          "handles": {
+            "streams": 0,
+            "subscriptions": 0,
+            "secrets": 0,
+            "total": 0
+          },
+          "pendingFinalizers": 0,
+          "pendingHostOperations": 1,
+          "suspendedRounds": 1,
+          "round": 2
+        }
+      ],
+      "recentlyClosed": [
+        {
+          "sequence": 1,
+          "id": 5,
+          "kind": "round",
+          "origin": "broker",
+          "parent": 4,
+          "state": "closed",
+          "reason": "completed",
+          "cascaded": false,
+          "released": {
+            "streams": 0,
+            "subscriptions": 0,
+            "secrets": 0,
+            "total": 0
+          },
+          "finalizersRun": 0,
+          "finalizerPanics": 0
+        }
+      ]
+    }
+  ],
+  "page": {
+    "limit": 1000,
+    "returned": 5,
+    "truncated": false
+  }
+}

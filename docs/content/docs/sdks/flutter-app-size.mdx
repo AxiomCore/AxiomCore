@@ -70,6 +70,21 @@ the app, the app ships the full library instead of the lean one, not both.
 `axiom_flutter_extensions`. Other apps need no change and get the smaller
 runtime.
 
+## Before 0.150.1: what 0.150.0 added
+
+The [`flutter-minimal` example](https://github.com/AxiomCore/examples/tree/main/flutter-minimal) is the smallest app on
+`axiom_flutter`: one query, one widget. Built with `axiom_flutter` 0.150.0 and
+`flutter build apk --release --split-per-abi`, its `arm64-v8a` APK is 25.1 MB,
+against 6.6 MB for an empty Flutter app (`flutter create --empty`) built the
+same way. Of the difference, 10.1 MB is the runtime library, stored
+uncompressed, and about 0.96 MB is the unused web runtime (2.4 MB, stored
+compressed in the APK) that 0.150.0 still copied into Android builds. On the web, 0.150.0 added about 0.95 MB gzipped
+(the wasm runtime and its loader).
+
+The sections below show what 0.150.1 changes.
+
+{/* VERIFY: 0.150.1 flutter-minimal sizes, if measured, from /home/node/fp/EXAMPLES2-REPORT.md or bench2. */}
+
 ## Android sizes per ABI
 
 The plugin bundles one library per ABI. Sizes in bytes:

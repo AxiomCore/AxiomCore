@@ -78,6 +78,20 @@ pub fn read_axiom_deps(path: &Path) -> Result<AxiomDeps> {
 // ENTRY POINT
 // ==========================================
 
+/// Options added for the Flutter CLI experience. `Default` keeps the
+/// historical behaviour of `handle_pull`.
+#[derive(Debug, Clone, Default)]
+pub struct PullOptions {
+    /// Base URL written to `[contracts.<name>].base_url` for the generator.
+    pub base_url: Option<String>,
+    /// Contract variant written to `[contracts.<name>].variant` for the generator.
+    pub variant: Option<String>,
+    /// Apply the fixes the post-pull project checks offer.
+    pub fix: bool,
+    /// Keep running and regenerate when a local source contract changes.
+    pub watch: bool,
+}
+
 pub async fn handle_pull(
     source: Option<String>,
     contract: Option<String>,
@@ -85,6 +99,27 @@ pub async fn handle_pull(
     framework_flag: Option<String>,
     name_flag: Option<String>,
     out_flag: Option<String>,
+) -> Result<()> {
+    handle_pull_with(
+        source,
+        contract,
+        contract_config,
+        framework_flag,
+        name_flag,
+        out_flag,
+        PullOptions::default(),
+    )
+    .await
+}
+
+pub async fn handle_pull_with(
+    source: Option<String>,
+    contract: Option<String>,
+    contract_config: Option<PathBuf>,
+    framework_flag: Option<String>,
+    name_flag: Option<String>,
+    out_flag: Option<String>,
+    options: PullOptions,
 ) -> Result<()> {
     let project_root = std::env::current_dir()?;
     let deps_path = project_root.join("AxiomDeps.toml");
@@ -104,6 +139,42 @@ pub async fn handle_pull(
         &deps_path,
     )?;
 
+    let watched: Vec<PathBuf> = contracts
+        .iter()
+        .filter_map(|entry| entry.source.as_deref())
+        .filter(|source| !is_remote_contract_source(source))
+        .map(PathBuf::from)
+        .collect();
+
+    // Fingerprint before the first pull so a change made while it runs is not lost.
+    let initial = source_fingerprint(&watched);
+    pull_once(&project_root, &deps_path, &framework, &out_dir, contracts.clone(), &options).await?;
+    println!("\n✅ axiom pull finished successfully.");
+
+    if options.watch {
+        watch_and_repull(
+            &project_root,
+            &deps_path,
+            &framework,
+            &out_dir,
+            contracts,
+            &options,
+            &watched,
+            initial,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+async fn pull_once(
+    project_root: &Path,
+    deps_path: &Path,
+    framework: &Framework,
+    out_dir: &str,
+    contracts: Vec<ContractEntry>,
+    options: &PullOptions,
+) -> Result<()> {
     // 4. Fetch every contract before changing the project's dependency
     // manifest. A failed remote authorization or lookup must not leave a
     // newly-created AxiomDeps.toml pointing at an unusable dependency.
@@ -134,18 +205,182 @@ pub async fn handle_pull(
             .map(|(entry, _)| entry.clone())
             .collect(),
     };
-    write_axiom_deps(&deps_path, &axiom_deps)?;
+    write_axiom_deps(deps_path, &axiom_deps)?;
+    for (entry, installed_path) in &installed_contracts {
+        write_generator_settings(deps_path, &entry.name, installed_path, options)?;
+    }
     println!("📝 AxiomDeps.toml written → {}", deps_path.display());
 
     // 6. Generate the selected framework bindings from the verified local
     // contract copies.
-    for (entry, installed_path) in installed_contracts {
-        run_codegen(&project_root, &framework, &installed_path, &entry, &out_dir).await?;
+    for (entry, installed_path) in &installed_contracts {
+        run_codegen(project_root, framework, installed_path, entry, out_dir).await?;
     }
 
-    println!("\n✅ axiom pull finished successfully.");
+    if matches!(framework, Framework::Flutter) {
+        let base_urls = read_base_urls(deps_path);
+        crate::commands::pull_checks::run_flutter_checks(project_root, &base_urls, options.fix)?;
+    }
     Ok(())
 }
+
+/// Write the generator settings that live beside each contract entry:
+/// `base_url` and `variant` (kept from earlier pulls unless overridden) and the
+/// `sha256` of the exact contract bytes copied into the app, so release builds
+/// can use the hash-locked contract load.
+fn write_generator_settings(
+    deps_path: &Path,
+    name: &str,
+    installed_contract: &Path,
+    options: &PullOptions,
+) -> Result<()> {
+    use sha2::{Digest, Sha256};
+    let bytes = fs::read(installed_contract)
+        .with_context(|| format!("read {}", installed_contract.display()))?;
+    let digest = hex::encode(Sha256::digest(&bytes));
+    let mut doc = fs::read_to_string(deps_path)?.parse::<DocumentMut>()?;
+    let sub = doc["contracts"][name]
+        .as_table_mut()
+        .with_context(|| format!("AxiomDeps.toml: 'contracts.{name}' must be a table"))?;
+    if let Some(base_url) = options.base_url.as_deref() {
+        let base_url = base_url.trim().trim_end_matches('/');
+        url::Url::parse(base_url)
+            .with_context(|| format!("--base-url {base_url:?} is not an absolute URL"))?;
+        sub["base_url"] = toml_edit::value(base_url);
+    }
+    if let Some(variant) = options.variant.as_deref() {
+        sub["variant"] = toml_edit::value(variant.trim());
+    }
+    sub["sha256"] = toml_edit::value(digest);
+    fs::write(deps_path, doc.to_string())?;
+    Ok(())
+}
+
+fn read_base_urls(deps_path: &Path) -> Vec<String> {
+    let Ok(text) = fs::read_to_string(deps_path) else {
+        return vec![];
+    };
+    let Ok(doc) = text.parse::<DocumentMut>() else {
+        return vec![];
+    };
+    let Some(contracts) = doc.get("contracts").and_then(|c| c.as_table()) else {
+        return vec![];
+    };
+    contracts
+        .iter()
+        .map(|(_, item)| {
+            item.get("base_url")
+                .and_then(|v| v.as_str())
+                .unwrap_or("http://localhost:8000")
+                .to_string()
+        })
+        .collect()
+}
+
+fn source_fingerprint(paths: &[PathBuf]) -> Vec<Option<Vec<u8>>> {
+    use sha2::{Digest, Sha256};
+    paths
+        .iter()
+        .map(|p| fs::read(p).ok().map(|b| Sha256::digest(&b).to_vec()))
+        .collect()
+}
+
+/// `axiom pull --watch`: poll local source contracts and regenerate on change.
+async fn watch_and_repull(
+    project_root: &Path,
+    deps_path: &Path,
+    framework: &Framework,
+    out_dir: &str,
+    contracts: Vec<ContractEntry>,
+    options: &PullOptions,
+    watched: &[PathBuf],
+    initial: Vec<Option<Vec<u8>>>,
+) -> Result<()> {
+    if watched.is_empty() {
+        anyhow::bail!("--watch needs a local contract file; remote contracts change only on a new release (re-run `axiom pull`).");
+    }
+    println!("\n👀 Watching for contract changes (Ctrl+C to stop):");
+    for path in watched {
+        println!("   {}", path.display());
+    }
+    // Fixes were applied by the first pass; later passes only report.
+    let options = PullOptions {
+        fix: false,
+        ..options.clone()
+    };
+    // A backend source beside the artifact (`main.acore` or `axiom.acore` with a
+    // backend AxiomDeps.toml) is rebuilt into the artifact on change, which then
+    // triggers regeneration below.
+    let sources: Vec<(PathBuf, PathBuf)> = watched
+        .iter()
+        .filter_map(|artifact| {
+            let dir = artifact.parent()?;
+            let manifest = fs::read_to_string(dir.join("AxiomDeps.toml")).ok()?;
+            if !manifest.contains("\"backend\"") {
+                return None;
+            }
+            ["main.acore", "axiom.acore"]
+                .iter()
+                .map(|n| dir.join(n))
+                .find(|p| p.is_file())
+                .map(|acore| (acore, artifact.clone()))
+        })
+        .collect();
+    for (acore, _) in &sources {
+        println!("   {} (rebuilt with `axiom build` on change)", acore.display());
+    }
+    let acore_paths: Vec<PathBuf> = sources.iter().map(|(a, _)| a.clone()).collect();
+    let mut last_acore = source_fingerprint(&acore_paths);
+    let mut last = initial;
+    loop {
+        let acore_now = source_fingerprint(&acore_paths);
+        if acore_now != last_acore {
+            last_acore = acore_now;
+            for (acore, artifact) in &sources {
+                println!("\n🔨 {} changed, rebuilding {}...", acore.display(), artifact.display());
+                let status = std::process::Command::new(std::env::current_exe()?)
+                    .arg("build")
+                    .arg(acore)
+                    .arg("--out")
+                    .arg(artifact)
+                    .current_dir(acore.parent().unwrap_or(Path::new(".")))
+                    .status();
+                match status {
+                    Ok(s) if s.success() => {}
+                    Ok(s) => println!("❌ Backend build failed (exit {:?}); keeping the previous client.", s.code()),
+                    Err(e) => println!("❌ Could not run axiom build: {e}"),
+                }
+            }
+        }
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                println!("\n👋 Stopped watching.");
+                return Ok(());
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(700)) => {}
+        }
+        let now = source_fingerprint(watched);
+        if std::env::var_os("AXIOM_WATCH_DEBUG").is_some() {
+            eprintln!("watch tick: changed={}", now != last);
+        }
+        if now == last {
+            continue;
+        }
+        // A writer may still be replacing the file; wait for it to settle.
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let settled = source_fingerprint(watched);
+        if settled != now || settled.iter().any(Option::is_none) {
+            continue;
+        }
+        last = settled;
+        println!("\n🔄 Contract changed, regenerating...");
+        match pull_once(project_root, deps_path, framework, out_dir, contracts.clone(), &options).await {
+            Ok(()) => println!("✅ Regenerated at {}", chrono::Local::now().format("%H:%M:%S")),
+            Err(error) => println!("❌ Regeneration failed (keeping previous output): {error:#}"),
+        }
+    }
+}
+
 
 // ==========================================
 // OUT DIR RESOLUTION
@@ -161,6 +396,14 @@ fn resolve_out_dir(framework: &Framework, out_flag: Option<String>) -> Result<St
         Framework::AtmxWeb | Framework::AtmxReact => "src/generated",
     };
 
+    // Re-pulls and non-interactive runs (CI, `--watch`, scaffolding) keep the
+    // default instead of waiting on a prompt.
+    {
+        use std::io::IsTerminal;
+        if !io::stdin().is_terminal() || Path::new(default_dir).is_dir() {
+            return Ok(default_dir.to_string());
+        }
+    }
     print!("📁 Output directory [{}]: ", default_dir);
     io::stdout().flush()?;
 
@@ -382,6 +625,19 @@ fn resolve_single_contract_name(path: &Path, name_flag: Option<&str>) -> Result<
 
 /// A direct local artifact needs no cloud registration. A local TOML/JSON
 /// config can reference remote contracts, so it still uses the cloud gate.
+/// True when AxiomDeps.toml lists at least one contract and every source is a local file.
+pub fn manifest_sources_are_local(deps_path: &Path) -> bool {
+    match read_contracts_from_deps(deps_path) {
+        Ok(entries) if !entries.is_empty() => entries.iter().all(|entry| {
+            entry
+                .source
+                .as_deref()
+                .is_some_and(is_local_artifact_source)
+        }),
+        _ => false,
+    }
+}
+
 pub fn is_local_artifact_source(source: &str) -> bool {
     let path = Path::new(source);
     path.is_file() && !is_contract_config_path(path)
@@ -857,7 +1113,8 @@ pub fn write_axiom_deps(path: &Path, deps: &AxiomDeps) -> Result<()> {
                 format!("AxiomDeps.toml: 'contracts.{}' must be a table", entry.name)
             })?;
         if let Some(ref source) = entry.source {
-            sub["source"] = toml_edit::value(source.as_str());
+            let stored = manifest_source_value(path, source);
+            sub["source"] = toml_edit::value(stored.as_str());
         }
         if let Some(ref version) = entry.version {
             sub["version"] = toml_edit::value(version.as_str());
@@ -883,6 +1140,88 @@ pub fn write_axiom_deps(path: &Path, deps: &AxiomDeps) -> Result<()> {
     Ok(())
 }
 
+/// Directory a manifest's relative `source` paths are relative to.
+fn manifest_dir(manifest: &Path) -> PathBuf {
+    let parent = match manifest.parent() {
+        Some(dir) if !dir.as_os_str().is_empty() => dir.to_path_buf(),
+        _ => PathBuf::from("."),
+    };
+    canonicalize_or_absolute(&parent).unwrap_or(parent)
+}
+
+/// A relative local `source` in AxiomDeps.toml is relative to the manifest's
+/// folder. Absolute entries (written by older CLIs) and URLs are kept as is.
+fn resolve_manifest_source(manifest: &Path, source: &str) -> String {
+    if is_remote_contract_source(source) || Path::new(source).is_absolute() {
+        return source.to_string();
+    }
+    let joined = manifest_dir(manifest).join(source);
+    joined
+        .canonicalize()
+        .unwrap_or_else(|_| lexically_normalize(&joined))
+        .to_string_lossy()
+        .to_string()
+}
+
+/// The `source` value written to AxiomDeps.toml: a local file is stored
+/// relative to the manifest's folder (forward slashes), so the project can be
+/// committed or moved together with its backend. It stays absolute when the
+/// two share no ancestor below the filesystem root (or sit on other drives).
+fn manifest_source_value(manifest: &Path, source: &str) -> String {
+    if is_remote_contract_source(source) {
+        return source.to_string();
+    }
+    let Ok(target) = canonicalize_or_absolute(Path::new(source)) else {
+        return source.to_string();
+    };
+    relative_path_from(&manifest_dir(manifest), &target)
+        .unwrap_or_else(|| target.to_string_lossy().to_string())
+}
+
+fn lexically_normalize(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() {
+                    out.push("..");
+                }
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// `target` relative to the directory `base`, or None when they share no
+/// ancestor below the root. Both paths are absolute.
+fn relative_path_from(base: &Path, target: &Path) -> Option<String> {
+    use std::path::Component;
+    let base: Vec<Component> = base.components().collect();
+    let target: Vec<Component> = target.components().collect();
+    let common = base
+        .iter()
+        .zip(target.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let rooted = target
+        .iter()
+        .take_while(|c| matches!(c, Component::Prefix(_) | Component::RootDir))
+        .count();
+    if common <= rooted || common == target.len() {
+        return None;
+    }
+    let mut parts: Vec<String> = (common..base.len()).map(|_| "..".to_string()).collect();
+    parts.extend(
+        target[common..]
+            .iter()
+            .map(|c| c.as_os_str().to_string_lossy().to_string()),
+    );
+    Some(parts.join("/"))
+}
+
 fn read_framework_from_deps(path: &Path) -> Result<Framework> {
     let content = fs::read_to_string(path)?;
     let doc = content.parse::<DocumentMut>()?;
@@ -903,7 +1242,10 @@ fn read_contracts_from_deps(path: &Path) -> Result<Vec<ContractEntry>> {
     let mut entries = Vec::new();
     for (name, item) in contracts.iter() {
         if let Some(sub) = item.as_table() {
-            let source = sub.get("source").and_then(|v| v.as_str()).map(String::from);
+            let source = sub
+                .get("source")
+                .and_then(|v| v.as_str())
+                .map(|value| resolve_manifest_source(path, value));
             let version = sub
                 .get("version")
                 .and_then(|v| v.as_str())
@@ -944,4 +1286,67 @@ fn slugify(s: &str) -> String {
         .filter(|p| !p.is_empty())
         .collect::<Vec<_>>()
         .join("-")
+}
+
+#[cfg(test)]
+mod manifest_source_tests {
+    use super::*;
+
+    #[test]
+    fn local_sources_are_stored_relative_and_read_back_absolute() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path().canonicalize().unwrap();
+        let backend = root.join("backend");
+        let app = root.join("app");
+        fs::create_dir_all(&backend).unwrap();
+        fs::create_dir_all(&app).unwrap();
+        let artifact = backend.join("backend.axiom");
+        fs::write(&artifact, b"x").unwrap();
+        let manifest = app.join("AxiomDeps.toml");
+
+        let stored = manifest_source_value(&manifest, artifact.to_str().unwrap());
+        assert_eq!(stored, "../backend/backend.axiom");
+        assert_eq!(
+            resolve_manifest_source(&manifest, &stored),
+            artifact.to_string_lossy()
+        );
+        // Older CLIs wrote absolute paths; they still resolve.
+        assert_eq!(
+            resolve_manifest_source(&manifest, artifact.to_str().unwrap()),
+            artifact.to_string_lossy()
+        );
+        // URLs are untouched both ways.
+        let url = "https://example.com/c.axiom";
+        assert_eq!(manifest_source_value(&manifest, url), url);
+        assert_eq!(resolve_manifest_source(&manifest, url), url);
+
+        // Round trip through write_axiom_deps / read_axiom_deps.
+        let deps = AxiomDeps {
+            framework: Framework::from_str("flutter").unwrap(),
+            contracts: vec![ContractEntry {
+                name: "api".into(),
+                source: Some(artifact.to_string_lossy().to_string()),
+                version: None,
+                signature: None,
+                public_key: None,
+            }],
+        };
+        write_axiom_deps(&manifest, &deps).unwrap();
+        let text = fs::read_to_string(&manifest).unwrap();
+        assert!(text.contains("source = \"../backend/backend.axiom\""), "{text}");
+        let back = read_axiom_deps(&manifest).unwrap();
+        assert_eq!(back.contracts[0].source.as_deref(), artifact.to_str());
+    }
+
+    #[test]
+    fn paths_without_a_common_ancestor_stay_absolute() {
+        assert_eq!(
+            relative_path_from(Path::new("/home/a/app"), Path::new("/srv/b.axiom")),
+            None
+        );
+        assert_eq!(
+            relative_path_from(Path::new("/home/a/app"), Path::new("/home/a/app/c/b.axiom")).as_deref(),
+            Some("c/b.axiom")
+        );
+    }
 }

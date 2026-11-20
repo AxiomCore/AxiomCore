@@ -5,6 +5,7 @@
     "web",
     "react",
     "flutter",
+    "flutter-auth",
     "swift"
   ]
 }

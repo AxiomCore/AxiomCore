@@ -1,0 +1,154 @@
+---
+title: Build a Flutter app before the backend exists
+description: Agree on a contract first, serve it with mock responses or sample data, build the Flutter screens against the generated client, then swap in the real backend without changing app code.
+pageType: guide
+---
+
+The app team and the backend team agree on a contract, and the app team starts
+building at once. A local server answers from the contract. When the real
+backend is ready, it serves the same contract, so the app keeps its generated
+client and its screens.
+
+| Path | Status |
+| --- | --- |
+| Contract mocks with `axiom mock --profile contract` (CLI 0.156.0) | **Alpha**; read endpoints only, see [Limits](#limits) |
+| Sample data from managed actions with `axiom run` | **Alpha** |
+| Flutter client (`axiom_flutter` 0.150.0) | **Alpha** |
+
+This guide uses the talks app from the
+[Flutter quickstart](/getting-started/quickstart-flutter). It assumes Axiom CLI
+0.156.0, Flutter 3.32 or newer and a Flutter app created with
+`flutter create`.
+
+```mermaid title="The contract stays the same while the server behind it changes"
+flowchart LR
+  A[Contract] --> B[Mock or sample data server]
+  A --> C[Generated Dart client]
+  A --> D[Real backend later]
+  C --> B
+  C -.same client.-> D
+```
+
+## Option A: contract mocks for read screens
+
+A contract mock answers each endpoint from its `mock(MockConfig(...))`
+declaration. No action code runs.
+
+```toml title="talks-api/AxiomDeps.toml"
+type = "backend"
+targets = ["server"]
+audiences = ["web"]
+```
+
+```acore title="talks-api/main.acore"
+project(id: "docs.talks", version: "1.0.0")
+variant default(include: ["*"])
+
+model Talk { id: String title: String speaker: String }
+model TalkList { talks: List<Models.Talk> }
+
+endpoint listTalks(method: GET, path: "/talks") {
+  response(type: Models.TalkList)
+  mock(MockConfig(fallback: MockResponse(
+    status: 200,
+    headers: { "content-type": "application/json" },
+    data: StaticData(body: { talks: [
+      { id: "mock-a", title: "Mocked talk", speaker: "Mock" }
+    ] })
+  )))
+}
+```
+
+Build the contract and start the mock server:
+
+```bash title="Terminal: talks-api"
+axiom check main.acore
+axiom build main.acore --out backend.axiom
+axiom mock main.acore --profile contract --port 8080
+```
+
+```text title="Expected output (excerpt)"
+🚀 Axiom Mock Server running on http://localhost:8080
+```
+
+```bash title="Second terminal"
+curl -s http://127.0.0.1:8080/talks
+```
+
+```json title="Expected output"
+{"talks":[{"id":"mock-a","speaker":"Mock","title":"Mocked talk"}]}
+```
+
+Generate the client and run the app as in the quickstart:
+
+```bash title="Terminal: talks_app"
+axiom pull ../talks-api/backend.axiom --framework flutter --name talks --out lib/axiom_generated
+flutter run -d chrome --web-port 5000
+```
+
+The list shows **Mocked talk** by Mock. The contract mock server answers
+browser preflight requests for any origin, so the contract needs no
+`cors(...)` line while you use it. Use `10.0.2.2:8080` from the Android
+emulator, as in the quickstart.
+
+[Mocks](/testing/mocks) covers conditional, sequential, stateful and
+fault-injected responses, latency, and the `/axdoc` API docs the mock server
+publishes.
+
+## Option B: sample data for every endpoint
+
+Write each endpoint with a managed action that returns sample data. This works
+for writes and for web apps that need `cors(...)`, and it runs the real server
+boundary: validation, status codes and CORS behave as they will in
+production. The quickstart backend is exactly this:
+
+```acore title="talks-api/main.acore (excerpt)"
+action createTalk(kind: ActionKind.command, input: Models.NewTalk, output: Models.Talk) {
+  managed { return {id: "t3", title: Input.title, speaker: Input.speaker} }
+}
+endpoint createTalk(method: POST, path: "/talks") {
+  request { body("title", type: String) body("speaker", type: String) }
+  handle(action: Actions.createTalk, input: {title: Input.body.title, speaker: Input.body.speaker})
+  response(type: Models.Talk, status: 201)
+}
+```
+
+Run it with the commands from
+[step 2 of the quickstart](/getting-started/quickstart-flutter#2-check-build-and-run-the-backend).
+To simulate private server logic with typed fixtures and identities instead,
+use `axiom serve main.acore --mock --fixtures mock.json`; see
+[Server simulation](/testing/server-simulation).
+
+## Switch to the real backend
+
+1. The backend team replaces the mock declarations or the sample-data actions
+   with real implementations. The models, endpoint names, paths and parameters
+   stay the same.
+2. Rebuild the contract and pull again:
+
+   ```bash title="Terminal: talks_app"
+   axiom pull ../talks-api/backend.axiom --framework flutter --name talks --out lib/axiom_generated
+   flutter analyze
+   ```
+
+3. If `flutter analyze` reports no errors, the app needs no change. If the
+   contract did change, the analyzer lists every call site to update.
+4. Point the app at the real backend with `baseUrlOverrides`, an
+   `AxiomEnvironment` or `--dart-define=AXIOM_BASE_URL=...`; see
+   [Configuration and environments](/sdks/flutter#configuration-and-environments).
+
+## Limits
+
+With CLI 0.156.0, `axiom mock --profile contract` serves contracts whose
+endpoints are all reads without a `cors(...)` declaration. A `POST`, `PUT` or
+`DELETE` endpoint, or a `cors(...)` line, makes the compiler produce a server
+plan, and the command stops with
+`contract mock profile cannot ignore a private server plan`. Use Option B for
+those contracts, or keep a read-only mock contract next to the real one while
+the screens are built.
+
+## Next steps
+
+- [Flutter SDK reference](/sdks/flutter)
+- [Mocks](/testing/mocks)
+- [Use Flutter with an existing backend](/guides/flutter-with-existing-backend)

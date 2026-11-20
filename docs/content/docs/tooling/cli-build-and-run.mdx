@@ -366,6 +366,21 @@ generator first with `npm install --save-dev atmx-cli@0.146.7`: without a local
 copy, the CLI runs `npx atmx-cli@<CLI version>`, and no `atmx-cli` 0.149.1 is
 published.
 
+For `--framework flutter`, `pull` copies each contract to
+`assets/axiom/<name>.axiom`, registers it in `pubspec.yaml`, adds
+`axiom_flutter` and `axiom_flutter_generator` when they are missing (0.147.5
+and 0.146.6 with CLI 0.156.0, so add the current versions first), runs
+`dart pub get` and then the generator. The base URL in the generated config
+comes from the `base_url` of the contract's table in `AxiomDeps.toml`, else
+`http://localhost:8000`. See [Flutter and Dart](/sdks/flutter#install-and-generate).
+
+<Callout type="info" title="Coming in the next CLI release">
+  `axiom pull --base-url`, `--variant`, `--fix` and `--watch` for Flutter
+  projects, `axiom init --template flutter`, a Flutter section in
+  `axiom doctor`, and a clear message when a backend source has no
+  `AxiomDeps.toml`. None of these are in CLI 0.156.0.
+</Callout>
+
 ```bash title="Terminal"
 axiom pull ../backend/backend.axiom --framework atmx-web
 axiom pull organization/project/1.2.0 --framework flutter --out lib/axiom

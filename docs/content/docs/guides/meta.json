@@ -4,6 +4,9 @@
     "index",
     "fastapi-to-web",
     "go-to-web",
+    "flutter-with-existing-backend",
+    "flutter-mock-first",
+    "migrate-from-dio-retrofit",
     "backend-extraction",
     "existing-database",
     "using-ai-agents"

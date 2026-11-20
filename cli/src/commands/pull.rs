@@ -1113,7 +1113,8 @@ pub fn write_axiom_deps(path: &Path, deps: &AxiomDeps) -> Result<()> {
                 format!("AxiomDeps.toml: 'contracts.{}' must be a table", entry.name)
             })?;
         if let Some(ref source) = entry.source {
-            sub["source"] = toml_edit::value(source.as_str());
+            let stored = manifest_source_value(path, source);
+            sub["source"] = toml_edit::value(stored.as_str());
         }
         if let Some(ref version) = entry.version {
             sub["version"] = toml_edit::value(version.as_str());
@@ -1139,6 +1140,88 @@ pub fn write_axiom_deps(path: &Path, deps: &AxiomDeps) -> Result<()> {
     Ok(())
 }
 
+/// Directory a manifest's relative `source` paths are relative to.
+fn manifest_dir(manifest: &Path) -> PathBuf {
+    let parent = match manifest.parent() {
+        Some(dir) if !dir.as_os_str().is_empty() => dir.to_path_buf(),
+        _ => PathBuf::from("."),
+    };
+    canonicalize_or_absolute(&parent).unwrap_or(parent)
+}
+
+/// A relative local `source` in AxiomDeps.toml is relative to the manifest's
+/// folder. Absolute entries (written by older CLIs) and URLs are kept as is.
+fn resolve_manifest_source(manifest: &Path, source: &str) -> String {
+    if is_remote_contract_source(source) || Path::new(source).is_absolute() {
+        return source.to_string();
+    }
+    let joined = manifest_dir(manifest).join(source);
+    joined
+        .canonicalize()
+        .unwrap_or_else(|_| lexically_normalize(&joined))
+        .to_string_lossy()
+        .to_string()
+}
+
+/// The `source` value written to AxiomDeps.toml: a local file is stored
+/// relative to the manifest's folder (forward slashes), so the project can be
+/// committed or moved together with its backend. It stays absolute when the
+/// two share no ancestor below the filesystem root (or sit on other drives).
+fn manifest_source_value(manifest: &Path, source: &str) -> String {
+    if is_remote_contract_source(source) {
+        return source.to_string();
+    }
+    let Ok(target) = canonicalize_or_absolute(Path::new(source)) else {
+        return source.to_string();
+    };
+    relative_path_from(&manifest_dir(manifest), &target)
+        .unwrap_or_else(|| target.to_string_lossy().to_string())
+}
+
+fn lexically_normalize(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() {
+                    out.push("..");
+                }
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// `target` relative to the directory `base`, or None when they share no
+/// ancestor below the root. Both paths are absolute.
+fn relative_path_from(base: &Path, target: &Path) -> Option<String> {
+    use std::path::Component;
+    let base: Vec<Component> = base.components().collect();
+    let target: Vec<Component> = target.components().collect();
+    let common = base
+        .iter()
+        .zip(target.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let rooted = target
+        .iter()
+        .take_while(|c| matches!(c, Component::Prefix(_) | Component::RootDir))
+        .count();
+    if common <= rooted || common == target.len() {
+        return None;
+    }
+    let mut parts: Vec<String> = (common..base.len()).map(|_| "..".to_string()).collect();
+    parts.extend(
+        target[common..]
+            .iter()
+            .map(|c| c.as_os_str().to_string_lossy().to_string()),
+    );
+    Some(parts.join("/"))
+}
+
 fn read_framework_from_deps(path: &Path) -> Result<Framework> {
     let content = fs::read_to_string(path)?;
     let doc = content.parse::<DocumentMut>()?;
@@ -1159,7 +1242,10 @@ fn read_contracts_from_deps(path: &Path) -> Result<Vec<ContractEntry>> {
     let mut entries = Vec::new();
     for (name, item) in contracts.iter() {
         if let Some(sub) = item.as_table() {
-            let source = sub.get("source").and_then(|v| v.as_str()).map(String::from);
+            let source = sub
+                .get("source")
+                .and_then(|v| v.as_str())
+                .map(|value| resolve_manifest_source(path, value));
             let version = sub
                 .get("version")
                 .and_then(|v| v.as_str())
@@ -1200,4 +1286,67 @@ fn slugify(s: &str) -> String {
         .filter(|p| !p.is_empty())
         .collect::<Vec<_>>()
         .join("-")
+}
+
+#[cfg(test)]
+mod manifest_source_tests {
+    use super::*;
+
+    #[test]
+    fn local_sources_are_stored_relative_and_read_back_absolute() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path().canonicalize().unwrap();
+        let backend = root.join("backend");
+        let app = root.join("app");
+        fs::create_dir_all(&backend).unwrap();
+        fs::create_dir_all(&app).unwrap();
+        let artifact = backend.join("backend.axiom");
+        fs::write(&artifact, b"x").unwrap();
+        let manifest = app.join("AxiomDeps.toml");
+
+        let stored = manifest_source_value(&manifest, artifact.to_str().unwrap());
+        assert_eq!(stored, "../backend/backend.axiom");
+        assert_eq!(
+            resolve_manifest_source(&manifest, &stored),
+            artifact.to_string_lossy()
+        );
+        // Older CLIs wrote absolute paths; they still resolve.
+        assert_eq!(
+            resolve_manifest_source(&manifest, artifact.to_str().unwrap()),
+            artifact.to_string_lossy()
+        );
+        // URLs are untouched both ways.
+        let url = "https://example.com/c.axiom";
+        assert_eq!(manifest_source_value(&manifest, url), url);
+        assert_eq!(resolve_manifest_source(&manifest, url), url);
+
+        // Round trip through write_axiom_deps / read_axiom_deps.
+        let deps = AxiomDeps {
+            framework: Framework::from_str("flutter").unwrap(),
+            contracts: vec![ContractEntry {
+                name: "api".into(),
+                source: Some(artifact.to_string_lossy().to_string()),
+                version: None,
+                signature: None,
+                public_key: None,
+            }],
+        };
+        write_axiom_deps(&manifest, &deps).unwrap();
+        let text = fs::read_to_string(&manifest).unwrap();
+        assert!(text.contains("source = \"../backend/backend.axiom\""), "{text}");
+        let back = read_axiom_deps(&manifest).unwrap();
+        assert_eq!(back.contracts[0].source.as_deref(), artifact.to_str());
+    }
+
+    #[test]
+    fn paths_without_a_common_ancestor_stay_absolute() {
+        assert_eq!(
+            relative_path_from(Path::new("/home/a/app"), Path::new("/srv/b.axiom")),
+            None
+        );
+        assert_eq!(
+            relative_path_from(Path::new("/home/a/app"), Path::new("/home/a/app/c/b.axiom")).as_deref(),
+            Some("c/b.axiom")
+        );
+    }
 }

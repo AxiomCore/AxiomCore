@@ -9,7 +9,10 @@ model Talk { id: String title: String speaker: String }
 model Talks { items: List<Models.Talk> }
 
 // Development CORS: Flutter web serves the app from a random localhost port.
-cors(origins: ["*"], methods: [GET, POST], headers: ["content-type", "authorization"], credentials: false, maxAge: 10m)
+// `headers` must list every request header the Flutter SDK can send, or the
+// browser's preflight is refused and every call fails with a network error:
+// traceparent/tracestate go out on every call.
+cors(origins: ["*"], methods: [GET, POST, PUT, DELETE], headers: ["accept", "authorization", "content-type", "traceparent", "tracestate", "x-api-key", "x-axiom-cache-mode", "x-axiom-request-id"], credentials: false, maxAge: 10m)
 
 action hello(kind: ActionKind.query, input: Models.HelloIn, output: Models.Greeting) {
   managed { return {message: "Hello, " + Input.name + "!"} }

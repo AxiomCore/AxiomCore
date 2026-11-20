@@ -28,4 +28,6 @@ After editing the contract, run step 1 again; `axiom pull --watch` picks up the 
   `com.apple.security.network.client` entitlement, the Android INTERNET permission,
   Android minSdk 24 and cleartext http in Android debug builds only.
 - `axiom doctor` checks your Flutter, Dart, CocoaPods and Android SDK setup.
-- The CORS rule in `backend/main.acore` allows every origin for development; restrict it before deploying.
+- The CORS rule in `backend/main.acore` allows every origin for development; restrict it to your
+  web origins before deploying. Keep its `headers` list: the SDK sends `traceparent` and
+  `tracestate` on every call, and a missing header makes the browser refuse every request.

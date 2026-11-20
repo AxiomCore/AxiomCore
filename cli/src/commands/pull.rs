@@ -146,6 +146,8 @@ pub async fn handle_pull_with(
         .map(PathBuf::from)
         .collect();
 
+    // Fingerprint before the first pull so a change made while it runs is not lost.
+    let initial = source_fingerprint(&watched);
     pull_once(&project_root, &deps_path, &framework, &out_dir, contracts.clone(), &options).await?;
     println!("\n✅ axiom pull finished successfully.");
 
@@ -158,6 +160,7 @@ pub async fn handle_pull_with(
             contracts,
             &options,
             &watched,
+            initial,
         )
         .await?;
     }
@@ -291,6 +294,7 @@ async fn watch_and_repull(
     contracts: Vec<ContractEntry>,
     options: &PullOptions,
     watched: &[PathBuf],
+    initial: Vec<Option<Vec<u8>>>,
 ) -> Result<()> {
     if watched.is_empty() {
         anyhow::bail!("--watch needs a local contract file; remote contracts change only on a new release (re-run `axiom pull`).");
@@ -304,8 +308,50 @@ async fn watch_and_repull(
         fix: false,
         ..options.clone()
     };
-    let mut last = source_fingerprint(watched);
+    // A backend source beside the artifact (`main.acore` or `axiom.acore` with a
+    // backend AxiomDeps.toml) is rebuilt into the artifact on change, which then
+    // triggers regeneration below.
+    let sources: Vec<(PathBuf, PathBuf)> = watched
+        .iter()
+        .filter_map(|artifact| {
+            let dir = artifact.parent()?;
+            let manifest = fs::read_to_string(dir.join("AxiomDeps.toml")).ok()?;
+            if !manifest.contains("\"backend\"") {
+                return None;
+            }
+            ["main.acore", "axiom.acore"]
+                .iter()
+                .map(|n| dir.join(n))
+                .find(|p| p.is_file())
+                .map(|acore| (acore, artifact.clone()))
+        })
+        .collect();
+    for (acore, _) in &sources {
+        println!("   {} (rebuilt with `axiom build` on change)", acore.display());
+    }
+    let acore_paths: Vec<PathBuf> = sources.iter().map(|(a, _)| a.clone()).collect();
+    let mut last_acore = source_fingerprint(&acore_paths);
+    let mut last = initial;
     loop {
+        let acore_now = source_fingerprint(&acore_paths);
+        if acore_now != last_acore {
+            last_acore = acore_now;
+            for (acore, artifact) in &sources {
+                println!("\n🔨 {} changed, rebuilding {}...", acore.display(), artifact.display());
+                let status = std::process::Command::new(std::env::current_exe()?)
+                    .arg("build")
+                    .arg(acore)
+                    .arg("--out")
+                    .arg(artifact)
+                    .current_dir(acore.parent().unwrap_or(Path::new(".")))
+                    .status();
+                match status {
+                    Ok(s) if s.success() => {}
+                    Ok(s) => println!("❌ Backend build failed (exit {:?}); keeping the previous client.", s.code()),
+                    Err(e) => println!("❌ Could not run axiom build: {e}"),
+                }
+            }
+        }
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
                 println!("\n👋 Stopped watching.");
@@ -314,6 +360,9 @@ async fn watch_and_repull(
             _ = tokio::time::sleep(std::time::Duration::from_millis(700)) => {}
         }
         let now = source_fingerprint(watched);
+        if std::env::var_os("AXIOM_WATCH_DEBUG").is_some() {
+            eprintln!("watch tick: changed={}", now != last);
+        }
         if now == last {
             continue;
         }

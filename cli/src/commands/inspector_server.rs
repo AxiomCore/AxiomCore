@@ -298,8 +298,8 @@ async fn shutdown_signal() -> Result<()> {
 /// if missing. Refused when `.axiom` or `.axiom/inspector` is a symlink or not
 /// a directory: the Inspector never follows one (it would otherwise chmod the
 /// link's target and write the token and its cache into it). The mode is set
-/// on a descriptor opened with `O_NOFOLLOW | O_DIRECTORY`, so a symlink swapped
-/// in after the check is refused too.
+/// on a descriptor whose inode is checked against the path's own (`lstat`), so
+/// a symlink swapped in after the check is refused too.
 fn private_inspector_directory(workspace: &Path) -> Result<PathBuf> {
     let axiom = workspace.join(".axiom");
     let inspector = axiom.join("inspector");
@@ -333,17 +333,23 @@ fn private_inspector_directory(workspace: &Path) -> Result<PathBuf> {
     }
     #[cfg(unix)]
     {
-        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-        let directory = fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_DIRECTORY)
-            .open(&inspector)
-            .with_context(|| {
-                format!(
-                    "refusing to use {}: it must be a real directory, not a symlink",
-                    inspector.display()
-                )
-            })?;
+        // chmod through a descriptor, and only after checking that the
+        // directory it names is the real (non-symlink) directory at the path:
+        // a symlink swapped in after the checks above is refused.
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let directory = fs::File::open(&inspector)
+            .with_context(|| format!("open {}", inspector.display()))?;
+        let opened = directory.metadata()?;
+        let at_path = fs::symlink_metadata(&inspector)?;
+        if at_path.file_type().is_symlink()
+            || !opened.is_dir()
+            || (opened.dev(), opened.ino()) != (at_path.dev(), at_path.ino())
+        {
+            bail!(
+                "refusing to use {}: it must be a real directory, not a symlink",
+                inspector.display()
+            );
+        }
         directory.set_permissions(fs::Permissions::from_mode(0o700))?;
     }
     Ok(inspector)

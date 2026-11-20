@@ -185,8 +185,8 @@ The Acore language server adds extension effects to the application graph:
 - **Hover on `alias.export`** shows each category with its label and names,
   the granted writes not in the summary, `maxRounds` and the ABI version.
 - **Impact queries** answer "who can write this field?" and "what does this
-  action touch?". The editor exposes them through the graph request; the CLI
-  runs them with `axiom inspect query`:
+  action touch?". The language server answers them through its graph request
+  with these query documents:
 
 ```json title="impact.json"
 {"format":"axiom-query/v1","operation":{"kind":"effect-impact","target":"cart.total_cents"}}
@@ -196,9 +196,10 @@ The Acore language server adds extension effects to the application graph:
 {"format":"axiom-query/v1","operation":{"kind":"effect-touches","id":"Home.apply"}}
 ```
 
-```bash title="Terminal"
-axiom inspect query impact.json
-```
+`axiom inspect query <file>` accepts the same documents, but in this release
+the CLI's graph does not include extension effects: an `effect-impact` query
+fails with `no effect resource field matches`, and an `effect-touches` query
+returns no entries. Use the editor for impact queries.
 
 Each answer lists exports, source sites and actions with every label that
 holds, strongest first: `observed` (seen in audit evidence), `static`,

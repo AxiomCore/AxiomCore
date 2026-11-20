@@ -335,13 +335,8 @@ fn check_local_tools(root: &Path, framework: Option<&Framework>) -> Vec<DoctorCh
             "Install npm with Node.js, then rerun `axiom pull`.",
         ));
     }
-    if matches!(framework, Some(Framework::Flutter)) || root.join("pubspec.yaml").exists() {
-        checks.push(check_tool_any(
-            "flutter",
-            &["flutter"],
-            "Flutter client source detected",
-            "Install Flutter and run `flutter pub get` before generating a Flutter client.",
-        ));
+    if crate::commands::doctor_flutter::applies(root, matches!(framework, Some(Framework::Flutter))) {
+        checks.extend(crate::commands::doctor_flutter::checks(root));
     }
     checks
 }

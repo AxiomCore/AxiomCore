@@ -43,7 +43,7 @@ WebAssembly interpreter and the package validator. The `traceparent` and
 
 From 0.150.1, `axiom_flutter` bundles the **lean** runtime on Android and the
 web. Queries, mutations, streams, auth, cache and cancellation behave exactly
-as in the full runtime. Calling an extension method on the lean runtime throws
+as in the full runtime. Loading or invoking an extension on the lean runtime throws
 an error that names the add-on package.
 
 To keep executable extensions on Android, add the add-on:
@@ -64,8 +64,8 @@ package is enough.
 | Web | Lean runtime | Lean runtime (extensions are not available on the web) |
 | iOS, macOS | Full runtime 0.148.6 | Full runtime 0.148.6 (no change) |
 
-**Migration from 0.150.0:** apps that call `loadExtension`,
-`invokeExtension`, `extensionLifecycle` or `extensionAudit` on Android add
+**Migration from 0.150.0:** apps that load executable extensions on Android
+(`loadExtension`, `invokeExtension`) add
 `axiom_flutter_extensions`. Other apps need no change and get the smaller
 runtime.
 

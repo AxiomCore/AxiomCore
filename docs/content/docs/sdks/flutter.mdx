@@ -17,8 +17,8 @@ pageType: reference
 <Callout type="warn" title="Behaviour changes in 0.150.1">
   **Lean runtime by default.** On Android and the web, `axiom_flutter` 0.150.1
   bundles the lean runtime, which has no executable extensions and no
-  telemetry exporter. If your app calls `loadExtension`, `invokeExtension`,
-  `extensionLifecycle` or `extensionAudit` on Android, add
+  telemetry exporter. If your app calls `loadExtension` or `invokeExtension`
+  on Android, add
   `flutter pub add axiom_flutter_extensions:^0.150.1`. iOS and macOS keep the
   full published runtime. See [Runtime variants](#runtime-variants).
   **Sampled validation for large responses.** Responses of 64 KiB or more are
@@ -454,9 +454,11 @@ run sandboxed AxiomCore extensions. A non-zero runtime status throws
 `AxiomExtensionException`. On the web the four methods throw
 `UnsupportedError`. See [Extensions](/extensions).
 
-On Android from 0.150.1, the four methods need the full runtime from the
-`axiom_flutter_extensions` package. Without it they throw an error that
-names that package. iOS and macOS always run the full runtime.
+On Android from 0.150.1, loading and invoking extensions needs the full
+runtime from the `axiom_flutter_extensions` package. Without it,
+`loadExtension` and `invokeExtension` throw `AxiomExtensionException` naming
+that package; `extensionLifecycle` and `extensionAudit` still succeed (the
+audit is empty). iOS and macOS always run the full runtime.
 
 ## Runtime variants
 

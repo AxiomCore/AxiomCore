@@ -112,6 +112,14 @@ Valid backend contract: main.acore
 Built backend contract: backend.axiom
 ```
 
+`axiom server deployment` never overwrites a reviewed file. When you repeat
+this step, for example after a contract change, delete or move the old
+`deployment.json` first, or the command stops with `File exists (os error 17)`:
+
+```bash title="Terminal: talks/talks-api (only when repeating this step)"
+mv deployment.json deployment.old.json
+```
+
 `axiom build` writes the contract `backend.axiom` and the server plan
 `backend.server.json`. `axiom run` keeps running and prints one JSON line per
 event. Leave it running and open a second terminal:
@@ -131,6 +139,14 @@ From the `talks` directory:
 ```bash title="Terminal: talks"
 flutter create --platforms android,ios,macos,web talks_app
 cd talks_app
+```
+
+`flutter create` writes a sample test, `test/widget_test.dart`, that refers to
+the counter app's `MyApp` class. Step 6 replaces that app, so delete the test
+now, or `flutter analyze` reports an error in it:
+
+```bash title="Terminal: talks/talks_app"
+rm test/widget_test.dart
 ```
 
 ## 4. Generate the Dart client
@@ -160,8 +176,22 @@ axiom pull ../talks-api/backend.axiom --framework flutter --name talks --out lib
    missing), then runs `dart pub get`;
 3. writes `lib/axiom_generated/axiom_sdk.dart` and
    `lib/axiom_generated/models.dart`;
-4. records the contract source in `AxiomDeps.toml` in the app directory, so
-   later pulls know where the contract comes from.
+4. records the contract source in `AxiomDeps.toml` in the app directory.
+
+CLI 0.156.0 records the source as an absolute path, for example
+`source = "/home/you/talks/talks-api/backend.axiom"`, which does not work on
+another machine. Before you commit the app, make it relative to the app
+directory:
+
+```toml title="talks/talks_app/AxiomDeps.toml (excerpt)"
+[contracts.talks]
+source = "../talks-api/backend.axiom"
+```
+
+Every pull writes the absolute path again, so repeat the edit after each pull.
+Always pass the contract path to `axiom pull`, as above: without a source
+argument, CLI 0.156.0 tries to resolve the contract through Axiom Cloud and
+asks you to sign in.
 
 The generated client has one module per contract (`sdk.talks`), one method per
 endpoint (`listTalks()`, `createTalk(title:, speaker:)`) and one Dart class per
@@ -314,7 +344,7 @@ Check the code:
 flutter analyze
 ```
 
-The analyzer reports no issues in `lib/main.dart`.
+The analyzer reports no issues.
 
 ## 7. Run the app
 
@@ -386,7 +416,8 @@ error • The getter 'speaker' isn't defined for the type 'Talk' • lib/main.da
 
 The compiler finds every place that still uses the old field before the app
 runs. Change `talk.speaker` to `talk.presenter`, then restart the backend with
-the commands from step 2 so that it serves the new contract.
+the commands from step 2 so that it serves the new contract. Move the old
+`deployment.json` aside first, as step 2 explains.
 
 ## Troubleshooting
 
@@ -394,6 +425,9 @@ the commands from step 2 so that it serves the new contract.
 | --- | --- |
 | `axiom check` fails with `Read Acore source axiom.acore` | Without an argument, `axiom check` looks for `axiom.acore`. Pass the file: `axiom check main.acore`. |
 | `ParseError("Unexpected token: Colon")` from `axiom check` or `axiom build` | `AxiomDeps.toml` is missing next to `main.acore`. Create it as in step 1. |
+| `axiom server deployment` fails with `File exists (os error 17)` | A `deployment.json` from an earlier run exists, and the command does not overwrite it. Move or delete it, then run the command again. |
+| `flutter analyze` reports `The name 'MyApp' isn't a class` in `test/widget_test.dart` | The sample test from `flutter create` refers to the replaced counter app. Delete `test/widget_test.dart` (step 3) or rewrite it for `TalksPage`. |
+| `axiom pull` without arguments asks you to sign in | Without a source, CLI 0.156.0 resolves the contract through Axiom Cloud. Pass the path: `axiom pull ../talks-api/backend.axiom --framework flutter --name talks --out lib/axiom_generated`. |
 | `axiom pull` stops with `dart pub get failed` | Run `flutter pub get` in the app to see the real error, fix it, then pull again. |
 | Android: the app shows a connection error | Use `10.0.2.2`, not `127.0.0.1`, and check the debug network security config and the internet permission (step 5). |
 | Android: `could not load libaxiom_runtime.so` | The emulator image is 32-bit `x86`. Use an `x86_64` or `arm64` image. |
@@ -406,6 +440,16 @@ the commands from step 2 so that it serves the new contract.
 
 More cases are in [Troubleshooting](/reference/troubleshooting#flutter).
 
+## The finished app
+
+The [`flutter-quickstart` example](https://github.com/AxiomCore/examples/tree/main/flutter-quickstart) contains
+the finished backend and app from this page, file for file, with a
+`run-backend.sh` script that moves the old `deployment.json` aside and a
+`tool/regen.sh` script that rebuilds the contract, pulls, and keeps the
+`AxiomDeps.toml` source relative.
+
+{/* VERIFY: link resolves once examples branch perf/examples2 (head 5d20793) is merged to main. */}
+
 ## Clean up
 
 Stop the backend with Ctrl-C and delete the `talks` directory.
@@ -415,5 +459,10 @@ Stop the backend with Ctrl-C and delete the `talks` directory.
 - [Flutter SDK reference](/sdks/flutter): configuration, caching, streams,
   authentication, errors and platform limits
 - [Managed sign-in for Flutter](/sdks/flutter-auth)
+- More Flutter examples: [`flutter-auth`](https://github.com/AxiomCore/examples/tree/main/flutter-auth) (sign-in with
+  `axiom_flutter_auth`), [`flutter-offline-first`](https://github.com/AxiomCore/examples/tree/main/flutter-offline-first)
+  (cache strategies and offline restart), [`flutter-minimal`](https://github.com/AxiomCore/examples/tree/main/flutter-minimal)
+  (smallest app, with release sizes) and [`stream/example`](https://github.com/AxiomCore/examples/tree/main/stream/example)
+  (HTTP chunked, SSE and WebSocket)
 - [Use Flutter with an existing backend](/guides/flutter-with-existing-backend)
 - [Build the app before the backend exists](/guides/flutter-mock-first)

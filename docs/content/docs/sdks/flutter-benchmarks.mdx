@@ -1,0 +1,128 @@
+---
+title: Flutter benchmarks
+description: How the AxiomCore Flutter SDK is benchmarked against dio and package:http, on which machines, the 10% spread rule, how to reproduce the runs, and the results for each release.
+pageType: reference
+---
+
+<StatusNote status="alpha" title="axiom_flutter 0.150.x">
+  These numbers come from a Linux server container and headless Chrome, not
+  from phones. Use them to compare clients and releases, not to predict your
+  app's latency.
+</StatusNote>
+
+The SDK repository contains a benchmark suite in
+[`flutter/benchmarks`](https://github.com/AxiomCore/axiom-sdk/tree/main/flutter/benchmarks).
+It runs the same Flutter app against one server with three clients: the
+generated Axiom client, `dio` with `retrofit`, and `package:http`. This page
+describes the method and lists the results of record for each release.
+
+## Method
+
+- **One server for every client.** A small Dart server
+  (`api/server/bin/server.dart`) returns pre-encoded JSON bodies on local
+  loopback, without TLS or compression. The Axiom client is generated from
+  the benchmark contract and pointed at that server.
+- **Payloads.** `GET /items?n=` with 1, 100, 1,000 and 10,000 items (about
+  110 B, 8.8 KB, 91 KB and 938 KB of JSON), a cached variant with
+  `cacheFirst` for 10 minutes, `GET /items/{id}`, `POST /items` and a
+  WebSocket echo.
+- **Per-call latency.** Sequential calls: 20 warm-up calls, then 200 measured;
+  p50 and p95. Each value includes decoding into typed models. After every
+  Axiom call the benchmark drops the in-memory query, so every call reaches
+  the server, as for dio and http.
+- **Cold start to first data.** A fresh browser profile per launch. The timer
+  starts in the app's first `initState` and stops when the first typed result
+  arrives. For Axiom this includes loading the runtime and the contract.
+- **Cache hit.** One network call, then 50 repeat calls of the cached endpoint.
+  Axiom uses the contract's `cacheFirst` strategy; dio uses
+  `dio_cache_interceptor` with an in-memory store.
+- **Decode only.** `utf8.decode`, `jsonDecode` and `fromJson` on a body
+  fetched once, for the generated Axiom models, `json_serializable` and a
+  hand-written `fromJson`.
+- **Size.** A baseline app with dio and http against the same app plus one
+  Axiom call, built with `flutter build apk --release --split-per-abi` and
+  `flutter build web --release`.
+
+## The spread rule
+
+Every full set runs three times. Each published value is the median of the
+three run medians. The spread of a metric is (max − min) / median of the run
+medians. A metric is published as a number only when its spread is 10% or
+less; the others are listed as "not stable". No row is dropped because its
+result is unfavourable. Every result names the machine and the SDK and
+runtime commits.
+
+## Machines
+
+| Name | Hardware | Browser or device | Used for |
+| --- | --- | --- | --- |
+| Linux container | 4 vCPU x86_64 server, 32 GB, gVisor | Chrome headless (`--headless=new`, no GPU), Flutter 3.32.0 | Web runs, tooling time, app size |
+
+Physical Android and iOS devices and the macOS desktop have not been measured
+yet.
+
+{/* VERIFY: machines added by /home/node/fp/bench2/REPORT.md (Android emulator, macOS, iOS simulator) when RESULTS_READY. */}
+
+## Reproduce
+
+```bash title="Terminal: axiom-sdk/flutter/benchmarks"
+top -bn1 | head -15            # check that nothing else is using the CPUs
+(cd api/acore && axiom build main.acore --out .out/bench.axiom)
+python3 tool/bench_size.py --out results/size.json
+tool/server.sh 8851 &
+tool/run_web.sh results/raw-web-run1.jsonl
+SKIP_BUILD=1 tool/run_web.sh results/raw-web-run2.jsonl
+SKIP_BUILD=1 tool/run_web.sh results/raw-web-run3.jsonl
+```
+
+`tool/collect_results.py` merges the three runs into one results file and
+`tool/render_readme.py` renders the table. The suite's README lists every
+option and the full command set.
+
+## Results
+
+### 0.150.1
+
+{/* VERIFY: fill from /home/node/fp/bench2/REPORT.md when it says RESULTS_READY. Only rows with spread <= 10% across 3 runs; name the machine. Do not use unit p1's preliminary rows (two had spread above 10%). */}
+
+Results for 0.150.1 are being collected and will be added here with the
+release.
+
+### 0.150.0 (2026-11-20)
+
+Linux container, release web build in headless Chrome, Flutter 3.32.0, three
+full runs. Values are milliseconds unless noted.
+
+| Measurement | Axiom | dio + retrofit | package:http |
+| --- | --- | --- | --- |
+| Cold start to first data | 262 | 221 | 219 |
+| List of 1,000 items (91 KB), p50 | 5.3 | 3.4 | 3.1 |
+| List of 10,000 items (938 KB), p50 | 33.2 | 18.6 | 13.2 |
+| Repeat call served from cache, 1,000 items, p50 | 5.0 | 26.4 (`dio_cache_interceptor`) | not applicable |
+| Decode only, 10,000 items, p50 | 10.8 | 12.5 (`json_serializable`) | 9.5 (hand-written `fromJson`) |
+| Client generation, warm | 1.2 s (`axiom pull` 2.2 s) | 2.7 s (`build_runner`) | none |
+
+Small calls (about 2 ms for every client) and WebSocket throughput did not
+repeat within 10% and are not listed.
+
+## Where Axiom is slower
+
+In the 0.150.0 results, Axiom is slower than dio and http on cold start and on
+uncached lists:
+
+- **Cold start** is about 40 ms behind on the web. The app downloads and
+  compiles the WebAssembly runtime and loads the contract before the first
+  call. Clients without a runtime skip both.
+- **Large uncached lists** cost more because the body crosses from the browser
+  into the runtime and back, and because the runtime checks the response
+  before Dart decodes it. In 0.150.0 the runtime also parsed every body into
+  a full JSON tree; 0.150.1 replaces that with a syntax check when the
+  endpoint has no field rules.
+
+Axiom is faster on repeated calls that its cache can answer, because the
+cached response is served by the runtime without a network round trip.
+
+## Related
+
+- [Flutter performance](/sdks/flutter-performance)
+- [Flutter app size](/sdks/flutter-app-size)

@@ -1314,6 +1314,13 @@ enum ExtensionsAction {
         /// instead of replaying it
         #[arg(long)]
         to_scenario: Option<PathBuf>,
+        /// Replay against a different build of the same extension (module,
+        /// interface, package ABI, negotiated ABI or SDK differ): the
+        /// regression-testing use. Without it such a tape is refused
+        /// (AXIOM_EXTENSION_REPLAY_IDENTITY). A tape of another application
+        /// or extension is always refused.
+        #[arg(long)]
+        allow_identity_mismatch: bool,
         /// Invocation deadline in milliseconds
         #[arg(long, default_value_t = 1_000)]
         deadline_ms: u64,
@@ -2688,7 +2695,7 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                 )
                 .await
             }
-            ExtensionsAction::Replay { tape, manifest, alias, target, to_scenario, deadline_ms } => {
+            ExtensionsAction::Replay { tape, manifest, alias, target, to_scenario, deadline_ms, allow_identity_mismatch } => {
                 commands::extension_replay::handle_replay(
                     tape.clone(),
                     manifest.clone(),
@@ -2696,6 +2703,7 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                     target.clone(),
                     to_scenario.clone(),
                     *deadline_ms,
+                    *allow_identity_mismatch,
                 )
                 .await
             }

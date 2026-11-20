@@ -232,7 +232,7 @@ pub async fn handle_request(
         .map(|report| report.alias.as_str())
         .collect();
     if !failing.is_empty() {
-        bail!("{PERMISSION_REQUEST_MISSING}: AxiomDeps.toml lacks permission(s) a known effect needs: {}", failing.join(", "));
+        bail!("{PERMISSION_REQUEST_MISSING}: AxiomDeps.toml lacks permission(s) a known effect needs or the code attempts without a permission (ungranted): {}", failing.join(", "));
     }
     Ok(())
 }

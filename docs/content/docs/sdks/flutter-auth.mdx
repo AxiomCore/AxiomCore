@@ -6,6 +6,25 @@ pageType: guide
 
 {/* VERIFY: the Dart samples on this page analyze against the SDK branch (axiom-sdk flutter/tool/verify_docs.py). Sign-in flows are tested against `axiom auth emulate` and headless Chrome, not on physical devices or Safari/Firefox. */}
 
+<Callout type="info" title="axiom_flutter_auth is being published to pub.dev">
+  `axiom_flutter_auth` 0.150.0 is being published to pub.dev. Until it is
+  listed at [pub.dev/packages/axiom_flutter_auth](https://pub.dev/packages/axiom_flutter_auth),
+  add it to `pubspec.yaml` as a git dependency and run `flutter pub get`:
+
+```yaml title="pubspec.yaml"
+dependencies:
+  axiom_flutter: ^0.150.0
+  axiom_flutter_auth:
+    git:
+      url: https://github.com/AxiomCore/axiom-sdk.git
+      path: flutter/axiom_flutter_auth
+      ref: main
+```
+
+  Once the package is listed, use `flutter pub add axiom_flutter_auth` as
+  shown below.
+</Callout>
+
 <StatusNote status="alpha" title="axiom_flutter_auth 0.150.0">
   Managed sign-in for Flutter is Alpha on Android, iOS, macOS and the web. It
   depends on [managed authentication](/authentication), which is Alpha.

@@ -133,6 +133,15 @@ cd talks_app
 
 ## 4. Generate the Dart client
 
+Add the SDK packages first. CLI 0.156.0 adds `axiom_flutter` 0.147.5 when the
+app has none, and that version has no Android support:
+
+```bash title="Terminal: talks/talks_app"
+flutter pub add axiom_flutter:^0.150.0 dev:axiom_flutter_generator:^0.150.0
+```
+
+Then generate the client:
+
 ```bash title="Terminal: talks/talks_app"
 axiom pull ../talks-api/backend.axiom --framework flutter --name talks --out lib/axiom_generated
 ```
@@ -145,8 +154,8 @@ axiom pull ../talks-api/backend.axiom --framework flutter --name talks --out lib
 
 1. copies the contract to `assets/axiom/talks.axiom` and lists it under
    `flutter: assets:` in `pubspec.yaml`;
-2. adds `axiom_flutter` and the dev dependency `axiom_flutter_generator` to
-   `pubspec.yaml` when they are missing, then runs `dart pub get`;
+2. keeps the package versions you added (it adds them only when they are
+   missing), then runs `dart pub get`;
 3. writes `lib/axiom_generated/axiom_sdk.dart` and
    `lib/axiom_generated/models.dart`;
 4. records the contract source in `AxiomDeps.toml` in the app directory, so

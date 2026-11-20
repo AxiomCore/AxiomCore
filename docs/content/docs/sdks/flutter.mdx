@@ -55,6 +55,7 @@ Platform setup:
 ## Install and generate
 
 ```bash title="Terminal: Flutter project root"
+flutter pub add axiom_flutter:^0.150.0 dev:axiom_flutter_generator:^0.150.0
 axiom pull ../backend/backend.axiom --framework flutter --name tasks --out lib/axiom_generated
 ```
 
@@ -62,15 +63,11 @@ axiom pull ../backend/backend.axiom --framework flutter --name tasks --out lib/a
 and registers it in `pubspec.yaml`, adds `axiom_flutter` and the dev
 dependency `axiom_flutter_generator` when they are missing, runs
 `dart pub get`, and writes `axiom_sdk.dart` and `models.dart` into the output
-directory. Pull again whenever the contract changes. To add the packages
-yourself:
-
-```bash title="Terminal: Flutter project root"
-flutter pub add axiom_flutter:^0.150.0
-flutter pub add dev:axiom_flutter_generator:^0.150.0
-```
-
-Keep both packages on the same version.
+directory. Pull again whenever the contract changes. Add the packages
+before the first pull: when they are missing, CLI 0.156.0 adds
+`axiom_flutter` 0.147.5 and `axiom_flutter_generator` 0.146.6, which have no
+Android support and lack most of the API on this page. Keep both packages on
+the same version.
 
 <Callout type="info" title="Coming in the next CLI release">
   These `axiom pull` and `axiom init` conveniences are not in CLI 0.156.0:

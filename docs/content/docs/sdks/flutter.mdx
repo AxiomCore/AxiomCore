@@ -9,8 +9,6 @@ pageType: reference
 <span id="initialize-once" />
 <span id="execute-a-mutation" />
 
-{/* VERIFY: package version. Written for the first axiom_flutter release with Android support (proposed 0.150.0), from the unreleased SDK source. Replace 0.150.0 once published. */}
-
 <StatusNote status="alpha" title="axiom_flutter 0.150.0">
   The Flutter SDK is Alpha on Android, iOS, macOS and the web. Test release
   builds on every platform you ship.
@@ -445,8 +443,15 @@ Measure release builds of your own app before you rely on a number.
 
 - Linux and Windows have no runtime library.
 - Android: no 32-bit `x86`; API 24 or newer.
-- Web: no extensions; WebSocket auth limits above; `Int64` values above
-  2^53 lose precision because the browser parses JSON numbers as doubles.
+- Web: no extensions; WebSocket auth limits above; with dart2js, `Int64`
+  values above 2^53 lose precision because JavaScript numbers are doubles
+  (dart2wasm and native builds are not affected).
+- iOS and macOS: WebSocket channels need the next AxiomRuntime release; with
+  the pinned 0.148.6 runtime a channel fails with an error that names the
+  cause. Android and web are not affected.
+- An empty body (`204 No Content`) on an endpoint that declares a typed
+  response is rejected by the current runtime. The fix ships with the next
+  runtime release; until then, return a body from that endpoint.
 - `--framework dart` is accepted by `axiom pull`, but it does not add packages
   or copy the contract asset, and this page does not cover it.
 - Test release builds on each platform, not only debug and hot reload.

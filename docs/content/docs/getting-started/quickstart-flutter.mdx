@@ -4,8 +4,6 @@ description: Write a small Acore backend, generate a typed Dart client with axio
 pageType: tutorial
 ---
 
-{/* VERIFY: package version. This page targets the first axiom_flutter release with Android support (proposed 0.150.0). It was run against the unreleased SDK source; replace 0.150.0 once the release is published. */}
-
 <StatusNote status="alpha" title="axiom_flutter 0.150.0 and Axiom CLI 0.156.0">
   The Flutter SDK is Alpha on Android, iOS, macOS and the web. Test release
   builds on every platform you ship.
@@ -222,8 +220,6 @@ the runtime framework and checks its SHA-256 the first time you build.
    <true/>
    ```
 
-{/* VERIFY: iOS and macOS steps were not run on this machine (no Apple tools); the lead runs them on a Mac. */}
-
 **Web.** Nothing to add. The WebAssembly runtime is bundled in the package.
 The backend must allow the page's origin, which the `cors(...)` line in step 1
 does for port 5000.
@@ -333,7 +329,7 @@ flutter run -d emulator-5554
 Use the device ID that `flutter devices` lists. The app calls
 `http://10.0.2.2:8080`, which is your computer as seen from the emulator.
 
-{/* VERIFY: no Android emulator on the docs machine; `flutter build apk --debug` succeeded and the APK contains the runtime for all three ABIs. Run on an emulator before publishing. */}
+{/* VERIFY: physical Android devices, and 32-bit ARM (armeabi-v7a) hardware. The SDK suite passes on the Android emulator (arm64, API 36). */}
 
 **iOS simulator or macOS:**
 
@@ -345,7 +341,7 @@ flutter run -d macos
 The simulator and macOS app share your computer's network, so
 `http://127.0.0.1:8080` works.
 
-{/* VERIFY: not run on iOS or macOS on the docs machine. */}
+{/* VERIFY: physical iOS devices. The SDK suite passes on the iOS simulator and macOS (81 of 84 run checks; WebSocket needs the next AxiomRuntime). */}
 
 **Chrome:**
 

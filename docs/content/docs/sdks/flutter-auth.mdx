@@ -4,9 +4,9 @@ description: Sign users in to a project's managed authentication from Flutter wi
 pageType: guide
 ---
 
-{/* VERIFY: axiom_flutter_auth 0.1.0 is not published yet. The emulator and headless Chrome tests in the package were run by the SDK team; the snippets on this page were not run on the docs machine. */}
+{/* VERIFY: the Dart samples on this page analyze against the SDK branch (axiom-sdk flutter/tool/verify_docs.py). Sign-in flows are tested against `axiom auth emulate` and headless Chrome, not on physical devices or Safari/Firefox. */}
 
-<StatusNote status="alpha" title="axiom_flutter_auth 0.1.0">
+<StatusNote status="alpha" title="axiom_flutter_auth 0.150.0">
   Managed sign-in for Flutter is Alpha on Android, iOS, macOS and the web. It
   depends on [managed authentication](/authentication), which is Alpha.
 </StatusNote>
@@ -47,7 +47,8 @@ final auth = createAxiomAuth(AxiomAuthOptions(
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final sdk = await AxiomSdk.create();
-  AxiomAuthBinding.attach(auth, runtime: sdk.runtime);
+  // The namespaces (contract names from `axiom pull --name`) that get the token.
+  AxiomAuthBinding.attach(auth, runtime: sdk.runtime, namespaces: ['api']);
   await auth.restore();
   runApp(AxiomAuthLifecycle(
     auth: auth,
@@ -67,10 +68,16 @@ What each part does:
 
 - `createAxiomAuth` creates the client and installs the default browser
   launcher for provider and hosted sign-in.
-- `AxiomAuthBinding.attach` pushes every new access token to the runtime with
-  `setGlobalAuthToken`, answers the runtime's auth provider with
-  `auth.accessToken()`, and calls `resetSession()` on sign-out. That clears the
-  session-partitioned cache and cancels in-flight calls.
+- `AxiomAuthBinding.attach` takes a required, non-empty `namespaces` list. It
+  pushes every new access token to those namespaces only, with
+  `setNamespaceAuthToken`; the runtime's auth provider answers
+  `auth.accessToken()` for them and `null` for any other namespace. It never
+  sets a global token, so a third-party contract loaded in the same app does
+  not receive your users' tokens. On sign-out it clears the tokens of exactly
+  those namespaces and calls `resetSession()`, which clears the
+  session-partitioned cache and cancels in-flight calls. Before 0.150.0 the
+  binding took no `namespaces` argument and set a global token; add the
+  argument when you upgrade.
 - `auth.restore()` loads a stored session. It ends as `authenticated`,
   `anonymous`, `expired` or `error`.
 - `AxiomAuthLifecycle` pauses and resumes the refresh timer with the app's

@@ -4,8 +4,6 @@ description: Keep a FastAPI or Go service, get a contract for it by extraction o
 pageType: guide
 ---
 
-{/* VERIFY: package version. Written for the first axiom_flutter release with Android support (proposed 0.150.0). */}
-
 Keep your backend as it is. AxiomCore needs only a contract that describes its
 HTTP API. The Flutter app calls the service through a Dart client generated
 from that contract, and the AxiomCore runtime in the app handles requests,
@@ -164,7 +162,7 @@ The page shows **Hello, Ada!**, and the Uvicorn log shows an `OPTIONS` and a
 `GET /greet/Ada` request, both `200 OK`. On Android, iOS and macOS, run with
 `flutter run -d <device>` after the platform setup.
 
-{/* VERIFY: the hand-written contract path was run on the docs machine on the web (headless Chrome, 200 from Uvicorn); Android, iOS and macOS were not run. */}
+{/* VERIFY: this guide's app was run on the web (headless Chrome, 200 from Uvicorn); the SDK itself passes on the Android emulator, iOS simulator and macOS. Physical devices not run. */}
 
 ## Errors and security
 

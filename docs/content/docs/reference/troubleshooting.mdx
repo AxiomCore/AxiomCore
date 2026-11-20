@@ -145,6 +145,11 @@ the same fixes in tutorial order.
 | Web: every call fails with a network error, curl works | The page origin is not allowed by CORS | Run with a fixed `--web-port` and add that origin, port included, to `cors(origins: [...])` |
 | Web: the app shows no data and the preflight (`OPTIONS`) gets 403 | The `cors(...)` headers list misses a header the SDK sends on every call | Allow `accept`, `content-type`, `x-axiom-request-id`, `x-axiom-cache-mode`, `traceparent` and `tracestate`, plus `authorization` or your API key header when used |
 | Web: the runtime does not load with a Content Security Policy | WebAssembly compilation is blocked | Allow `script-src 'self' 'wasm-unsafe-eval'`, and build with `--no-web-resources-cdn` or allow `https://www.gstatic.com` |
+| Web release build: `Null check operator used on a null value` in your own code | A dart2js bug in Dart 3.8.0 / Flutter 3.32.0, not an SDK bug: any `async` function literally named `result` crashes in release web builds (the compiler's internal `$async$result` name shadows the awaited value) | Rename the function |
+| Web: after a rebuild the browser still runs the previous app | Flutter's service worker serves the cached build | Hard-reload, or test each build in a fresh browser profile (Chrome `--user-data-dir=<new dir>`) |
+| Web (dart2js): a 64-bit id changes its last digits | JavaScript numbers lose precision above 2^53 | Use `String` for 64-bit ids, or build with `--wasm`; native builds are not affected |
+| iOS or macOS: a WebSocket channel fails at once | The pinned AxiomRuntime 0.148.6 lacks the WebSocket fix | Wait for the next AxiomRuntime release; Android and web are not affected |
+| A `204 No Content` endpoint fails with a decode error | The current runtime rejects an empty body when the endpoint declares a typed response | Return a body until the next runtime release |
 | Web: WebSocket upgrade refused with 403 | A browser cannot send `Authorization` on the handshake, or a global `cors(...)` policy (CLI 0.156.0) | Use a cookie session or another token transport, and see [Web](/sdks/flutter#web) |
 
 ## Database

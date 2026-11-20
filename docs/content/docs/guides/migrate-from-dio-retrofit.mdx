@@ -4,8 +4,6 @@ description: Map a Retrofit interface, json_serializable models and Dio intercep
 pageType: guide
 ---
 
-{/* VERIFY: package version. Written for the first axiom_flutter release with Android support (proposed 0.150.0). */}
-
 A typical Flutter networking stack has three hand-maintained parts: a Retrofit
 interface, `json_serializable` models, and Dio interceptors for auth, retries
 and caching. With AxiomCore, one contract describes the endpoints, models,
@@ -22,6 +20,7 @@ the same app; both call the same backend.
 
 ## Before: Retrofit, json_serializable and Dio
 
+{/* no-verify: code from the libraries being replaced */}
 ```dart title="lib/api/talks_api.dart (Retrofit)"
 @RestApi()
 abstract class TalksApi {
@@ -38,6 +37,7 @@ abstract class TalksApi {
 }
 ```
 
+{/* no-verify: code from the libraries being replaced */}
 ```dart title="lib/api/models.dart (json_serializable)"
 @JsonSerializable()
 class Talk {
@@ -51,6 +51,7 @@ class Talk {
 // TalkList and NewTalk follow the same pattern.
 ```
 
+{/* no-verify: code from the libraries being replaced */}
 ```dart title="lib/api/client.dart (Dio set-up)"
 final dio = Dio(BaseOptions(baseUrl: 'https://api.example.com'))
   ..interceptors.addAll([

@@ -1,0 +1,11 @@
+Extension ownership · development · 1 extension(s) · 5 scope(s)
+
+rounds.v11 · rounds.v11@1.0.0 · instance 1 · abi 1.1 · wasmi 2.0.2 · backend/server · module 224b6ddfd34c
+  open 5 · closed 1 · graph extension:adc5b73643731f8832dd607e
+  #1 app · open · 321ms
+    #2 extension · open · 321ms
+      #3 instance · open · 321ms · budgets calls 64 read 65536 write 65536 rounds 4
+        #4 invocation · open · 118ms · handles 1 (streams 0, subscriptions 0, secrets 1) · suspended 1 · rounds 2/4 · calls 2 · read 2 · write 21 · fuel 1133819 · deadline in 19.8s · rounds.v11.run
+          #6 round 2 · open · 50ms · pending 1 · suspended 1
+  recently closed:
+    #5 round · completed · released 0 · finalizers 0

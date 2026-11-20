@@ -1182,11 +1182,49 @@ enum ExtensionsAction {
         #[arg(long, default_value = "AxiomExtensions.toml")]
         manifest: PathBuf,
     },
-    /// Explain one extension identity, provenance, and authority
+    /// Explain one extension identity, provenance, and authority; with
+    /// --ownership, show the live scope tree of a running development host
     Inspect {
-        alias: String,
+        /// The extension to explain (required without --ownership)
+        #[arg(required_unless_present_any = ["ownership", "schema"])]
+        alias: Option<String>,
         #[arg(long, default_value = "AxiomExtensions.toml")]
         manifest: PathBuf,
+        /// X10b: the live ownership tree (scopes, handles, budgets, usage)
+        /// read from the running Inspector's development channel
+        #[arg(long)]
+        ownership: bool,
+        /// Stable JSON (`axiom-extension-ownership/v1`) instead of the tree
+        #[arg(long, requires = "ownership")]
+        json: bool,
+        /// Poll and redraw (with --json: one report per line)
+        #[arg(long, requires = "ownership")]
+        watch: bool,
+        /// Print the JSON schema of the ownership report and exit
+        #[arg(long)]
+        schema: bool,
+        /// Only this extension (alias); the positional alias is used when given
+        #[arg(long, requires = "ownership")]
+        extension: Option<String>,
+        /// Only this scope id and its descendants
+        #[arg(long, requires = "ownership")]
+        scope: Option<u64>,
+        /// Continue after a previous report (`more: --cursor ...`)
+        #[arg(long, requires = "ownership")]
+        cursor: Option<String>,
+        /// Scopes per report (1-1000, default 200)
+        #[arg(long, requires = "ownership")]
+        limit: Option<usize>,
+        /// Inspector connection file (default: .axiom/inspector/live-connection.json
+        /// in this directory or an ancestor)
+        #[arg(long, requires = "ownership")]
+        connection: Option<PathBuf>,
+        /// --watch poll interval in milliseconds
+        #[arg(long, default_value_t = 1_000, requires = "watch")]
+        interval_ms: u64,
+        /// --watch: stop after this many reports
+        #[arg(long, requires = "watch")]
+        count: Option<u64>,
     },
     /// Show requested, granted, and target-effective authority
     Permissions {
@@ -2498,8 +2536,45 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             ExtensionsAction::Verify { manifest } => {
                 commands::extensions::handle_verify(manifest.clone()).await
             }
-            ExtensionsAction::Inspect { alias, manifest } => {
-                commands::extensions::handle_inspect(manifest.clone(), alias.clone()).await
+            ExtensionsAction::Inspect {
+                alias,
+                manifest,
+                ownership,
+                json,
+                watch,
+                schema,
+                extension,
+                scope,
+                cursor,
+                limit,
+                connection,
+                interval_ms,
+                count,
+            } => {
+                if *ownership || *schema {
+                    let code = commands::extensions_inspect::handle_ownership(
+                        commands::extensions_inspect::OwnershipOptions {
+                            json: *json,
+                            watch: *watch,
+                            schema: *schema,
+                            extension: extension.clone().or_else(|| alias.clone()),
+                            scope: *scope,
+                            cursor: cursor.clone(),
+                            limit: *limit,
+                            connection: connection.clone(),
+                            interval_ms: *interval_ms,
+                            count: *count,
+                        },
+                    )
+                    .await;
+                    if code != 0 {
+                        std::process::exit(code);
+                    }
+                    Ok(())
+                } else {
+                    let alias = alias.clone().expect("clap requires the alias without --ownership");
+                    commands::extensions::handle_inspect(manifest.clone(), alias).await
+                }
             }
             ExtensionsAction::Permissions { alias, manifest } => {
                 commands::extensions::handle_permissions(manifest.clone(), alias.clone()).await

@@ -47,6 +47,8 @@ struct ServerState {
     updated_ms: Arc<RwLock<u128>>,
     source_error: Arc<RwLock<Option<String>>>,
     live: Arc<RwLock<LiveStore>>,
+    /// X10b: ownership publications of development hosts.
+    ownership: Arc<RwLock<super::extensions_inspect::OwnershipStore>>,
     updates: broadcast::Sender<String>,
     allow_remote_planner: bool,
     jev_intent_threshold: f64,
@@ -81,6 +83,16 @@ struct LiveQuery {
     target: Option<String>,
     session_id: Option<String>,
     after: Option<u64>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OwnershipApiQuery {
+    token: Option<String>,
+    extension: Option<String>,
+    scope: Option<u64>,
+    cursor: Option<String>,
+    limit: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -136,6 +148,7 @@ pub(super) async fn serve(
         updated_ms: Arc::new(RwLock::new(now_ms())),
         source_error: Arc::new(RwLock::new(None)),
         live: Arc::new(RwLock::new(LiveStore::default())),
+        ownership: Arc::new(RwLock::new(Default::default())),
         updates,
         allow_remote_planner,
         jev_intent_threshold,
@@ -155,6 +168,10 @@ pub(super) async fn serve(
         .route("/api/v1/live/selection", post(api_live_selection))
         .route("/api/v1/live/state", post(api_live_state))
         .route("/api/v1/live/causal", post(api_live_causal))
+        .route(
+            "/api/v1/live/ownership",
+            get(api_live_ownership).post(api_publish_ownership),
+        )
         .route(
             "/api/v1/live/commands",
             get(api_live_commands).post(api_live_command),
@@ -905,6 +922,65 @@ async fn api_live_causal(
         .updates
         .send(json!({"type":"live-causal"}).to_string());
     (StatusCode::ACCEPTED, Json(json!({"accepted":true})))
+}
+
+/// X10b: the merged ownership view of the development hosts that published
+/// one (`axiom extensions inspect --ownership`). Same token as every other
+/// Inspector API; 404 when no live host has published.
+async fn api_live_ownership(
+    State(state): State<ServerState>,
+    Query(query): Query<OwnershipApiQuery>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if !authorized(&state, &headers, query.token.as_deref()) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error":"invalid Inspector session token"})),
+        );
+    }
+    let request = axiom_lib::extension_ownership::OwnershipQuery {
+        extension: query.extension,
+        scope: query.scope,
+        cursor: query.cursor,
+        limit: query.limit,
+    };
+    if let Err(error) = request.page_limit() {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error":error.to_string()})));
+    }
+    match state.ownership.read().await.read(&request, now_ms()) {
+        Ok(Some(report)) => (StatusCode::OK, Json(json!(report))),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error":"no development host has published ownership data to this Inspector"})),
+        ),
+        Err(error) if error.to_string().contains("alias") => {
+            (StatusCode::NOT_FOUND, Json(json!({"error":error.to_string()})))
+        }
+        Err(error) => (StatusCode::BAD_REQUEST, Json(json!({"error":error.to_string()}))),
+    }
+}
+
+/// X10b: a development host publishes its ownership report (token and,
+/// when a browser sends one, the Inspector origin are required).
+async fn api_publish_ownership(
+    State(state): State<ServerState>,
+    Query(query): Query<TokenQuery>,
+    headers: HeaderMap,
+    Json(publication): Json<axiom_lib::extension_ownership::OwnershipPublication>,
+) -> impl IntoResponse {
+    if !authorized(&state, &headers, query.token.as_deref()) || !origin_allowed(&state, &headers) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error":"invalid Inspector session token"})),
+        );
+    }
+    if let Err(error) = state.ownership.write().await.publish(publication, now_ms()) {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error":error.to_string()})));
+    }
+    let _ = state
+        .updates
+        .send(json!({"type":"ownership-updated"}).to_string());
+    (StatusCode::OK, Json(json!({"accepted":true})))
 }
 
 async fn api_live_commands(

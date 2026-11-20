@@ -722,6 +722,7 @@ No options other than `--help`.
 | Command | Purpose |
 | --- | --- |
 | [`dependencies check`](#axiom-dependencies-check) | Validate the v2 manifest without fetching. |
+| [`dependencies request`](#axiom-dependencies-request) | Propose extension permissions from static effect summaries. Extension SDK 0.1.5 releases. |
 | [`dependencies format`](#axiom-dependencies-format) | Canonically format the manifest. |
 | [`dependencies migrate`](#axiom-dependencies-migrate) | Convert a v1 manifest to v2. |
 | [`dependencies schema`](#axiom-dependencies-schema) | Print the v2 JSON Schema. |
@@ -750,10 +751,37 @@ axiom dependencies check [OPTIONS]
 | --- | --- | --- | --- |
 | `--deps` | file | `AxiomDeps.toml` | Manifest to validate. |
 | `--json` | flag | off | Print the result or diagnostics as JSON. |
+| `--against` | file | none | Extension SDK 0.1.5 releases. Review against an earlier manifest: name each permission added (`permission increase (needs review)`) or removed, budget changes, and why the canonical digest changed (for example "exports now derived"). |
+| `--from-summary` | flag | off | Extension SDK 0.1.5 releases. Also report, per extension, the permissions its static effect summary needs; a missing permission fails the check. |
+| `--out` | directory | `.axiom/extensions` | Source-build output root used with `--from-summary`. |
 
 ```bash title="Terminal"
 axiom dependencies check
 ```
+
+### axiom dependencies request
+
+Proposes `[extensions.<alias>.permissions]` from what each extension's code can
+do (its static effect summary, built here from source) and prints a semantic
+diff against the manifest. The proposal never changes the grant or a lock; an
+increase still needs the existing review. Exits non-zero
+(`AXIOM_PERMISSION_REQUEST_MISSING`) when the manifest lacks a permission a
+known effect needs. Available in CLI releases that accept extension SDK 0.1.5;
+see [What an extension can do](/extensions/effect-summaries).
+
+```text title="Usage"
+axiom dependencies request [OPTIONS] --from-summary [ALIAS]
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `[ALIAS]` | alias | every extension | One extension alias. |
+| `--deps` | file | `AxiomDeps.toml` | Manifest to read. |
+| `--from-summary` | flag | off | Generate from the static effect summary (the only source). |
+| `--write` | flag | off | Rewrite only the changed `[extensions.<alias>.permissions]` tables in `AxiomDeps.toml`; comments and the rest of the file are kept. |
+| `--format` | `preserve`, `long`, `shorthand` | `preserve` | Permission spelling for the proposal and `--write`. |
+| `--json` | flag | off | Print an array of `axiom-extension-permission-request/v1` reports. |
+| `--out` | directory | `.axiom/extensions` | Source-build output root. |
 
 ### axiom dependencies format
 
@@ -769,6 +797,7 @@ axiom dependencies format [OPTIONS]
 | `--deps` | file | `AxiomDeps.toml` | Manifest to format. |
 | `--check` | flag | off | Fail if formatting would change the file. Cannot be combined with `--write`. |
 | `--write` | flag | off | Replace the manifest after successful validation. |
+| `--permissions` | `preserve`, `long`, `shorthand` | `preserve` | Extension SDK 0.1.5 releases. Spelling of extension permissions. An operation with two origins stays in `resources`. |
 
 ### axiom dependencies migrate
 

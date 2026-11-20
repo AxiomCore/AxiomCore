@@ -66,6 +66,9 @@ checksums.
 | Acore language, `.axiom` contracts, typed packages, resolution and semantic diff | Alpha | Use compatible tools and pinned locks |
 | Managed logic, concurrency, caching, streams, scenarios and typed failures | Experimental | Requirements vary by feature and host; see [Capability boundaries](/reference/capability-boundaries) |
 | Executable extensions | Experimental | Selected Rust, TypeScript and Python profiles; no arbitrary ecosystem compatibility |
+| Async extension exports (effect rounds, extension ABI 1.1) | Experimental | Extension SDK 0.1.5; at most 16 yields per invocation; Python async exports are limited by the invocation deadline. See [Async exports](/extensions/async-rounds) |
+| Static extension effect summaries and generated permission requests | Experimental | Summaries are trusted only when built from source on the same machine; Rust and Python only, TypeScript summaries never narrow anything. See [What an extension can do](/extensions/effect-summaries) |
+| Extension dev replay tapes | Experimental | Recorded only by development builds; replay through `axiom extensions replay`. See [Test and debug extensions](/extensions/testing) |
 | Inspector | Alpha | Canonical facts, relationships, impact and recorded execution evidence |
 | Optional Jev question planning | Experimental | Remote intent planning; local evidence remains authoritative |
 | [Semantic service](/semantic-service) (`acore-semantic`) for coding agents | Experimental | Preview release 0.1.4 (Homebrew or GitHub download). Acore UI projects only (profile `acore-ui`, target `web`), one local project root, macOS arm64. See its [support matrix](/semantic-service/support-matrix) |

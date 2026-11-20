@@ -1,0 +1,400 @@
+---
+title: Typed effects, tickets and numbers
+description: Read host-call results with typed tickets in Rust, TypeScript and Python, migrate from positional outcomes and prefixed generated names, and represent money and rates exactly with Cents and Percentage.
+pageType: guide
+---
+
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+<StatusNote status="experimental" title="Requires extension SDK 0.1.5">
+  Tickets, the idiomatic generated names and the TypeScript and Python
+  `Cents` and `Percentage` helpers are in the Rust, TypeScript and Python
+  extension SDKs 0.1.5. Older spellings keep working; see
+  [What is deprecated](#what-is-deprecated).
+</StatusNote>
+
+An extension asks the host to do work, such as a contract query, by yielding
+**effects**. This page shows how to read the results with a type, how to
+migrate code that reads results by position, and how to pass money and rates
+across the boundary without rounding.
+
+If an export needs results that depend on earlier results, write it as an
+async export instead; see [Async exports and effect rounds](/extensions/async-rounds).
+Tickets are for an export that yields once and then completes.
+
+## Read results with tickets
+
+Add each call to a plan with `push`. It returns a **ticket** typed with the
+operation's output. Yield the plan, then read each result with `get(ticket)`
+when the host resumes the export. The examples yield two catalog queries and
+complete with a record. They come from
+[`extension-authoring-samples`](https://github.com/AxiomCore/examples/tree/main/extension-authoring-samples)
+and return the same result in all three languages.
+
+<Tabs items={['Rust', 'TypeScript', 'Python']}>
+<Tab value="Rust">
+
+```rust title="logic/lookup.rs (excerpt)"
+struct Pending {
+    price: Ticket<Cents>,
+    stock: Ticket<u64>,
+}
+
+impl TypedExtension for Lookup {
+    fn invoke(&mut self, invocation: TypedInvocation) -> Result<ExtensionResponse> {
+        match invocation.export() {
+            "lookup" => {
+                let mut fx = Effects::new();
+                let price = fx.push(price_of::<String, Cents>().call(String::from(FEATURED)));
+                let stock = fx.push(stock_of::<String, u64>().call(String::from(FEATURED)));
+                self.pending = Some(Pending { price, stock });
+                Ok(ExtensionResponse::yield_for(fx))
+            }
+            // `lookup_group` is shown under "Group tickets" below.
+            other => Err(SdkError::invalid_input(format!("unknown export `{other}`"))),
+        }
+    }
+
+    fn resume(&mut self, resume: ResumeContext) -> Result<ExtensionResponse> {
+        let pending = self.pending.take().ok_or_else(|| SdkError::invalid_input("no lookup is pending"))?;
+        let price = resume.get(pending.price)?;
+        let stock = resume.get(pending.stock)?;
+        Ok(ExtensionResponse::new(Item { in_stock: stock > 0, price_label: price.as_currency() }))
+    }
+}
+```
+
+`price_of` and `stock_of` are the generated typed operations for the granted
+catalog queries (`crate::axiom_bindings::operations::contract_catalog_query_price`
+and `..._stock`). `Ticket<O>` is `Copy` and cannot be constructed by hand. A
+result that does not decode as `O` is an `InvalidInput` error.
+
+</Tab>
+<Tab value="TypeScript">
+
+```typescript title="logic/lookup.ts"
+// Lookup extension used by the extension documentation: one yield with two
+// host calls, read back with typed tickets.
+import {
+  Cents,
+  defineExtension,
+  operation,
+  type Effects,
+  type ExtensionContext,
+  type ResumeContext,
+} from "@axiomcore/extension-sdk";
+
+const priceOf = operation<string, number>("contract_runtime", "query_catalog_683b531f41ec88a2");
+const stockOf = operation<string, number>("contract_runtime", "query_catalog_08c4242b5f585628");
+
+// The resume runs in a fresh engine, so it rebuilds the same plan (same calls,
+// same inputs, same order) and reads the tickets of the rebuilt plan.
+// The resume receives no input, so the plan uses only constants.
+const FEATURED = "featured";
+const plan = (fx: Effects) => ({
+  price: fx.push(priceOf.call(FEATURED)),
+  stock: fx.push(stockOf.call(FEATURED)),
+});
+
+export default defineExtension({
+  exports: {
+    lookup(context: ExtensionContext) {
+      const fx = context.plan();
+      plan(fx);
+      return context.effects(fx);
+    },
+  },
+  resume(resume: ResumeContext) {
+    const tickets = plan(resume.plan());
+    const price = Cents.decode(resume.get(tickets.price));
+    const stock = resume.get(tickets.stock);
+    return resume.complete({ in_stock: stock > 0, price_label: price.asCurrency() });
+  },
+});
+```
+
+`operation<I, O>(namespace, operation)` names a granted host import. Find the
+import names of an extension with `axiom extensions interface <alias>`;
+contract queries are named `query_<service>_<digest>`.
+
+</Tab>
+<Tab value="Python">
+
+```python title="logic/lookup.py"
+"""Lookup extension used by the extension documentation: one yield with two
+host calls, read back with typed tickets."""
+from typing import TYPE_CHECKING
+
+from axiom_extension_sdk import Cents, Ticket, extension, typed_effect
+
+if TYPE_CHECKING:
+    from axiom_extension_sdk import Context, Effects, ResumeContext
+
+
+# The resume receives no input, so the plan uses only constants.
+FEATURED = "featured"
+
+
+def plan(fx: "Effects") -> "tuple[Ticket[int], Ticket[int]]":
+    price = fx.push(typed_effect("contract_runtime", "query_catalog_683b531f41ec88a2", {"String": FEATURED}, int))
+    stock = fx.push(typed_effect("contract_runtime", "query_catalog_08c4242b5f585628", {"String": FEATURED}, int))
+    return price, stock
+
+
+@extension.export
+def lookup(ctx: "Context"):
+    fx = ctx.plan()
+    plan(fx)
+    return ctx.effects(fx)
+
+
+@extension.resume
+def resume(ctx: "ResumeContext"):
+    # The resume runs in a fresh engine: rebuild the same plan, then read it.
+    price, stock = plan(ctx.plan())
+    return ctx.complete({"in_stock": ctx.get(stock) > 0, "price_label": Cents.decode(ctx.get(price)).as_currency()})
+```
+
+`typed_effect(namespace, operation, input, output)` builds a typed effect
+whose ticket is `Ticket[output]`, so a type checker infers the type of
+`ctx.get(...)`. The input is written in its wire form (`{"String": ...}`).
+Python cannot use `fx.call(...)`; the SDK spells it `push` in every language.
+
+</Tab>
+</Tabs>
+
+With the catalog answering a price of 4999 and a stock of 7, all three
+editions complete with `{"in_stock": true, "price_label": "$49.99"}`.
+
+### Rebuild the plan in TypeScript and Python
+
+TypeScript and Python extensions run every exchange in a fresh engine, so
+nothing from the export survives into the resume. The resume rebuilds its plan
+with `resume.plan()` (`ctx.plan()` in Python), making **the same calls, with
+the same inputs, in the same order**, and reads the tickets of the rebuilt
+plan. Share one function between the export and the resume, as above.
+
+The resume does not receive the export's input. A ticket plan can therefore
+depend only on constants. When the calls depend on the input, write an async
+export, which re-runs from the top with its input every round.
+
+The host keeps a record of the yielded plan and the SDK compares the rebuilt
+plan with it on the first `get`. A difference fails with a message that names
+the first differing call, for example
+`rebuilt effect plan differs from the yielded plan: call 0 is catalog.stock, the yielded call 0 was catalog.name`.
+Other rules:
+
+- The first `get` binds the resume to one plan. A ticket from another plan
+  fails.
+- After a plan is yielded or read, `push` on it throws.
+- A host error or a denied call surfaces as an error from `get` (Rust keeps
+  the host error code; TypeScript and Python throw "host operation denied").
+
+The record is not sent for very large plans (more than 512 calls or more than
+256 KiB of call data). Then only the number of calls is checked, so a rebuild
+that makes the same number of calls in another order would read the wrong
+results. Keep ticket plans small, or use an async export.
+
+### Group tickets
+
+In Rust, an `EffectGroup` asks the host to run its branches concurrently.
+`group.push(name, call)` returns a ticket for the branch:
+
+```rust title="logic/lookup.rs (excerpt)"
+"lookup_group" => {
+    // Both branches may run at once; outcomes keep declaration order.
+    let mut group = EffectGroup::new(EffectGroupMode::Collect, 2);
+    let price = group.push("price", price_of::<String, Cents>().call(String::from(FEATURED)));
+    let stock = group.push("stock", stock_of::<String, u64>().call(String::from(FEATURED)));
+    self.pending = Some(Pending { price, stock });
+    Ok(ExtensionResponse::yield_effect_group(group))
+}
+```
+
+The same `resume` reads both tickets. A ticket reads its own branch even when
+branches finish out of order. Groups accept granted contract queries, and a
+host must support groups. TypeScript and Python have no group yield; use
+`Promise.all` or `gather` in an async export instead.
+
+## What is deprecated
+
+Old spellings keep working in SDK 0.1.5 and produce the same bytes on the
+wire. They are reported so you can migrate.
+
+| Deprecated | Language | Replacement | How it is reported |
+| --- | --- | --- | --- |
+| `resume.outcome(i)` | Rust | `resume.get(ticket)` | `#[deprecated(since = "0.1.5")]`; the source build prints a `warning: <file>:<line>:<column>: ... [deprecated]` line |
+| `resume.outcome(i)` | TypeScript | `resume.get(ticket)` | `@deprecated`; the source build prints a deprecation warning |
+| `ctx.outcome(i)` | Python | `ctx.get(ticket)` | The source build reports it in its deprecations |
+| `fx.call(effect)` on `Effects` | TypeScript | `fx.push(effect)` | `@deprecated` alias |
+| Prefixed generated names (`Type_Draft`, `Step_load`, ...) | All | Idiomatic names (table below) | Deprecated aliases |
+
+The Rust by-value chain `Effects::new().call(a).call(b)` and
+`ctx.effects(e1, e2)` in TypeScript and Python are not deprecated. They still
+work and produce the same bytes as `push`; they just give you no tickets.
+
+### Generated names for selected interfaces
+
+An extension with a selected `interface` gets generated types. They now use
+the names from the interface, with the same spelling in Rust, TypeScript and
+Python. The old prefixed names stay as deprecated aliases during the current
+and the next SDK minor version.
+
+`T` is a selected type, `e` an export and `c` a continuation of `e`, with `C`
+its UpperCamelCase form (`loaded` becomes `Loaded`).
+
+| Family | Old name | New name |
+| --- | --- | --- |
+| Selected type | `Type_T` | `T` |
+| Python variant case | `Type_T_x` | `T` plus the case in UpperCamelCase, for example `OutcomeMissing` |
+| Rust export step | `Step_e` | `e::Step` |
+| Rust resume step | `Step_e::Resume_c { .. }` | `e::C { .. }` (also `e::Step::C`) |
+| Branch calls | `Calls_c` | `e::CCalls`, and `e::Calls` when `e` has one continuation |
+| Branch outcomes | `Outcomes_c` | `e::COutcomes`, and `e::Outcomes` when `e` has one continuation |
+| TypeScript and Python effects | `Effects_e` | `e.Effects` |
+| Python invoke context | `Context_e` | `e.Context` |
+| Python resume context | `Resume_c` | `e.C` |
+
+For example, `Type_Draft` becomes `Draft`, `Step_load` becomes `load::Step`,
+and `Calls_loaded` becomes `load::Calls` (long form `load::LoadedCalls`).
+Fixed names such as `SelectedExports`, `SelectedExtension` and
+`defineSelectedExtension` do not change.
+
+How each language marks the old names:
+
+- **Rust:** `#[deprecated]` aliases. Old code compiles and warns; no build
+  denies warnings.
+- **TypeScript:** `@deprecated` aliases; editors strike them through.
+- **Python:** a `# deprecated` comment on each alias in the stub.
+
+When two items want the same spelling, one of them gets a `_` suffix (a type
+`load` beside an export `load` becomes `load_`), and the source build prints a
+`warning: extension <alias>: generated bindings: ...` line naming it. Adding a
+type, export or continuation keeps existing names, except in the three cases
+those warnings report. The `Calls` and `Outcomes` shorthands exist only while
+an export has exactly one continuation; the long forms always exist.
+
+In Python, the handler for export `load` must be a function named `load`, which
+would hide a namespace imported as `load`. Import the namespace under another
+name:
+
+```python title="Python excerpt: selected export with a continuation"
+from axiom_extension_sdk import extension
+from axiom_bindings import load as load_types, Draft
+
+@extension.export
+def load(context: load_types.Context) -> object:
+    return context.effects.loaded(context.input, {"task": context.input})
+
+@extension.resume
+def loaded(context: load_types.Loaded) -> object: ...
+```
+
+## Numbers in extensions
+
+The extension boundary has no floating-point values. Numbers cross it as
+signed or unsigned 64-bit integers:
+
+| Language | Integers | Exactness |
+| --- | --- | --- |
+| Rust | `i64` and `u64` | Exact |
+| TypeScript | `number` up to 2^53 − 1, `bigint` beyond | Exact, never rounded |
+| Python | `int` | Exact |
+
+Choose a representation on purpose:
+
+| Quantity | Use | Why |
+| --- | --- | --- |
+| Money | `Cents`: integer minor units | Exact sums and comparisons. One rounding rule (truncate) in every language. |
+| Rates, discounts, tax, shares | `Percentage`: integer basis points from 0 to 10,000 | `of(cents)` is integer arithmetic with the same result everywhere. |
+| Counts, quantities, IDs, revisions, millisecond timestamps | Plain integers | Exact. TypeScript switches to `bigint` above 2^53 − 1. |
+| Exact decimals of other scales | A decimal string; compute in scaled integers, or with Python's `decimal` module | No rounding. There is no SDK decimal type yet. |
+| Approximate measurements in UI state typed `Float` | Float | Display only. |
+
+If two systems must agree on a value to the last unit, use an integer or a
+decimal string, never a float.
+
+### Cents and Percentage
+
+The three SDKs have the same `Cents` and `Percentage` with the same results:
+
+| | Rust | TypeScript | Python |
+| --- | --- | --- | --- |
+| Construct | `Cents::new(u64)` | `Cents.new(number \| bigint)` | `Cents(int)` or `Cents.new(int)` |
+| From dollars | `Cents::from_dollars` | `Cents.fromDollars` | `Cents.from_dollars` |
+| Zero | `Cents::ZERO` | `Cents.ZERO` | `Cents.ZERO` |
+| Value | `value()` (`u64`) | `value` (`bigint`), `toNumber()` | `value` (`int`) |
+| To and from the wire | `encode()`, `Cents::decode` | `encode()`, `Cents.decode` | `encode()`, `Cents.decode` |
+| Minimum, subtraction | `min`, `checked_sub` | `min`, `checkedSub` | `min`, `checked_sub` |
+| Format | `as_currency()`, `as_saving()` | `asCurrency()`, `asSaving()` | `as_currency()`, `as_saving()` |
+| Percentage | `Percentage::from_whole(0..=100)`, `from_basis_points(0..=10000)`, `basis_points()`, `of(Cents)` | `fromWhole`, `fromBasisPoints`, `basisPoints`, `of` | `from_whole`, `from_basis_points`, `basis_points`, `of` |
+| Compare | `==`, `<` (derived) | `equals`, `compare`, `lt`, `le`, `gt`, `ge` | `==`, `<`, `<=`, `>`, `>=` |
+
+Shared rules:
+
+- **Integer arithmetic only.** `Percentage.of` computes
+  `amount × basis points / 10,000` and truncates toward zero.
+- **No negative amounts.** Subtracting below zero fails; show a saving with
+  `as_saving()` (for example `−$19.99`).
+- **Failures never wrap or round.** Rust returns `SdkError::invalid_input`,
+  TypeScript throws `RangeError` and Python raises `ValueError`, with the same
+  message in every language, for example `currency subtraction would be negative`.
+- **No implicit conversion.** There is no `+` on `Cents`. In TypeScript,
+  comparing with `<`, adding, string conversion and `JSON.stringify` throw a
+  `TypeError`; in Python, `+`, `int(x)`, `bool(x)` and `json.dumps(x)` raise
+  `TypeError`. Compare with the methods, convert with `encode()`, and add the
+  integer values explicitly.
+- **Python `Percentage(n)` takes basis points**, so `Percentage(50)` is 0.5%.
+  Prefer the named constructors.
+- TypeScript and Python import the helpers from the package root
+  (`@axiomcore/extension-sdk` and `axiom_extension_sdk`). In Python they are
+  compiled into the module only when you import them.
+
+The sync `apply_discount` export of the samples computes 10 percent off,
+capped at $25, in each language:
+
+<Tabs items={['Rust', 'TypeScript', 'Python']}>
+<Tab value="Rust">
+
+```rust title="logic/pricing.rs (excerpt)"
+let subtotal = invocation.input::<Cents>()?;
+// 10 percent off, capped at $25.
+let discount = Percentage::from_whole(10)?.of(subtotal)?.min(Cents::from_dollars(25)?);
+let total = subtotal.checked_sub(discount)?;
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```typescript title="logic/pricing.ts (excerpt)"
+const subtotal = Cents.decode(context.input);
+// 10 percent off, capped at $25.
+const discount = Percentage.fromWhole(10).of(subtotal).min(Cents.fromDollars(25));
+const total = subtotal.checkedSub(discount);
+```
+
+</Tab>
+<Tab value="Python">
+
+```python title="logic/pricing.py (excerpt)"
+subtotal = Cents.decode(context.input)
+# 10 percent off, capped at $25.
+discount = Percentage.from_whole(10).of(subtotal).min(Cents.from_dollars(25))
+total = subtotal.checked_sub(discount)
+```
+
+</Tab>
+</Tabs>
+
+For a subtotal of 12000 cents, every edition patches `discount_cents` to 1200
+and `total_cents` to 10800.
+
+A `Cents` value above 2^53 − 1 encodes as a `bigint` in TypeScript. A selected
+interface port limits integers to the portable safe range, so such a value
+cannot cross a selected port.
+
+## Next steps
+
+- [Async exports and effect rounds](/extensions/async-rounds) for several dependent results
+- [Test and debug extensions](/extensions/testing) to replay a recorded invocation
+- [Extension reference](/extensions/reference) for the SDK surfaces

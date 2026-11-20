@@ -39,7 +39,10 @@ flowchart LR
 The host loads only a signed, verified module. It hands the guest one typed
 input, the state snapshots the extension is allowed to read, and a deadline.
 The guest returns a typed result, one bounded plan of effects to perform, or a
-proposal to change state. The host checks types, invariants, authorization,
+proposal to change state. An async export can wait for host results several
+times in one invocation; the host re-runs it from the top each time, so no
+guest memory has to survive between calls (see
+[Async exports and effect rounds](/extensions/async-rounds)). The host checks types, invariants, authorization,
 revision conflicts and cancellation before it commits anything, records an
 audit entry either way, and stays responsible for notifying subscribers and
 for teardown. Ordinary Acore rendering and backend handling never
@@ -104,6 +107,12 @@ it also needs the signed authority workflow in this section.
 ## Next steps
 
 - [Build an extension](/extensions/build): write, sign, verify and run one
+- [Declare and call an extension](/extensions/declare-and-call): `use extension`, `writes` clauses, permissions and budgets
+- [Typed effects, tickets and numbers](/extensions/typed-effects) and [Async exports and effect rounds](/extensions/async-rounds): the guest side of host calls
+- [What an extension can do](/extensions/effect-summaries): static effect summaries, impact queries and audit sites
+- [Test and debug extensions](/extensions/testing): replay tapes and scenarios
+- [Extension security model](/extensions/security-model): scopes, host layers, build sandboxes and the engine
+- [Upgrade an existing project](/extensions/upgrade): what changes with extension SDK 0.1.5
 - [Extension reference](/extensions/reference): fields, limits, ABI and SDKs
 - [Packages](/extensions/packages): build and lock declarative `.axiom` packages
 - [Artifact trust](/core-concepts/trust-and-security): how signatures and locks are checked

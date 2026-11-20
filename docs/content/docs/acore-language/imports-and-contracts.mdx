@@ -105,7 +105,9 @@ match the artifact kind and name an export present in the locked package.
 diagnostics, completion and definition links from that verified surface.
 Package source is neither executed nor merged into the consumer. Acore UI also
 accepts `use extension Name from "alias" export "name"`; see
-[Extension reference](/extensions/reference).
+[Extension reference](/extensions/reference). With extension SDK 0.1.5,
+`use extension alias` names the extension once and makes every export callable
+as `alias.export`; see [Declare and call an extension](/extensions/declare-and-call).
 
 ## amends
 

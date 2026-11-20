@@ -22,14 +22,16 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
 This page lists the exact surfaces of executable extensions for Axiom CLI
 0.149.1. For a walkthrough, see [Build an extension](/extensions/build). For
-every command flag, see [axiom extensions](/tooling/cli-extensions).
+every command flag, see [axiom extensions](/tooling/cli-extensions). CLI
+releases that accept extension SDK 0.1.5 add the surfaces marked "SDK 0.1.5"
+below; [Upgrade an existing project](/extensions/upgrade) lists every change.
 
 ## Versions and identities
 
 | Item | Value |
 | --- | --- |
 | Package payload | `axiom-extension/v2`; `axiom-extension/v3` for [selected interfaces](#selected-interfaces) |
-| Wire ABI | `axiom-extension-abi@1.0.0`, `AXE1` frames. Published Rust crate: 1.0.4. |
+| Wire ABI | `axiom-extension-abi@1.0.0`, `AXE1` frames. Published Rust crate: 1.0.4. SDK 0.1.5: a module with an async export declares `1.1.0` (effect rounds); every other module stays `1.0.0`. |
 | Rust SDK | `axiom-extension-sdk` on crates.io (uses `axiom-extension-sdk-derive` and `axiom-extension-abi`). Latest 0.1.4; CLI 0.149.1 builds with 0.1.0, 0.1.1 or 0.1.2. |
 | TypeScript SDK | `@axiomcore/extension-sdk` on npm. Latest 0.1.3; CLI 0.149.1 builds with 0.1.0, 0.1.1 or 0.1.2. |
 | Python SDK | `axiom-extension-sdk` on PyPI. Latest 0.1.3; CLI 0.149.1 builds with 0.1.0 or 0.1.1. |
@@ -44,7 +46,7 @@ the authority lock and the target host handoff.
 
 ## Commands
 
-`axiom extensions` has 19 subcommands. The full flag list is in
+`axiom extensions` has 19 subcommands (20 with `replay` in releases that accept extension SDK 0.1.5). The full flag list is in
 [axiom extensions](/tooling/cli-extensions).
 
 | Stage | Subcommands | Behavior |
@@ -63,7 +65,7 @@ that Acore imports.
 | --- | --- | --- |
 | `language` | Yes | `rust`, `typescript` or `python`. |
 | `source` | Yes | Entry file relative to `AxiomDeps.toml` (`.rs`, `.ts` or `.mts`, `.py`). Paths cannot escape the project. |
-| `exports` | Yes | Export names Acore may bind. |
+| `exports` | Yes (SDK 0.1.5: optional for Rust and Python) | Export names Acore may bind. With SDK 0.1.5, omit it to derive the list from the guest; see [Declare and call an extension](/extensions/declare-and-call#exports-come-from-the-extension). |
 | `targets` | Yes | Subset of the application `targets`. |
 | `interface` | No | A separate `.json` selection file, at most 256 KiB, that narrows input and output types. Adds no authority. |
 | `environment` | No | A [dependency environment](/extensions/dependencies) with the same language. |
@@ -71,6 +73,7 @@ that Acore imports.
 | `dependencies` | No | Other extension aliases this module depends on. |
 | `sharedSources` | No | Extra source files or directories compiled with the entry. Sharing source never shares instances or grants. |
 | `permissions` | No | Requested authority. Omitted means denied. |
+| `budgets` | No | SDK 0.1.5: `maxRounds` (1 to 16, default 1) and `deadlineMs` (1 to 60,000, default 1,000). See [Request budgets](/extensions/declare-and-call#request-budgets). |
 
 Lists are sorted and unique. Targets use the order `android`, `ios`, `web`,
 `server`. The top level uses `type = "frontend"` (or `backend`) or the legacy
@@ -91,6 +94,12 @@ An unknown runtime capability fails binding generation, for example
 `unsupported generated runtime permission`. A frontend export may request only
 one `ui-state` scope.
 
+SDK 0.1.5 adds a shorthand with the same meaning: `ui.<scope>` for
+`ui-state.<scope>`, `network.<operation> = { origin, methods }` and
+`secrets = [...]`, plus long-form `resources` entries. Network origins must be
+in canonical form in both spellings. See
+[Request permissions](/extensions/declare-and-call#request-permissions).
+
 <span id="authority-surface" />
 
 ## Authority model
@@ -108,7 +117,9 @@ it appears in the signed request, the application grant and the target policy.
 
 In CLI 0.149.1, `AxiomDeps.toml` can request the first three groups and the
 runtime list above. HTTPS origins, storage, files, secret use and queues have
-no `AxiomDeps.toml` field.
+no `AxiomDeps.toml` field. With SDK 0.1.5, HTTPS origin and method pairs and
+secret use have shorthand fields, and every resource port can be written as a
+`resources` entry.
 
 A target policy can narrow a request but cannot add access the package did not
 request. Frontend profiles deny backend-store, secret, file and private or
@@ -129,6 +140,12 @@ Source builds write these defaults into the package and the authority request.
 | | | `maxConcurrentStreams` | 4 |
 
 Limits must be finite and non-zero, and `maxHostCalls` must be non-zero.
+
+SDK 0.1.5 adds the authority budget `maxRounds` (default 1, at most 16): how
+many times one invocation may yield effects. `[extensions.<alias>.budgets]`
+requests it and `deadlineMs`. An ABI 1.1 invocation gets one fuel budget of
+the per-invocation fuel times `maxRounds + 1`; the deadline, host-call and byte
+budgets are not scaled. See [Async exports and effect rounds](/extensions/async-rounds#cost-and-limits).
 
 ## Generated files
 
@@ -205,6 +222,13 @@ outcomes and event batches. The host accepts one terminal response per request.
 Invalid transitions, use after shutdown, malformed frames, version mismatches,
 oversize messages and duplicate terminal replies fail closed.
 
+ABI 1.1 (SDK 0.1.5, modules with async exports) only appends messages. Every
+invocation is a sequence of rounds: the host starts the export with the input
+and a tape of earlier results, the guest yields the next plan or completes,
+and the host checks that each replayed plan matches the tape. The host offers
+1.1 only to a module that declares it, so a 1.0 module receives exactly the
+1.0 frames. See [Async exports and effect rounds](/extensions/async-rounds).
+
 Error codes: `InvalidInput`, `Denied`, `Conflict`, `Exhausted`, `Deadline`,
 `Cancelled`, `Host`, `Guest`, `Protocol`.
 
@@ -230,6 +254,11 @@ CPython.
 | Rust | `use axiom_extension_sdk::prelude::*;` with `#[extension]`, `#[export]` (or `#[export(name = "...")]`), `#[derive(AxiomType)]`, `TypedInvocation`, `ExtensionResponse` | Generated `crate::axiom_bindings` module: typed `ui`, `store` and `operations` views with only the granted fields. Deterministic `Cents`, `Percentage`, `TimestampMs`, `DurationMs`, `Id`, `Revision`. |
 | TypeScript | `defineExtension({ exports: { ... }, resume })` from `@axiomcore/extension-sdk` | `context.input`, `context.snapshot(resource).get(selector)`, `context.patch(resource).set/unset/increment(...).build()`, `context.effects(...)`, `context.complete(output, { patches, transactions, emitted_events })`. Branded selectors from `@axiomcore/extension-bindings`. |
 | Python | `@extension.export` from `axiom_extension_sdk` | The same `Context` shape: `input`, `snapshot`, `patch`, `effects`, `complete(output, patches=[...])`. Selector stubs from `axiom_bindings`. |
+
+SDK 0.1.5 adds typed tickets for reading results (`push` and `get` in every
+language), async exports, and `Cents` and `Percentage` in TypeScript and
+Python. See [Typed effects, tickets and numbers](/extensions/typed-effects)
+and [Async exports and effect rounds](/extensions/async-rounds).
 
 Generated selectors are named `ui_<scope>_<field>`. Supported scalar state
 fields carry `number`/`int`, `string`/`str` or `boolean`/`bool` types; other
@@ -475,7 +504,11 @@ export default defineSelectedExtension({
 Rust receives generated `Step_load`, `Calls_loaded` and `Outcomes_loaded`
 types. Python uses `Context_load` and `Resume_loaded` stubs with
 `@extension.export` and `@extension.resume`; the `resume` decorator is in the
-Python SDK stubs from 0.1.2.
+Python SDK stubs from 0.1.2. From SDK 0.1.5 the generated names follow the
+interface (`Draft` instead of `Type_Draft`, `load::Step`, `load::Calls`,
+`load.Context`, `load.Loaded`), and the prefixed names above remain as
+deprecated aliases; see
+[Generated names for selected interfaces](/extensions/typed-effects#generated-names-for-selected-interfaces).
 
 The host owns the invocation identity and continuation state. It checks every
 branch before dispatch and every outcome before the authored resume runs. The
@@ -500,7 +533,9 @@ other adapters reject before any I/O. Groups initially accept granted contract
 queries and share finite host-call and byte capacities. Cancelling a group
 drains started work before resume. A guest cannot expand root budgets or gain
 retry or scheduling authority, and ordinary effect plans stay sequential. CLI
-0.149.1 builds with Rust SDK 0.1.2 at most, so groups need a later CLI. For
+0.149.1 builds with Rust SDK 0.1.2 at most, so groups need a later CLI. SDK
+0.1.5 adds typed group tickets
+([Group tickets](/extensions/typed-effects#group-tickets)). For
 owned operations in Acore, see
 [Managed logic and concurrency](/acore-language/managed-language).
 
@@ -572,6 +607,12 @@ guest values. The published Rust SDK has no `schema` feature.
 | `AUI078` | Call input is not one typed literal or declared state or operation field | Pass a single literal or field |
 | `AUI079` | Export requests more than one `ui-state` scope | Bind one scope per frontend export |
 | `AUI080`, `AUI081` | State scope or selector not in the permission declaration or page state | Align permissions with the page's `state` |
+| `AUI082` | SDK 0.1.5: text after `use extension <alias>` on the same line, or a keyword alias | End the declaration after the alias |
+| `AUI083` | SDK 0.1.5: malformed `writes` clause | List at least one field; name each scope and field once |
+| `AUI084`, `AUI085`, `AUI086` | SDK 0.1.5: `writes` clause names an ungranted field (error), misses a granted write (warning), or sits on an action that calls no extension (error) | See [writes clauses](/extensions/declare-and-call#say-which-state-an-action-changes) |
+| `AUI087` | SDK 0.1.5: deprecated `use extension X from "a" export "e"` (warning) | Run the migration code action |
+| `AXIOM_PERMISSION_*` | SDK 0.1.5: invalid permission key, value, origin, method, wildcard or duplicate | See [permission diagnostics](/extensions/declare-and-call#permission-diagnostics) |
+| `AXIOM_EXTENSION_EXPORTS_UNDERIVED`, `_STALE`, `_LOCK_MISMATCH` | SDK 0.1.5: exports cannot be derived, or the recorded list no longer matches the guest | Add `exports` (TypeScript), or build again |
 
 ## Examples and evidence
 

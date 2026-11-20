@@ -383,6 +383,7 @@ dependencies = [
  "axiom-extension-kernel",
  "axiom-lib",
  "futures",
+ "rustix",
  "serde",
  "serde_json",
  "sha2 0.10.9",

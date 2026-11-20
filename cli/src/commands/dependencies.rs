@@ -211,7 +211,7 @@ pub async fn handle_check_with(deps: PathBuf, json: bool, against: Option<PathBu
     }
     let missing: Vec<&str> = requests.iter().flatten().filter(|request| request.missing_required).map(|request| request.alias.as_str()).collect();
     if !missing.is_empty() {
-        bail!("{}: AxiomDeps.toml lacks permission(s) a known effect needs: {}", axiom_lib::permission_request::PERMISSION_REQUEST_MISSING, missing.join(", "));
+        bail!("{}: AxiomDeps.toml lacks permission(s) a known effect needs or the code attempts without a permission (ungranted): {}", axiom_lib::permission_request::PERMISSION_REQUEST_MISSING, missing.join(", "));
     }
     Ok(())
 }

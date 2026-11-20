@@ -72,6 +72,38 @@ pub(crate) fn explain_canonical_change(before: &str, after: &str, after_path: &P
             notes.push(format!("extension `{alias}`: exports changed from [{}] to [{}]", listed.join(", "), now.join(", ")));
         }
     }
+    // w3-b: requested budgets (`maxRounds`, `deadlineMs`): an increase is a
+    // reviewed permission increase, as in the authority diff.
+    let (before_manifest, after_manifest) = (parse_axiom_deps_v2(before)?, parse_axiom_deps_v2(after)?);
+    for (alias, extension) in &after_manifest.extensions {
+        let Some(earlier) = before_manifest.extensions.get(alias) else { continue };
+        let (old, new) = (earlier.budgets, extension.budgets);
+        for (name, previous, current) in [
+            ("maxRounds", u64::from(old.max_rounds_or_default()), u64::from(new.max_rounds_or_default())),
+            ("deadlineMs", old.deadline_ms_or_default(), new.deadline_ms_or_default()),
+        ] {
+            if current > previous {
+                notes.push(format!("extension `{alias}`: budgets.{name} {previous} -> {current}: permission increase (needs review)"));
+            } else if current < previous {
+                notes.push(format!("extension `{alias}`: budgets.{name} {previous} -> {current}: reduced"));
+            }
+        }
+    }
+    // w3-c (X10d): each permission added or removed, so a generated request
+    // written with `axiom dependencies request --from-summary --write` is
+    // reviewed item by item here; an added permission is a permission
+    // increase that needs review, as in the authority lock diff.
+    for (alias, extension) in &after_manifest.extensions {
+        let Some(earlier) = before_manifest.extensions.get(alias) else { continue };
+        let lower = |permissions| axiom_lib::extension_binding::canonical_requested_authority(permissions).map(|values| values.into_iter().collect::<std::collections::BTreeSet<_>>());
+        let (old, new) = (lower(&earlier.permissions)?, lower(&extension.permissions)?);
+        for permission in new.difference(&old) {
+            notes.push(format!("extension `{alias}`: permission added: {}: permission increase (needs review)", axiom_lib::permission_request::permission_text(permission)));
+        }
+        for permission in old.difference(&new) {
+            notes.push(format!("extension `{alias}`: permission removed: {}: reduced", axiom_lib::permission_request::permission_text(permission)));
+        }
+    }
     if without_exports(before)? != without_exports(after)? {
         notes.push("other declarations changed as well (the canonical manifest differs beyond `exports`)".into());
     }
@@ -94,6 +126,14 @@ pub(crate) fn deprecation_summary(path: &Path, source: &str) -> Option<String> {
 }
 
 pub async fn handle_check(deps: PathBuf, json: bool, against: Option<PathBuf>) -> Result<()> {
+    handle_check_with(deps, json, against, None).await
+}
+
+/// `axiom dependencies check [--from-summary [--out <dir>]]`: with
+/// `from_summary` (the build output root), the X10d report of every
+/// extension is added (missing / unused / not derivable), and a missing
+/// permission fails the check (`AXIOM_PERMISSION_REQUEST_MISSING`).
+pub async fn handle_check_with(deps: PathBuf, json: bool, against: Option<PathBuf>, from_summary: Option<PathBuf>) -> Result<()> {
     let source =
         std::fs::read_to_string(&deps).with_context(|| format!("read {}", deps.display()))?;
     let diagnostics = diagnose_axiom_deps(&source);
@@ -109,6 +149,13 @@ pub async fn handle_check(deps: PathBuf, json: bool, against: Option<PathBuf>) -
         Some(path) => {
             let before = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
             Some((digest_hex(&canonical_axiom_deps_v2_bytes(&before)?), explain_canonical_change(&before, &source, &deps)?))
+        }
+        None => None,
+    };
+    let requests = match &from_summary {
+        Some(out) => {
+            let out = if out.is_absolute() { out.clone() } else { deps.parent().filter(|dir| !dir.as_os_str().is_empty()).map(|dir| dir.join(out)).unwrap_or_else(|| out.clone()) };
+            Some(super::dependencies_request::reports(&deps, None, &out)?)
         }
         None => None,
     };
@@ -130,6 +177,9 @@ pub async fn handle_check(deps: PathBuf, json: bool, against: Option<PathBuf>) -
         let shorthand = axiom_lib::deps_manifest::permission_shorthand_candidates(&source);
         if !shorthand.is_empty() {
             report["hints"] = serde_json::json!([{"code": axiom_lib::deps_manifest::PERMISSIONS_SHORTHAND_HINT, "extensions": shorthand}]);
+        }
+        if let Some(requests) = &requests {
+            report["extensions"] = serde_json::to_value(requests)?;
         }
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
@@ -155,6 +205,13 @@ pub async fn handle_check(deps: PathBuf, json: bool, against: Option<PathBuf>) -
             manifest.extensions.len(),
             manifest.dependency_environments.len(),
         );
+        for request in requests.iter().flatten() {
+            print!("{}", request.render());
+        }
+    }
+    let missing: Vec<&str> = requests.iter().flatten().filter(|request| request.missing_required).map(|request| request.alias.as_str()).collect();
+    if !missing.is_empty() {
+        bail!("{}: AxiomDeps.toml lacks permission(s) a known effect needs: {}", axiom_lib::permission_request::PERMISSION_REQUEST_MISSING, missing.join(", "));
     }
     Ok(())
 }
@@ -603,6 +660,40 @@ mod format_permissions_tests {
         assert!(notes.iter().any(|note| note.contains("beyond `exports`")), "{notes:?}");
     }
 
+    /// w3-b: raising `deadlineMs` (or `maxRounds`) is named as a permission
+    /// increase in the review; lowering it as a reduction.
+    #[test]
+    fn budget_increases_are_named_as_permission_increases() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("logic")).unwrap();
+        std::fs::write(dir.path().join("logic/pricing.rs"), "pub fn pricing() {}\n").unwrap();
+        let deps = dir.path().join("AxiomDeps.toml");
+        let base = "format = \"axiom-deps/v2\"\ntargets = [\"web\"]\n\n[extensions.pricing]\nlanguage = \"rust\"\nsource = \"logic/pricing.rs\"\nexports = [\"apply\"]\ntargets = [\"web\"]\n";
+        let longer = format!("{base}\n[extensions.pricing.budgets]\nmaxRounds = 4\ndeadlineMs = 10000\n");
+        let notes = explain_canonical_change(base, &longer, &deps).unwrap();
+        assert!(notes.iter().any(|n| n.contains("budgets.deadlineMs 1000 -> 10000: permission increase")), "{notes:?}");
+        assert!(notes.iter().any(|n| n.contains("budgets.maxRounds 1 -> 4: permission increase")), "{notes:?}");
+        let notes = explain_canonical_change(&longer, base, &deps).unwrap();
+        assert!(notes.iter().any(|n| n.contains("budgets.deadlineMs 10000 -> 1000: reduced")), "{notes:?}");
+    }
+
+    /// w3-c (X10d): the existing review names every permission a written
+    /// request adds (an increase that needs review) or removes.
+    #[test]
+    fn permission_changes_are_named_in_the_review() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("logic")).unwrap();
+        std::fs::write(dir.path().join("logic/pricing.rs"), "pub fn pricing() {}\n").unwrap();
+        let deps = dir.path().join("AxiomDeps.toml");
+        let base = "format = \"axiom-deps/v2\"\ntargets = [\"web\"]\n\n[extensions.pricing]\nlanguage = \"rust\"\nsource = \"logic/pricing.rs\"\nexports = [\"apply\"]\ntargets = [\"web\"]\n";
+        let before = format!("{base}\n[extensions.pricing.permissions.ui.cart]\nread = [\"subtotal\"]\nwrite = [\"note\"]\n");
+        let after = format!("{base}\n[extensions.pricing.permissions]\nsecrets = [\"payment\"]\n\n[extensions.pricing.permissions.ui.cart]\nread = [\"subtotal\"]\n");
+        let notes = explain_canonical_change(&before, &after, &deps).unwrap();
+        assert!(notes.iter().any(|n| n == "extension `pricing`: permission added: secret payment: permission increase (needs review)"), "{notes:?}");
+        assert!(notes.iter().any(|n| n == "extension `pricing`: permission removed: ui-state cart.note (write): reduced"), "{notes:?}");
+        assert!(!notes.iter().any(|n| n.contains("subtotal")), "{notes:?}");
+    }
+
     /// w1-p D7: `--permissions long|shorthand|preserve` reaches the formatter
     /// and both conversions round-trip through `--write` and `--check`.
     #[tokio::test]
@@ -649,7 +740,7 @@ fn digest_hex(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
-fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
+pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(parent)?;
     let file_name = path

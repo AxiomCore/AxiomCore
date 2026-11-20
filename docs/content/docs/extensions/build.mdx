@@ -331,6 +331,14 @@ The permission scope `cart` names the page's `state cart { ... }` group. If a
 page has no group with that name, the scope maps to the page's top-level
 states. A UI export may request only one state scope.
 
+<Callout type="info" title="With extension SDK 0.1.5">
+  CLI releases that accept SDK 0.1.5 add a shorter form: `use extension pricing`
+  makes every export callable as `pricing.<export>`, and an action can declare
+  the fields the call changes with `writes cart { discount_cents, total_cents }`.
+  The form above keeps working and is reported as deprecated (`AUI087`). See
+  [Declare and call an extension](/extensions/declare-and-call).
+</Callout>
+
 </Step>
 <Step>
 
@@ -501,6 +509,9 @@ crossings and can exceed the deadline or quota.
 
 ## Next steps
 
+- [Declare and call an extension](/extensions/declare-and-call) for the name-once form, `writes` clauses, the permission shorthand and budgets
+- [Async exports and effect rounds](/extensions/async-rounds) when an export needs several dependent host results
+- [Test and debug extensions](/extensions/testing) to replay a recorded invocation
 - [Extension reference](/extensions/reference) for fields, limits, errors and the ABI
 - [Extension dependencies](/extensions/dependencies) to add third-party packages
 - [axiom extensions](/tooling/cli-extensions) for every flag

@@ -469,6 +469,10 @@ pub enum InspectorAction {
         runtime: bool,
         #[arg(long)]
         changes: Option<PathBuf>,
+        /// X10b: include an ownership snapshot (`axiom extensions inspect
+        /// --ownership --json` output) in the signed payload
+        #[arg(long)]
+        ownership: Option<PathBuf>,
         #[arg(short, long)]
         output: PathBuf,
     },
@@ -1306,6 +1310,7 @@ pub async fn handle(action: &InspectorAction) -> Result<()> {
             key,
             runtime,
             changes,
+            ownership,
             output,
         } => {
             let evidence = load(path)?;
@@ -1315,10 +1320,21 @@ pub async fn handle(action: &InspectorAction) -> Result<()> {
                 None
             };
             let changes = changes.as_deref().map(read_change_report).transpose()?;
+            let ownership = ownership
+                .as_deref()
+                .map(|file| -> Result<axiom_lib::extension_ownership::OwnershipReport> {
+                    let report: axiom_lib::extension_ownership::OwnershipReport =
+                        serde_json::from_slice(&fs::read(file)?)
+                            .context("parse axiom-extension-ownership/v1 JSON")?;
+                    report.validate()?;
+                    Ok(report)
+                })
+                .transpose()?;
             let payload = InspectorExchangePayload {
                 evidence,
                 runtime,
                 changes,
+                ownership,
             };
             let signer = inspector_signing_key(key)?;
             let digest = InspectorExchange::signing_digest(&payload)?;
@@ -1365,6 +1381,12 @@ pub async fn handle(action: &InspectorAction) -> Result<()> {
                 write_canonical(
                     &output_dir.join("semantic-changes.jcs.json"),
                     &changes.canonical_bytes()?,
+                )?;
+            }
+            if let Some(ownership) = &envelope.payload.ownership {
+                write_canonical(
+                    &output_dir.join("extension-ownership.jcs.json"),
+                    &serde_jcs::to_vec(ownership)?,
                 )?;
             }
             println!("Verified and imported signed Inspector handoff");

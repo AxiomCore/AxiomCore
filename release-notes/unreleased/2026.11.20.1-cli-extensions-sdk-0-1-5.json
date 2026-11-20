@@ -1,0 +1,6 @@
+{
+  "component": "cli",
+  "type": "feature",
+  "summary": "Executable extensions accept extension SDK 0.1.5 (Rust, TypeScript, Python): use extension <alias> names an extension once and derives its exports, actions can declare writes clauses (AUI083 to AUI086), AxiomDeps.toml gains the ui./network./secrets permission shorthand and [extensions.<alias>.budgets] maxRounds and deadlineMs, typed tickets read host-call results, TypeScript and Python get Cents and Percentage, async exports run over effect rounds (extension ABI 1.1, opt in per module), axiom dependencies request --from-summary proposes permissions from static effect summaries, and axiom extensions replay, run --snapshot/--scenario/--record-tape test against dev replay tapes. Projects that change nothing keep building; old forms are deprecated, not removed.",
+  "migration": "Nothing is required. Rust source extensions get a new module hash once (location-independent builds); re-release and confirm with axiom extensions diff that authority did not change. Network origins must be written in canonical form (AXIOM_PERMISSION_INVALID_ORIGIN names the spelling to use), a Python package __init__.py must be listed in sharedSources (AXIOM_PYTHON_PACKAGE_INIT_UNLISTED), and --locked or --frozen refuse a stale export list in .axiom/AxiomDeps.lock. See the Upgrade an existing extension project page."
+}

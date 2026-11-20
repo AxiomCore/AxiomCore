@@ -18,15 +18,10 @@ String backendBaseUrl() {
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Overrides only the base URL; the generated config keeps the contract
+  // asset, its sha256 lock and any signature.
   final sdk = await AxiomSdk.create(
-    config: AxiomConfig(
-      contracts: {
-        '{{namespace}}': AxiomContractConfig(
-          baseUrl: backendBaseUrl(),
-          assetPath: 'assets/axiom/{{namespace}}.axiom',
-        ),
-      },
-    ),
+    baseUrlOverrides: {'{{namespace}}': backendBaseUrl()},
   );
   runApp(App(sdk: sdk));
 }

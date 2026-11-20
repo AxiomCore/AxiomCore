@@ -5,5 +5,7 @@ cd "$(dirname "$0")"
 AXIOM="${AXIOM:-axiom}"
 "$AXIOM" check main.acore
 "$AXIOM" build main.acore --out backend.axiom
-"$AXIOM" server deployment backend.axiom backend.server.json --output deployment.json
+# `server deployment` never overwrites; regenerate into a new file, then replace.
+"$AXIOM" server deployment backend.axiom backend.server.json --output deployment.json.new >/dev/null
+mv -f deployment.json.new deployment.json
 exec "$AXIOM" run main.acore --deployment deployment.json --port "${PORT:-{{port}}}"

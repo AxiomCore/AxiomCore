@@ -173,15 +173,17 @@ The page shows **Hello, Ada!**, and the Uvicorn log shows an `OPTIONS` and a
   know the 40-character limit unless you add it; add field rules to get Dart
   form validators too.
 - **CORS (web only).** Allow the app's origin, port included, and the headers
-  the SDK sends: `content-type`, `accept`, `traceparent`, `tracestate`,
-  `x-axiom-cache-mode`, plus `authorization` or your API key header if the API
-  uses them. The example allows `content-type`, `traceparent` and
-  `x-axiom-cache-mode` for `GET` from port 5175, which is enough for this
-  endpoint.
+  the SDK sends: `accept`, `content-type`, `x-axiom-request-id`,
+  `x-axiom-cache-mode`, `traceparent` and `tracestate`, plus `authorization` or
+  your API key header if the API uses them. A missing header makes the
+  preflight fail and the app shows no data. The example's FastAPI middleware allows `content-type`,
+  `traceparent` and `x-axiom-cache-mode` for `GET` from port 5175. If the
+  browser reports a CORS error, add `accept` and `tracestate`.
 - **Auth.** If your service checks a bearer token, pass it with
-  `sdk.runtime.setGlobalAuthToken(token)` or an auth provider; see
-  [Authentication](/sdks/flutter#authentication). Declare the auth requirement
-  in the contract so the runtime attaches the token.
+  `sdk.runtime.setGlobalAuthToken(token)`,
+  `sdk.runtime.setNamespaceAuthToken(namespace: 'greetings', token: token)`
+  or an auth provider. The SDK sends `Authorization: Bearer <token>`. See
+  [Authentication](/sdks/flutter#authentication).
 - The contract does not enforce anything on the server. Your service stays
   responsible for validation and authorization.
 

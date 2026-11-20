@@ -142,7 +142,8 @@ the same fixes in tutorial order.
 | iOS or macOS: pod install asks for a higher deployment target | The plugin needs iOS 13 and macOS 11 | Raise the target in the Podfile and in Xcode |
 | iOS or macOS: `AxiomRuntime checksum mismatch` | A cached or wrong runtime framework | Update to the current `axiom_flutter`, run `pod repo update` and `flutter clean`, and rebuild |
 | macOS: every call fails with a connection error | The sandbox blocks outgoing connections | Add `com.apple.security.network.client` to both entitlement files |
-| Web: every call fails with a network error, curl works | The page origin or a request header is not allowed by CORS | Run with a fixed `--web-port`, allow that origin, and allow `content-type`, `accept`, `traceparent`, `tracestate`, `x-axiom-cache-mode` and any auth header |
+| Web: every call fails with a network error, curl works | The page origin is not allowed by CORS | Run with a fixed `--web-port` and add that origin, port included, to `cors(origins: [...])` |
+| Web: the app shows no data and the preflight (`OPTIONS`) gets 403 | The `cors(...)` headers list misses a header the SDK sends on every call | Allow `accept`, `content-type`, `x-axiom-request-id`, `x-axiom-cache-mode`, `traceparent` and `tracestate`, plus `authorization` or your API key header when used |
 | Web: the runtime does not load with a Content Security Policy | WebAssembly compilation is blocked | Allow `script-src 'self' 'wasm-unsafe-eval'`, and build with `--no-web-resources-cdn` or allow `https://www.gstatic.com` |
 | Web: WebSocket upgrade refused with 403 | A browser cannot send `Authorization` on the handshake, or a global `cors(...)` policy (CLI 0.156.0) | Use a cookie session or another token transport, and see [Web](/sdks/flutter#web) |
 

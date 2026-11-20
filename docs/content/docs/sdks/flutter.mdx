@@ -42,11 +42,12 @@ Platform setup:
 - **Android:** set `minSdk = 24`, add `android.permission.INTERNET` to the main
   manifest, and allow cleartext HTTP to `10.0.2.2` in debug builds only if your
   development backend uses plain HTTP. 32-bit `x86` emulator images are not
-  supported. No R8 or ProGuard rules are needed. When you pass no `dbPath`, the
-  cache lives in the app's private support directory.
+  supported. No R8 or ProGuard rules are needed.
 - **iOS and macOS:** set the deployment target to iOS 13 or macOS 11 in the
   Podfile and in Xcode. macOS apps need `com.apple.security.network.client`
-  in both entitlement files. The plugin includes a privacy manifest. If the
+  in both entitlement files. For plain `http://` to a local backend on iOS,
+  add `NSAllowsLocalNetworking` under `NSAppTransportSecurity` in
+  `Info.plist`. The plugin includes a privacy manifest. If the
   runtime download or checksum check fails, pod preparation keeps the previous
   framework and stops the build.
 - **Web:** nothing to add to `web/index.html`. See [Web](#web) for CORS,
@@ -154,9 +155,10 @@ mismatch between the runtime library and the Dart package fails start-up with
 `AxiomVersionMismatch`; upgrade both together. `AxiomSdk.fromRuntime(runtime)`
 wraps a runtime you initialized yourself, for tests or custom start-up.
 
-Set `AxiomConfig.dbPath` to a directory for cached, recoverable data, for
-example under `path_provider`'s application support directory. The cache is
-not a credential store.
+The response cache needs storage. Without `AxiomConfig.dbPath`, the SDK
+stores it in the app's application support directory on Android, iOS and
+macOS, and in `localStorage` on the web. Set `dbPath` to choose another
+directory for cached, recoverable data. The cache is not a credential store.
 
 ## Queries
 
@@ -264,19 +266,32 @@ the last subscription of a stream cancels the request.
 ## Authentication
 
 Tokens are held in runtime memory only. Restore them from secure storage at
-start-up.
+start-up. The SDK sends the token as `Authorization: Bearer <token>`.
+
+Contracts built from an Acore backend carry no client auth metadata, so use a
+namespace token, the global token or an auth provider:
 
 | Scope | Call |
 | --- | --- |
-| One auth method | `sdk.tasks.axiom.setAuthToken(methodName, token)`, `clearAuthToken(methodName)` |
-| Every method of a contract | `sdk.tasks.axiom.setNamespaceToken(token)`, `clearNamespaceToken()` |
+| Every call of a contract | `sdk.runtime.setNamespaceAuthToken(namespace: 'tasks', token: token)`, or `sdk.tasks.axiom.setNamespaceToken(token)` |
 | Every contract | `sdk.runtime.setGlobalAuthToken(token)`, `clearGlobalAuthToken()` |
 | Refresh on demand | `sdk.runtime.setAuthProvider((namespace, methodName) async => token)` |
+| One auth method | `sdk.tasks.axiom.setAuthToken(methodName, token)`, `clearAuthToken(methodName)`. Only for contracts that declare auth methods |
+
+```dart title="Dart excerpt: bearer token for every call"
+sdk.runtime.setGlobalAuthToken(accessToken);
+
+// Or refresh before calls that need a token:
+sdk.runtime.setAuthProvider((namespace, methodName) async {
+  return await myAuth.freshAccessToken(); // null means "no token"
+});
+```
 
 A per-method token wins over a namespace token, which wins over the global
 token. The auth provider is asked for a token when a call needs one; return
 `null` when the user is signed out. The generated `TasksModule.authMethods`
-lists the method names a contract declares.
+lists the auth methods a contract declares, and is empty for contracts built
+from an Acore backend.
 
 Contracts with a cookie session use the runtime's cookie jar on native
 platforms; cookie values never reach Dart. On the web the browser owns
@@ -404,10 +419,13 @@ run sandboxed AxiomCore extensions. A non-zero runtime status throws
   your origin and every backend URL.
 - **CORS.** Calls are ordinary `fetch` requests from your page's origin.
   Allow every origin you serve from, port included (pass `--web-port` to
-  `flutter run`). Allow the headers the SDK may send: `content-type`,
-  `accept`, `authorization`, your API key header, `traceparent`, `tracestate`,
-  `x-axiom-cache-mode` and any header you pass in `AxiomCallOptions.headers`.
-  A rejected origin shows up as a network error, not an HTTP status.
+  `flutter run`). The SDK sends `accept`, `traceparent` and `tracestate` on
+  every call, so allow at least `accept`, `content-type`,
+  `x-axiom-request-id`, `x-axiom-cache-mode`, `traceparent` and `tracestate`,
+  plus `authorization`, your API key header and any header you pass in
+  `AxiomCallOptions.headers`. A missing header makes the browser's preflight
+  fail with 403 and the app shows no data. A rejected origin shows up as a
+  network error, not an HTTP status.
 - Cookie sessions need `credentials: true` and an explicit origin.
 - Browsers cannot set `Authorization` on a WebSocket handshake, so a WebSocket
   endpoint behind a bearer guard cannot be reached from the web. With CLI
@@ -415,6 +433,13 @@ run sandboxed AxiomCore extensions. A non-zero runtime status throws
   upgrades.
 - The response cache uses the page's `localStorage` (per origin, shared by
   tabs) and falls back to memory when it is unavailable. `dbPath` is ignored.
+
+## Performance
+
+Each call crosses from Dart into the native or wasm runtime. For measured call
+overhead, startup time and app size, with the method and devices, see the
+[benchmarks in the SDK README](https://github.com/AxiomCore/axiom-sdk#benchmarks).
+Measure release builds of your own app before you rely on a number.
 
 ## Platform limits
 

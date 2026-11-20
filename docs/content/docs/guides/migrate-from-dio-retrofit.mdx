@@ -154,7 +154,7 @@ request when the widget goes away. See [Queries](/sdks/flutter#queries).
 | `Future<T>` | `AxiomQuery<T>`; `.stream.unwrap()` gives a `Future<T>` |
 | `@JsonSerializable` models and `build_runner` | Generated `models.dart`, rewritten by `axiom pull` |
 | `BaseOptions(baseUrl:)` | `AxiomSdk.create(baseUrlOverrides:)`, `AxiomEnvironment` or `--dart-define=AXIOM_BASE_URL` |
-| Auth interceptor | `setGlobalAuthToken`, `setNamespaceToken`, `setAuthProvider`, or [axiom_flutter_auth](/sdks/flutter-auth) |
+| Auth interceptor | `setGlobalAuthToken`, `setNamespaceAuthToken`, `setAuthProvider` (sent as `Authorization: Bearer`), or [axiom_flutter_auth](/sdks/flutter-auth) |
 | Retry interceptor | `retry(...)` on the endpoint |
 | `dio_cache_interceptor` | `cache(strategy:, ttl:)` on the endpoint, `invalidates` and `cacheIdentity`, and the [cache controls](/sdks/flutter#cache-strategies-and-control) |
 | `Options(receiveTimeout:, headers:)` | `AxiomCallOptions(timeout:, headers:)` |

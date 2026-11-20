@@ -94,7 +94,11 @@ endpoint createTalk(method: POST, path: "/talks") {
 ```
 
 The `cors(...)` line matters only for the web build. It allows the origin that
-the Flutter web app uses in step 7.
+the Flutter web app uses in step 7, and the request headers the SDK sends:
+`accept`, `content-type`, `x-axiom-request-id` and `x-axiom-cache-mode`, plus
+`traceparent` and `tracestate`, which go out on every call. If one of them is
+missing, the browser's preflight request gets a 403 and the app shows no
+data.
 
 ## 2. Check, build and run the backend
 
@@ -204,7 +208,9 @@ The SDK ships the runtime for `arm64-v8a`, `armeabi-v7a` and `x86_64`. A
 **iOS and macOS.** The plugin needs iOS 13 and macOS 11. CocoaPods downloads
 the runtime framework and checks its SHA-256 the first time you build.
 
-1. In `ios/Podfile`, set `platform :ios, '13.0'`.
+1. In `ios/Podfile`, set `platform :ios, '13.0'`. To reach the local backend
+   over plain `http://`, add `NSAllowsLocalNetworking` (set to `true`) under
+   `NSAppTransportSecurity` in `ios/Runner/Info.plist`.
 2. In `macos/Podfile`, set `platform :osx, '11.0'`, and in Xcode set the
    macOS deployment target of the Runner target to 11.0.
 3. Add the outgoing network entitlement to both
@@ -399,6 +405,7 @@ the commands from step 2 so that it serves the new contract.
 | iOS or macOS: pod install asks for a higher deployment target | Set iOS 13 or macOS 11 in the Podfile and in Xcode (step 5). |
 | macOS: every call fails with a connection error | Add `com.apple.security.network.client` to both entitlement files. |
 | Web: every call fails with a network error, but curl works | The page origin is not in the backend's `cors(...)` list. Run with `--web-port 5000` or add your origin and rebuild the backend. |
+| Web: the browser console shows a preflight (`OPTIONS`) answered with 403 | The `cors(...)` headers list misses a header the SDK sends. Allow `accept`, `content-type`, `x-axiom-request-id`, `x-axiom-cache-mode`, `traceparent` and `tracestate`, then rebuild and restart the backend. |
 | `StateError` or an `AxiomInitResult` error at start-up | A contract asset is missing. Run `axiom pull` again and check that `assets/axiom/talks.axiom` is listed in `pubspec.yaml`. |
 
 More cases are in [Troubleshooting](/reference/troubleshooting#flutter).

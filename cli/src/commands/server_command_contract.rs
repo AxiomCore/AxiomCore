@@ -49,6 +49,15 @@ pub struct CommonInput {
     /// Redacted diagnostics; never raw credentials or request/response bodies.
     #[arg(short, long)]
     pub debug: bool,
+    /// Development only (X10b): publish the redacted ownership view of the
+    /// sandboxed extensions to the Inspector running for this project
+    /// (`<project>/.axiom/inspector/live-connection.json`, owner-only, never
+    /// an ancestor). Needs a CLI built with `--features
+    /// dev-inspect-ownership`; refused with --environment, --watch, cloud
+    /// mocks and a non-loopback --host. `axiom server run`/`run-bundle`
+    /// never publish.
+    #[arg(long)]
+    pub inspect_ownership: bool,
 }
 
 #[derive(Clone, Debug, Args)]
@@ -119,6 +128,9 @@ pub struct ResolvedInput {
     pub port: u16,
     pub watch: bool,
     pub debug: bool,
+    /// w3-d2: the project directory whose Inspector receives the ownership
+    /// view, when `--inspect-ownership` was given (the input's directory).
+    pub inspect_ownership: Option<PathBuf>,
 }
 
 impl ServeInput {
@@ -223,6 +235,16 @@ fn resolve(args: &CommonInput, profile: ProfileIntent, cwd: &Path) -> Result<Res
         matches!(profile, ProfileIntent::Real)
             || (args.deployment.is_none() && args.bindings.is_none() && args.delivery.is_none()),
         "mock mode cannot reuse real deployment or implementation bindings"
+    );
+    // w3-d2: development ownership inspection is an explicit operator choice
+    // for a local development session only.
+    ensure!(
+        !args.inspect_ownership
+            || (args.environment.is_none()
+                && !args.watch
+                && !cloud
+                && args.host.is_loopback()),
+        "--inspect-ownership is development-only: it cannot be combined with --environment, --watch, cloud mocks or a non-loopback --host"
     );
     let root = cwd.canonicalize().context("resolve invocation directory")?;
     let file = |path: &Path| -> Result<PathBuf> {
@@ -334,6 +356,14 @@ fn resolve(args: &CommonInput, profile: ProfileIntent, cwd: &Path) -> Result<Res
             None
         },
     )?;
+    let inspect_ownership = if args.inspect_ownership {
+        Some(
+            base.map(Path::to_path_buf)
+                .context("--inspect-ownership needs a local project input")?,
+        )
+    } else {
+        None
+    };
     Ok(ResolvedInput {
         environment: args.environment.clone(),
         profile,
@@ -347,6 +377,7 @@ fn resolve(args: &CommonInput, profile: ProfileIntent, cwd: &Path) -> Result<Res
         port: args.port,
         watch: args.watch,
         debug: args.debug,
+        inspect_ownership,
     })
 }
 
@@ -382,6 +413,47 @@ mod tests {
             std::fs::write(directory.path().join(name), "{}").unwrap();
         }
         directory
+    }
+    /// w3-d2 Fix 1: `--inspect-ownership` is an explicit choice for local
+    /// development sessions only; the project directory is the input's.
+    #[test]
+    fn inspect_ownership_is_explicit_and_development_only() {
+        let dir = project();
+        let root = dir.path().canonicalize().unwrap();
+        for argv in [
+            vec!["axiom", "serve", "--inspect-ownership"],
+            vec!["axiom", "serve", "contract.axiom", "--inspect-ownership"],
+            vec!["axiom", "serve", "--mock", "--inspect-ownership"],
+            vec!["axiom", "mock", "--inspect-ownership"],
+        ] {
+            let resolved = resolve(&argv, dir.path()).unwrap();
+            assert_eq!(resolved.inspect_ownership.as_deref(), Some(root.as_path()), "{argv:?}");
+        }
+        // Without the flag nothing is inspected, whatever files exist.
+        std::fs::create_dir_all(dir.path().join(".axiom/inspector")).unwrap();
+        std::fs::write(dir.path().join(".axiom/inspector/live-connection.json"), "{}").unwrap();
+        for argv in [vec!["axiom", "serve"], vec!["axiom", "mock"], vec!["axiom", "serve", "--mock"]] {
+            assert!(resolve(&argv, dir.path()).unwrap().inspect_ownership.is_none());
+        }
+        // Refused combinations.
+        for argv in [
+            vec!["axiom", "serve", "--inspect-ownership", "--environment", "prod"],
+            vec!["axiom", "serve", "--inspect-ownership", "--watch"],
+            vec!["axiom", "serve", "--inspect-ownership", "--host", "0.0.0.0"],
+            vec!["axiom", "serve", "--inspect-ownership", "--host", "10.1.2.3"],
+            vec!["axiom", "mock", "--inspect-ownership", "--cloud"],
+        ] {
+            let error = resolve(&argv, dir.path()).unwrap_err().to_string();
+            assert!(error.contains("--inspect-ownership is development-only") || error.contains("cloud"), "{argv:?}: {error}");
+        }
+        // `axiom server run` / `run-bundle` / `database dev` have no such flag.
+        for argv in [
+            vec!["axiom", "server", "run", "--inspect-ownership"],
+            vec!["axiom", "server", "run-bundle", "release", "--inspect-ownership"],
+        ] {
+            let error = crate::Cli::try_parse_from(&argv).err().expect("refused");
+            assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument, "{argv:?}");
+        }
     }
     #[test]
     fn command_matrix_resolves_modes_without_starting_any_service() {

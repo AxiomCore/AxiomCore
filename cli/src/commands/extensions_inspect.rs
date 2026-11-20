@@ -15,11 +15,11 @@
 //! refused the session token; 5 no host has published ownership data, or the
 //! `--extension` alias is unknown.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use axiom_lib::extension_ownership::*;
 use axiom_lib::live_inspection::InspectorConnection;
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     fmt::Write as _,
     path::{Path, PathBuf},
     time::Duration,
@@ -82,26 +82,22 @@ pub async fn handle_ownership(options: OwnershipOptions) -> i32 {
         return EXIT_USAGE;
     }
     if let Some(cursor) = &query.cursor {
-        if parse_cursor(cursor).is_err() {
+        if parse_walk_cursor(cursor).is_err() {
             eprintln!("axiom extensions inspect: malformed --cursor");
             return EXIT_USAGE;
         }
     }
-    let connection = match options
-        .connection
-        .clone()
-        .map(Ok)
-        .unwrap_or_else(|| find_connection(Path::new(".")))
-    {
-        Ok(path) => match read_connection(&path) {
-            Ok(connection) => connection,
-            Err(error) => {
-                eprintln!("axiom extensions inspect: {error:#}");
-                return EXIT_UNAVAILABLE;
-            }
-        },
+    let connection = match options.connection.as_deref() {
+        Some(path) => axiom_lib::live_inspection::read_connection_file(path),
+        None => discover_connection(Path::new(".")),
+    };
+    let connection = match connection {
+        Ok(connection) => connection,
         Err(error) => {
-            eprintln!("axiom extensions inspect: {error:#}");
+            eprintln!(
+                "axiom extensions inspect: {}",
+                terminal_safe(&format!("{error:#}"), MAX_MESSAGE_CHARS)
+            );
             return EXIT_UNAVAILABLE;
         }
     };
@@ -124,7 +120,11 @@ pub async fn handle_ownership(options: OwnershipOptions) -> i32 {
                 }
             }
             Err(failure) => {
-                eprintln!("axiom extensions inspect: {}", failure.message);
+                // Server-supplied text: escaped and bounded (w3-d2 Fix 3).
+                eprintln!(
+                    "axiom extensions inspect: {}",
+                    terminal_safe(&failure.message, MAX_MESSAGE_CHARS)
+                );
                 if !options.watch || failure.code != EXIT_NO_DATA {
                     return failure.code;
                 }
@@ -141,14 +141,18 @@ pub async fn handle_ownership(options: OwnershipOptions) -> i32 {
     }
 }
 
-/// `.axiom/inspector/live-connection.json` in `start` or an ancestor.
-pub fn find_connection(start: &Path) -> Result<PathBuf> {
+/// The Inspector connection for the workspace containing `start`: the
+/// nearest directory (from `start` upwards) that has a
+/// `.axiom/inspector/live-connection.json`. Each candidate is checked by the
+/// one validation in `axiom_lib::live_inspection::find_project_connection`
+/// (no symlink, owner-only file, strictly loopback endpoint); an
+/// untrustworthy candidate is an error, never skipped.
+pub fn discover_connection(start: &Path) -> Result<InspectorConnection> {
     let start = std::fs::canonicalize(start).unwrap_or_else(|_| start.to_path_buf());
     let mut directory = start.as_path();
     loop {
-        let candidate = directory.join(".axiom/inspector/live-connection.json");
-        if candidate.is_file() {
-            return Ok(candidate);
+        if let Some(connection) = axiom_lib::live_inspection::find_project_connection(directory)? {
+            return Ok(connection);
         }
         match directory.parent() {
             Some(parent) if parent != directory => directory = parent,
@@ -157,18 +161,55 @@ pub fn find_connection(start: &Path) -> Result<PathBuf> {
     }
 }
 
-fn read_connection(path: &Path) -> Result<InspectorConnection> {
-    let connection: InspectorConnection = serde_json::from_slice(
-        &std::fs::read(path).with_context(|| format!("read {}", path.display()))?,
-    )
-    .with_context(|| format!("parse {}", path.display()))?;
-    connection.validate()?;
-    let loopback = connection.endpoint.starts_with("http://127.0.0.1:")
-        || connection.endpoint.starts_with("http://[::1]:");
-    if !loopback {
-        bail!("the Inspector connection is not a loopback endpoint");
+/// Longest server-supplied message printed (characters, after escaping).
+pub const MAX_MESSAGE_CHARS: usize = 512;
+/// Largest Inspector response body read: a report page is under 1 MiB.
+pub const MAX_REPORT_BYTES: usize = 2 * 1024 * 1024;
+/// Largest Inspector error body read.
+pub const MAX_ERROR_BYTES: usize = 64 * 1024;
+
+/// Text from outside the process (Inspector bodies, endpoints, paths), made
+/// safe for a terminal: every control character (C0, DEL, C1), and the
+/// bidirectional and zero-width formatting characters, are written as
+/// `\u{..}` escapes; backslashes are doubled; the result is cut to `max`
+/// characters (with `…`). No escape sequence can reach the terminal.
+pub fn terminal_safe(text: &str, max: usize) -> String {
+    let mut out = String::new();
+    let mut count = 0usize;
+    for c in text.chars() {
+        let piece = match c {
+            '\\' => "\\\\".to_string(),
+            c if c.is_control()
+                || matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2069}' | '\u{FEFF}' | '\u{061C}') =>
+            {
+                format!("\\u{{{:x}}}", c as u32)
+            }
+            c => c.to_string(),
+        };
+        let width = piece.chars().count();
+        if count + width > max {
+            out.push('…');
+            return out;
+        }
+        count += width;
+        out.push_str(&piece);
     }
-    Ok(connection)
+    out
+}
+
+/// Read at most `max` bytes of a response body; `None` if it is larger.
+async fn bounded_body(mut response: reqwest::Response, max: usize) -> Result<Option<Vec<u8>>, ()> {
+    if response.content_length().is_some_and(|length| length > max as u64) {
+        return Ok(None);
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|_| ())? {
+        if body.len() + chunk.len() > max {
+            return Ok(None);
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(Some(body))
 }
 
 /// The query string for `GET /api/v1/live/ownership`.
@@ -205,15 +246,14 @@ async fn fetch(
     connection: &InspectorConnection,
     query: &OwnershipQuery,
 ) -> Result<OwnershipReport, InspectFailure> {
-    let url = format!(
-        "{}/api/v1/live/ownership?{}",
-        connection.endpoint,
-        query_string(query)
-    );
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
+    // The parsed loopback address, never the file's string (w3-d2 Fix 2).
+    let endpoint = connection
+        .loopback_endpoint()
+        .map_err(|e| InspectFailure::new(EXIT_UNAVAILABLE, e.to_string()))?;
+    let url = endpoint.url(&format!("/api/v1/live/ownership?{}", query_string(query)));
+    let client = axiom_lib::live_inspection::inspector_client_builder(Duration::from_secs(10))
         .build()
-        .map_err(|e| InspectFailure::new(EXIT_UNAVAILABLE, format!("HTTP client: {e}")))?;
+        .map_err(|_| InspectFailure::new(EXIT_UNAVAILABLE, "HTTP client unavailable"))?;
     let response = client
         .get(&url)
         .header("x-axiom-inspector-token", &connection.token)
@@ -222,19 +262,27 @@ async fn fetch(
         .map_err(|_| {
             InspectFailure::new(
                 EXIT_UNAVAILABLE,
-                format!("the Inspector at {} is not reachable", connection.endpoint),
+                format!("the Inspector at {} is not reachable", endpoint.origin()),
             )
         })?;
     let status = response.status().as_u16();
-    let body = response
-        .bytes()
+    let limit = if status == 200 {
+        MAX_REPORT_BYTES
+    } else {
+        MAX_ERROR_BYTES
+    };
+    let body = bounded_body(response, limit)
         .await
-        .map_err(|_| InspectFailure::new(EXIT_UNAVAILABLE, "the Inspector response was cut off"))?;
+        .map_err(|_| InspectFailure::new(EXIT_UNAVAILABLE, "the Inspector response was cut off"))?
+        .ok_or_else(|| {
+            InspectFailure::new(EXIT_UNAVAILABLE, "the Inspector response exceeds its bound")
+        })?;
     let message = || {
-        serde_json::from_slice::<serde_json::Value>(&body)
+        let text = serde_json::from_slice::<serde_json::Value>(&body)
             .ok()
             .and_then(|v| v.get("error").and_then(|e| e.as_str()).map(str::to_string))
-            .unwrap_or_else(|| format!("HTTP {status}"))
+            .unwrap_or_else(|| format!("HTTP {status}"));
+        terminal_safe(&text, MAX_MESSAGE_CHARS)
     };
     match status {
         200 => {
@@ -338,10 +386,22 @@ pub fn render_tree(report: &OwnershipReport) -> String {
         );
         let listed: HashMap<u64, &ScopeView> = ext.scopes.iter().map(|s| (s.id, s)).collect();
         let mut children: BTreeMap<Option<u64>, Vec<u64>> = BTreeMap::new();
+        let first = ext.scopes.first().map_or(0, |scope| scope.id);
+        let mut orphans: Vec<u64> = Vec::new();
         for scope in &ext.scopes {
-            // A scope whose parent is on another page is shown at the top.
-            let parent = scope.parent.filter(|p| listed.contains_key(p));
-            children.entry(parent).or_default().push(scope.id);
+            match scope.parent {
+                // An older, listed parent: shown under it.
+                Some(p) if p < scope.id && listed.contains_key(&p) => {
+                    children.entry(Some(p)).or_default().push(scope.id)
+                }
+                // A parent on an earlier page (before this page's first
+                // scope), or the root: shown at the top.
+                Some(p) if p < first => children.entry(None).or_default().push(scope.id),
+                None => children.entry(None).or_default().push(scope.id),
+                // w3-d2 Fix 6: a parent that is missing from its range or not
+                // older: listed under "orphaned" below, never dropped.
+                Some(_) => orphans.push(scope.id),
+            }
         }
         fn walk(
             out: &mut String,
@@ -349,7 +409,11 @@ pub fn render_tree(report: &OwnershipReport) -> String {
             depth: usize,
             listed: &HashMap<u64, &ScopeView>,
             children: &BTreeMap<Option<u64>, Vec<u64>>,
+            shown: &mut HashSet<u64>,
         ) {
+            if !shown.insert(id) {
+                return;
+            }
             let scope = listed[&id];
             let mut line = format!(
                 "{}#{} {}",
@@ -428,13 +492,29 @@ pub fn render_tree(report: &OwnershipReport) -> String {
             out.push('\n');
             if let Some(kids) = children.get(&Some(id)) {
                 for kid in kids {
-                    walk(out, *kid, depth + 1, listed, children);
+                    walk(out, *kid, depth + 1, listed, children, shown);
                 }
             }
         }
+        let mut shown = HashSet::new();
         if let Some(roots) = children.get(&None) {
             for root in roots {
-                walk(&mut out, *root, 0, &listed, &children);
+                walk(&mut out, *root, 0, &listed, &children, &mut shown);
+            }
+        }
+        // w3-d2 Fix 6: never omit a scope silently. A validated report has
+        // none, but a scope unreachable from the roots is listed here.
+        let unreached: Vec<u64> = ext
+            .scopes
+            .iter()
+            .map(|scope| scope.id)
+            .filter(|id| !shown.contains(id) && !orphans.contains(id))
+            .collect();
+        orphans.extend(unreached);
+        if !orphans.is_empty() {
+            let _ = writeln!(out, "  orphaned (parent missing or not older):");
+            for id in orphans {
+                walk(&mut out, id, 1, &listed, &children, &mut shown);
             }
         }
         if !ext.recently_closed.is_empty() {
@@ -460,7 +540,11 @@ pub fn render_tree(report: &OwnershipReport) -> String {
         }
     }
     if let Some(cursor) = &report.page.next_cursor {
-        let _ = writeln!(out, "\nmore: --cursor {cursor}");
+        let _ = writeln!(
+            out,
+            "\nmore: --cursor {}",
+            terminal_safe(cursor, MAX_MESSAGE_CHARS)
+        );
     }
     out
 }
@@ -570,6 +654,7 @@ mod tests {
         let publication = |host: &str| OwnershipPublication {
             format: OWNERSHIP_PUBLICATION_FORMAT.into(),
             host_id: host.into(),
+            serving_mode: None,
             report: fixture(),
         };
         store.publish(publication("dev-a"), 1_000).unwrap();
@@ -620,20 +705,120 @@ mod tests {
     }
 
     #[test]
-    fn connection_is_found_upwards() {
+    fn connection_is_found_upwards_and_checked() {
+        use std::os::unix::fs::PermissionsExt;
         let root = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(root.path().join(".axiom/inspector")).unwrap();
-        std::fs::create_dir_all(root.path().join("a/b")).unwrap();
-        std::fs::write(
-            root.path().join(".axiom/inspector/live-connection.json"),
-            "{}",
+        std::fs::set_permissions(
+            root.path().join(".axiom/inspector"),
+            std::fs::Permissions::from_mode(0o700),
         )
         .unwrap();
-        let found = find_connection(&root.path().join("a/b")).unwrap();
-        assert!(found.ends_with(".axiom/inspector/live-connection.json"));
+        std::fs::create_dir_all(root.path().join("a/b")).unwrap();
+        let path = root.path().join(".axiom/inspector/live-connection.json");
+        std::fs::write(&path, "{}").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
         assert!(
-            read_connection(&found).is_err(),
-            "an invalid connection is refused"
+            discover_connection(&root.path().join("a/b")).is_err(),
+            "an invalid connection is refused, not skipped"
         );
+        let valid = serde_json::json!({"format": axiom_lib::live_inspection::LIVE_CONNECTION_FORMAT, "endpoint": "http://127.0.0.1:4242", "token": "0123456789abcdef0123456789abcdef", "graphRevision": "0".repeat(64), "processId": 1});
+        std::fs::write(&path, valid.to_string()).unwrap();
+        let found = discover_connection(&root.path().join("a/b")).unwrap();
+        assert_eq!(found.loopback_endpoint().unwrap().address().port(), 4242);
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(discover_connection(&root.path().join("a/b")).is_err());
+    }
+
+    /// w3-d2 Fix 6: a scope unreachable from a root is shown, never dropped.
+    #[test]
+    fn unreachable_scopes_are_listed_as_orphaned() {
+        let mut report = fixture();
+        let ids: Vec<u64> = report.extensions[0].scopes.iter().map(|s| s.id).collect();
+        let last = report.extensions[0].scopes.len() - 1;
+        let self_parent = report.extensions[0].scopes[last].id;
+        report.extensions[0].scopes[last].parent = Some(self_parent);
+        assert!(report.validate().is_err(), "the contract refuses it");
+        let text = render_tree(&report);
+        assert!(text.contains("orphaned (parent missing or not older):"), "{text}");
+        for id in ids {
+            assert!(text.contains(&format!("#{id} ")), "#{id} missing:\n{text}");
+        }
+        // A valid report has no orphaned heading (the golden is unchanged).
+        assert!(!render_tree(&fixture()).contains("orphaned"));
+    }
+
+    /// w3-d2 Fix 3: a hostile "Inspector" on the loopback port cannot put
+    /// control sequences on the terminal, flood it, or redirect the token.
+    #[tokio::test]
+    async fn hostile_inspector_replies_are_escaped_bounded_and_not_followed() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let replies: Vec<Vec<u8>> = vec![
+            {
+                let body = r#"{"error":"\u001b]0;PWNED-TITLE\u0007\u001b[2J\u001b[31mred\r\nforged line"}"#;
+                format!("HTTP/1.1 401 Unauthorized\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len()).into_bytes()
+            },
+            {
+                let body = format!("{{\"error\":\"{}\"}}", "\\u001b[31m".repeat(200_000));
+                format!("HTTP/1.1 500 Internal Server Error\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len()).into_bytes()
+            },
+            format!("HTTP/1.1 302 Found\r\nlocation: http://{address}/stolen\r\ncontent-length: 0\r\nconnection: close\r\n\r\n").into_bytes(),
+        ];
+        let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let seen = std::sync::Arc::clone(&requests);
+        tokio::spawn(async move {
+            for reply in replies.into_iter().chain(std::iter::repeat(b"HTTP/1.1 500 x\r\ncontent-length: 0\r\n\r\n".to_vec())) {
+                let Ok((mut stream, _)) = listener.accept().await else { return };
+                let mut buffer = vec![0u8; 8192];
+                let n = stream.read(&mut buffer).await.unwrap_or(0);
+                seen.lock().unwrap().push(String::from_utf8_lossy(&buffer[..n]).lines().next().unwrap_or("").to_string());
+                let _ = stream.write_all(&reply).await;
+                let _ = stream.shutdown().await;
+            }
+        });
+        let connection = InspectorConnection {
+            format: axiom_lib::live_inspection::LIVE_CONNECTION_FORMAT.into(),
+            endpoint: format!("http://{address}"),
+            token: "0123456789abcdef0123456789abcdef".into(),
+            graph_revision: "0".repeat(64),
+            process_id: 1,
+        };
+        let query = OwnershipQuery::default();
+        let unauthorized = fetch(&connection, &query).await.unwrap_err();
+        assert_eq!(unauthorized.code, EXIT_UNAUTHENTICATED);
+        let printed = terminal_safe(&unauthorized.message, MAX_MESSAGE_CHARS);
+        assert!(!unauthorized.message.chars().any(char::is_control), "{:?}", unauthorized.message);
+        assert!(!printed.chars().any(char::is_control));
+        assert!(printed.contains("PWNED-TITLE"));
+        let flood = fetch(&connection, &query).await.unwrap_err();
+        assert_eq!(flood.code, EXIT_UNAVAILABLE);
+        assert!(flood.message.chars().count() <= MAX_MESSAGE_CHARS + 1, "{}", flood.message.len());
+        let redirect = fetch(&connection, &query).await.unwrap_err();
+        assert_eq!(redirect.code, EXIT_UNAVAILABLE);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let requests = requests.lock().unwrap().clone();
+        assert_eq!(requests.len(), 3, "{requests:?}");
+        assert!(requests.iter().all(|line| line.starts_with("GET /api/v1/live/ownership?")), "{requests:?}");
+    }
+
+    #[test]
+    fn server_text_is_escaped_and_bounded() {
+        let hostile = "\u{1b}]0;PWNED-TITLE\u{7}\u{1b}[2J\u{1b}[31mred\u{9b}31m\r\nfake line\u{202e}txt.exe\u{0}";
+        let safe = terminal_safe(hostile, MAX_MESSAGE_CHARS);
+        assert!(!safe.chars().any(|c| c.is_control()), "{safe:?}");
+        assert!(!safe.contains('\u{202e}'));
+        assert!(safe.contains("\\u{1b}]0;PWNED-TITLE\\u{7}"), "{safe}");
+        assert_eq!(terminal_safe("plain text", 100), "plain text");
+        assert_eq!(terminal_safe("a\\b", 100), "a\\\\b");
+        let long = "x".repeat(10_000);
+        let cut = terminal_safe(&long, MAX_MESSAGE_CHARS);
+        assert_eq!(cut.chars().count(), MAX_MESSAGE_CHARS + 1);
+        assert!(cut.ends_with('…'));
+        // An escape is never split by the bound.
+        let cut = terminal_safe(&"\u{1b}".repeat(100), 10);
+        assert!(!cut.chars().any(|c| c.is_control()));
+        assert!(cut.chars().count() <= 11);
     }
 }

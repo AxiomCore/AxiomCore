@@ -3,6 +3,14 @@ name = "axiom-cli"
 version = "0.156.0"
 edition = "2021"
 
+[features]
+default = []
+# w3-d2 (X10b): compile the development ownership publisher into a developer
+# build of the CLI (`axiom serve|mock --inspect-ownership`). Never a default:
+# a release bundle packages this executable as `bin/axiom` and runs it with
+# `server run-bundle`, so production builds must not contain the publisher.
+dev-inspect-ownership = ["axiom-server/dev-inspect-ownership"]
+
 [dependencies]
 axiom-lib = { path = "../../axiom-lib" }
 # `local-auth`: `axiom auth emulate` installs the axiom-auth stream locally (embeds system/axiom-auth).

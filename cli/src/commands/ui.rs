@@ -3936,16 +3936,17 @@ fn development_runtime_config_value(
         .filter(|value| !value.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
     loop {
-        let candidate = directory.join(".axiom/inspector/live-connection.json");
-        if candidate.is_file() {
-            let connection: axiom_lib::live_inspection::InspectorConnection =
-                serde_json::from_slice(&std::fs::read(&candidate)?)
-                    .with_context(|| format!("parse {}", candidate.display()))?;
-            connection.validate()?;
+        // w3-d2: the one connection check (no symlink, owner-only file,
+        // strictly loopback endpoint); the endpoint embedded is rebuilt from
+        // the parsed loopback address.
+        if let Some(connection) =
+            axiom_lib::live_inspection::find_project_connection(directory)?
+        {
+            let endpoint = connection.loopback_endpoint()?.origin();
             config["inspector"] = serde_json::json!({
                 "format": "axiom-inspector-target/v1",
                 "enabled": true,
-                "endpoint": connection.endpoint,
+                "endpoint": endpoint,
                 "token": connection.token,
                 "graphRevision": connection.graph_revision,
                 "target": target.as_str(),

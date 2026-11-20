@@ -169,10 +169,6 @@ pub(super) async fn serve(
         .route("/api/v1/live/state", post(api_live_state))
         .route("/api/v1/live/causal", post(api_live_causal))
         .route(
-            "/api/v1/live/ownership",
-            get(api_live_ownership).post(api_publish_ownership),
-        )
-        .route(
             "/api/v1/live/commands",
             get(api_live_commands).post(api_live_command),
         )
@@ -183,16 +179,27 @@ pub(super) async fn serve(
             .route("/assets/inspector.css", get(styles))
             .route("/assets/inspector.js", get(script));
     }
+    // Pre-existing routes keep their permissive CORS (live UI targets run at
+    // other development origins); w3-d2 lists them as a follow-up.
+    let router = router.layer(
+        CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods(Any)
+            .allow_headers(Any),
+    );
+    // w3-d2 Fix 7: the X10b ownership route only answers the Inspector's own
+    // origin (CORS), a loopback Host header and the constant-time token.
+    let ownership = Router::new()
+        .route(
+            "/api/v1/live/ownership",
+            get(api_live_ownership).post(api_publish_ownership),
+        )
+        .layer(ownership_cors(&origin)?);
     let router = router
+        .merge(ownership)
         // Runtime audit batches can be larger than a question. Keep a hard
         // process boundary while preserving the existing ingestion workflow.
         .layer(DefaultBodyLimit::max(1024 * 1024))
-        .layer(
-            CorsLayer::new()
-                .allow_origin(Any)
-                .allow_methods(Any)
-                .allow_headers(Any),
-        )
         .with_state(state.clone());
     tokio::spawn(watch_workspace(state));
     let connection_path = workspace.join(".axiom/inspector/live-connection.json");
@@ -238,15 +245,32 @@ pub(super) async fn serve(
 
 fn write_connection(path: &Path, connection: &InspectorConnection) -> Result<()> {
     connection.validate()?;
+    // w3-d2: readers accept only an owner-only file in a directory nobody
+    // else can write (axiom_lib::live_inspection::read_connection_file), so
+    // the directory is made 0700 and the file is created 0600 (no window at
+    // umask permissions).
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
+        }
     }
     let temporary = path.with_extension("json.tmp");
-    fs::write(&temporary, serde_jcs::to_vec(connection)?)?;
+    let _ = fs::remove_file(&temporary);
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&temporary, fs::Permissions::from_mode(0o600))?;
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    {
+        use std::io::Write;
+        let mut file = options.open(&temporary)?;
+        file.write_all(&serde_jcs::to_vec(connection)?)?;
+        file.sync_all()?;
     }
     fs::rename(&temporary, path)?;
     Ok(())
@@ -932,7 +956,10 @@ async fn api_live_ownership(
     Query(query): Query<OwnershipApiQuery>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
-    if !authorized(&state, &headers, query.token.as_deref()) {
+    if !authorized(&state, &headers, query.token.as_deref())
+        || !origin_allowed(&state, &headers)
+        || !host_allowed(&state, &headers)
+    {
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({"error":"invalid Inspector session token"})),
@@ -968,7 +995,10 @@ async fn api_publish_ownership(
     headers: HeaderMap,
     Json(publication): Json<axiom_lib::extension_ownership::OwnershipPublication>,
 ) -> impl IntoResponse {
-    if !authorized(&state, &headers, query.token.as_deref()) || !origin_allowed(&state, &headers) {
+    if !authorized(&state, &headers, query.token.as_deref())
+        || !origin_allowed(&state, &headers)
+        || !host_allowed(&state, &headers)
+    {
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({"error":"invalid Inspector session token"})),
@@ -1339,11 +1369,52 @@ fn resolve_live_semantic_id(evidence: &ApplicationEvidence, incoming: &str) -> O
 }
 
 fn authorized(state: &ServerState, headers: &HeaderMap, query: Option<&str>) -> bool {
-    query == Some(state.token.as_ref())
-        || headers
-            .get("x-axiom-inspector-token")
-            .and_then(|value| value.to_str().ok())
-            == Some(state.token.as_ref())
+    // w3-d2 Fix 7: constant-time comparison (of SHA-256 digests, so the
+    // length is not revealed either); used by every token-gated route.
+    let header = headers
+        .get("x-axiom-inspector-token")
+        .and_then(|value| value.to_str().ok());
+    token_matches(&state.token, query) | token_matches(&state.token, header)
+}
+
+fn token_matches(expected: &str, offered: Option<&str>) -> bool {
+    let Some(offered) = offered else {
+        return false;
+    };
+    let a = Sha256::digest(expected.as_bytes());
+    let b = Sha256::digest(offered.as_bytes());
+    a.iter().zip(b.iter()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+/// w3-d2 Fix 7: the `Host` header must name this listener on a loopback
+/// name (`127.0.0.1`, `localhost` or `[::1]` with the listener's port), so a
+/// DNS-rebinding page cannot reach the route through another name.
+fn host_allowed(state: &ServerState, headers: &HeaderMap) -> bool {
+    host_header_allowed(
+        &state.origin,
+        headers.get(header::HOST).and_then(|value| value.to_str().ok()),
+    )
+}
+
+fn host_header_allowed(origin: &str, host: Option<&str>) -> bool {
+    let Some(port) = origin.rsplit(':').next() else {
+        return false;
+    };
+    host.is_some_and(|host| {
+        ["127.0.0.1", "localhost", "[::1]"]
+            .iter()
+            .any(|name| host == format!("{name}:{port}"))
+    })
+}
+
+fn ownership_cors(origin: &str) -> Result<CorsLayer> {
+    Ok(CorsLayer::new()
+        .allow_origin(axum::http::HeaderValue::from_str(origin)?)
+        .allow_methods([axum::http::Method::GET, axum::http::Method::POST])
+        .allow_headers([
+            header::CONTENT_TYPE,
+            axum::http::HeaderName::from_static("x-axiom-inspector-token"),
+        ]))
 }
 
 fn origin_allowed(state: &ServerState, headers: &HeaderMap) -> bool {
@@ -1392,6 +1463,69 @@ mod tests {
         let two = random_token();
         assert_eq!(one.len(), 64);
         assert_ne!(one, two);
+    }
+
+    #[test]
+    fn tokens_compare_in_constant_time_on_digests() {
+        let token = random_token();
+        assert!(token_matches(&token, Some(&token)));
+        assert!(!token_matches(&token, None));
+        assert!(!token_matches(&token, Some("")));
+        assert!(!token_matches(&token, Some(&token[..63])));
+        assert!(!token_matches(&token, Some(&token.to_uppercase())));
+        assert!(!token_matches(&token, Some(&format!("{token}x"))));
+    }
+
+    #[test]
+    fn the_ownership_route_checks_the_host_header() {
+        let origin = "http://127.0.0.1:4321";
+        for good in ["127.0.0.1:4321", "localhost:4321", "[::1]:4321"] {
+            assert!(host_header_allowed(origin, Some(good)), "{good}");
+        }
+        for bad in [
+            None,
+            Some("evil.example"),
+            Some("evil.example:4321"),
+            Some("127.0.0.1"),
+            Some("127.0.0.1:4322"),
+            Some("127.0.0.1.nip.io:4321"),
+            Some("localhost.:4321"),
+            Some("127.0.0.1:4321@evil"),
+        ] {
+            assert!(!host_header_allowed(origin, bad), "{bad:?}");
+        }
+        assert!(ownership_cors(origin).is_ok());
+    }
+
+    #[test]
+    fn the_connection_is_written_private_and_read_back_by_the_one_check() {
+        use std::os::unix::fs::PermissionsExt;
+        let workspace = tempfile::tempdir().unwrap();
+        let path = workspace.path().join(".axiom/inspector/live-connection.json");
+        let connection = InspectorConnection {
+            format: LIVE_CONNECTION_FORMAT.into(),
+            endpoint: "http://127.0.0.1:4321".into(),
+            token: random_token(),
+            graph_revision: "0".repeat(64),
+            process_id: 1,
+        };
+        write_connection(&path, &connection).unwrap();
+        let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&path), 0o600);
+        assert_eq!(mode(path.parent().unwrap()), 0o700);
+        let read = axiom_lib::live_inspection::find_project_connection(workspace.path())
+            .unwrap()
+            .unwrap();
+        assert_eq!(read, connection);
+        // Rewriting (the watcher does) keeps it private.
+        write_connection(&path, &connection).unwrap();
+        assert_eq!(mode(&path), 0o600);
+        // A userinfo endpoint is never written.
+        let bad = InspectorConnection {
+            endpoint: "http://127.0.0.1:1@10.0.0.1:80".into(),
+            ..connection
+        };
+        assert!(write_connection(&path, &bad).is_err());
     }
 
     #[test]

@@ -28,6 +28,7 @@ pub mod editor_workflows;
 pub mod extension_replay;
 pub mod extensions;
 pub mod extensions_inspect;
+pub mod ownership_session;
 pub mod init;
 pub mod inspector;
 mod inspector_dashboard;

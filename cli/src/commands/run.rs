@@ -124,6 +124,7 @@ pub async fn handle_backend(
                     host: host.parse().context("mock host must be an IP address")?,
                     port,
                     debug,
+                    inspect_ownership: false,
                 },
             })
             .await
@@ -147,6 +148,7 @@ pub async fn handle_backend(
                         .context("backend --host must be an IP address")?,
                     port,
                     debug,
+                    inspect_ownership: false,
                 },
             })
             .await

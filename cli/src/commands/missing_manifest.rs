@@ -52,7 +52,7 @@ pub fn message(source: &Path) -> String {
     format!(
         "{} looks like a backend contract, but no AxiomDeps.toml was found in {dir} or any parent directory.\n\
 Without it the compiler cannot select the backend language and fails with a parse error.\n\n\
-Create {dir}/AxiomDeps.toml with:\n\n{}\n\
+Create {dir}/AxiomDeps.toml with:\n\n{}\n\n\
 then run the command again.",
         source.display(),
         EXAMPLE

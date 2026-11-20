@@ -2097,10 +2097,12 @@ fn is_local_command(command: &Commands) -> bool {
             contract,
             contract_config: None,
             ..
-        } => source
-            .as_deref()
-            .or(contract.as_deref())
-            .is_some_and(commands::pull::is_local_artifact_source),
+        } => match source.as_deref().or(contract.as_deref()) {
+            Some(source) => commands::pull::is_local_artifact_source(source),
+            // A re-pull (`axiom pull`, `--fix`, `--watch`) is local when every
+            // source in AxiomDeps.toml is a local file.
+            None => commands::pull::manifest_sources_are_local(Path::new("AxiomDeps.toml")),
+        },
         Commands::Install { package, module } => {
             package == "lsp-server"
                 || (!module && commands::app::is_axiom_application(Path::new(package)))

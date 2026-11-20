@@ -363,6 +363,20 @@ mod tests {
                 "{error}"
             );
         }
+        // w3-bc3 (w3-vbc2 finding 5): a tape whose application or extension
+        // was blanked is refused, also with the flag (as the SDKs do).
+        for (blank_app, blank_ext) in [(true, true), (true, false), (false, true)] {
+            let mut blank = tape.clone();
+            if blank_app {
+                blank.identity.application = String::new();
+            }
+            if blank_ext {
+                blank.identity.extension = String::new();
+            }
+            let m = identity_mismatches(&blank, &same, Some("1.1"));
+            assert!(m.iter().all(|m| m.rule == IdentityRule::MustMatch) && !m.is_empty(), "{m:?}");
+            assert!(check_replay_identity(&m, true).is_err());
+        }
     }
 
     #[test]

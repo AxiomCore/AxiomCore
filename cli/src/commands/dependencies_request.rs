@@ -4,10 +4,15 @@
 //! The permission request is generated from the extension's static effect
 //! summary, and only from a summary this host computed while building the
 //! extension from source (`effect_summary::trusted_summary` with
-//! `SummaryTrust::BuiltFromSourceHere`). Anything else (a build that fails,
-//! an `axiom-build` without the X9a analysers, a package without a summary,
+//! `SummaryTrust::BuiltFromSourceHere`). Anything else (an `axiom-build`
+//! without the X9a analysers, a package without a summary, a legacy package,
 //! a TypeScript summary while TypeScript is not authoritative) is "not
-//! derivable": the current permissions are kept unchanged. A proposal never
+//! derivable": the current permissions are kept unchanged and the exit code
+//! is zero with a note. An extension that does not build from source is
+//! different (w3-bc3, w3-vbc2 finding 11): its permissions were not checked
+//! at all, so both commands fail with `AXIOM_PERMISSION_REQUEST_BUILD_FAILED`
+//! and the build's message (a removed Rust permission makes the Rust build
+//! fail, which must not look like a green check). A proposal never
 //! changes the grant or the lock; `--write` edits `AxiomDeps.toml` only, and
 //! an increase then needs the existing permission-increase review.
 
@@ -21,7 +26,7 @@ use axiom_lib::effect_summary::{trusted_summary, EffectSummary, SummaryTrust, Tr
 use axiom_lib::package::{decode_axiom_package, DecodedAxiomPackage, ExtensionPackagePayload, PackageContents, PackageTarget};
 use axiom_lib::permission_request::{
     permission_request_report, render_permissions_table, rewrite_extension_permissions,
-    PermissionRequestReport, PERMISSION_REQUEST_MISSING,
+    PermissionRequestReport, PERMISSION_REQUEST_BUILD_FAILED, PERMISSION_REQUEST_MISSING,
 };
 use sha2::{Digest, Sha256};
 
@@ -48,9 +53,18 @@ impl From<RequestFormatArg> for PermissionStyle {
     }
 }
 
+/// Why a local summary is not trusted, beyond what the summary carries.
+pub(crate) enum LocalNote {
+    /// Not derivable (no analysers, legacy package, ...): permissions kept,
+    /// exit zero.
+    Untrusted(String),
+    /// The extension does not build from source: an error.
+    BuildFailed(String),
+}
+
 /// The summary of `alias` that this host may rely on, and a note when it is
 /// not trusted for a reason the summary itself cannot carry (the build).
-pub(crate) fn local_trusted_summary(deps: &Path, alias: &str, out: &Path) -> (TrustedSummary, Option<String>) {
+pub(crate) fn local_trusted_summary(deps: &Path, alias: &str, out: &Path) -> (TrustedSummary, Option<LocalNote>) {
     let manifest = std::fs::read_to_string(deps).ok().and_then(|source| parse_axiom_deps_v2(&source).ok());
     let extension = manifest.as_ref().and_then(|manifest| manifest.extensions.get(alias));
     let language = extension.map(|extension| extension.language.clone()).unwrap_or_default();
@@ -64,7 +78,7 @@ pub(crate) fn local_trusted_summary(deps: &Path, alias: &str, out: &Path) -> (Tr
             .unwrap_or_default();
     }
     let untrusted = |exports: &[String], language: &str, why: String| {
-        (trusted_summary(None, &"0".repeat(64), language, exports, &SummaryTrust::PublisherClaim), Some(why))
+        (trusted_summary(None, &"0".repeat(64), language, exports, &SummaryTrust::PublisherClaim), Some(LocalNote::Untrusted(why)))
     };
     let target = extension.and_then(|extension| extension.targets.first().copied()).unwrap_or(PackageTarget::Web);
     let build = match build_source_extension(&SourceBuildOptions {
@@ -75,7 +89,12 @@ pub(crate) fn local_trusted_summary(deps: &Path, alias: &str, out: &Path) -> (Tr
         clean: false,
     }) {
         Ok(build) => build,
-        Err(error) => return untrusted(&declared, &language, format!("not built here from source: {error:#}")),
+        Err(error) => {
+            return (
+                trusted_summary(None, &"0".repeat(64), &language, &declared, &SummaryTrust::PublisherClaim),
+                Some(LocalNote::BuildFailed(format!("{error:#}"))),
+            )
+        }
     };
     let executable = match std::fs::read(&build.package)
         .context("read the built package")
@@ -113,7 +132,7 @@ pub(crate) fn local_trusted_summary(deps: &Path, alias: &str, out: &Path) -> (Tr
     };
     (
         trusted_summary(executable.effect_summary.as_ref(), &executable.interface_sha256, &executable.sdk.language, &exports, &trust),
-        note,
+        note.map(LocalNote::Untrusted),
     )
 }
 
@@ -149,9 +168,17 @@ pub(crate) fn reports(deps: &Path, alias: Option<&str>, out: &Path) -> Result<Ve
         let extension = &manifest.extensions[&alias];
         let (summary, note) = local_trusted_summary(deps, &alias, out);
         let mut report = permission_request_report(&alias, &summary, &extension.permissions, &extension.budgets, &site_prefix(deps, &extension.source, &summary))?;
-        if let (Some(note), false) = (note, report.trusted) {
-            report.trust_note = axiom_lib::effect_summary::printable(&note);
-            report.proposal.trust_note = report.trust_note.clone();
+        match note {
+            Some(LocalNote::Untrusted(note)) if !report.trusted => {
+                report.trust_note = axiom_lib::effect_summary::printable(&note);
+                report.proposal.trust_note = report.trust_note.clone();
+            }
+            Some(LocalNote::BuildFailed(error)) => {
+                report.trust_note = "the extension does not build from source here".into();
+                report.proposal.trust_note = report.trust_note.clone();
+                report.build_error = axiom_lib::effect_summary::printable(&error);
+            }
+            _ => {}
         }
         out_reports.push(report);
     }
@@ -231,10 +258,28 @@ pub async fn handle_request(
         .filter(|report| if write { !report.unsatisfiable.is_empty() } else { report.missing_required })
         .map(|report| report.alias.as_str())
         .collect();
+    let broken: Vec<&str> = reports.iter().filter(|report| !report.build_error.is_empty()).map(|report| report.alias.as_str()).collect();
+    if !broken.is_empty() {
+        bail!("{}", build_failed_message(&reports));
+    }
     if !failing.is_empty() {
         bail!("{PERMISSION_REQUEST_MISSING}: AxiomDeps.toml lacks permission(s) a known effect needs or the code attempts without a permission (ungranted): {}", failing.join(", "));
     }
     Ok(())
+}
+
+/// The error of `request` and `check --from-summary` when an extension does
+/// not build: every failing alias with the build's message.
+pub(crate) fn build_failed_message(reports: &[PermissionRequestReport]) -> String {
+    let failures: Vec<String> = reports
+        .iter()
+        .filter(|report| !report.build_error.is_empty())
+        .map(|report| format!("`{}`: {}", report.alias, report.build_error))
+        .collect();
+    format!(
+        "{PERMISSION_REQUEST_BUILD_FAILED}: the extension does not build from source, so its permissions could not be checked against its effect summary: {}",
+        failures.join("; ")
+    )
 }
 
 #[cfg(test)]
@@ -253,11 +298,12 @@ mod tests {
         deps
     }
 
-    /// Without a summary built here (this box cannot build the Rust guest,
-    /// or the build has no analysers), nothing is derivable and the
-    /// manifest is kept exactly; `--write` is then a no-op.
+    /// w3-bc3 (w3-vbc2 finding 11): an extension that does not build from
+    /// source (this one is not a valid extension) was not checked at all:
+    /// `request` and `check --from-summary` fail with the build's message,
+    /// and the manifest is kept exactly (`--write` changes nothing).
     #[tokio::test]
-    async fn without_a_local_summary_the_request_keeps_the_manifest() {
+    async fn an_extension_that_does_not_build_fails_the_request_and_the_check() {
         let dir = tempfile::tempdir().unwrap();
         let deps = project(dir.path());
         let before = std::fs::read(&deps).unwrap();
@@ -266,11 +312,15 @@ mod tests {
         assert_eq!(reports.len(), 1);
         let report = &reports[0];
         assert!(!report.trusted);
-        assert!(!report.trust_note.is_empty());
+        assert!(!report.build_error.is_empty(), "{report:?}");
+        assert!(report.render().contains(PERMISSION_REQUEST_BUILD_FAILED), "{}", report.render());
         assert!(report.diff.increase.is_empty() && report.diff.decrease.is_empty());
-        assert!(!report.missing_required);
-        handle_request(deps.clone(), Some("pricing".into()), true, true, RequestFormatArg::Long, true, out).await.unwrap();
+        let error = handle_request(deps.clone(), Some("pricing".into()), true, true, RequestFormatArg::Long, true, out.clone()).await.unwrap_err();
+        assert!(error.to_string().contains(PERMISSION_REQUEST_BUILD_FAILED), "{error:#}");
+        assert!(error.to_string().contains(&report.build_error), "the build's message: {error:#}");
         assert_eq!(std::fs::read(&deps).unwrap(), before, "--write without a trusted summary changes nothing");
+        let error = super::super::dependencies::handle_check_with(deps.clone(), true, None, Some(out)).await.unwrap_err();
+        assert!(error.to_string().contains(PERMISSION_REQUEST_BUILD_FAILED), "{error:#}");
     }
 
     #[tokio::test]

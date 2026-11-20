@@ -130,11 +130,15 @@ axiom extensions run pricing --export apply_discount --input 12000 --snapshot ca
 ```
 
 The run prints the same report as before and writes one tape per invocation,
-named `<sequence>-<extension>-<export>.axtape.json`:
+named `<sequence>-<random>-<extension>-<export>.axtape.json`:
 
 ```text title="tapes/"
-000001-local_pricing-apply_discount.axtape.json
+000001-3f9a1c0e5b7d2a64-local_pricing-apply_discount.axtape.json
 ```
+
+The whole name identifies a tape and is never reused. The sequence only
+orders one run's tapes: two runs recording into the same directory at the
+same time can repeat a sequence number, so do not rely on it being unique.
 
 ### Recording is for development only
 
@@ -156,14 +160,22 @@ never an invocation error.
   carries only the granted secret name.
 - Host context: capability scope, principal, roles, session data, trace IDs.
 - Request IDs, audit IDs, wall-clock deadlines and paths of your machine.
+- Credentials and identity context the host supplies. An invocation that
+  received a network reply or error, secure random bytes, or the
+  authentication or session context writes **no tape**
+  (`AXIOM_EXTENSION_REPLAY_TAPE_SENSITIVE`). There is no option to redact
+  such values instead: no redaction can find every copy a guest makes of
+  them. To record such an extension, give it a fake host whose replies are
+  test data.
 
-Some results carry host data: network replies, secure random bytes, and the
-authentication and session context. By default an invocation that received
-one of them writes **no tape** (`AXIOM_EXTENSION_REPLAY_TAPE_SENSITIVE`). A host
-can choose to redact instead: every such value, and any copy of it elsewhere
-in the tape, becomes `"[redacted]"`, and the tape is marked not replayable. A
-guest that transforms a sensitive value before copying it could still leak
-the transformed text into a redacted tape, which is why the default refuses.
+### What a tape does contain
+
+A tape is a development artifact and contains application data by design:
+the input, the snapshots, the plans, and the replies of contract, state,
+store, storage, file and queue calls, recorded exactly. If a development
+host answers a contract call with the caller's identity (a "current user"
+contract, for example), that value is on the tape. Every tape says this in
+its `header.notice`. Keep tapes local and treat them like the data they hold.
 
 Tape files are created with mode `0600` in a directory with mode `0700`, and
 are limited to 32 MiB. The same invocation always produces the same bytes. A
@@ -174,7 +186,7 @@ gives a guest no authority; replay runs under the current build's authority.
 ## Replay a tape against the current build
 
 ```bash title="Terminal"
-axiom extensions replay tapes/000001-local_pricing-apply_discount.axtape.json
+axiom extensions replay tapes/000001-3f9a1c0e5b7d2a64-local_pricing-apply_discount.axtape.json
 ```
 
 ```json title="Output"
@@ -233,7 +245,7 @@ changed budget can legitimately change the outcome.
 ### Turn a tape into a scenario
 
 ```bash title="Terminal"
-axiom extensions replay tapes/000001-local_pricing-apply_discount.axtape.json --to-scenario scenarios/replay.json
+axiom extensions replay tapes/000001-3f9a1c0e5b7d2a64-local_pricing-apply_discount.axtape.json --to-scenario scenarios/replay.json
 axiom extensions run pricing --scenario scenarios/replay.json
 ```
 
@@ -246,7 +258,9 @@ The scenario embeds the sealed tape. `axiom extensions run --scenario` checks
 its digest and runs it tape-backed, exactly like `replay`, and fails with
 `AXIOM_EXTENSION_REPLAY_DIFFERS` when the recorded outcome is not reproduced.
 The scenario's `input` is a readable view; the run uses the tape's exact
-input. A redacted tape cannot become a scenario. Commit such scenarios to keep
+input. A tape that says `"replayable": false` (written by an older dev
+recorder that redacted values) cannot be replayed or become a scenario.
+Commit such scenarios to keep
 a recorded behavior as a regression test.
 
 ### Replay in a language test

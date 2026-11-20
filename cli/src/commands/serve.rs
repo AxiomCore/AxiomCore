@@ -50,6 +50,7 @@ pub async fn handle(input: ServeInput) -> Result<()> {
                         ensure!(resolved.deployment.is_none() && resolved.bindings.is_none() && resolved.delivery.is_none(), "external services cannot consume ActionHost deployment/bindings without a private server plan; configure their application adapter explicitly");
                         ensure!(resolved.environment.is_none(),"AXSECRET_UNSUPPORTED_TARGET: external Python/Go adapters need a qualified protected runtime integration");
                         let backend = backend.context("no executable server plan or declared Python/Go backend; real serving never starts a mock or retrieves cloud mock data. Declare action implementations or use `axiom run <source.acore> --mode mock` explicitly")?;
+                        ensure!(resolved.inspect_ownership.is_none(), "--inspect-ownership inspects sandboxed extensions of an Axiom server plan; external Python/Go services have none");
                         return Ok(Prepared::External { source: path, backend, listen, debug: resolved.debug });
                     }
                     temporary = Some(directory);
@@ -64,12 +65,12 @@ pub async fn handle(input: ServeInput) -> Result<()> {
                 Some(Arc::new(tokio::runtime::Handle::current().block_on(super::secrets::runtime(secret_root.as_deref().context("runtime profile requires a project root")?,environment,&private_plan))?))
             }else{None};
             let host = load_host_with_resolver(&contract, &plan, &deployment, resolved.bindings.as_deref(), resolved.delivery.as_deref(), secrets.clone())?;
-            Ok(Prepared::Host { host, listen, debug: resolved.debug, _artifacts: temporary })
+            Ok(Prepared::Host { host, listen, debug: resolved.debug, inspect_ownership: resolved.inspect_ownership, _artifacts: temporary })
         }).await.context("real server preparation task failed")??;
         match prepared {
-            Prepared::Host { host, listen, debug, _artifacts } => {
+            Prepared::Host { host, listen, debug, inspect_ownership, _artifacts } => {
                 let _artifacts = _artifacts;
-                axiom_server::development::real_session(host, listen, debug).run(cancellation).await?;
+                super::ownership_session::session(host, listen, debug, inspect_ownership.as_deref())?.run(cancellation).await?;
             }
             Prepared::External { source, backend, listen, debug } => {
                 axiom_server::development::PreparedSession::new(axiom_lib::backend::ServingMode::Real, Box::new(ExternalRunner { source, backend, listen, debug })).run(cancellation).await?;
@@ -106,6 +107,7 @@ enum Prepared {
         host: Arc<ActionHost>,
         listen: SocketAddr,
         debug: bool,
+        inspect_ownership: Option<std::path::PathBuf>,
         _artifacts: Option<tempfile::TempDir>,
     },
     External {

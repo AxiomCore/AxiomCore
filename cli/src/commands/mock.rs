@@ -30,6 +30,7 @@ pub async fn handle_resolved(resolved: ResolvedInput) -> Result<()> {
         axiom_server::development::shutdown_signal().await;
         token.cancel();
     });
+    let inspect_ownership=resolved.inspect_ownership.clone();
     let result=async {
         if resolved.watch { return super::mock_development::supervise(resolved,cancellation).await; }
         let prepared=if matches!(resolved.input,PreparationInput::Cloud) {
@@ -42,9 +43,10 @@ pub async fn handle_resolved(resolved: ResolvedInput) -> Result<()> {
         match prepared {
             Prepared::Server{host,_artifacts}=>{
                 let _artifacts=_artifacts;
-                axiom_server::development::real_session(host,listen,debug).run(cancellation).await?;
+                super::ownership_session::session(host,listen,debug,inspect_ownership.as_deref())?.run(cancellation).await?;
             },
             Prepared::Contract(config)=>{
+                ensure!(inspect_ownership.is_none(),"--inspect-ownership needs a server plan with sandboxed extensions; contract mocks have none");
                 // Non-loopback contract mocks protect data/docs/reset with an
                 // isolated key. Loopback is the explicit legacy development profile.
                 let owned=tempfile::Builder::new().prefix("axiom-contract-mock-").tempdir()?;

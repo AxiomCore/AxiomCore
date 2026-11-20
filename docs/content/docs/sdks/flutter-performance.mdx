@@ -1,0 +1,126 @@
+---
+title: Flutter performance
+description: How a call flows through the AxiomCore runtime in a Flutter app, response validation and its default, the cache layers, background decoding, and what costs time compared with a bare HTTP request.
+pageType: concept
+---
+
+<StatusNote status="alpha" title="axiom_flutter 0.150.1">
+  Timings on this page come from the SDK's own measurements on a Linux test
+  machine. Measure release builds of your app on your target devices.
+</StatusNote>
+
+A call from a generated Dart client goes through the AxiomCore runtime before
+and after the network. The runtime owns retries, auth, the cache, cancellation
+and validation for that call, so it adds some work to every request. This page
+explains where that time goes and which settings change it. Measured numbers
+are on [Flutter benchmarks](/sdks/flutter-benchmarks).
+
+## How a call flows
+
+```mermaid title="One query from Dart to the backend and back"
+flowchart LR
+  A[Generated method] --> B[Runtime: build request]
+  B --> C{Cache}
+  C -->|hit| G[Bytes to Dart]
+  C -->|miss| D[Network]
+  D --> E[Body read]
+  E --> F[Validate]
+  F --> H[Cache write]
+  H --> G
+  G --> I[Dart decode and fromJson]
+  I --> J[AxiomState to widgets]
+```
+
+1. **Request build.** The generated method passes the endpoint and arguments to
+   the runtime: through `dart:ffi` on Android, iOS and macOS, through
+   JavaScript interop into WebAssembly on the web.
+2. **Pipeline.** The runtime applies the contract: base URL, path, query,
+   headers, auth token, retry policy and the cache strategy.
+3. **Network.** The runtime's own HTTP stack sends the request. On the web the
+   request is a browser `fetch`.
+4. **Body read.** On the web the body is copied from JavaScript into wasm
+   memory.
+5. **Validation.** The body is checked against the contract (see below).
+6. **Cache write.** Only for endpoints whose cache strategy has a TTL.
+7. **Hand-off.** The bytes go to Dart without an extra copy on native
+   platforms and with one copy on the web.
+8. **Decode.** Dart decodes the JSON and the generated `fromJson` builds your
+   models.
+
+Stages 1 and 2 cost well under a tenth of a millisecond. For large lists, the
+time is in the network, the body copy on the web, validation and the Dart
+decode.
+
+{/* VERIFY: stage costs from /home/node/fp/P1-REPORT.md table B1 (web Chrome headless and native Linux, 200 calls). */}
+
+## Response validation
+
+The runtime checks every response before your code sees it:
+
+- **Endpoints without field rules** (no `minLength`, ranges, enums and so on in
+  the response models) get a JSON syntax check. A malformed body fails with a
+  typed `ValidationError` instead of a Dart `FormatException`. Since 0.150.1
+  this check no longer builds a JSON tree, which made large responses much
+  faster; what is accepted and rejected did not change.
+- **Endpoints with field rules** are validated against the rules.
+
+{/* VERIFY: validation policy (full, sampled, off), the size threshold for sampling, its default and the per-endpoint and global settings from /home/node/fp/RTSPEED-REPORT.md (C1.5, C1.4). Until confirmed, do not document a setting name. */}
+
+## Cache layers
+
+| Layer | Where | What it holds | Lifetime |
+| --- | --- | --- | --- |
+| Response cache | Runtime; on-device store on Android, iOS and macOS, `localStorage` on the web | Response bytes for endpoints with `cacheFirst`, `networkFirst` or `staleWhileRevalidate` | The contract's TTL; survives restarts |
+| Query state | Dart | The last `AxiomState` of each active query | While the query has listeners, then kept for the next listener |
+
+A repeated `cacheFirst` call is served from the response cache without a
+network request. Identical queries that run at the same time share one
+request.
+
+{/* VERIFY: in-memory decoded object cache (C2.1): name, default size, how to turn it off, from /home/node/fp/DARTNATIVE-REPORT.md. Add it as a row above when DONE. */}
+
+## Decoding large responses
+
+Decoding JSON and building models runs in Dart. For a list of 10,000 items
+this is the largest single cost on native platforms, and it runs on the UI
+isolate unless the SDK moves it.
+
+{/* VERIFY: off-isolate decode above a size threshold (C1.3): threshold, default, setting, platforms (not on the web), from /home/node/fp/DARTNATIVE-REPORT.md. Generated decoder speed-up (C1.6) from the same report. */}
+
+On the web, Dart runs on the browser's main thread and decoding cannot move
+to another isolate.
+
+## What stays slower than a bare request
+
+Compared with a plain `http` or `dio` call that decodes the same JSON, an
+Axiom call does extra work:
+
+- **The body crosses into the runtime and back.** On the web this is one copy
+  into wasm memory and one copy out. It is the price of running retries, auth,
+  cache, cancellation and validation in one runtime for every platform.
+- **The JSON syntax check.** It turns a malformed body into a typed error.
+- **Cold start on the web.** The first call waits for the WebAssembly runtime
+  to download and compile and for the contracts to load. Clients without a
+  runtime do not pay this.
+
+For small requests the difference is small; the cache and shared in-flight
+requests can make repeated calls faster than a bare client. The benchmarks
+page lists the measured rows, including the ones where Axiom is slower.
+
+{/* VERIFY: web cold start improvements (C3.1, first call without waiting for the runtime) and body staying out of wasm (C1.1) from /home/node/fp/WEBSPEED-REPORT.md; update the first and third bullets if they landed. */}
+
+## Make your app faster
+
+- Choose a cache strategy with a TTL for data that does not change on every
+  request (`cacheFirst` or `staleWhileRevalidate`).
+- Page large lists on the backend instead of returning thousands of items.
+- On the web, call `AxiomSdk.create()` early in `main` so the runtime loads
+  while your first frame renders.
+- Measure release builds. Debug builds and hot reload are much slower and do
+  not reflect what users see.
+
+## Related
+
+- [Flutter benchmarks](/sdks/flutter-benchmarks)
+- [Flutter app size](/sdks/flutter-app-size)
+- [Cache strategies and control](/sdks/flutter#cache-strategies-and-control)

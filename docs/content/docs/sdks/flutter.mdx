@@ -9,10 +9,21 @@ pageType: reference
 <span id="initialize-once" />
 <span id="execute-a-mutation" />
 
-<StatusNote status="alpha" title="axiom_flutter 0.150.0">
+<StatusNote status="alpha" title="axiom_flutter 0.150.1">
   The Flutter SDK is Alpha on Android, iOS, macOS and the web. Test release
   builds on every platform you ship.
 </StatusNote>
+
+<Callout type="warn" title="Behaviour change in 0.150.1: lean runtime by default">
+  On Android and the web, `axiom_flutter` 0.150.1 bundles the lean runtime,
+  which has no executable extensions and no telemetry exporter. Everything
+  else on this page works unchanged. If your app calls `loadExtension`,
+  `invokeExtension`, `extensionLifecycle` or `extensionAudit` on Android, add
+  `flutter pub add axiom_flutter_extensions:^0.150.1`. iOS and macOS are not
+  affected. See [Runtime variants](#runtime-variants).
+</Callout>
+
+{/* VERIFY: lean default and add-on name/version from /home/node/fp/pack/REPORT.md (unit pack). */}
 
 `axiom_flutter` runs the AxiomCore runtime, written in Rust, inside a Flutter
 app: through `dart:ffi` on Android, iOS and macOS, and as WebAssembly on the
@@ -29,10 +40,10 @@ reference.
 
 | Platform | Minimum | How the runtime is supplied | Status |
 | --- | --- | --- | --- |
-| Android | API 24; `arm64-v8a`, `armeabi-v7a`, `x86_64` | `libaxiom_runtime.so` bundled in the package | Alpha |
+| Android | API 24; `arm64-v8a`, `armeabi-v7a`, `x86_64` | Lean `libaxiom_runtime.so` bundled in the package; full runtime with `axiom_flutter_extensions` | Alpha |
 | iOS | iOS 13 | CocoaPods downloads `AxiomRuntime.xcframework` and verifies its SHA-256 | Alpha |
 | macOS | macOS 11 | Same as iOS | Alpha |
-| Web | Browsers with WebAssembly; dart2js and dart2wasm | Wasm runtime bundled in the package assets | Alpha |
+| Web | Browsers with WebAssembly; dart2js and dart2wasm | Lean wasm runtime bundled in the package assets | Alpha |
 | Linux, Windows | | No runtime library is published | Not supported |
 
 Platform setup:
@@ -40,7 +51,7 @@ Platform setup:
 - **Android:** set `minSdk = 24`, add `android.permission.INTERNET` to the main
   manifest, and allow cleartext HTTP to `10.0.2.2` in debug builds only if your
   development backend uses plain HTTP. 32-bit `x86` emulator images are not
-  supported. No R8 or ProGuard rules are needed.
+  supported. No R8 or ProGuard rules are needed. Android builds need JDK 17.
 - **iOS and macOS:** set the deployment target to iOS 13 or macOS 11 in the
   Podfile and in Xcode. macOS apps need `com.apple.security.network.client`
   in both entitlement files. For plain `http://` to a local backend on iOS,
@@ -398,6 +409,28 @@ run sandboxed AxiomCore extensions. A non-zero runtime status throws
 `AxiomExtensionException`. On the web the four methods throw
 `UnsupportedError`. See [Extensions](/extensions).
 
+On Android from 0.150.1, the four methods need the full runtime from the
+`axiom_flutter_extensions` package. Without it they throw an error that
+names that package. iOS and macOS always run the full runtime.
+
+## Runtime variants
+
+| Variant | Contains | Where |
+| --- | --- | --- |
+| Lean (default) | Everything on this page except executable extensions and the telemetry exporter | Android and web with `axiom_flutter` 0.150.1 |
+| Full | Lean plus executable extensions and the telemetry exporter | Android with `axiom_flutter_extensions`; iOS and macOS (AxiomRuntime 0.148.6) |
+
+```bash title="Terminal: Flutter project root (only for extensions on Android)"
+flutter pub add axiom_flutter_extensions:^0.150.1
+```
+
+With the add-on, the Android app ships the full library instead of the lean
+one. To return to the 0.150.0 behaviour (full runtime on Android), add the
+add-on; there is no full runtime for the web. Sizes per ABI and per variant
+are on [Flutter app size](/sdks/flutter-app-size).
+
+{/* VERIFY: loader rule and "one library per APK" from /home/node/fp/pack/REPORT.md. */}
+
 ## Observability
 
 - The runtime sends `traceparent` and `tracestate` on every call. Allow both
@@ -434,15 +467,20 @@ run sandboxed AxiomCore extensions. A non-zero runtime status throws
 
 ## Performance
 
-Each call crosses from Dart into the native or wasm runtime. For measured call
-overhead, startup time and app size, with the method and devices, see the
-[benchmarks in the SDK README](https://github.com/AxiomCore/axiom-sdk#benchmarks).
-Measure release builds of your own app before you rely on a number.
+Each call crosses from Dart into the native or wasm runtime. How a call flows,
+response validation, the cache layers and decoding are explained on
+[Flutter performance](/sdks/flutter-performance). Measured results, the method
+and the machines are on [Flutter benchmarks](/sdks/flutter-benchmarks), and
+app size on [Flutter app size](/sdks/flutter-app-size). Measure release
+builds of your own app before you rely on a number.
+
+{/* VERIFY: new options from RTSPEED (validation policy), DARTNATIVE (object cache, decode isolate) and WEBSPEED reports; add a row each to the relevant sections when DONE. */}
 
 ## Platform limits
 
 - Linux and Windows have no runtime library.
 - Android: no 32-bit `x86`; API 24 or newer.
+- Android: executable extensions need `axiom_flutter_extensions` from 0.150.1.
 - Web: no extensions; WebSocket auth limits above; with dart2js, `Int64`
   values above 2^53 lose precision because JavaScript numbers are doubles
   (dart2wasm and native builds are not affected).
@@ -460,6 +498,7 @@ Measure release builds of your own app before you rely on a number.
 
 - [Flutter quickstart](/getting-started/quickstart-flutter)
 - [Managed sign-in for Flutter](/sdks/flutter-auth)
+- [Flutter app size](/sdks/flutter-app-size) and [Flutter performance](/sdks/flutter-performance)
 - [Migrate from Dio and Retrofit](/guides/migrate-from-dio-retrofit)
 - [The contract runtime](/core-concepts/the-generic-runtime)
 - [Artifact trust](/core-concepts/trust-and-security)

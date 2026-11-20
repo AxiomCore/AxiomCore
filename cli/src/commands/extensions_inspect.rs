@@ -721,10 +721,17 @@ mod tests {
             discover_connection(&root.path().join("a/b")).is_err(),
             "an invalid connection is refused, not skipped"
         );
-        let valid = serde_json::json!({"format": axiom_lib::live_inspection::LIVE_CONNECTION_FORMAT, "endpoint": "http://127.0.0.1:4242", "token": "0123456789abcdef0123456789abcdef", "graphRevision": "0".repeat(64), "processId": 1});
+        let valid = serde_json::json!({"format": axiom_lib::live_inspection::LIVE_CONNECTION_FORMAT, "endpoint": "http://127.0.0.1:4242", "token": "0123456789abcdef0123456789abcdef", "graphRevision": "0".repeat(64), "processId": std::process::id(), "processStarted": axiom_lib::live_inspection::process_start_time(std::process::id())});
         std::fs::write(&path, valid.to_string()).unwrap();
         let found = discover_connection(&root.path().join("a/b")).unwrap();
         assert_eq!(found.loopback_endpoint().unwrap().address().port(), 4242);
+        // w3-d3: a file whose Inspector process is gone is refused, not used.
+        let mut stale = valid.clone();
+        stale["processId"] = serde_json::json!(1);
+        std::fs::write(&path, stale.to_string()).unwrap();
+        let error = discover_connection(&root.path().join("a/b")).unwrap_err();
+        assert!(format!("{error:#}").contains("stale"), "{error:#}");
+        std::fs::write(&path, valid.to_string()).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
         assert!(discover_connection(&root.path().join("a/b")).is_err());
     }
@@ -782,7 +789,8 @@ mod tests {
             endpoint: format!("http://{address}"),
             token: "0123456789abcdef0123456789abcdef".into(),
             graph_revision: "0".repeat(64),
-            process_id: 1,
+            process_id: std::process::id(),
+            process_started: axiom_lib::live_inspection::process_start_time(std::process::id()),
         };
         let query = OwnershipQuery::default();
         let unauthorized = fetch(&connection, &query).await.unwrap_err();

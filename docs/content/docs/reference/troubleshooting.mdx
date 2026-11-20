@@ -123,7 +123,7 @@ To diagnose an Acore UI target, run `axiom ui doctor --target ios --json`,
 
 ## Flutter
 
-These rows apply to `axiom_flutter` 0.150.0 and Axiom CLI 0.156.0. The
+These rows apply to `axiom_flutter` 0.150.1 and Axiom CLI 0.156.0. The
 [Flutter quickstart](/getting-started/quickstart-flutter#troubleshooting) has
 the same fixes in tutorial order.
 
@@ -135,8 +135,11 @@ the same fixes in tutorial order.
 | `ParseError("Unexpected token: Colon")` from `axiom check` or `axiom build` | No `AxiomDeps.toml` next to the backend source | Create one with `type = "backend"`, `targets = ["server"]` and `audiences = ["web"]` |
 | `axiom check` says it cannot read `axiom.acore` | Without an argument it looks for `axiom.acore` | Pass the file, for example `axiom check main.acore` |
 | `axiom pull` stops with `dart pub get failed` | A dependency cannot be resolved, or `dart` on `PATH` is not a working SDK | Run `flutter pub get` in the app to see the error. Put Flutter's `bin` first on `PATH` |
-| `axiom pull` added `axiom_flutter` 0.147.5 | CLI 0.156.0 adds that version when the app has none | Run `flutter pub add axiom_flutter:^0.150.0 dev:axiom_flutter_generator:^0.150.0`, then pull again |
+| `axiom pull` added `axiom_flutter` 0.147.5 | CLI 0.156.0 adds that version when the app has none | Run `flutter pub add axiom_flutter:^0.150.1 dev:axiom_flutter_generator:^0.150.1`, then pull again |
 | Android: `could not load libaxiom_runtime.so` | A 32-bit `x86` emulator image, or an `axiom_flutter` version without Android support | Use an `x86_64` or `arm64` image and `axiom_flutter` 0.150.0 or later |
+| Android: Gradle fails with `Unsupported class file major version` or asks for a newer Java | The Android build runs on a JDK other than 17 | Install JDK 17 and point Flutter at it with `flutter config --jdk-dir <path>`, then `flutter doctor -v` |
+| Android: a `wss://` WebSocket fails with a certificate error, HTTPS to the same host works in the browser | Since 0.150.1 native WebSocket TLS trusts the runtime's bundled public root certificates, not the device store, so a private CA installed on the device is not trusted | Use a certificate from a public CA for the WebSocket host |
+| Android: an extension call throws an error that names `axiom_flutter_extensions` | From 0.150.1 `axiom_flutter` bundles the lean runtime without executable extensions | Add `axiom_flutter_extensions:^0.150.1`; see [Flutter app size](/sdks/flutter-app-size#lean-by-default-extensions-as-an-add-on) |
 | Android: build fails with a `minSdkVersion` error | The runtime needs API 24 | Set `minSdk = 24` in `android/app/build.gradle.kts` |
 | Android: every call fails with a connection error | `127.0.0.1` is the emulator itself, cleartext HTTP is blocked, or the internet permission is missing | Use `http://10.0.2.2:<port>`, allow cleartext for `10.0.2.2` in a debug network security config, and add `android.permission.INTERNET` |
 | iOS or macOS: pod install asks for a higher deployment target | The plugin needs iOS 13 and macOS 11 | Raise the target in the Podfile and in Xcode |

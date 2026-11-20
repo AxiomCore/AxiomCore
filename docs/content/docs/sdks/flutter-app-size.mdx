@@ -1,0 +1,185 @@
+---
+title: Flutter app size
+description: What the AxiomCore runtime adds to a Flutter app on Android, iOS, macOS and the web, the lean default and the extensions add-on, and how to measure download and installed size.
+pageType: concept
+---
+
+<StatusNote status="alpha" title="axiom_flutter 0.150.1">
+  Sizes on this page are for the runtime files that `axiom_flutter` bundles.
+  Measure your own release build before you rely on a number.
+</StatusNote>
+
+`axiom_flutter` contains a compiled copy of the AxiomCore runtime, written in
+Rust. It is the largest part of what the SDK adds to your app. This page
+explains what is in that runtime, which variant your app ships, and how the
+numbers you see in an APK, an App Bundle or a web build relate to what users
+download.
+
+## What is in the runtime
+
+The runtime executes your `.axiom` contract on the device. Every build
+contains:
+
+- the HTTP client and TLS stack (the runtime keeps its own networking on every
+  platform),
+- the contract reader and request pipeline,
+- response validation for the field rules in the contract,
+- the response cache and its on-device store,
+- retries, cancellation, streams (SSE, chunked) and WebSocket channels,
+- auth token handling and the cookie jar on native platforms.
+
+Two parts are optional and are not in the lean build:
+
+| Part | What it does | Who needs it |
+| --- | --- | --- |
+| Executable extensions | Runs sandboxed AxiomCore extensions (`loadExtension`, `invokeExtension`, `extensionLifecycle`, `extensionAudit`) | Apps that load extension packages |
+| Telemetry exporter | Exports runtime traces over OpenTelemetry | Apps that collect runtime traces themselves |
+
+The executable extension support is most of the difference: it links a
+WebAssembly interpreter and the package validator. The `traceparent` and
+`tracestate` headers are sent by both variants.
+
+## Lean by default, extensions as an add-on
+
+From 0.150.1, `axiom_flutter` bundles the **lean** runtime on Android and the
+web. Queries, mutations, streams, auth, cache and cancellation behave exactly
+as in the full runtime. Loading or invoking an extension on the lean runtime throws
+an error that names the add-on package.
+
+To keep executable extensions on Android, add the add-on:
+
+```bash title="Terminal: Flutter project root"
+flutter pub add axiom_flutter_extensions:^0.150.1
+```
+
+`axiom_flutter_extensions` carries the full Android runtime as
+`libaxiom_runtime_full.so`. `axiom_flutter` loads it in preference to the lean
+library, and the add-on's Gradle build removes the lean library from the app,
+so the app ships one runtime, not both. No code is needed; depending on the
+package is enough.
+
+| Platform | Without the add-on | With `axiom_flutter_extensions` |
+| --- | --- | --- |
+| Android | Lean runtime | Full runtime |
+| Web | Lean runtime | Lean runtime (extensions are not available on the web) |
+| iOS, macOS | Full runtime 0.148.6 | Full runtime 0.148.6 (no change) |
+
+**Migration from 0.150.0:** apps that load executable extensions on Android
+(`loadExtension`, `invokeExtension`) add
+`axiom_flutter_extensions`. Other apps need no change and get the smaller
+runtime.
+
+## Before 0.150.1: what 0.150.0 added
+
+The [`flutter-minimal` example](https://github.com/AxiomCore/examples/tree/main/flutter-minimal) is the smallest app on
+`axiom_flutter`: one query, one widget. Built with `axiom_flutter` 0.150.0 and
+`flutter build apk --release --split-per-abi`, its `arm64-v8a` APK is 25.1 MB,
+against 6.6 MB for an empty Flutter app (`flutter create --empty`) built the
+same way. Of the difference, 10.1 MB is the runtime library, stored
+uncompressed, and about 0.96 MB is the unused web runtime (2.4 MB, stored
+compressed in the APK) that 0.150.0 still copied into Android builds. On the web, 0.150.0 added about 0.95 MB gzipped
+(the wasm runtime and its loader).
+
+The sections below show what 0.150.1 changes.
+
+## Android sizes per ABI
+
+The plugin bundles one library per ABI. Sizes in bytes:
+
+| ABI | 0.150.0 runtime | 0.150.1 lean (default) | Lean, gzip -9 | 0.150.1 full (add-on) | Full, gzip -9 |
+| --- | --- | --- | --- | --- | --- |
+| `arm64-v8a` | 10,097,128 | 4,804,712 | 2,381,263 | 7,375,344 | 3,499,462 |
+| `armeabi-v7a` | 7,258,388 | 3,410,196 | 1,963,736 | 5,197,156 | 2,893,789 |
+| `x86_64` | 12,479,672 | 5,701,680 | 2,507,701 | 8,861,496 | 3,666,195 |
+
+The 0.150.1 full runtime is also smaller than 0.150.0: the extension package
+check no longer pulls in the server-side validators, and the runtime uses one
+TLS stack.
+
+A whole app shows the saving: the SDK's integration app, built as an
+`arm64-v8a` release APK, is 27.32 MB with `axiom_flutter` 0.150.0, 21.07 MB
+with 0.150.1 (lean, without the unused web runtime) and 23.65 MB with
+`axiom_flutter_extensions`.
+
+### Installed size and download size
+
+With `minSdk 24`, the Android Gradle plugin stores native libraries
+uncompressed and page-aligned in the APK (`useLegacyPackaging=false`), so the
+device can map them without extracting them. Two consequences:
+
+- The **APK and the installed app** grow by the raw library size: about
+  4.8 MB for lean on `arm64-v8a`, 7.4 MB for full.
+- The **download** from Google Play is compressed. The gzip column above is a
+  close estimate of what one user downloads for the runtime.
+
+### App Bundles and ABI splits
+
+A universal APK (`flutter build apk`) contains every ABI, so the runtime is
+counted three times. Users never install that:
+
+- Publish an App Bundle (`flutter build appbundle`). Google Play then delivers
+  only the user's own ABI.
+- For side-loaded or other stores, build one APK per ABI:
+
+```bash title="Terminal: Flutter project root"
+flutter build apk --release --split-per-abi
+```
+
+Check which libraries an APK contains:
+
+```bash title="Terminal"
+unzip -l build/app/outputs/flutter-apk/app-arm64-v8a-release.apk | grep '\.so$'
+```
+
+### The web runtime in Android builds
+
+Flutter 3.32 has no per-platform assets, so the web runtime files are declared
+for every platform. The `axiom_flutter` Android plugin removes them from
+Android app builds, because Android never loads them. This saves 956,619
+bytes on an `arm64-v8a` release APK of the SDK's benchmark app. To keep the
+files, set this in `android/gradle.properties`:
+
+```text title="android/gradle.properties"
+axiom.keepWebAssets=true
+```
+
+## Web
+
+The web runtime is one WebAssembly file plus a small JavaScript loader, served
+from your app's `assets/packages/axiom_flutter/` directory:
+
+| File | 0.150.0 | 0.150.1 (lean) |
+| --- | --- | --- |
+| `axiom_runtime_bg.wasm`, raw | 2,444,563 | 2,123,497 |
+| `axiom_runtime_bg.wasm`, gzip -9 | 946,955 | 807,347 |
+| `axiom_runtime.js`, raw | 38,809 | 34,290 |
+
+Your web server decides what is transferred: serve `.wasm` files with gzip or
+Brotli compression and the `application/wasm` content type. The runtime is
+loaded by `AxiomSdk.create()`, not before the first frame.
+
+## iOS and macOS
+
+iOS and macOS still use the full published AxiomRuntime 0.148.6, downloaded
+by CocoaPods and checked by SHA-256. The lean runtime and the add-on do not
+change Apple builds in 0.150.1; they apply from the next Apple runtime
+release. iOS and macOS bundles also still carry the unused web runtime files
+(about 2.5 MB before App Store compression), because Flutter 3.32 cannot
+exclude assets per platform. The workaround is described in the package's
+`doc/wasm-size.md`.
+
+## Measure your own app
+
+1. Build release, not debug: `flutter build appbundle` or
+   `flutter build apk --release --split-per-abi`, `flutter build ipa`,
+   `flutter build web --release`.
+2. Compare against the same app without `axiom_flutter` if you need the exact
+   cost.
+3. For Android, Flutter's `--analyze-size` flag reports the Dart code and the
+   native libraries separately.
+
+## Related
+
+- [Flutter performance](/sdks/flutter-performance)
+- [Flutter benchmarks](/sdks/flutter-benchmarks)
+- [Flutter and Dart reference](/sdks/flutter)

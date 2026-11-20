@@ -83,6 +83,11 @@ cd examples/domain-commerce
 | `offline-first-feed` | A cached feed with online and offline consumer states | Backend and web toolchains | Experimental: caching | Build the contract, then exercise online and offline states |
 | `realtime-chat` | A Go streaming service with web, React and Flutter consumers | Go and the chosen frontend toolchain | Experimental: streams | Build, then test connect, message, error, reconnect and dispose |
 
+The Flutter consumers in `simple-backend` and `realtime-chat` resolve an older
+`axiom_flutter` from a local path and have not been regenerated for 0.150.0.
+For a tested Flutter starting point, follow the
+[Flutter quickstart](/getting-started/quickstart-flutter).
+
 The `rpc`, `stream` and `observability-and-auth` directories are lower-level
 runtime fixtures for maintainers. The repository README also lists UI
 galleries, demos and extension samples.

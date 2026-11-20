@@ -121,6 +121,39 @@ function messageFor(error: AxiomError): string {
 Keep detailed diagnostic context in protected logs, not in a message the user
 sees.
 
+## Dart error types
+
+In Flutter (`axiom_flutter` 0.150.0), every failed call produces an
+`AxiomError`. `stage` is an `ErrorStage` enum and `category` an
+`ErrorCategory` enum, with the stages and categories above in camelCase (for
+example `ErrorStage.networkSend`, `ErrorCategory.timeout`). `code` is a
+sealed `AxiomErrorCode`:
+
+| Dart class | Meaning |
+| --- | --- |
+| `ContractMissing`, `ContractInvalid`, `EndpointNotFound` | Contract problems |
+| `ValidationError` | The request or response does not match the contract |
+| `NetworkConnectionFailed`, `NetworkTimeout` | Transport failures. `NetworkTimeout` also reports an `AxiomCallOptions.timeout` |
+| `HttpStatus(code)` | The server answered with an error status that the contract does not map to a typed failure |
+| `JsonParseError`, `CodecError` | The body could not be decoded |
+| `AuthTokenExpired` | The token was rejected as expired |
+| `NotInitialized` | A call ran before `AxiomSdk.create()` completed |
+| `Cancelled` | The call was cancelled by `query.cancel()`, widget disposal or `resetSession()`. It is not reported to `onError` |
+| `UnknownCode(raw)` | Any other runtime code, with its raw name |
+
+```dart title="Dart excerpt"
+String messageFor(AxiomError error) => switch (error.code) {
+      NetworkTimeout() || NetworkConnectionFailed() => 'Check your connection.',
+      AuthTokenExpired() => 'Please sign in again.',
+      HttpStatus(:final code) when code >= 500 => 'Server problem. Try again.',
+      _ => error.retryable ? 'Request failed. Try again.' : 'Something went wrong.',
+    };
+```
+
+A contract `failure` arrives as `error.failureCode` and
+`error.failurePayload`, and the generated client turns it into a typed class;
+see [Errors and typed failures](/sdks/flutter#errors-and-typed-failures).
+
 <span id="retry-guidance" />
 
 ## Retry rules

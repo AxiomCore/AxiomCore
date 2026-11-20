@@ -89,7 +89,7 @@ checksums.
 | --- | --- | --- |
 | Vanilla web / ATMX | Available | Verify browser startup, runtime, CORS and application behavior |
 | React / ATMX | Alpha | Verify bundler, provider and application lifecycle |
-| Flutter / Dart | Alpha | `axiom_flutter` 0.147.5 bundles native runtimes for iOS and macOS only; verify assets, storage and release builds. See [Flutter and Dart](/sdks/flutter) |
+| Flutter / Dart | Alpha | `axiom_flutter` 0.150.0 runs on Android (API 24; arm64-v8a, armeabi-v7a, x86_64; runtime bundled in the package), iOS 13 and macOS 11 (runtime framework downloaded by CocoaPods and checked by SHA-256) and the web (WebAssembly runtime bundled in the package). No Linux or Windows runtime. Verify release builds on each platform. See [Flutter and Dart](/sdks/flutter) |
 | Swift / Apple | Experimental | Distribution foundations; full binding and lifecycle parity is incomplete |
 | Acore UI | Alpha | Browser and qualified emulator or simulator development paths |
 | Extension hosts and foreign web islands | Experimental | Target-specific limits in [Capability boundaries](/reference/capability-boundaries) |

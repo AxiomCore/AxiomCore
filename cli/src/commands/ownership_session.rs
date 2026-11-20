@@ -23,10 +23,8 @@ pub fn session(
     };
     #[cfg(feature = "dev-inspect-ownership")]
     {
-        axiom_server::development::development_session_with_ownership(
-            host, listen, debug, project,
-        )
-        .map_err(|e| anyhow::anyhow!("{}: {}", e.code, e.message))
+        axiom_server::development::development_session_with_ownership(host, listen, debug, project)
+            .map_err(|e| anyhow::anyhow!("{}: {}", e.code, e.message))
     }
     #[cfg(not(feature = "dev-inspect-ownership"))]
     {
@@ -60,8 +58,14 @@ mod tests {
         assert_eq!(server.matches("development::real_session(").count(), 2);
         let database = include_str!("database_dev.rs");
         assert!(!database.contains("development_session_with_ownership"));
-        for (name, source) in [("serve.rs", include_str!("serve.rs")), ("mock.rs", include_str!("mock.rs"))] {
-            assert!(!source.contains("development::real_session("), "{name} must choose through ownership_session");
+        for (name, source) in [
+            ("serve.rs", include_str!("serve.rs")),
+            ("mock.rs", include_str!("mock.rs")),
+        ] {
+            assert!(
+                !source.contains("development::real_session("),
+                "{name} must choose through ownership_session"
+            );
             assert!(source.contains("ownership_session::session("), "{name}");
         }
     }

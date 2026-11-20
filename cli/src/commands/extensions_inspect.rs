@@ -57,10 +57,12 @@ pub struct InspectFailure {
 }
 
 impl InspectFailure {
+    /// The message is made terminal-safe here, once (w3-d2 Fix 3): it may
+    /// quote the Inspector (error bodies, serde errors naming its fields).
     fn new(code: i32, message: impl Into<String>) -> Self {
         Self {
             code,
-            message: message.into(),
+            message: terminal_safe(&message.into(), MAX_MESSAGE_CHARS),
         }
     }
 }
@@ -120,11 +122,8 @@ pub async fn handle_ownership(options: OwnershipOptions) -> i32 {
                 }
             }
             Err(failure) => {
-                // Server-supplied text: escaped and bounded (w3-d2 Fix 3).
-                eprintln!(
-                    "axiom extensions inspect: {}",
-                    terminal_safe(&failure.message, MAX_MESSAGE_CHARS)
-                );
+                // Already escaped and bounded by InspectFailure::new.
+                eprintln!("axiom extensions inspect: {}", failure.message);
                 if !options.watch || failure.code != EXIT_NO_DATA {
                     return failure.code;
                 }
@@ -282,7 +281,7 @@ async fn fetch(
             .ok()
             .and_then(|v| v.get("error").and_then(|e| e.as_str()).map(str::to_string))
             .unwrap_or_else(|| format!("HTTP {status}"));
-        terminal_safe(&text, MAX_MESSAGE_CHARS)
+        text
     };
     match status {
         200 => {
@@ -788,10 +787,11 @@ mod tests {
         let query = OwnershipQuery::default();
         let unauthorized = fetch(&connection, &query).await.unwrap_err();
         assert_eq!(unauthorized.code, EXIT_UNAUTHENTICATED);
-        let printed = terminal_safe(&unauthorized.message, MAX_MESSAGE_CHARS);
         assert!(!unauthorized.message.chars().any(char::is_control), "{:?}", unauthorized.message);
-        assert!(!printed.chars().any(char::is_control));
-        assert!(printed.contains("PWNED-TITLE"));
+        assert!(unauthorized.message.contains("PWNED-TITLE"));
+        // Escaped exactly once.
+        assert!(unauthorized.message.contains("\\u{1b}]0;PWNED-TITLE\\u{7}"), "{}", unauthorized.message);
+        assert!(!unauthorized.message.contains("\\\\u{"), "{}", unauthorized.message);
         let flood = fetch(&connection, &query).await.unwrap_err();
         assert_eq!(flood.code, EXIT_UNAVAILABLE);
         assert!(flood.message.chars().count() <= MAX_MESSAGE_CHARS + 1, "{}", flood.message.len());

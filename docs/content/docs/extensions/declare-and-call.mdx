@@ -20,7 +20,7 @@ permissions and budgets. For a first walkthrough, see
 Write the `AxiomDeps.toml` alias once. Every export of the extension becomes
 callable as `<alias>.<export>`:
 
-```acore title="main.acore"
+```acore title="main.acore (excerpt)"
 module example.extension.samples.ui
 
 use extension pricing
@@ -50,7 +50,9 @@ Rules:
 - `use extension <alias>` must end its line. A trailing comment is allowed;
   any other token after the alias is an error (`AUI082`).
 - The alias must be a key of `[extensions]` in `AxiomDeps.toml` and cannot be
-  an Acore keyword.
+  an Acore keyword. For an extension you build from source, use only lowercase
+  letters and digits: in this release a source build refuses an alias that
+  contains `_` (`invalid package name local.<alias>`).
 - Calling an export the extension does not have is `AUI077`. The message lists
   the exports that exist.
 - The editor completes exports after `pricing.` and shows the export's
@@ -89,7 +91,15 @@ Exports carry no authority.
 
 Removing an `exports` list that equals the derived list changes the canonical
 manifest digest but not the binding, the interface or the authority.
-`axiom dependencies check --against <old AxiomDeps.toml>` names that change.
+`axiom dependencies check --against <old AxiomDeps.toml>` names that change:
+
+```text title="Output of axiom dependencies check --against AxiomDeps.before.toml (digests shortened)"
+Valid AxiomDeps.toml v2: AxiomDeps.toml
+Canonical manifest: 6fc7ec7f...
+Canonical manifest changed from 3c314ca1...:
+  - extension `pricing`: exports now derived; the removed list [apply_discount, quote] equals the derived exports, so the binding and authority are unchanged
+0 contract(s), 0 Axiom package(s), 6 extension(s), 0 build environment(s).
+```
 
 ## Say which state an action changes
 
@@ -122,6 +132,13 @@ the action calls, including calls inside branches:
 Coverage is by field path. A declared `a.b` is within a granted `a`. A declared
 `a` when only `a.b` is granted is broader than the grant and is `AUI084`; the
 message names the granted paths to list instead.
+
+For example, the samples' block action above declares only `total_cents`,
+while `pricing` may also write `discount_cents`, so `axiom ui check` warns:
+
+```text title="Output of axiom ui check main.acore --target web"
+main.acore:16:19:AUI085: warning `pricing` may write `cart.discount_cents`, which this action's `writes` clause does not declare
+```
 
 The check uses the extension's write permissions, which may be wider than what
 its code actually writes. That is why an uncovered grant is a warning, not an
@@ -157,14 +174,25 @@ locks are byte-identical to the long form of the same permissions.
 
 The long form is still the canonical lowering and is still accepted:
 
-```toml title="AxiomDeps.toml"
+```toml title="AxiomDeps.toml (long form)"
+[extensions.pricing.permissions.contract-runtime.catalog]
+query = [
+    "discount",
+    "price",
+    "shipping",
+    "stock",
+]
+
 [extensions.pricing.permissions.ui-state.cart]
 read = ["subtotal_cents"]
-write = ["discount_cents", "total_cents"]
-
-[extensions.pricing.permissions.contract-runtime.catalog]
-query = ["discount", "price", "shipping", "stock"]
+write = [
+    "discount_cents",
+    "total_cents",
+]
 ```
+
+`axiom dependencies format --permissions long` prints any manifest in this
+form, and `--permissions shorthand` in the shorter one.
 
 `contract-runtime`, `backend-store` and `runtime` have no shorthand. Network,
 storage, file, queue and secret ports can also be written as long-form
@@ -187,11 +215,12 @@ forms.
 | Written | Result |
 | --- | --- |
 | `https://payments.example.test` | Accepted |
-| `https://Payments.example.test/` | `AXIOM_PERMISSION_INVALID_ORIGIN`; the message names `https://payments.example.test` |
-| `https://bücher.example` | `AXIOM_PERMISSION_INVALID_ORIGIN`; the message names `https://xn--bcher-kva.example` |
-| `http://api.example.test` | `AXIOM_PERMISSION_INVALID_ORIGIN`; plain `http` is accepted only for a loopback host |
-| `http://127.1` | `AXIOM_PERMISSION_OBFUSCATED_ORIGIN`; write IPv4 in dotted decimal |
-| `https://*.example.test` | `AXIOM_PERMISSION_WILDCARD` |
+| `https://Payments.example.test/` | `AXIOM_PERMISSION_INVALID_ORIGIN`: must be written canonically as `https://payments.example.test` |
+| `https://bücher.example` | `AXIOM_PERMISSION_INVALID_ORIGIN`: must be written canonically as `https://xn--bcher-kva.example` |
+| `http://api.example.test` | `AXIOM_PERMISSION_INVALID_ORIGIN`: plain `http` is accepted only for `localhost`, `127.0.0.1` and `[::1]` |
+| `http://127.0.0.1:8080` | Accepted |
+| `http://127.1` | `AXIOM_PERMISSION_OBFUSCATED_ORIGIN`: write it in dotted decimal as `http://127.0.0.1` |
+| `https://*.example.test` | `AXIOM_PERMISSION_WILDCARD`: one exact origin; wildcards are not permitted |
 
 One origin has one spelling, so it has one canonical manifest and one
 authority digest.
@@ -225,9 +254,10 @@ maxRounds = 3
 | `maxRounds` | 1 to 16 | 1 | How many times an invocation may yield effects before it completes. An async export that awaits three times in sequence needs 3. |
 | `deadlineMs` | 1 to 60,000 | 1,000 | Wall-clock deadline of one invocation in milliseconds, for all of its rounds together. The host policy deadline still caps it. |
 
-Values outside the range fail with a named diagnostic (for example
-`AXIOM_AUTHORITY_MAX_ROUNDS`); they are never clamped. Only these two keys are
-accepted. Raising either one is a permission increase that needs review, like
+Values outside the range fail with a named diagnostic, for example
+`AXIOM_AUTHORITY_MAX_ROUNDS: extension pricing budgets.maxRounds = 17 is outside 1..=16`;
+they are never clamped. Only these two keys are accepted (also spelled
+`max-rounds` and `deadline-ms`). Raising either one is a permission increase that needs review, like
 any other. [Async exports and effect rounds](/extensions/async-rounds) explains
 how to choose them.
 

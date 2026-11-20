@@ -1,0 +1,272 @@
+---
+title: What an extension can do
+description: Static effect summaries and their labels, the build check against the grant, effect impact queries in the editor and CLI, permission requests generated from summaries, and the round and site fields of audit records and spans.
+pageType: concept
+---
+
+<StatusNote status="experimental" title="Requires extension SDK 0.1.5">
+  Effect summaries, impact queries, generated permission requests and audit
+  sites ship with CLI releases that accept extension SDK 0.1.5. None of them
+  changes what the host enforces.
+</StatusNote>
+
+Before you approve an extension, you want to know what it can read, write and
+call. AxiomCore answers that in two independent ways:
+
+- **Enforcement.** The host allows only what the authority request, the
+  application grant and the target policy allow, for every operation, every
+  time. This does not depend on anything on this page.
+- **Explanation.** A source build analyses the extension's code and writes a
+  **static effect summary** of what each export can do. Tools use it to show
+  you impact, to check the grant, and to propose permissions.
+
+A summary never replaces enforcement. When a summary is missing, unknown or
+wrong, the host still enforces the grant.
+
+## Static effect summaries
+
+For every export, a source build lists the effects the export can perform:
+
+| Category | Contains |
+| --- | --- |
+| `reads` | UI state, backend store and contract fields the export can read, with the access (for example `read`, `query`) |
+| `writes` | Fields and resources it can change (for example UI `write`, store `insert`, contract `mutation`) |
+| `calls` | Host operations it can issue |
+| `streams` | Stream operations it can open |
+| `secrets` | Secret names it can use |
+
+Each item points at the source **sites** (file, line and column) that perform
+it. All rounds of an async export form one summary: every effect any round can
+attempt belongs to the export.
+
+The summary is derived from the extension's use of its generated typed
+bindings, the only way to build typed effects. For code that uses only the
+bindings, the summary is an upper bound: everything the export does at run
+time is in its summary.
+
+### Labels
+
+| Label | Meaning |
+| --- | --- |
+| `static` | The binding is used directly in the export's own handler. |
+| `inferred` | The binding is reached through a helper, a method, a closure, a resume handler, or a handler shared by several exports. |
+| `unknown` | The analyser could not show that it sees every way the export can build an effect. The category's items are then only a lower bound. |
+
+An empty category labelled `static` means the export provably performs none of
+those effects.
+
+The analysers mark a category `unknown` rather than guess. Common reasons:
+
+| Reason | Example |
+| --- | --- |
+| `raw-effect` | An effect or plan built without a generated binding, or `operation(...)` / `typed_effect(...)` with a name that is not a literal |
+| `raw-state` | Snapshot or patch access without a generated selector |
+| `dynamic-name`, `dynamic-access` | A computed operation, selector or secret name, or `selectors[name]` |
+| `escaped-binding` | A binding object or context passed where the analyser cannot follow it |
+| `unresolved-call`, `reflection` | A call the analyser cannot resolve; `eval`, `getattr` with a computed name, `Proxy` |
+| `macro`, `ffi`, `dependency` | A macro that can hide a binding use; native code; a dependency that can build effects itself |
+| `analysis-limit` | The file or the analysis was too large; never silent |
+| `legacy-package` | No trusted summary is available for this package (see below) |
+
+### When a summary is trusted
+
+A summary inside a binary package is a claim by its publisher. Tools use a
+summary only when it was built **here, from source, by this machine's
+analysers**, and only for languages whose analysers are authoritative:
+
+| Language | Summary used by tools |
+| --- | --- |
+| Rust | Yes, when built from source here |
+| Python | Yes, when built from source here |
+| TypeScript | No. TypeScript summaries are produced but treated as `unknown` until their analyser is independently verified. |
+
+Every other summary (a package you did not build, another analyser version,
+an altered summary, a TypeScript summary) counts as `unknown` in every
+category. An untrusted summary can never narrow anything.
+
+### The build check
+
+A source build compares the summary with the authority the extension
+requests. An item that no requested permission covers fails the build with a
+diff that lists the export, the category, the missing permission and its
+source sites. Items match exactly: a write to `cart.total.cents` is not covered
+by a grant of `cart.total`. An `unknown` category is not an error; the build
+notes it as "runtime enforcement only".
+
+### Known gaps in this release
+
+Two SDK features are not yet recognised by the analysers, so using them makes
+every category of the affected exports `unknown` (enforcement is unaffected):
+
+- Rust: importing `try_join` (`use axiom_extension_sdk::try_join;`). `join!`
+  and `join_all` are recognised.
+- Python: the `Cents` and `Percentage` helpers.
+
+## Generated permission requests
+
+`axiom dependencies request --from-summary` proposes the
+`[extensions.<alias>.permissions]` table from the trusted summary and prints a
+semantic diff against `AxiomDeps.toml`:
+
+```bash title="Terminal"
+axiom dependencies request --from-summary lookup
+```
+
+```text title="Output"
+extension `lookup` (rust): permission request generated from the static effect summary
+  unchanged:
+    contract catalog.stock (query)  at logic/lookup.rs:38, logic/lookup.rs:46, logic/lookup.rs:6
+    contract catalog.price (query)  at logic/lookup.rs:37, logic/lookup.rs:45, logic/lookup.rs:6
+  proposed table:
+    [extensions.lookup.permissions.contract-runtime.catalog]
+    query = [
+        "price",
+        "stock",
+    ]
+```
+
+Here every category of the `lookup` extension is known, so the request is
+complete: the two catalog queries are needed and nothing is missing or unused.
+When a category is `unknown`, the request is partial and says why. For
+example, the samples' Python `pricingpy` extension uses `Cents` and
+`Percentage`, which this release's Python analyser does not yet recognise:
+
+```text title="Output (excerpt)"
+extension `pricingpy` (python): permission request generated from the static effect summary (partial: see not derivable)
+  unchanged:
+    contract catalog.stock (query) [not derivable]
+    ...
+    ui-state cart.discount_cents (write)  at logic/pricing.py:54
+    ui-state cart.total_cents (write)  at logic/pricing.py:55
+  ! not derivable: reads is unknown statically (member `ZERO` of an SDK value is not part of the recognised SDK surface; ...) (exports: apply_discount, quote)
+```
+
+The diff has three kinds of entry:
+
+| Entry | Meaning |
+| --- | --- |
+| Increase (`missing`) | A known effect needs a permission the manifest lacks. The command exits non-zero (`AXIOM_PERMISSION_REQUEST_MISSING`). |
+| Decrease (`unused`) | A permission that no effect needs. Reported only when every category it serves is fully known, so it is safe to remove. |
+| Unchanged (`not derivable`) | Carried over because it cannot be derived (see below). |
+
+Some permissions are never generated, only carried over from the manifest:
+
+- network origins and methods (the summary knows the operation, not the
+  origin);
+- storage, file and queue ports (their names come from the author);
+- budgets (`maxRounds`, `deadlineMs`);
+- every permission that can serve a category that is `unknown`, for any
+  export and any reason. TypeScript extensions therefore always get "not
+  derivable".
+
+`--write` rewrites only the changed permission tables in `AxiomDeps.toml`,
+keeps comments and the rest of the file, and never touches the grant or a
+lock. `--format preserve|long|shorthand` chooses the spelling; `--json` prints
+`axiom-extension-permission-request/v1` reports. An increase still goes
+through the normal review: `axiom dependencies check --against <old AxiomDeps.toml>`
+names every added permission as `permission increase (needs review)`, and the
+authority lock diff requires approval.
+
+A summary is computed against the permissions the manifest already requests,
+because generated bindings exist only for requested permissions. Code that
+tries to use something the manifest does not request makes its category
+`unknown`, so the tool keeps your permissions and reports "not derivable"
+instead of proposing the missing one. Increases are proposed for secrets named
+in code, runtime operations with a known import, and summaries built against a
+wider manifest.
+
+## Effect impact in the editor and CLI
+
+The Acore language server adds extension effects to the application graph:
+
+- **Hover on an action** that calls an extension shows the calls, the write
+  set per scope with its labels, the `writes` clause and whether it matches
+  (with each `AUI084` or `AUI085` finding).
+- **Hover on `alias.export`** shows each category with its label and names,
+  the granted writes not in the summary, `maxRounds` and the ABI version.
+- **Impact queries** answer "who can write this field?" and "what does this
+  action touch?". The editor exposes them through the graph request; the CLI
+  runs them with `axiom inspect query`:
+
+```json title="impact.json"
+{"format":"axiom-query/v1","operation":{"kind":"effect-impact","target":"cart.total_cents"}}
+```
+
+```json title="touches.json"
+{"format":"axiom-query/v1","operation":{"kind":"effect-touches","id":"Home.apply"}}
+```
+
+```bash title="Terminal"
+axiom inspect query impact.json
+```
+
+Each answer lists exports, source sites and actions with every label that
+holds, strongest first: `observed` (seen in audit evidence), `static`,
+`inferred`, `enforced` (allowed by the grant) and `unknown`. Sources never
+cancel each other: a field the grant allows but the summary does not show is
+listed as `enforced` only and flagged, never hidden. Query results contain
+field and export names, never values, secret values or absolute paths.
+
+<Callout type="warn" title="The editor shows granted and observed effects today">
+  The editor has no source build of its own to trust, so every summary counts
+  as `unknown` there. Hovers and impact queries in the editor therefore show
+  what the grant allows (`enforced`) and what audit evidence observed, not the
+  `static` and `inferred` labels. The source build and
+  `axiom dependencies request --from-summary` use the summary directly.
+</Callout>
+
+## Audit records and spans
+
+Every audit record of an extension effect names the round it ran in and the
+source site that issued it:
+
+```json title="Audit record fields (excerpt)"
+{ "round": 2, "site": 5 }
+```
+
+- `round` is absent for round 1, so the audit output of an ABI 1.0 module is
+  unchanged.
+- `site` is an index into the package's site table, or `"unknown"` when the
+  guest gave no valid site. It is absent when the plan carried no sites at
+  all, which covers every ABI 1.0 invocation.
+- A site is a label for audit and tracing only. It never affects
+  authorization, budgets, the tape or the commit. A site reported by the guest
+  is checked against the table but is not proof; treat it as `inferred`.
+
+<Callout type="warn" title="Sites are not filled in yet">
+  In this release, source builds do not yet embed the site table in the
+  module, and hosts treat every package as having an empty table. Audit
+  records of source-built extensions therefore carry `round` but no `site`.
+  TypeScript and Python extensions do not report sites yet.
+</Callout>
+
+### OpenTelemetry spans
+
+A host can export one span tree per invocation: `axiom.extension.invocation`,
+with one `axiom.extension.round` child per round and one
+`axiom.extension.effect` child per effect. Spans are built only when the host
+installs a span exporter; by default no span code runs. The host's trace
+context becomes the parent of the invocation span; the guest never sees it.
+
+Spans carry a closed list of attributes: application, extension, export, ABI,
+outcome, error code and kind, rounds, fuel, host calls and byte counts, and
+for each effect its operation, resource kind, decision, round and site.
+
+What is never in an audit site or a span:
+
+| Data | Audit `site` field | Spans |
+| --- | --- | --- |
+| Effect inputs, outputs, patches, field values | Never | Never |
+| Secret names and values | Never | Never |
+| Value digests | Not in the site (a separate audit field, as before) | Never |
+| Guest error messages | Never | Never (codes only) |
+| Operation names of an effect without a grant | Never | Never (`resource_kind = unknown`) |
+
+The exporter never slows an invocation: a slow or failing span sink drops
+batches and counts them instead of blocking.
+
+## Next steps
+
+- [Declare and call an extension](/extensions/declare-and-call) for `writes` clauses
+- [Test and debug extensions](/extensions/testing) to replay what an extension did
+- [Extension security model](/extensions/security-model) for what enforcement guarantees

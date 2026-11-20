@@ -93,14 +93,10 @@ source sites. Items match exactly: a write to `cart.total.cents` is not covered
 by a grant of `cart.total`. An `unknown` category is not an error; the build
 notes it as "runtime enforcement only".
 
-### Known gaps in this release
-
-Two SDK features are not yet recognised by the analysers, so using them makes
-every category of the affected exports `unknown` (enforcement is unaffected):
-
-- Rust: importing `try_join` (`use axiom_extension_sdk::try_join;`). `join!`
-  and `join_all` are recognised.
-- Python: the `Cents` and `Percentage` helpers.
+The analysers recognise the whole SDK. The money helpers (`Cents`,
+`Percentage`) and the async combinators (`join!`, `try_join!`, `join_all`,
+`try_join_all`, `Promise.all`, `Promise.allSettled`, `gather`, including
+`gather(..., return_exceptions=True)`) keep a summary `static` or `inferred`.
 
 ## Generated permission requests
 
@@ -196,10 +192,15 @@ The Acore language server adds extension effects to the application graph:
 {"format":"axiom-query/v1","operation":{"kind":"effect-touches","id":"Home.apply"}}
 ```
 
-`axiom inspect query <file>` accepts the same documents, but in this release
-the CLI's graph does not include extension effects: an `effect-impact` query
-fails with `no effect resource field matches`, and an `effect-touches` query
-returns no entries. Use the editor for impact queries.
+`axiom inspect query` answers the same documents from the same graph as the
+language server:
+
+```bash title="Terminal"
+axiom inspect query impact.json .
+```
+
+An export without a verified summary is listed with its granted writes and
+marked unknown; it is never left out.
 
 Each answer lists exports, source sites and actions with every label that
 holds, strongest first: `observed` (seen in audit evidence), `static`,

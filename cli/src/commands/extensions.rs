@@ -79,7 +79,7 @@ pub async fn handle_interface(
     out: Option<PathBuf>,
     json: bool,
 ) -> Result<()> {
-    let sources = resolve_extension_sources(&deps)?;
+    let sources = axiom_lib::extension_source::resolve_extension_sources_for(&deps, &alias)?;
     let source = sources
         .get(&alias)
         .with_context(|| format!("AxiomDeps.toml has no extension `{alias}`"))?;
@@ -321,7 +321,7 @@ pub async fn handle_migrate_rust(
     check: bool,
     json: bool,
 ) -> Result<()> {
-    let sources = resolve_extension_sources(&deps)?;
+    let sources = axiom_lib::extension_source::resolve_extension_sources_for(&deps, &alias)?;
     let extension = sources
         .get(&alias)
         .with_context(|| format!("AxiomDeps.toml has no extension `{alias}`"))?;
@@ -490,7 +490,7 @@ pub async fn handle_source_release(
         target,
         clean,
     })?;
-    let sources = resolve_extension_sources(&deps)?;
+    let sources = axiom_lib::extension_source::resolve_extension_sources_for(&deps, &alias)?;
     let source = sources
         .get(&alias)
         .with_context(|| format!("AxiomDeps.toml has no extension `{alias}`"))?;
@@ -526,28 +526,89 @@ pub async fn handle_source_release(
     let package_digest = Sha256::digest(&package_bytes);
     let package_signature = BASE64.encode(package_key.sign(package_digest.as_slice()).to_bytes());
     let package_public_key = BASE64.encode(package_key.verifying_key().to_bytes());
-    let package_manifest = PackageDependencyManifest {
-        format: PACKAGE_MANIFEST_FORMAT.into(),
-        targets: source.targets.clone(),
-        extensions: Default::default(),
-        packages: std::collections::BTreeMap::from([(
-            alias.clone(),
-            PackageReference {
-                artifact: PathBuf::from(&package_name),
-                name: package.package.name.clone(),
-                kind: PackageKind::Extension,
-                version: package.package.version.clone(),
-                dependencies: Vec::new(),
-                module_artifact: Some(PathBuf::from(&module_name)),
-                signature: Some(package_signature),
-                public_key: Some(package_public_key),
-            },
-        )]),
+    let reference = PackageReference {
+        artifact: PathBuf::from(&package_name),
+        name: package.package.name.clone(),
+        kind: PackageKind::Extension,
+        version: package.package.version.clone(),
+        dependencies: Vec::new(),
+        module_artifact: Some(PathBuf::from(&module_name)),
+        signature: Some(package_signature),
+        public_key: Some(package_public_key),
     };
-    let package_manifest_path = release_root.join("AxiomDeps.toml");
+    // w3-x (w3-e finding 6): `ui run`/`ui build` read one workflow file, so a
+    // release keeps the other aliases the file already lists. A file with no
+    // other alias is written exactly as before (per-alias package manifest);
+    // otherwise one package manifest and lock per workflow file under
+    // `<out>/release` list every alias of the file.
+    let merge = axiom_lib::extension_workflow::source_release_merge(
+        &workflow,
+        &PackageIdentity { name: application.clone(), version: application_version.clone() },
+        &alias,
+        &output_root.join("release"),
+    )?;
+    let (package_manifest, package_root, package_manifest_path, package_lock_path) = if merge.entries.is_empty() {
+        (
+            PackageDependencyManifest {
+                format: PACKAGE_MANIFEST_FORMAT.into(),
+                targets: source.targets.clone(),
+                extensions: Default::default(),
+                packages: std::collections::BTreeMap::from([(alias.clone(), reference)]),
+            },
+            release_root.clone(),
+            release_root.join("AxiomDeps.toml"),
+            release_root.join("AxiomPackages.lock"),
+        )
+    } else {
+        let mut reference = reference;
+        reference.artifact = PathBuf::from(&alias).join(&package_name);
+        reference.module_artifact = Some(PathBuf::from(&alias).join(&module_name));
+        let mut packages = merge.packages.clone();
+        packages.insert(alias.clone(), reference);
+        let targets: Vec<PackageTarget> =
+            merge.targets.iter().copied().filter(|target| source.targets.contains(target)).collect();
+        let dropped: std::collections::BTreeSet<&'static str> = merge
+            .targets
+            .iter()
+            .chain(&source.targets)
+            .filter(|target| !targets.contains(target))
+            .map(|target| target_name(*target))
+            .collect();
+        if targets.is_empty() {
+            bail!(
+                "AXIOM_EXTENSION_WORKFLOW_TARGETS_DISJOINT: `{alias}` shares no target with the extensions already in {} ({}); pass --workflow with another file",
+                workflow.display(),
+                merge.entries.keys().cloned().collect::<Vec<_>>().join(", ")
+            );
+        }
+        if !dropped.is_empty() {
+            eprintln!(
+                "warning: {} now lists {} for the targets every one of its extensions supports; it no longer covers {} [AXIOM_EXTENSION_WORKFLOW_TARGETS_NARROWED]",
+                workflow.display(),
+                packages.keys().cloned().collect::<Vec<_>>().join(", "),
+                dropped.into_iter().collect::<Vec<_>>().join(", ")
+            );
+        }
+        let stem = workflow
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .context("workflow file name is not UTF-8")?
+            .to_string();
+        let root = output_root.join("release");
+        (
+            PackageDependencyManifest {
+                format: PACKAGE_MANIFEST_FORMAT.into(),
+                targets,
+                extensions: Default::default(),
+                packages,
+            },
+            root.clone(),
+            root.join(format!("{stem}.packages.toml")),
+            root.join(format!("{stem}.packages.lock")),
+        )
+    };
     fs::write(&package_manifest_path, toml::to_string(&package_manifest)?)?;
-    let package_lock = resolve_package_dependencies(&release_root, &package_manifest)?;
-    let package_lock_path = release_root.join("AxiomPackages.lock");
+    let package_lock = resolve_package_dependencies(&package_root, &package_manifest)?;
     write_package_lock(&package_lock_path, &package_lock)?;
 
     let application = PackageIdentity {
@@ -632,7 +693,7 @@ pub async fn handle_source_release(
         application,
         package_manifest: relative_from(project_root, &package_manifest_path)?,
         package_lock: relative_from(project_root, &package_lock_path)?,
-        extensions: std::collections::BTreeMap::from([(
+        extensions: merge.entries.clone().into_iter().chain([(
             alias.clone(),
             ExtensionWorkflowEntry {
                 authority_lock: relative_from(project_root, &authority_path)?,
@@ -653,7 +714,7 @@ pub async fn handle_source_release(
                     translator: None,
                 },
             },
-        )]),
+        )]).collect(),
     };
     fs::write(&workflow, toml::to_string(&workflow_manifest)?)?;
     verify_extension_workflow(&workflow)?;

@@ -269,6 +269,14 @@ Release files go to `<out>/release/<alias>/`. Locally generated owner-only
 signing keys go to `<out>/keys/<alias>/`; keep them out of source control. An
 extension with dependencies needs those modules released separately first.
 
+When the workflow file already lists other extensions, the release keeps them:
+the file then names one package manifest and lock for all its extensions,
+`<out>/release/<workflow name>.packages.toml` and `.packages.lock`. Release
+every extension of one workflow file with the same `--out` and `--application`;
+a different application is refused. The file's targets become the targets
+every listed extension supports, and the release prints
+`AXIOM_EXTENSION_WORKFLOW_TARGETS_NARROWED` when that drops one.
+
 ```bash title="Terminal"
 axiom extensions source-release checkout --deps AxiomDeps.toml --application example.checkout
 ```

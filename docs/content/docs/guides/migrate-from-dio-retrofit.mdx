@@ -12,7 +12,7 @@ from it, and the AxiomCore runtime in the app applies the policies.
 
 | Path | Status |
 | --- | --- |
-| Generated client (`axiom_flutter` 0.150.0) | **Alpha** on Android, iOS, macOS and the web |
+| Generated client (`axiom_flutter` 0.150.1) | **Alpha** on Android, iOS, macOS and the web |
 | Contract written in Acore, or extracted from FastAPI or Go | See [Use Flutter with an existing backend](/guides/flutter-with-existing-backend) |
 
 You can migrate one screen at a time. Dio and the generated client can live in
@@ -104,7 +104,7 @@ contract; see [Use Flutter with an existing backend](/guides/flutter-with-existi
 Generate the client:
 
 ```bash title="Terminal: Flutter project root"
-flutter pub add axiom_flutter:^0.150.0 dev:axiom_flutter_generator:^0.150.0
+flutter pub add axiom_flutter:^0.150.1 dev:axiom_flutter_generator:^0.150.1
 axiom pull ../talks-api/backend.axiom --framework flutter --name talks --out lib/axiom_generated
 ```
 

@@ -14,16 +14,22 @@ pageType: reference
   builds on every platform you ship.
 </StatusNote>
 
-<Callout type="warn" title="Behaviour change in 0.150.1: lean runtime by default">
-  On Android and the web, `axiom_flutter` 0.150.1 bundles the lean runtime,
-  which has no executable extensions and no telemetry exporter. Everything
-  else on this page works unchanged. If your app calls `loadExtension`,
-  `invokeExtension`, `extensionLifecycle` or `extensionAudit` on Android, add
-  `flutter pub add axiom_flutter_extensions:^0.150.1`. iOS and macOS are not
-  affected. See [Runtime variants](#runtime-variants).
+<Callout type="warn" title="Behaviour changes in 0.150.1">
+  **Lean runtime by default.** On Android and the web, `axiom_flutter` 0.150.1
+  bundles the lean runtime, which has no executable extensions and no
+  telemetry exporter. If your app calls `loadExtension`, `invokeExtension`,
+  `extensionLifecycle` or `extensionAudit` on Android, add
+  `flutter pub add axiom_flutter_extensions:^0.150.1`. iOS and macOS keep the
+  full published runtime. See [Runtime variants](#runtime-variants).
+  **Sampled validation for large responses.** Responses of 64 KiB or more are
+  validated on a sample by default; `AxiomState.validation` reports it. Set
+  `AxiomValidationPolicy.full` to validate everything. See
+  [Response validation](#response-validation).
+  **Background JSON parsing.** On native platforms, bodies of 256 KB or more
+  are parsed off the calling isolate (`decodeIsolateThreshold: 0` restores
+  inline parsing). **WebSocket TLS** on native trusts the bundled public root
+  certificates, not the operating system store.
 </Callout>
-
-{/* VERIFY: lean default and add-on name/version from /home/node/fp/pack/REPORT.md (unit pack). */}
 
 `axiom_flutter` runs the AxiomCore runtime, written in Rust, inside a Flutter
 app: through `dart:ffi` on Android, iOS and macOS, and as WebAssembly on the
@@ -43,8 +49,6 @@ app), [`flutter-auth`](https://github.com/AxiomCore/examples/tree/main/flutter-a
 offline restart), [`flutter-minimal`](https://github.com/AxiomCore/examples/tree/main/flutter-minimal) (smallest app, with
 release sizes) and [`stream/example`](https://github.com/AxiomCore/examples/tree/main/stream/example) (chunked, SSE and
 WebSocket streams).
-
-{/* VERIFY: example links resolve once examples perf/examples2 (5d20793) is merged to main. */}
 
 ## Platforms
 
@@ -75,7 +79,7 @@ Platform setup:
 ## Install and generate
 
 ```bash title="Terminal: Flutter project root"
-flutter pub add axiom_flutter:^0.150.0 dev:axiom_flutter_generator:^0.150.0
+flutter pub add axiom_flutter:^0.150.1 dev:axiom_flutter_generator:^0.150.1
 axiom pull ../backend/backend.axiom --framework flutter --name tasks --out lib/axiom_generated
 ```
 
@@ -141,10 +145,19 @@ Future<void> main() async {
 
 | Parameter | Type | Use |
 | --- | --- | --- |
-| `config` | `AxiomConfig?` | Replaces the generated `AxiomDefaultConfig.config` (contracts, `dbPath`, `debug`) |
+| `config` | `AxiomConfig?` | Replaces the generated `AxiomDefaultConfig.config` (contracts, `dbPath`, `debug`, and the settings below); start from `AxiomDefaultConfig.config.copyWith(...)` |
 | `environment` | `AxiomEnvironment?` | Named set of base URLs |
 | `baseUrlOverrides` | `Map<String, String>?` | Base URL per contract name |
 | `assetLoader` | `AxiomAssetLoader?` | Loads contract assets; default `rootBundle` |
+
+Performance settings on `AxiomConfig` (0.150.1):
+
+| Field | Default | Use |
+| --- | --- | --- |
+| `validation` | `null` (runtime default `auto`) | Global response validation policy: `AxiomValidationPolicy.auto`, `full`, `sample` or `off`. See [Response validation](#response-validation) |
+| `decodeIsolateThreshold` | `262144` (256 KB) | Native: bodies at or above this size are JSON-parsed on a background isolate; `fromJson` stays on the calling isolate. `0` parses inline |
+| `objectCacheMaxEntries` | `0` (off) | Native: opt-in cache of decoded models, reused when the runtime returns the same bytes. Only for apps that treat models as immutable |
+| `objectCacheMaxBytes` | 8 MB | Memory limit of the object cache |
 
 The base URL of each contract is resolved in this order:
 
@@ -223,13 +236,29 @@ sdk.tasks.listTasks(
     timeout: Duration(seconds: 5),
     headers: {'x-request-source': 'pull-to-refresh'},
     cacheMode: AxiomCacheMode.refresh,
+    validation: AxiomValidationPolicy.full,
   ),
 );
 ```
 
 `timeout` cancels the call and reports `NetworkTimeout`. `headers` are merged
 into the request. `AxiomCacheMode.refresh` bypasses cached data for this call
-by sending `x-axiom-cache-mode: refresh`.
+by sending `x-axiom-cache-mode: refresh`. `validation` overrides the global
+validation policy for this call.
+
+### Response validation
+
+The runtime validates every response against the contract before Dart sees
+it. With the default policy `auto`, bodies under 64 KiB are validated in full
+and bodies of 64 KiB or more on a sample: the envelope, fields outside lists,
+the real length of each list against its bounds, and the first and last items
+of large plain lists. A sampled check never rejects a body the full check
+accepts. `state.validation` reports `AxiomValidationMode.full`, `sampled`,
+`off` or `unknown` (the published Apple runtime 0.148.6 does not report it and
+always validates in full). Force full validation for the app with
+`AxiomConfig(validation: AxiomValidationPolicy.full)` or for one call with
+`AxiomCallOptions(validation: ...)`. Details:
+[Flutter performance](/sdks/flutter-performance#response-validation).
 
 ## Mutations
 
@@ -279,6 +308,12 @@ The channel's `reconnect` parameter defaults to `AxiomReconnectPolicy.auto`
 (exponential back-off). Pass `AxiomReconnectPolicy.none` to disable it, or
 your own policy with `maxAttempts`, `initialDelay` and `maxDelay`. Cancelling
 the last subscription of a stream cancels the request.
+
+On Android (and on iOS and macOS once the next Apple runtime ships), `wss://`
+connections trust the public root certificates bundled with the runtime, the
+same set HTTPS calls use, not the operating system's certificate store. A
+server whose certificate chains only to a private CA installed on the device
+is rejected.
 
 <span id="authentication-and-shutdown" />
 
@@ -434,12 +469,17 @@ names that package. iOS and macOS always run the full runtime.
 flutter pub add axiom_flutter_extensions:^0.150.1
 ```
 
-With the add-on, the Android app ships the full library instead of the lean
-one. To return to the 0.150.0 behaviour (full runtime on Android), add the
-add-on; there is no full runtime for the web. Sizes per ABI and per variant
-are on [Flutter app size](/sdks/flutter-app-size).
-
-{/* VERIFY: loader rule and "one library per APK" from /home/node/fp/pack/REPORT.md. */}
+No code is needed. The add-on ships `libaxiom_runtime_full.so`, which
+`axiom_flutter` loads in preference to the lean library, and its Gradle build
+removes the lean library from the app, so the APK carries one runtime. Calling
+`AxiomExtensions.ensureInitialized()` from
+`package:axiom_flutter_extensions/axiom_flutter_extensions.dart` before start-up
+fails early if the library was not packaged. Without the add-on, extension
+calls on Android throw `AxiomExtensionException` with "Executable extensions
+need the axiom_flutter_extensions package". To return to the 0.150.0
+behaviour (full runtime on Android), add the add-on; there is no full runtime
+for the web. Sizes per ABI and per variant are on
+[Flutter app size](/sdks/flutter-app-size).
 
 ## Observability
 
@@ -474,6 +514,12 @@ are on [Flutter app size](/sdks/flutter-app-size).
   upgrades.
 - The response cache uses the page's `localStorage` (per origin, shared by
   tabs) and falls back to memory when it is unavailable. `dbPath` is ignored.
+- **Fast start (opt-in).** Build with
+  `--dart-define=AXIOM_WEB_FAST_START=true` to let `AxiomSdk.create()` return
+  before the wasm runtime is up. Only unsigned contracts in namespaces without
+  auth qualify, validated endpoints still wait, and a later contract or
+  runtime failure fails every queued call. See
+  [Web fast start](/sdks/flutter-performance#web-fast-start-opt-in).
 
 ## Performance
 
@@ -483,8 +529,6 @@ response validation, the cache layers and decoding are explained on
 and the machines are on [Flutter benchmarks](/sdks/flutter-benchmarks), and
 app size on [Flutter app size](/sdks/flutter-app-size). Measure release
 builds of your own app before you rely on a number.
-
-{/* VERIFY: new options from RTSPEED (validation policy), DARTNATIVE (object cache, decode isolate) and WEBSPEED reports; add a row each to the relevant sections when DONE. */}
 
 ## Platform limits
 

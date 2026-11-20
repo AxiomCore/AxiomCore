@@ -4,7 +4,7 @@ description: Write a small Acore backend, generate a typed Dart client with axio
 pageType: tutorial
 ---
 
-<StatusNote status="alpha" title="axiom_flutter 0.150.0 and Axiom CLI 0.156.0">
+<StatusNote status="alpha" title="axiom_flutter 0.150.1 and Axiom CLI 0.156.0">
   The Flutter SDK is Alpha on Android, iOS, macOS and the web. Test release
   builds on every platform you ship.
 </StatusNote>
@@ -155,7 +155,7 @@ Add the SDK packages first. CLI 0.156.0 adds `axiom_flutter` 0.147.5 when the
 app has none, and that version has no Android support:
 
 ```bash title="Terminal: talks/talks_app"
-flutter pub add axiom_flutter:^0.150.0 dev:axiom_flutter_generator:^0.150.0
+flutter pub add axiom_flutter:^0.150.1 dev:axiom_flutter_generator:^0.150.1
 ```
 
 Then generate the client:
@@ -448,7 +448,6 @@ the finished backend and app from this page, file for file, with a
 `tool/regen.sh` script that rebuilds the contract, pulls, and keeps the
 `AxiomDeps.toml` source relative.
 
-{/* VERIFY: link resolves once examples branch perf/examples2 (head 5d20793) is merged to main. */}
 
 ## Clean up
 

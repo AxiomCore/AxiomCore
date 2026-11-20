@@ -15,7 +15,7 @@ your service.
 | Contract by FastAPI extraction | **Available**; the published extractor binary is for macOS arm64 |
 | Contract by Go extraction | **Alpha**; the published extractor binary is for macOS arm64 |
 | Contract written by hand in Acore | **Alpha** (CLI 0.156.0) |
-| Flutter client (`axiom_flutter` 0.150.0) | **Alpha** on Android, iOS, macOS and the web |
+| Flutter client (`axiom_flutter` 0.150.1) | **Alpha** on Android, iOS, macOS and the web |
 
 ```mermaid title="Your service stays in charge; the contract describes it"
 flowchart LR
@@ -107,7 +107,7 @@ the service, and test it against the real API in CI.
 ## 3. Generate the client in your Flutter app
 
 ```bash title="Terminal 2: your Flutter app"
-flutter pub add axiom_flutter:^0.150.0 dev:axiom_flutter_generator:^0.150.0
+flutter pub add axiom_flutter:^0.150.1 dev:axiom_flutter_generator:^0.150.1
 axiom pull ../fastapi-web/backend/backend.axiom --framework flutter --name greetings --out lib/axiom_generated
 ```
 

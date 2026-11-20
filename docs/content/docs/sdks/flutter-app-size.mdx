@@ -15,8 +15,6 @@ explains what is in that runtime, which variant your app ships, and how the
 numbers you see in an APK, an App Bundle or a web build relate to what users
 download.
 
-{/* VERIFY: every size on this page comes from unit p1's measurements (/home/node/fp/P1-REPORT.md, tables A4 and A5, artifacts built from axiom-runtime flutter/perf f93a3b8). Replace with the final 0.150.1 artifact sizes from /home/node/fp/rtlean/REPORT.md (item 8) when it is DONE. */}
-
 ## What is in the runtime
 
 The runtime executes your `.axiom` contract on the device. Every build
@@ -54,10 +52,11 @@ To keep executable extensions on Android, add the add-on:
 flutter pub add axiom_flutter_extensions:^0.150.1
 ```
 
-`axiom_flutter_extensions` carries the full Android runtime. When it is in
-the app, the app ships the full library instead of the lean one, not both.
-
-{/* VERIFY: add-on package name, version, loader rule and "one library per APK" from /home/node/fp/pack/REPORT.md (unit pack). */}
+`axiom_flutter_extensions` carries the full Android runtime as
+`libaxiom_runtime_full.so`. `axiom_flutter` loads it in preference to the lean
+library, and the add-on's Gradle build removes the lean library from the app,
+so the app ships one runtime, not both. No code is needed; depending on the
+package is enough.
 
 | Platform | Without the add-on | With `axiom_flutter_extensions` |
 | --- | --- | --- |
@@ -83,26 +82,24 @@ compressed in the APK) that 0.150.0 still copied into Android builds. On the web
 
 The sections below show what 0.150.1 changes.
 
-{/* VERIFY: 0.150.1 flutter-minimal sizes, if measured, from /home/node/fp/EXAMPLES2-REPORT.md or bench2. */}
-
 ## Android sizes per ABI
 
 The plugin bundles one library per ABI. Sizes in bytes:
 
-| ABI | Full runtime | Lean runtime | Lean, gzip -9 (download estimate) |
-| --- | --- | --- | --- |
-| `arm64-v8a` | 10,123,728 | 5,025,888 | 2,483,034 |
-| `armeabi-v7a` | 7,280,044 | 3,538,792 | 2,040,974 |
-| `x86_64` | 12,512,352 | 5,957,296 | 2,615,356 |
+| ABI | 0.150.0 runtime | 0.150.1 lean (default) | Lean, gzip -9 | 0.150.1 full (add-on) | Full, gzip -9 |
+| --- | --- | --- | --- | --- | --- |
+| `arm64-v8a` | 10,097,128 | 4,804,712 | 2,381,263 | 7,375,344 | 3,499,462 |
+| `armeabi-v7a` | 7,258,388 | 3,410,196 | 1,963,736 | 5,197,156 | 2,893,789 |
+| `x86_64` | 12,479,672 | 5,701,680 | 2,507,701 | 8,861,496 | 3,666,195 |
 
-The full runtime's gzip size for `arm64-v8a` is 4,946,984 bytes.
+The 0.150.1 full runtime is also smaller than 0.150.0: the extension package
+check no longer pulls in the server-side validators, and the runtime uses one
+TLS stack.
 
-A whole app shows the same saving: the SDK's integration app, built as an
-`arm64-v8a` release APK, is 27,322,530 bytes with `axiom_flutter` 0.150.0 and
-21,286,443 bytes with the lean runtime (6.04 MB smaller; this includes the
-removed web runtime files).
-
-{/* VERIFY: APK sizes from /home/node/fp/pack/REPORT.md (APK_READY 18:50 UTC, p1 artifact set); update after the swap to rtlean's artifacts. */}
+A whole app shows the saving: the SDK's integration app, built as an
+`arm64-v8a` release APK, is 27.32 MB with `axiom_flutter` 0.150.0, 21.07 MB
+with 0.150.1 (lean, without the unused web runtime) and 23.65 MB with
+`axiom_flutter_extensions`.
 
 ### Installed size and download size
 
@@ -110,8 +107,8 @@ With `minSdk 24`, the Android Gradle plugin stores native libraries
 uncompressed and page-aligned in the APK (`useLegacyPackaging=false`), so the
 device can map them without extracting them. Two consequences:
 
-- The **APK and the installed app** grow by the raw library size: about 5 MB
-  for lean on `arm64-v8a`, 10 MB for full.
+- The **APK and the installed app** grow by the raw library size: about
+  4.8 MB for lean on `arm64-v8a`, 7.4 MB for full.
 - The **download** from Google Play is compressed. The gzip column above is a
   close estimate of what one user downloads for the runtime.
 
@@ -151,10 +148,11 @@ axiom.keepWebAssets=true
 The web runtime is one WebAssembly file plus a small JavaScript loader, served
 from your app's `assets/packages/axiom_flutter/` directory:
 
-| File | Full runtime | Lean runtime (0.150.1 default) |
+| File | 0.150.0 | 0.150.1 (lean) |
 | --- | --- | --- |
-| `axiom_runtime_bg.wasm`, raw | 2,475,214 | 2,067,867 |
-| `axiom_runtime_bg.wasm`, gzip -9 | 960,757 | 786,604 |
+| `axiom_runtime_bg.wasm`, raw | 2,444,563 | 2,123,497 |
+| `axiom_runtime_bg.wasm`, gzip -9 | 946,955 | 807,347 |
+| `axiom_runtime.js`, raw | 38,809 | 34,290 |
 
 Your web server decides what is transferred: serve `.wasm` files with gzip or
 Brotli compression and the `application/wasm` content type. The runtime is

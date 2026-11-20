@@ -82,6 +82,13 @@ The plugin bundles one library per ABI. Sizes in bytes:
 
 The full runtime's gzip size for `arm64-v8a` is 4,946,984 bytes.
 
+A whole app shows the same saving: the SDK's integration app, built as an
+`arm64-v8a` release APK, is 27,322,530 bytes with `axiom_flutter` 0.150.0 and
+21,286,443 bytes with the lean runtime (6.04 MB smaller; this includes the
+removed web runtime files).
+
+{/* VERIFY: APK sizes from /home/node/fp/pack/REPORT.md (APK_READY 18:50 UTC, p1 artifact set); update after the swap to rtlean's artifacts. */}
+
 ### Installed size and download size
 
 With `minSdk 24`, the Android Gradle plugin stores native libraries

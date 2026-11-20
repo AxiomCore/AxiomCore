@@ -61,7 +61,7 @@ runtime commits.
 Physical Android and iOS devices and the macOS desktop have not been measured
 yet.
 
-{/* VERIFY: machines added by /home/node/fp/bench2/REPORT.md (Android emulator, macOS, iOS simulator) when RESULTS_READY. */}
+The native rows use the Dart VM on the same Linux container (`flutter_tester`, JIT, host runtime library). That is a server CPU, not a phone.
 
 ## Reproduce
 
@@ -83,12 +83,39 @@ option and the full command set.
 
 ### 0.150.1
 
-{/* VERIFY: fill from /home/node/fp/bench2/REPORT.md when it says RESULTS_READY. Only rows with spread <= 10% across 3 runs; name the machine. Do not use unit p1's preliminary rows (two had spread above 10%). */}
+Linux container, release web build in headless Chrome 158, Flutter 3.32.0,
+local loopback server, three full runs of the merged 0.150.1 code. Each value
+is the median of the three run medians, in milliseconds. A value whose runs
+differ by more than 10% is listed as not stable.
 
-The 0.150.1 re-measurement of the merged code did not finish in time for this
-page: its first three-run set did not pass the 10% spread rule and is being
-repeated. Until it is published, the 0.150.0 table below is the latest result
-of record. Size changes in 0.150.1 are on [Flutter app size](/sdks/flutter-app-size).
+| Measurement | Axiom | dio + retrofit | package:http |
+| --- | --- | --- | --- |
+| Cold start to first data | 259 | 219 | 215 |
+| List of 1,000 items (91 KB), p50 | 3.4 | 3.4 | 2.9 |
+| List of 10,000 items (938 KB), p50 | 15.4 | 18.3 | 12.7 |
+| 20 parallel 1,000-item lists, all done, p50 | 40.3 | 47.4 | 35.9 |
+| Repeat call served from cache, 1,000 items, p50 | 3.5 | 24.7 (`dio_cache_interceptor`) | not applicable |
+| First data with the server unreachable, 1,000 items | 3.4 | not stable (`dio_cache_interceptor`) | fails (no cache) |
+| Longest UI stall while loading 10,000 items | 11.7 | not stable | 9.9 |
+| Decode only, 10,000 items, p50 | 8.7 | 13.2 (`json_serializable`) | 9.5 (hand-written `fromJson`) |
+| Single small call (about 110 B), p50 | not stable | not stable | not stable |
+
+Native Dart VM on the same machine, three runs:
+
+| Measurement | Axiom | dio + retrofit | package:http |
+| --- | --- | --- | --- |
+| Single small call (about 110 B), p50 | 1.04 | 1.34 | 0.76 |
+| List of 1,000 items, p50 | 1.76 | 2.46 | 1.84 |
+| List of 10,000 items, p50 | 21.4 | 24.6 | 14.0 |
+| 20 parallel small calls, all done, p50 | 11.9 | 14.0 | 10.8 |
+| 20 parallel 1,000-item lists, all done, p50 | 35.7 | 46.8 | 53.3 |
+| First data with the server unreachable, 1,000 items | 1.5 | 2.69 (`dio_cache_interceptor`) | fails (no cache) |
+| Decode only, 10,000 items, p50 | 10.8 | 10.9 (`json_serializable`) | 11.2 (hand-written `fromJson`) |
+
+Compared with 0.150.0 on the web, the 10,000-item list went from 33.2 ms to
+15.4 ms, the 1,000-item list from 5.3 ms to 3.4 ms, and the cached repeat call
+from 5.0 ms to 3.5 ms. Cold start did not change (262 ms then, 259 ms now).
+Size changes are on [Flutter app size](/sdks/flutter-app-size).
 
 ### 0.150.0 table (2026-11-20)
 
@@ -109,8 +136,9 @@ repeat within 10% and are not listed.
 
 ## Where Axiom is slower
 
-In the 0.150.0 results, Axiom is slower than dio and http on cold start and on
-uncached lists:
+In 0.150.1, Axiom is slower than `package:http` on cold start and on uncached
+lists, and level with or ahead of dio on lists. The causes below are from the
+0.150.0 analysis; the first two still apply:
 
 - **Cold start** is about 40 ms behind on the web. The app downloads and
   compiles the WebAssembly runtime and loads the contract before the first

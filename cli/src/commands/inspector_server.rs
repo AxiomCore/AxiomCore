@@ -7,7 +7,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use axiom_lib::{
     application_change::semantic_diff,
     application_evidence::{ApplicationEvidence, AxiomQuery, EvidenceIndex, EvidenceNodeKind},
@@ -130,6 +130,9 @@ pub(super) async fn serve(
     } else {
         workspace
     };
+    // w3-d3: refuse a symlinked `.axiom` or `.axiom/inspector` before anything
+    // (the evidence cache, the connection file) is written under it.
+    private_inspector_directory(&workspace)?;
     let evidence = super::inspector::load(&workspace)?;
     let runtime = inspector_runtime::load_latest(&workspace)?;
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
@@ -209,6 +212,7 @@ pub(super) async fn serve(
         token: token.clone(),
         graph_revision: initial_graph_revision,
         process_id: std::process::id(),
+        process_started: axiom_lib::live_inspection::process_start_time(std::process::id()),
     };
     write_connection(&connection_path, &connection)?;
     let url = if api_only {
@@ -235,12 +239,120 @@ pub(super) async fn serve(
     if !no_open && !api_only {
         super::ui::open_application_browser(&url)?;
     }
+    // w3-d3 (w3-vd2 finding 3): the connection file goes away on SIGINT,
+    // SIGTERM and SIGHUP, on a server error and on unwinding, not only on
+    // Ctrl-C (the guard removes it when it drops, if it is still ours).
+    let _connection_file = ConnectionFileGuard {
+        path: connection_path,
+        token: token.clone(),
+    };
     tokio::select! {
         result = axum::serve(listener, router) => result.context("Inspector server stopped")?,
-        _ = tokio::signal::ctrl_c() => {}
+        signal = shutdown_signal() => signal?,
     }
-    let _ = fs::remove_file(&connection_path);
     Ok(())
+}
+
+/// Removes the Inspector connection file when dropped, unless another
+/// Inspector has replaced it since (a different token).
+struct ConnectionFileGuard {
+    path: PathBuf,
+    token: String,
+}
+
+impl Drop for ConnectionFileGuard {
+    fn drop(&mut self) {
+        remove_own_connection(&self.path, &self.token);
+    }
+}
+
+fn remove_own_connection(path: &Path, token: &str) {
+    let ours = fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<InspectorConnection>(&bytes).ok())
+        .is_some_and(|connection| connection.token == token);
+    if ours {
+        let _ = fs::remove_file(path);
+    }
+}
+
+/// Resolves on the first SIGINT (Ctrl-C), SIGTERM or SIGHUP.
+async fn shutdown_signal() -> Result<()> {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut terminate = signal(SignalKind::terminate())?;
+        let mut hangup = signal(SignalKind::hangup())?;
+        tokio::select! {
+            result = tokio::signal::ctrl_c() => result?,
+            _ = terminate.recv() => {}
+            _ = hangup.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    tokio::signal::ctrl_c().await?;
+    Ok(())
+}
+
+/// w3-d3 (w3-vd2 finding 4): `<workspace>/.axiom/inspector`, created owner-only
+/// if missing. Refused when `.axiom` or `.axiom/inspector` is a symlink or not
+/// a directory: the Inspector never follows one (it would otherwise chmod the
+/// link's target and write the token and its cache into it). The mode is set
+/// on a descriptor whose inode is checked against the path's own (`lstat`), so
+/// a symlink swapped in after the check is refused too.
+fn private_inspector_directory(workspace: &Path) -> Result<PathBuf> {
+    let axiom = workspace.join(".axiom");
+    let inspector = axiom.join("inspector");
+    for (directory, mode) in [(&axiom, 0o755), (&inspector, 0o700)] {
+        match fs::symlink_metadata(directory) {
+            Ok(metadata) if metadata.file_type().is_symlink() => bail!(
+                "refusing to use {}: it is a symlink (the Inspector never follows one)",
+                directory.display()
+            ),
+            Ok(metadata) if !metadata.is_dir() => {
+                bail!("refusing to use {}: it is not a directory", directory.display())
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let mut builder = fs::DirBuilder::new();
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::DirBuilderExt;
+                    builder.mode(mode);
+                }
+                #[cfg(not(unix))]
+                let _ = mode;
+                builder
+                    .create(directory)
+                    .with_context(|| format!("create {}", directory.display()))?;
+            }
+            Err(error) => {
+                return Err(error).with_context(|| format!("inspect {}", directory.display()))
+            }
+        }
+    }
+    #[cfg(unix)]
+    {
+        // chmod through a descriptor, and only after checking that the
+        // directory it names is the real (non-symlink) directory at the path:
+        // a symlink swapped in after the checks above is refused.
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let directory = fs::File::open(&inspector)
+            .with_context(|| format!("open {}", inspector.display()))?;
+        let opened = directory.metadata()?;
+        let at_path = fs::symlink_metadata(&inspector)?;
+        if at_path.file_type().is_symlink()
+            || !opened.is_dir()
+            || (opened.dev(), opened.ino()) != (at_path.dev(), at_path.ino())
+        {
+            bail!(
+                "refusing to use {}: it must be a real directory, not a symlink",
+                inspector.display()
+            );
+        }
+        directory.set_permissions(fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(inspector)
 }
 
 fn write_connection(path: &Path, connection: &InspectorConnection) -> Result<()> {
@@ -249,13 +361,15 @@ fn write_connection(path: &Path, connection: &InspectorConnection) -> Result<()>
     // else can write (axiom_lib::live_inspection::read_connection_file), so
     // the directory is made 0700 and the file is created 0600 (no window at
     // umask permissions).
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
-        }
+    // w3-d3: never through a symlinked `.axiom` or `.axiom/inspector`.
+    let workspace = path
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+        .context("Inspector connection path must be <workspace>/.axiom/inspector/<file>")?;
+    let directory = private_inspector_directory(workspace)?;
+    if path.parent() != Some(directory.as_path()) {
+        bail!("Inspector connection path must be <workspace>/.axiom/inspector/<file>");
     }
     let temporary = path.with_extension("json.tmp");
     let _ = fs::remove_file(&temporary);
@@ -1207,6 +1321,7 @@ async fn watch_workspace(state: ServerState) {
                         token: state.token.to_string(),
                         graph_revision: revision.clone(),
                         process_id: std::process::id(),
+                        process_started: axiom_lib::live_inspection::process_start_time(std::process::id()),
                     },
                 );
                 *state.generation.write().await += 1;
@@ -1457,6 +1572,101 @@ fn now_ms() -> u128 {
 mod tests {
     use super::*;
 
+    fn w3d3_connection(token: String) -> InspectorConnection {
+        InspectorConnection::for_current_process("http://127.0.0.1:4321".into(), token, "0".repeat(64))
+    }
+
+    /// w3-d3 (w3-vd2 finding 4): a symlinked `.axiom/inspector` or `.axiom`
+    /// is refused; the link's target is neither chmodded nor written.
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_inspector_directory_is_refused_and_its_target_untouched() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        let elsewhere = tempfile::tempdir().unwrap();
+        let target = elsewhere.path().join("victim");
+        fs::create_dir(&target).unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).unwrap();
+
+        // .axiom/inspector -> victim
+        let workspace = tempfile::tempdir().unwrap();
+        fs::create_dir(workspace.path().join(".axiom")).unwrap();
+        symlink(&target, workspace.path().join(".axiom/inspector")).unwrap();
+        let path = workspace.path().join(".axiom/inspector/live-connection.json");
+        let error = write_connection(&path, &w3d3_connection(random_token())).unwrap_err();
+        assert!(error.to_string().contains("symlink"), "{error:#}");
+        assert!(private_inspector_directory(workspace.path()).is_err());
+        assert_eq!(mode(&target), 0o755, "the target's mode is unchanged");
+        assert_eq!(fs::read_dir(&target).unwrap().count(), 0, "nothing written into it");
+
+        // .axiom -> a directory that holds an `inspector` directory
+        let workspace = tempfile::tempdir().unwrap();
+        fs::create_dir(target.join("inspector")).unwrap();
+        fs::set_permissions(target.join("inspector"), fs::Permissions::from_mode(0o755)).unwrap();
+        symlink(&target, workspace.path().join(".axiom")).unwrap();
+        let path = workspace.path().join(".axiom/inspector/live-connection.json");
+        assert!(write_connection(&path, &w3d3_connection(random_token())).is_err());
+        assert_eq!(mode(&target.join("inspector")), 0o755);
+        assert_eq!(fs::read_dir(target.join("inspector")).unwrap().count(), 0);
+
+        // .axiom/inspector is a file
+        let workspace = tempfile::tempdir().unwrap();
+        fs::create_dir(workspace.path().join(".axiom")).unwrap();
+        fs::write(workspace.path().join(".axiom/inspector"), "x").unwrap();
+        assert!(private_inspector_directory(workspace.path()).is_err());
+
+        // control: real directories are created (or tightened) owner-only
+        let workspace = tempfile::tempdir().unwrap();
+        let directory = private_inspector_directory(workspace.path()).unwrap();
+        assert_eq!(mode(&directory), 0o700);
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o755)).unwrap();
+        private_inspector_directory(workspace.path()).unwrap();
+        assert_eq!(mode(&directory), 0o700);
+    }
+
+    /// w3-d3 (w3-vd2 finding 3): the guard removes the connection file when
+    /// it drops (every exit path of `serve`), but never a file another
+    /// Inspector has written since.
+    #[test]
+    fn the_connection_file_is_removed_on_exit_only_while_it_is_ours() {
+        let workspace = tempfile::tempdir().unwrap();
+        let path = workspace.path().join(".axiom/inspector/live-connection.json");
+        let ours = random_token();
+        write_connection(&path, &w3d3_connection(ours.clone())).unwrap();
+        drop(ConnectionFileGuard { path: path.clone(), token: ours.clone() });
+        assert!(!path.exists());
+
+        write_connection(&path, &w3d3_connection(random_token())).unwrap();
+        drop(ConnectionFileGuard { path: path.clone(), token: ours });
+        assert!(path.exists(), "a newer Inspector's file stays");
+    }
+
+    /// SIGTERM and SIGHUP end `serve` like Ctrl-C (so the guard runs).
+    #[cfg(unix)]
+    #[test]
+    fn sigterm_and_sighup_end_the_inspector() {
+        use tokio::signal::unix::{signal, SignalKind};
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        for kind in [libc::SIGTERM, libc::SIGHUP] {
+            runtime.block_on(async {
+                // Install the handlers first, so raising the signal can never
+                // take the default action (end the test process).
+                let _term = signal(SignalKind::terminate()).unwrap();
+                let _hup = signal(SignalKind::hangup()).unwrap();
+                let waiter = tokio::spawn(shutdown_signal());
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                assert!(!waiter.is_finished());
+                // SAFETY: raise has no preconditions; tokio handles the signal.
+                assert_eq!(unsafe { libc::raise(kind) }, 0);
+                tokio::time::timeout(std::time::Duration::from_secs(10), waiter)
+                    .await
+                    .expect("the signal ends the wait")
+                    .unwrap()
+                    .unwrap();
+            });
+        }
+    }
+
     #[test]
     fn tokens_are_random_and_opaque() {
         let one = random_token();
@@ -1507,7 +1717,8 @@ mod tests {
             endpoint: "http://127.0.0.1:4321".into(),
             token: random_token(),
             graph_revision: "0".repeat(64),
-            process_id: 1,
+            process_id: std::process::id(),
+            process_started: axiom_lib::live_inspection::process_start_time(std::process::id()),
         };
         write_connection(&path, &connection).unwrap();
         let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;

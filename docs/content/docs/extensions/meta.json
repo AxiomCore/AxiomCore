@@ -1,4 +1,17 @@
 {
   "title": "Extensions and packages",
-  "pages": ["index", "build", "reference", "dependencies", "packages"]
+  "pages": [
+    "index",
+    "build",
+    "declare-and-call",
+    "typed-effects",
+    "async-rounds",
+    "effect-summaries",
+    "testing",
+    "security-model",
+    "upgrade",
+    "reference",
+    "dependencies",
+    "packages"
+  ]
 }

@@ -1175,6 +1175,14 @@ pub async fn handle(action: &InspectorAction) -> Result<()> {
         } => {
             let query: AxiomQuery = serde_json::from_slice(&fs::read(query_file)?)
                 .context("parse axiom-query/v1 JSON")?;
+            // w3-x (w3-e finding 3): the X9b effect operations are answered
+            // from the editor's graph of the saved project (shared code in
+            // `acore::editor::inspection`), which carries the extension effect
+            // nodes; the workspace evidence below has none.
+            if acore::editor::inspection::is_effect_query(&query) {
+                let result = acore::editor::inspection::query_saved_project(path, query)?;
+                return render(&result, *format);
+            }
             let evidence = load(path)?;
             let result = EvidenceIndex::new(&evidence)?.query(query)?;
             render(&result, *format)

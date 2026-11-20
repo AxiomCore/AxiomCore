@@ -18,11 +18,10 @@ change to check that the extension still behaves the same. It uses the
 
 Prerequisites: the extension is released with `axiom extensions source-release`
 and targets `server`. Run every command from the directory that holds
-`AxiomDeps.toml` and `AxiomExtensions.toml`. `source-release` writes a workflow
-file that lists only the extension it released; in a project with several
-extensions, release each one into its own file
-(`--workflow AxiomExtensions.<alias>.toml`) and pass that file to `run` and
-`replay` with `--manifest`.
+`AxiomDeps.toml` and `AxiomExtensions.toml`. `source-release` adds the
+extension it released to the workflow file and keeps the extensions the file
+already lists, so releasing each extension in turn gives one
+`AxiomExtensions.toml` for all of them.
 
 ## Run an export with UI state
 

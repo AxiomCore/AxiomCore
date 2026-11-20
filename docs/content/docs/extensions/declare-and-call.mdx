@@ -50,9 +50,11 @@ Rules:
 - `use extension <alias>` must end its line. A trailing comment is allowed;
   any other token after the alias is an error (`AUI082`).
 - The alias must be a key of `[extensions]` in `AxiomDeps.toml` and cannot be
-  an Acore keyword. For an extension you build from source, use only lowercase
-  letters and digits: in this release a source build refuses an alias that
-  contains `_` (`invalid package name local.<alias>`).
+  an Acore keyword. An alias uses lowercase letters and digits, with single
+  `_` between them, and starts with a letter (`pricing`, `pricing_ts`,
+  `ext2`); it is at most 122 characters. Any other alias, for example
+  `my-ext`, `MyExt`, `_ext` or `my__ext`, fails when the manifest is read
+  with `AXIOM_EXTENSION_ALIAS_INVALID` and the reason.
 - Calling an export the extension does not have is `AUI077`. The message lists
   the exports that exist.
 - The editor completes exports after `pricing.` and shows the export's

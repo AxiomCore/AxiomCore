@@ -613,6 +613,7 @@ guest values. The published Rust SDK has no `schema` feature.
 | `AUI087` | SDK 0.1.5: deprecated `use extension X from "a" export "e"` (warning) | Run the migration code action |
 | `AXIOM_PERMISSION_*` | SDK 0.1.5: invalid permission key, value, origin, method, wildcard or duplicate | See [permission diagnostics](/extensions/declare-and-call#permission-diagnostics) |
 | `AXIOM_EXTENSION_EXPORTS_UNDERIVED`, `_STALE`, `_LOCK_MISMATCH` | SDK 0.1.5: exports cannot be derived, or the recorded list no longer matches the guest | Add `exports` (TypeScript), or build again |
+| `AXIOM_EXTENSION_ALIAS_INVALID` | SDK 0.1.5: an `[extensions]` alias is not lowercase letters and digits with single `_` between them, starting with a letter, at most 122 characters | Rename the alias (for example `my-ext` to `my_ext`) |
 
 ## Examples and evidence
 

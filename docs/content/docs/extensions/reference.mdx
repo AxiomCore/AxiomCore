@@ -100,6 +100,54 @@ SDK 0.1.5 adds a shorthand with the same meaning: `ui.<scope>` for
 in canonical form in both spellings. See
 [Request permissions](/extensions/declare-and-call#request-permissions).
 
+### Network origins and paths
+
+A network permission names one exact origin. The origin must be written in
+its canonical form: lower-case scheme and host, no default port, no trailing
+`/`, path, query, fragment, user info or trailing `.`, and punycode for
+non-ASCII hosts (`https://api.example.com`, `https://api.example.com:8443`,
+`http://localhost:8080`, `http://[::1]:9000`; the only IPv6 literal accepted
+is `[::1]`; see [Canonical origins](/extensions/declare-and-call#canonical-origins)).
+The same rule applies when the
+manifest is checked at build, when the authority lock is written and
+verified, and when the host loads the extension, so the first stage that
+sees a non-canonical origin reports it. A lock written by an older toolchain
+with an origin such as `https://api.example.com/` or
+`https://api.example.com:443` fails verification with the canonical
+spelling in the message. Fix the origin in `AxiomDeps.toml` and rebuild the
+lock.
+
+The extension passes only a path, which the host joins to the granted
+origin. The path must be an origin-relative, already-normalized reference.
+The broker refuses a path, with an audited `denied` decision, if it contains
+any of the following, raw or after any percent-decoding layer (up to four).
+It never rewrites a path.
+
+| Refused | Example | Write instead |
+| --- | --- | --- |
+| `@` anywhere in the path, also as `%40` | `/users/@me`, `/users/%40me` | No workaround in this release; an `@` in a query value is accepted |
+| `..` anywhere, also inside a segment or in the query | `/compare/main...dev`, `/x?range=1..5` | `/x?range=1-5`, if the API accepts it |
+| `://` anywhere (raw) | `/x?callback=https://example.com/cb` | `/x?callback=https%3A%2F%2Fexample.com%2Fcb` |
+| An empty inner segment, or a leading `//` | `/bucket/a//b`, `//evil.example` | `/bucket/a/b` |
+| A scheme-like first segment | `/v1:batchGet`, `/urn:isbn:0451450523` | `/v1/items:batchGet` (a `:` after the first segment is accepted) |
+| `.` or `..` segments, also with a path parameter | `/a/./b`, `/a/..;/b`, `/%2e%2e/admin` | `/a/b` |
+| Backslash, control characters, space, non-ASCII, `#` | `/a\b`, `/a%0Ab`, `/café` | Percent-encode text: `/caf%C3%A9`, `/a%20b` |
+| A malformed percent escape, or more than four encoding layers | `/a%zz`, `/a%2` | Encode `%` as `%25`: `/files/100%25` |
+
+A literal encoded `%` is accepted (`/files/100%25`,
+`/x?discount=50%25off`), as are `:` after the first segment
+(`/users/123:activate`), `;`, `=`, `+`, `~` and encoded `/`, `?` and `#`
+(`/a%2Fb`).
+
+File paths have a similar rule. A path relative to the granted root is
+refused if it starts with `/`, contains `\`, `:`, a control character or an
+empty, `.` or `..` segment. The `:` refusal applies on every host, so a
+package behaves the same on Windows, where `C:x` and `name:stream` would
+escape the root. A name such as `backup-10:30.log` is refused.
+
+These rules are strict on purpose and may be relaxed in a later release
+(for example to accept `@` and `..` inside a segment).
+
 <span id="authority-surface" />
 
 ## Authority model

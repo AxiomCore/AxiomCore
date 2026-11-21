@@ -302,6 +302,14 @@ rounds left. Only fuel scales. The deadline, the host-call budget and the read
 and write byte budgets are **not** scaled by `maxRounds` and are shared by all
 rounds.
 
+**On the web.** Multi-round (ABI 1.1) extensions in Rust, TypeScript and
+Python also run on the web target. The browser has no fuel metering, so there
+the guest's CPU is limited by the invocation deadline (`deadlineMs`) instead of
+fuel: one deadline covers every round and the host work between rounds, and it
+is not scaled by `maxRounds`. When it passes, the invocation fails with
+`AXIOM_EXTENSION_DEADLINE_EXCEEDED` and nothing commits. Choose `deadlineMs`
+for the slowest browser you support.
+
 Measured costs per language under the default policy (release builds,
 1,000 ms deadline, 64 memory pages):
 

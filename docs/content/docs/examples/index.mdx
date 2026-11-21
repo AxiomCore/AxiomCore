@@ -83,6 +83,28 @@ cd examples/domain-commerce
 | `offline-first-feed` | A cached feed with online and offline consumer states | Backend and web toolchains | Experimental: caching | Build the contract, then exercise online and offline states |
 | `realtime-chat` | A Go streaming service with web, React and Flutter consumers | Go and the chosen frontend toolchain | Experimental: streams | Build, then test connect, message, error, reconnect and dispose |
 
+### Flutter examples
+
+These apps use `axiom_flutter` 0.150.0 from pub.dev with Axiom CLI 0.156.0. Each
+has Android, iOS, macOS and web folders set up, commits its generated client,
+and has a `tool/regen.sh` script that rebuilds the contract and regenerates the
+client on any operating system.
+
+| Directory | Capability | Backend | Built | Run |
+| --- | --- | --- | --- | --- |
+| `flutter-quickstart` | The finished app of the [Flutter quickstart](/getting-started/quickstart-flutter), identical to the page | Acore | Web, Android APK | Web (headless Chrome) |
+| `flutter-auth` | Sign-up, sign-in, session restore and sign-out with [axiom_flutter_auth](/sdks/flutter-auth) against `axiom auth emulate` | Acore and the local auth emulator | Web, Android APK | Web (headless Chrome) |
+| `flutter-offline-first` | `cacheFirst` and `staleWhileRevalidate` lists, pull-to-refresh, data from the persistent cache after a restart with the backend down | Acore | Web, Android APK | Web (headless Chrome) |
+| `flutter-minimal` | The smallest app (one query) with measured release sizes; see [Flutter app size](/sdks/flutter-app-size) | Acore | Web, Android APKs per ABI | Web (headless Chrome) |
+| `stream/example` | HTTP chunked, SSE and a bidirectional WebSocket channel | FastAPI, contract in Acore | Web, Android APK | Web (headless Chrome) |
+
+iOS, macOS and the Android emulator are set up in every example but were not
+run for this table.
+
+
+The Flutter consumers in `simple-backend` and `realtime-chat` use extracted
+FastAPI and Go contracts, which CLI 0.156.0 can rebuild on macOS only.
+
 The `rpc`, `stream` and `observability-and-auth` directories are lower-level
 runtime fixtures for maintainers. The repository README also lists UI
 galleries, demos and extension samples.

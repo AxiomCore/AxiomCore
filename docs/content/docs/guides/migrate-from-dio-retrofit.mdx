@@ -1,0 +1,210 @@
+---
+title: Migrate a Flutter app from Dio and Retrofit
+description: Map a Retrofit interface, json_serializable models and Dio interceptors to a contract and the generated axiom_flutter client, one endpoint at a time.
+pageType: guide
+---
+
+A typical Flutter networking stack has three hand-maintained parts: a Retrofit
+interface, `json_serializable` models, and Dio interceptors for auth, retries
+and caching. With AxiomCore, one contract describes the endpoints, models,
+caching and retry policy. `axiom pull` generates the Dart client and models
+from it, and the AxiomCore runtime in the app applies the policies.
+
+| Path | Status |
+| --- | --- |
+| Generated client (`axiom_flutter` 0.150.1) | **Alpha** on Android, iOS, macOS and the web |
+| Contract written in Acore, or extracted from FastAPI or Go | See [Use Flutter with an existing backend](/guides/flutter-with-existing-backend) |
+
+You can migrate one screen at a time. Dio and the generated client can live in
+the same app; both call the same backend.
+
+## Before: Retrofit, json_serializable and Dio
+
+{/* no-verify: code from the libraries being replaced */}
+```dart title="lib/api/talks_api.dart (Retrofit)"
+@RestApi()
+abstract class TalksApi {
+  factory TalksApi(Dio dio, {String? baseUrl}) = _TalksApi;
+
+  @GET('/talks')
+  Future<TalkList> listTalks();
+
+  @GET('/talks/{id}')
+  Future<Talk> getTalk(@Path('id') String id);
+
+  @POST('/talks')
+  Future<Talk> createTalk(@Body() NewTalk input);
+}
+```
+
+{/* no-verify: code from the libraries being replaced */}
+```dart title="lib/api/models.dart (json_serializable)"
+@JsonSerializable()
+class Talk {
+  Talk({required this.id, required this.title, required this.speaker});
+  factory Talk.fromJson(Map<String, dynamic> json) => _$TalkFromJson(json);
+  final String id;
+  final String title;
+  final String speaker;
+  Map<String, dynamic> toJson() => _$TalkToJson(this);
+}
+// TalkList and NewTalk follow the same pattern.
+```
+
+{/* no-verify: code from the libraries being replaced */}
+```dart title="lib/api/client.dart (Dio set-up)"
+final dio = Dio(BaseOptions(baseUrl: 'https://api.example.com'))
+  ..interceptors.addAll([
+    AuthInterceptor(tokenStore),     // adds Authorization, refreshes on 401
+    RetryInterceptor(retries: 3),    // retries 502, 503, 504 and timeouts
+    DioCacheInterceptor(options: cacheOptions),
+  ]);
+final api = TalksApi(dio);
+```
+
+Every endpoint change touches the interface, the models and often an
+interceptor, then `build_runner` regenerates the `.g.dart` files. Nothing
+checks that any of it matches the server.
+
+## After: a contract and a generated client
+
+The same API as a contract. The cache and retry policies move from
+interceptors into the endpoint declarations:
+
+```acore title="talks-api/main.acore (excerpt)"
+model Talk { id: String title: String speaker: String }
+model TalkList { talks: List<Models.Talk> }
+model NewTalk { title: String speaker: String }
+
+endpoint listTalks(method: GET, path: "/talks") {
+  handle(action: Actions.listTalks)
+  response(type: Models.TalkList)
+  cache(strategy: CacheStrategy.staleWhileRevalidate, ttl: 1m)
+  retry(attempts: 3, onStatus: [502, 503, 504], onTimeout: true, backoff: Exponential())
+}
+
+endpoint getTalk(method: GET, path: "/talks/{id}") {
+  request { path("id", type: String) }
+  handle(action: Actions.getTalk, input: {id: Input.path.id})
+  response(type: Models.Talk)
+  cache(strategy: CacheStrategy.cacheFirst, ttl: 5m)
+}
+
+endpoint createTalk(method: POST, path: "/talks") {
+  request { body("title", type: String) body("speaker", type: String) }
+  handle(action: Actions.createTalk, input: {title: Input.body.title, speaker: Input.body.speaker})
+  response(type: Models.Talk, status: 201)
+}
+```
+
+The actions behind `handle(...)` are omitted here. If your backend is not
+written in Acore, describe the endpoints without `handle(...)` or extract the
+contract; see [Use Flutter with an existing backend](/guides/flutter-with-existing-backend).
+
+Generate the client:
+
+```bash title="Terminal: Flutter project root"
+flutter pub add axiom_flutter:^0.150.1 dev:axiom_flutter_generator:^0.150.1
+axiom pull ../talks-api/backend.axiom --framework flutter --name talks --out lib/axiom_generated
+```
+
+Call it:
+
+```dart title="lib/talks_repository.dart"
+import 'package:axiom_flutter/axiom_flutter.dart';
+
+import 'axiom_generated/axiom_sdk.dart';
+import 'axiom_generated/models.dart' as models;
+
+Future<void> example(AxiomSdk sdk, String token) async {
+  // Replaces the Authorization interceptor.
+  sdk.runtime.setGlobalAuthToken(token);
+
+  // Like `await api.getTalk('t1')`.
+  final models.Talk talk = await sdk.talks.getTalk(id: 't1').stream.unwrap();
+
+  // Like `await api.createTalk(NewTalk(...))`.
+  final created = await sdk.talks
+      .createTalk(title: 'Hello', speaker: 'Ada')
+      .stream
+      .unwrap();
+
+  // Like Dio `Options(receiveTimeout: ...)` plus a cache bypass.
+  final fresh = await sdk.talks
+      .listTalks(
+        options: const AxiomCallOptions(
+          timeout: Duration(seconds: 5),
+          cacheMode: AxiomCacheMode.refresh,
+        ),
+      )
+      .stream
+      .unwrap();
+}
+```
+
+In widgets, prefer `AxiomBuilder` and `AxiomMutationBuilder` over awaiting a
+`Future`: they show cached data at once, rebuild on refresh and cancel the
+request when the widget goes away. See [Queries](/sdks/flutter#queries).
+
+## Mapping
+
+| Dio and Retrofit | AxiomCore |
+| --- | --- |
+| `@RestApi` interface and `_TalksApi` | Generated `TalksModule`, reached as `sdk.talks` |
+| `@GET`, `@POST`, `@Path`, `@Query`, `@Header`, `@Body` | `endpoint(method:, path:)` and `request { path() query() header() body() }` |
+| `Future<T>` | `AxiomQuery<T>`; `.stream.unwrap()` gives a `Future<T>` |
+| `@JsonSerializable` models and `build_runner` | Generated `models.dart`, rewritten by `axiom pull` |
+| `BaseOptions(baseUrl:)` | `AxiomSdk.create(baseUrlOverrides:)`, `AxiomEnvironment` or `--dart-define=AXIOM_BASE_URL` |
+| Auth interceptor | `setGlobalAuthToken`, `setNamespaceAuthToken`, `setAuthProvider` (sent as `Authorization: Bearer`), or [axiom_flutter_auth](/sdks/flutter-auth) |
+| Retry interceptor | `retry(...)` on the endpoint |
+| `dio_cache_interceptor` | `cache(strategy:, ttl:)` on the endpoint, `invalidates` and `cacheIdentity`, and the [cache controls](/sdks/flutter#cache-strategies-and-control) |
+| `Options(receiveTimeout:, headers:)` | `AxiomCallOptions(timeout:, headers:)` |
+| `CancelToken` | `query.cancel()`; disposing an `AxiomBuilder` cancels automatically |
+| `DioException` and `response.statusCode` | `AxiomError` with a sealed `code`, plus typed contract failures |
+| Logging interceptor | `AxiomConfig(debug: true)` and `sdk.runtime.onError` |
+| Dio `Stream` responses, `web_socket_channel` | Generated `<name>Stream()` for SSE and chunked, `<name>Channel()` for WebSocket |
+
+## Errors
+
+```dart title="Dart excerpt: replacing DioException handling"
+String describe(AxiomError error) => switch (error.code) {
+      NetworkTimeout() => 'Timed out',
+      NetworkConnectionFailed() => 'Offline',
+      HttpStatus(:final code) => 'HTTP $code',
+      _ => error.message,
+    };
+```
+
+When the contract declares a `failure` for an endpoint, the body of that error
+response becomes a typed Dart class. Match it with the generated
+`error.when<Endpoint>(...)` helper instead of parsing
+`DioException.response.data`. See
+[Errors and typed failures](/sdks/flutter#errors-and-typed-failures).
+
+## Migrate step by step
+
+1. Write or extract the contract for the endpoints of one screen.
+2. Run `axiom pull` and replace that screen's repository calls with the
+   generated client. Keep Dio for the rest.
+3. Move auth from the interceptor to `setGlobalAuthToken` or an auth provider,
+   and remove per-screen retry and cache code that the contract now declares.
+4. Run `flutter analyze` and your tests. Repeat for the next screen.
+5. When no code imports the Retrofit interface, remove `retrofit`,
+   `json_annotation`, `json_serializable`, `retrofit_generator` and, if nothing
+   else uses them, `dio` and `build_runner`.
+
+## What is different
+
+- The policies live in the contract, so they are the same on every platform
+  and in every client generated from that contract, not only in this app.
+- The Dart models are generated from the contract. When the contract changes,
+  a re-pull turns every outdated call site into an analyzer error.
+- The runtime is a native library (a WebAssembly module on the web) and adds
+  to the app size. Measure release builds for your target platforms.
+- Custom Dio interceptors with arbitrary logic have no direct equivalent. Keep
+  that logic in your repository layer or on the server.
+
+## Next steps
+
+- [Flutter SDK reference](/sdks/flutter)
+- [Flutter quickstart](/getting-started/quickstart-flutter)

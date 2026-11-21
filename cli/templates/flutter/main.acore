@@ -1,0 +1,37 @@
+// Backend contract for {{project}}. Edit it, then rebuild with `./run-backend.sh`;
+// `axiom pull --watch` in app/ regenerates the Dart client on every build.
+project(id: "{{project_id}}", version: "0.1.0")
+variant default(include: ["*"])
+
+model Greeting { message: String }
+model HelloIn { name: String }
+model Talk { id: String title: String speaker: String }
+model Talks { items: List<Models.Talk> }
+
+// Development CORS: Flutter web serves the app from a random localhost port.
+// `headers` must list every request header the Flutter SDK can send, or the
+// browser's preflight is refused and every call fails with a network error:
+// traceparent/tracestate go out on every call.
+cors(origins: ["*"], methods: [GET, POST, PUT, DELETE], headers: ["accept", "authorization", "content-type", "traceparent", "tracestate", "x-api-key", "x-axiom-cache-mode", "x-axiom-request-id"], credentials: false, maxAge: 10m)
+
+action hello(kind: ActionKind.query, input: Models.HelloIn, output: Models.Greeting) {
+  managed { return {message: "Hello, " + Input.name + "!"} }
+}
+endpoint hello(method: GET, path: "/hello") {
+  request { query("name", type: String) }
+  handle(action: Actions.hello, input: {name: Input.query.name})
+  response(type: Models.Greeting)
+}
+
+action listTalks(kind: ActionKind.query, output: Models.Talks) {
+  managed {
+    return {items: [
+      {id: "t1", title: "Typed APIs with Axiom", speaker: "Ada"},
+      {id: "t2", title: "One client for Android, iOS and web", speaker: "Linus"}
+    ]}
+  }
+}
+endpoint listTalks(method: GET, path: "/talks") {
+  handle(action: Actions.listTalks)
+  response(type: Models.Talks)
+}

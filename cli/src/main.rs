@@ -51,11 +51,14 @@ enum Commands {
         action: commands::editor::Action,
     },
     Init {
-        /// Entrypoint path (e.g., main.py:app)
+        /// Entrypoint path (e.g., main.py:app), or the new project directory with --template
         entrypoint: Option<String>,
         /// The Acore compiler module to use (e.g., axiom-fastapi)
         #[arg(long)]
         module: Option<String>,
+        /// Scaffold a complete project instead: `flutter` creates backend/ and a wired Flutter app/
+        #[arg(long, conflicts_with = "module")]
+        template: Option<String>,
     },
     /// Inspect local prerequisites without changing files, logging in, or pulling a contract
     Doctor {
@@ -304,6 +307,24 @@ enum Commands {
 
         #[arg(short, long)]
         out: Option<String>,
+
+        /// Backend base URL baked into the generated client config
+        /// (written to AxiomDeps.toml as contracts.<name>.base_url)
+        #[arg(long)]
+        base_url: Option<String>,
+
+        /// Contract variant the generator emits (contracts.<name>.variant)
+        #[arg(long)]
+        variant: Option<String>,
+
+        /// Apply the fixes offered by the post-pull project checks
+        /// (iOS/macOS deployment targets, macOS network entitlement, Android INTERNET)
+        #[arg(long)]
+        fix: bool,
+
+        /// Keep running and regenerate whenever the local source contract changes
+        #[arg(long)]
+        watch: bool,
     },
     /// Watch for changes and rebuild/pull automatically
     Watch {
@@ -1987,6 +2008,9 @@ async fn main() -> anyhow::Result<()> {
     // 3. EXECUTE COMMAND
     // -------------------------------------------------------------------------
     let result = execute_command(&cli.command).await;
+    let result = result.map_err(|error| {
+        commands::missing_manifest::explain(acore_source_of(&cli.command).as_deref(), error)
+    });
     if register_after_login && result.is_ok() {
         active_config = access_gate::after_login().await;
     }
@@ -2209,15 +2233,27 @@ fn is_local_command(command: &Commands) -> bool {
             contract,
             contract_config: None,
             ..
-        } => source
-            .as_deref()
-            .or(contract.as_deref())
-            .is_some_and(commands::pull::is_local_artifact_source),
+        } => match source.as_deref().or(contract.as_deref()) {
+            Some(source) => commands::pull::is_local_artifact_source(source),
+            // A re-pull (`axiom pull`, `--fix`, `--watch`) is local when every
+            // source in AxiomDeps.toml is a local file.
+            None => commands::pull::manifest_sources_are_local(Path::new("AxiomDeps.toml")),
+        },
         Commands::Install { package, module } => {
             package == "lsp-server"
                 || (!module && commands::app::is_axiom_application(Path::new(package)))
         }
         _ => false,
+    }
+}
+
+/// The `.acore` source a command compiles, for the missing-manifest explanation.
+fn acore_source_of(command: &Commands) -> Option<PathBuf> {
+    match command {
+        Commands::Check { file, .. } => Some(file.clone()),
+        Commands::Build { file, .. } => Some(PathBuf::from(file)),
+        Commands::Run { source, .. } => Some(source.clone()),
+        _ => None,
     }
 }
 
@@ -3634,15 +3670,25 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             contract_config,
             framework,
             name,
-            out, // <-- Add this
+            out,
+            base_url,
+            variant,
+            fix,
+            watch,
         } => {
-            commands::pull::handle_pull(
+            commands::pull::handle_pull_with(
                 source.clone(),
                 contract.clone(),
                 contract_config.clone(),
                 framework.clone(),
                 name.clone(),
-                out.clone(), // <-- Pass this
+                out.clone(),
+                commands::pull::PullOptions {
+                    base_url: base_url.clone(),
+                    variant: variant.clone(),
+                    fix: *fix,
+                    watch: *watch,
+                },
             )
             .await
         }
@@ -3667,9 +3713,24 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             )
             .await
         }
-        Commands::Init { entrypoint, module } => {
-            crate::commands::init::handle_init(entrypoint.clone(), module.clone()).await
-        }
+        Commands::Init {
+            entrypoint,
+            module,
+            template: None,
+        } => crate::commands::init::handle_init(entrypoint.clone(), module.clone()).await,
+        Commands::Init {
+            entrypoint,
+            template: Some(template),
+            ..
+        } => match template.as_str() {
+            "flutter" => {
+                let dir = entrypoint.as_deref().ok_or_else(|| {
+                    anyhow::anyhow!("pass the new project directory: `axiom init --template flutter <dir>`")
+                })?;
+                crate::commands::init_flutter::scaffold(Path::new(dir)).await
+            }
+            other => anyhow::bail!("Unknown template '{other}'. Available: flutter"),
+        },
         Commands::Login { step_up: true, .. } => commands::step_up::handle_login_step_up().await,
         Commands::Login {
             step_up: false,

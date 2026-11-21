@@ -60,8 +60,10 @@ for both paths. See [Support and availability](/introduction/support-matrix).
 4. Application-owned authentication, error UI, cache privacy and startup order.
 
 The contract is portable. The lifecycle is not. A browser client uses Wasm,
-browser storage, CORS and cookie rules. Flutter uses a native runtime,
-bundled contract assets and an optional cache database path. An Acore UI app
+browser storage, CORS and cookie rules. Flutter uses a native runtime on
+Android, iOS and macOS and a WebAssembly runtime on the web, bundled contract
+assets and an optional cache database path; see the
+[Flutter quickstart](/getting-started/quickstart-flutter). An Acore UI app
 depends on its UI host version. Test every target you ship, including a release
 build and a contract integrity failure.
 

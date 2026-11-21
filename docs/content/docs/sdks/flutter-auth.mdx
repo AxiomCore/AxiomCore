@@ -1,0 +1,212 @@
+---
+title: Managed sign-in for Flutter (axiom_flutter_auth)
+description: Sign users in to a project's managed authentication from Flutter with axiom_flutter_auth, keep tokens fresh and pass them to every axiom_flutter call.
+pageType: guide
+---
+
+{/* VERIFY: the Dart samples on this page analyze against the SDK branch (axiom-sdk flutter/tool/verify_docs.py). Sign-in flows are tested against `axiom auth emulate` and headless Chrome, not on physical devices or Safari/Firefox. */}
+
+<StatusNote status="alpha" title="axiom_flutter_auth 0.150.1">
+  Managed sign-in for Flutter is Alpha on Android, iOS, macOS and the web. It
+  depends on [managed authentication](/authentication), which is Alpha.
+</StatusNote>
+
+`axiom_flutter_auth` signs users in to your project's
+[managed authentication](/authentication) issuer and keeps their session fresh.
+It plugs into `axiom_flutter`, so every contract call carries a current access
+token. It uses the same concepts and method names as the web client, on
+Android, iOS, macOS and the web.
+
+**You need:** a Flutter app that already uses the
+[generated client](/sdks/flutter), an issuer URL for your project environment,
+and, for browser-based flows, a redirect URI listed in the environment's
+`redirect_urls`.
+
+## Add the package
+
+```bash title="Terminal: Flutter project root"
+flutter pub add axiom_flutter_auth
+```
+
+## Sign in and wire tokens into the SDK
+
+```dart title="lib/main.dart"
+import 'package:axiom_flutter/axiom_flutter.dart';
+import 'package:axiom_flutter_auth/axiom_flutter_auth.dart';
+import 'package:flutter/material.dart';
+
+import 'axiom_generated/axiom_sdk.dart';
+
+final auth = createAxiomAuth(AxiomAuthOptions(
+  issuer: 'https://your-project.example/issuer', // the environment's issuer
+  redirectUri: 'com.example.app:/auth/callback', // listed in redirect_urls
+  apiOrigins: const ['https://api.example.com'], // where the bearer may go
+  storage: platformStorage(),
+));
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  final sdk = await AxiomSdk.create();
+  // The namespaces (contract names from `axiom pull --name`) that get the token.
+  AxiomAuthBinding.attach(auth, runtime: sdk.runtime, namespaces: ['api']);
+  await auth.restore();
+  runApp(AxiomAuthLifecycle(
+    auth: auth,
+    child: MaterialApp(
+      home: AxiomAuthBuilder(
+        auth: auth,
+        loading: (_, __) => const Center(child: CircularProgressIndicator()),
+        signedOut: (_, __) => const SignInPage(),
+        signedIn: (_, session) => HomePage(subject: session.principal!.subject),
+      ),
+    ),
+  ));
+}
+```
+
+What each part does:
+
+- `createAxiomAuth` creates the client and installs the default browser
+  launcher for provider and hosted sign-in.
+- `AxiomAuthBinding.attach` takes a required, non-empty `namespaces` list. It
+  pushes every new access token to those namespaces only, with
+  `setNamespaceAuthToken`; the runtime's auth provider answers
+  `auth.accessToken()` for them and `null` for any other namespace. It never
+  sets a global token, so a third-party contract loaded in the same app does
+  not receive your users' tokens. On sign-out it clears the tokens of exactly
+  those namespaces and calls `resetSession()`, which clears the
+  session-partitioned cache and cancels in-flight calls. Before 0.150.0 the
+  binding took no `namespaces` argument and set a global token; add the
+  argument when you upgrade.
+- `auth.restore()` loads a stored session. It ends as `authenticated`,
+  `anonymous`, `expired` or `error`.
+- `AxiomAuthLifecycle` pauses and resumes the refresh timer with the app's
+  foreground state.
+- `AxiomAuthBuilder` rebuilds when the session changes. You can also use
+  `auth.session()`, `auth.subscribe(...)` or `auth.sessionListenable`.
+
+The `SignInPage` calls one of the sign-in methods:
+
+```dart title="Dart excerpt: sign-in calls"
+await auth.signInWithPassword(email, password);
+
+final challenge = await auth.requestEmailCode(email);
+await auth.verifyEmailCode(challenge.challenge, code);
+
+await auth.signInWithProvider('google');
+
+await auth.signOut();
+```
+
+## Methods
+
+| Area | Methods |
+| --- | --- |
+| Session | `session()`, `subscribe()`, `sessionListenable`, `restore()`, `refresh({tenant})`, `selectTenant` |
+| Sign up and sign in | `signUp`, `verifySignUp`, `signInWithPassword`, `requestEmailCode`, `verifyEmailCode` |
+| Browser flows | `signInWithProvider`, `signInHosted`, `requestMagicLink`, `handleRedirect` |
+| Sign out | `signOut({everywhere, redirect, returnTo})` |
+| Tokens for other HTTP clients | `authorizationHeader()`, `accessToken()`, `authorizedClient()`, `authorizedSend()` |
+| Multi-factor | `mfaChallenge`, `verifyMfa`, `verifyRecoveryCode`, `sendSmsCode`, `stepUp`, `listFactors`, `enrollTotp`, `confirmTotp`, `removeFactor`, `regenerateRecoveryCodes`, phone and consent methods |
+| Passkeys | `signInWithPasskey`, `verifyMfaWithPasskey`, `registerPasskey`, through an `AxiomPasskeys` you supply |
+| Helpers | `parseStepUpChallenge`, `runtimeAuthRefusal`, `setForeground(bool)` |
+
+Behaviour to rely on:
+
+- Refresh is single-flight, starts before the access token expires (with
+  jitter), and rotates the refresh token. It backs off on `unavailable` and
+  `rate_limited`, honouring `Retry-After`, and ends the session on
+  `invalid_refresh` (refresh token reuse).
+- Provider and hosted flows use PKCE (S256), open the system browser, and
+  return the session instead of navigating away.
+- `signOut` drops the credentials and the stored record first, then revokes
+  the session on the issuer (`everywhere: true` signs out all devices).
+- `authorizedClient()` sends the bearer only to `apiOrigins` (and the page
+  origin on the web). On `401 authorization_changed` it refreshes once and
+  retries once.
+- The MFA ticket stays private and expires after 300 seconds.
+- Flutter has no built-in WebAuthn. To use passkeys, pass an `AxiomPasskeys`
+  implementation backed by a passkeys plugin. Without one, passkey calls fail
+  with `webauthn`.
+
+## Errors
+
+Every failure is an `AxiomAuthError` with `code` (for example
+`invalid_credentials`, `mfa_required` or `unavailable`), `status` (the HTTP
+status, or 0 for client-side and network failures) and `retryAfterSeconds`.
+Messages never contain a token or a ticket.
+
+```dart title="Dart excerpt: sign-in errors"
+try {
+  await auth.signInWithPassword(email, password);
+} on AxiomAuthError catch (e) {
+  final text = switch (e.code) {
+    'invalid_credentials' => 'Wrong email or password.',
+    'mfa_required' => 'Enter your second factor.',
+    _ => 'Sign-in failed. Try again later.',
+  };
+  showMessage(text);
+}
+```
+
+See [Sessions](/authentication/sessions#error-codes) for every code.
+
+## Token storage
+
+The storage adapter holds only the refresh record. The access token stays in
+memory.
+
+| Adapter | Where | Use |
+| --- | --- | --- |
+| `memoryStorage()` (default) | Process memory | Nothing touches disk; users sign in again after a restart or a web reload |
+| `secureStorage()` | iOS and macOS Keychain, Android Keystore-backed encrypted preferences | Recommended on mobile and desktop. macOS needs the Keychain Sharing entitlement |
+| `sessionStorageAdapter()` | The web tab's `sessionStorage` | Survives a reload, but any script on the page can read the refresh token. Use only with a strict Content Security Policy |
+| `platformStorage()` | `sessionStorageAdapter()` on the web, `secureStorage()` elsewhere | |
+
+Do not use `secureStorage()` on the web: there it encrypts with a key stored
+next to the data in `localStorage`. You can implement `AuthStorageAdapter`
+(`get`, `set`, `remove`) yourself.
+
+## Redirect flows
+
+The default launcher opens `ASWebAuthenticationSession` on iOS and macOS,
+Custom Tabs on Android and a popup on the web. Add the `redirectUri` to the
+environment's `redirect_urls`.
+
+- **Android:** add the callback activity for your scheme to
+  `android/app/src/main/AndroidManifest.xml`:
+
+  ```html title="android/app/src/main/AndroidManifest.xml (inside application)"
+  <activity
+      android:name="com.linusu.flutter_web_auth_2.CallbackActivity"
+      android:exported="true">
+      <intent-filter android:label="flutter_web_auth_2">
+          <action android:name="android.intent.action.VIEW" />
+          <category android:name="android.intent.category.DEFAULT" />
+          <category android:name="android.intent.category.BROWSABLE" />
+          <data android:scheme="com.example.app" />
+      </intent-filter>
+  </activity>
+  ```
+
+- **iOS and macOS:** nothing to add for a custom scheme.
+- **Web:** the popup's callback page must post its URL back to the opener
+  (the `auth.html` page from `flutter_web_auth_2`). For a full-page redirect
+  instead, write a launcher that assigns `location`, then call
+  `auth.restore()` on load.
+- Magic links and password-reset links arrive through your app-link handler.
+  Pass the URL to `auth.handleRedirect(uri)`.
+
+## Test locally
+
+`axiom auth emulate` runs a loopback issuer. It supports sign-up with mail
+codes, password, email code, refresh rotation with reuse detection, logout,
+`/v1/user` and provider sign-in through a mock OIDC issuer. It does not
+support MFA, step-up, hosted sign-in or magic links. Point `issuer` at the
+emulator's URL. See [Local emulation](/authentication/local-emulation).
+
+## Next steps
+
+- [Flutter SDK reference](/sdks/flutter#authentication)
+- [Sessions and token endpoints](/authentication/sessions)
+- [Multi-factor authentication](/authentication/mfa)

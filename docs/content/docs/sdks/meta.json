@@ -5,6 +5,10 @@
     "web",
     "react",
     "flutter",
+    "flutter-auth",
+    "flutter-app-size",
+    "flutter-performance",
+    "flutter-benchmarks",
     "swift"
   ]
 }

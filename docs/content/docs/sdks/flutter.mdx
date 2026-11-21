@@ -1,231 +1,560 @@
 ---
 title: Flutter and Dart (axiom_flutter)
-description: Generate a typed Dart client with axiom pull, start the native AxiomCore runtime in a Flutter app and bind queries and mutations to widgets.
-pageType: guide
+description: Reference for axiom_flutter and the generated Dart client, covering platforms, configuration, queries, mutations, streams, auth, caching, cancellation, errors, contract trust and limits.
+pageType: reference
 ---
 
 <span id="generate-and-package-the-contract" />
 <span id="render-a-query" />
+<span id="initialize-once" />
+<span id="execute-a-mutation" />
 
-<StatusNote status="alpha" title="axiom_flutter 0.147.5">
-  Generated Dart bindings and the native runtime path are implemented.
-  Validate asset packaging, cache storage, native libraries and release builds
-  on every platform you ship.
+<StatusNote status="alpha" title="axiom_flutter 0.150.1">
+  The Flutter SDK is Alpha on Android, iOS, macOS and the web. Test release
+  builds on every platform you ship.
 </StatusNote>
 
-`axiom_flutter` runs the AxiomCore runtime, written in Rust, inside a Flutter
-app through `dart:ffi`. `axiom_flutter_generator` turns your `.axiom` contract
-into a typed Dart client. This guide uses the `greetings` contract from the
-[FastAPI example](/guides/fastapi-to-web): endpoint `greet` at
-`GET /greet/{name}`, returning `Greeting { message }`.
+<Callout type="warn" title="Behaviour changes in 0.150.1">
+  **Lean runtime by default.** On Android and the web, `axiom_flutter` 0.150.1
+  bundles the lean runtime, which has no executable extensions and no
+  telemetry exporter. If your app calls `loadExtension` or `invokeExtension`
+  on Android, add
+  `flutter pub add axiom_flutter_extensions:^0.150.1`. iOS and macOS keep the
+  full published runtime. See [Runtime variants](#runtime-variants).
+  **Sampled validation for large responses.** Responses of 64 KiB or more are
+  validated on a sample by default; `AxiomState.validation` reports it. Set
+  `AxiomValidationPolicy.full` to validate everything. See
+  [Response validation](#response-validation).
+  **Background JSON parsing.** On native platforms, bodies of 256 KB or more
+  are parsed off the calling isolate (`decodeIsolateThreshold: 0` restores
+  inline parsing). **WebSocket TLS** on native trusts the bundled public root
+  certificates, not the operating system store.
+</Callout>
 
-**You need:** a Flutter project with Dart SDK 3.8 or newer, `dart` (or
-`fvm dart`) on your `PATH`, and CocoaPods for iOS and macOS builds.
+`axiom_flutter` runs the AxiomCore runtime, written in Rust, inside a Flutter
+app: through `dart:ffi` on Android, iOS and macOS, and as WebAssembly on the
+web. `axiom_flutter_generator` turns a backend `.axiom` contract into a typed
+Dart client. The runtime handles HTTP, validation, caching, retries, streams
+and auth tokens as the contract declares them; the generated client gives you
+Dart methods and classes for every endpoint and model.
+
+New to the SDK? Start with the
+[Flutter quickstart](/getting-started/quickstart-flutter). This page is the
+reference.
+
+Runnable apps for the features on this page are in the examples repository:
+[`flutter-quickstart`](https://github.com/AxiomCore/examples/tree/main/flutter-quickstart) (the quickstart's finished
+app), [`flutter-auth`](https://github.com/AxiomCore/examples/tree/main/flutter-auth) (managed sign-in),
+[`flutter-offline-first`](https://github.com/AxiomCore/examples/tree/main/flutter-offline-first) (cache strategies and
+offline restart), [`flutter-minimal`](https://github.com/AxiomCore/examples/tree/main/flutter-minimal) (smallest app, with
+release sizes) and [`stream/example`](https://github.com/AxiomCore/examples/tree/main/stream/example) (chunked, SSE and
+WebSocket streams).
 
 ## Platforms
 
-| Platform | How the runtime is supplied | Notes |
-| --- | --- | --- |
-| iOS 13+ | CocoaPods downloads `AxiomRuntime.xcframework` (runtime 0.148.6) and verifies its SHA-256 | Native target |
-| macOS 11+ | Same as iOS | Native target |
-| Web | Wasm runtime assets bundled in the package | Not covered by a published example |
-| Android | The package loads `libaxiom_runtime.so` but does not include it, and no public release provides it | Not usable with 0.147.5 alone |
-| Linux, Windows | No runtime library is published | Not supported |
+| Platform | Minimum | How the runtime is supplied | Status |
+| --- | --- | --- | --- |
+| Android | API 24; `arm64-v8a`, `armeabi-v7a`, `x86_64` | Lean `libaxiom_runtime.so` bundled in the package; full runtime with `axiom_flutter_extensions` | Alpha |
+| iOS | iOS 13 | CocoaPods downloads `AxiomRuntime.xcframework` and verifies its SHA-256 | Alpha |
+| macOS | macOS 11 | Same as iOS | Alpha |
+| Web | Browsers with WebAssembly; dart2js and dart2wasm | Lean wasm runtime bundled in the package assets | Alpha |
+| Linux, Windows | | No runtime library is published | Not supported |
 
-If the runtime download or checksum check fails, pod preparation keeps the
-previous framework and stops the build. Rebuild your app after updating the
-runtime pin; an old framework is not evidence for a new release.
+Platform setup:
 
-## 1. Add the packages
+- **Android:** set `minSdk = 24`, add `android.permission.INTERNET` to the main
+  manifest, and allow cleartext HTTP to `10.0.2.2` in debug builds only if your
+  development backend uses plain HTTP. 32-bit `x86` emulator images are not
+  supported. No R8 or ProGuard rules are needed. Android builds need JDK 17.
+- **iOS and macOS:** set the deployment target to iOS 13 or macOS 11 in the
+  Podfile and in Xcode. macOS apps need `com.apple.security.network.client`
+  in both entitlement files. For plain `http://` to a local backend on iOS,
+  add `NSAllowsLocalNetworking` under `NSAppTransportSecurity` in
+  `Info.plist`. The plugin includes a privacy manifest. If the
+  runtime download or checksum check fails, pod preparation keeps the previous
+  framework and stops the build.
+- **Web:** nothing to add to `web/index.html`. See [Web](#web) for CORS,
+  Content Security Policy and cache storage.
 
-```bash title="Terminal (Flutter project)"
-flutter pub add axiom_flutter:^0.147.5
-flutter pub add dev:axiom_flutter_generator:^0.146.6
+## Install and generate
+
+```bash title="Terminal: Flutter project root"
+flutter pub add axiom_flutter:^0.150.1 dev:axiom_flutter_generator:^0.150.1
+axiom pull ../backend/backend.axiom --framework flutter --name tasks --out lib/axiom_generated
 ```
 
-This step is optional: `axiom pull` adds both entries to `pubspec.yaml` when
-they are missing.
+`axiom pull` (CLI 0.156.0) copies the contract to `assets/axiom/<name>.axiom`
+and registers it in `pubspec.yaml`, adds `axiom_flutter` and the dev
+dependency `axiom_flutter_generator` when they are missing, runs
+`dart pub get`, and writes `axiom_sdk.dart` and `models.dart` into the output
+directory. Pull again whenever the contract changes. Add the packages
+before the first pull: when they are missing, CLI 0.156.0 adds
+`axiom_flutter` 0.147.5 and `axiom_flutter_generator` 0.146.6, which have no
+Android support and lack most of the API on this page. Keep both packages on
+the same version.
 
-## 2. Generate the client
+<Callout type="info" title="Coming in the next CLI release">
+  These `axiom pull` and `axiom init` conveniences are not in CLI 0.156.0:
+  `--base-url` and `--variant` (stored in `AxiomDeps.toml` and kept across
+  re-pulls), a SHA-256 of each pulled contract for release builds,
+  `--fix` (sets the iOS, macOS and Android settings listed above), `--watch`
+  (regenerates when the contract or a sibling `main.acore` changes),
+  `axiom init --template flutter` (backend plus Flutter app), a Flutter
+  section in `axiom doctor`, a clear message when `AxiomDeps.toml` is missing,
+  and full error output when `dart pub get` fails.
+</Callout>
 
-```bash title="Terminal (Flutter project root)"
-axiom pull ../backend/backend.axiom --framework flutter --name greetings --out lib/axiom_generated
-```
-
-`pull` then:
-
-1. copies the contract to `assets/axiom/greetings.axiom` and registers it
-   under `flutter: assets:` in `pubspec.yaml`;
-2. adds `axiom_flutter` and `axiom_flutter_generator` if missing and runs
-   `dart pub get`;
-3. runs the generator, which writes `lib/axiom_generated/axiom_sdk.dart` and
-   `lib/axiom_generated/models.dart`.
-
-The generated `AxiomDefaultConfig` maps each contract name to a `baseUrl` and
-an `assetPath`. The base URL is `http://localhost:8000` unless the contract's
-table in `AxiomDeps.toml` sets `base_url` before you pull.
-
-Generated names follow the contract:
+### What gets generated
 
 | Contract item | Dart |
 | --- | --- |
-| Contract name `greetings` | `sdk.greetings` (camelCase) |
-| Endpoint `greet` | `AxiomQuery<models.Greeting> greet({required String name})` |
-| Endpoint `create_task` | `createTask(...)`, with named parameters; optional ones are nullable |
-| Write endpoint without a body parameter | Extra `Map<String, dynamic>? body` parameter |
-| Model `Greeting` | `models.Greeting`, with `fromJson` and `toJson` |
+| Contract `tasks` | `sdk.tasks`, a module class |
+| Endpoint `list_tasks` | `AxiomQuery<models.TaskList> listTasks({...})` |
+| Path, query and header parameters | Named parameters; optional ones are nullable |
+| Body parameters | Named parameters, sent as one JSON object |
+| `Bytes` fields | `Uint8List`, base64 on the wire |
+| SSE or chunked stream endpoint | `AxiomQuery<T>` plus `Stream<T> <name>Stream(...)` |
+| WebSocket endpoint | `AxiomChannel<Receive, Send> <name>Channel(...)` |
+| Model `Task` | `models.Task` with `fromJson`, `toJson` and value equality |
+| Union | A sealed class with one subclass per option and an `Unknown` fallback |
+| Enum | A Dart enum that keeps the wire value |
+| Field rules (`minLength`, ranges, enums) | `<Model>Validators`, one static `TextFormField.validator` per field, plus `all` by wire name |
+| `failure` declarations | Sealed failure classes and `when<Endpoint>(...)` helpers on `AxiomError` |
+| Endpoint IDs and cache identities | `TasksModule.endpointIds`, `TasksModule.cacheIdentities` |
 
-Every endpoint method returns an `AxiomQuery<T>`. `POST`, `PUT`, `PATCH` and
-`DELETE` endpoints are sent as mutations and are never cached.
+Every endpoint method also takes `AxiomCallOptions? options`. `POST`, `PUT`,
+`PATCH` and `DELETE` endpoints are sent as mutations and never cached.
 
-<span id="initialize-once" />
+## Configuration and environments
 
-## 3. Initialize once
+`AxiomSdk.create()` starts the runtime, checks that the runtime and the package
+versions match, loads every contract, and registers typed failures. It throws
+when start-up fails, so call it before `runApp`.
 
-```dart title="lib/main.dart"
-import 'package:flutter/material.dart';
-import 'package:axiom_flutter/axiom_flutter.dart';
-import 'package:my_app/axiom_generated/axiom_sdk.dart';
-import 'package:my_app/axiom_generated/models.dart' as models;
-
+```dart title="lib/main.dart (excerpt)"
 late final AxiomSdk sdk;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  sdk = await AxiomSdk.create();
-  runApp(const MaterialApp(home: Scaffold(body: Center(child: GreetingView()))));
+  sdk = await AxiomSdk.create(
+    baseUrlOverrides: {'tasks': 'https://api.example.com'},
+  );
+  runApp(const App());
 }
 ```
 
-`AxiomSdk.create()` starts the runtime and loads every contract from the asset
-bundle. It throws a `StateError` naming the status if a contract fails to
-load, so create it before mounting widgets that run queries.
+| Parameter | Type | Use |
+| --- | --- | --- |
+| `config` | `AxiomConfig?` | Replaces the generated `AxiomDefaultConfig.config` (contracts, `dbPath`, `debug`, and the settings below); start from `AxiomDefaultConfig.config.copyWith(...)` |
+| `environment` | `AxiomEnvironment?` | Named set of base URLs |
+| `baseUrlOverrides` | `Map<String, String>?` | Base URL per contract name |
+| `assetLoader` | `AxiomAssetLoader?` | Loads contract assets; default `rootBundle` |
 
-To change the backend URL or keep a persistent cache, pass a config:
+Performance settings on `AxiomConfig` (0.150.1):
 
-```dart title="Dart excerpt: custom configuration"
-final config = AxiomConfig(
-  contracts: {
-    'greetings': const AxiomContractConfig(
-      baseUrl: 'https://api.example.com',
-      assetPath: 'assets/axiom/greetings.axiom',
-    ),
-  },
-  dbPath: applicationCachePath,
-  debug: false,
+| Field | Default | Use |
+| --- | --- | --- |
+| `validation` | `null` (runtime default `auto`) | Global response validation policy: `AxiomValidationPolicy.auto`, `full`, `sample` or `off`. See [Response validation](#response-validation) |
+| `decodeIsolateThreshold` | `262144` (256 KB) | Native: bodies at or above this size are JSON-parsed on a background isolate; `fromJson` stays on the calling isolate. `0` parses inline |
+| `objectCacheMaxEntries` | `0` (off) | Native: opt-in cache of decoded models, reused when the runtime returns the same bytes. Only for apps that treat models as immutable |
+| `objectCacheMaxBytes` | 8 MB | Memory limit of the object cache |
+
+The base URL of each contract is resolved in this order:
+
+1. `baseUrlOverrides[name]`
+2. `environment.baseUrls[name]`, then `environment.defaultBaseUrl`
+3. the build-time defines `AXIOM_ENV` and `AXIOM_BASE_URL`, when no
+   environment is passed
+4. the generated default: the contract's base URL, the `base_url` of the
+   contract's table in the app's `AxiomDeps.toml`, or `http://localhost:8000`
+
+```dart title="Dart excerpt: environments"
+const staging = AxiomEnvironment(
+  name: 'staging',
+  defaultBaseUrl: 'https://staging.example.com',
+  baseUrls: {'billing': 'https://billing.staging.example.com'},
 );
-
-sdk = await AxiomSdk.create(config: config);
+sdk = await AxiomSdk.create(environment: staging);
 ```
 
-Choose a `dbPath` suited to cached, recoverable data, for example under the
-directory from `path_provider`. Without one, do not assume persistence. The
-cache is not a secure credential store.
-
-## 4. Make a typed call
-
-```dart title="lib/main.dart (continued)"
-class GreetingView extends StatelessWidget {
-  const GreetingView({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return AxiomBuilder<models.Greeting, models.Greeting>(
-      query: sdk.greetings.greet(name: 'Ada'),
-      loading: (context) => const Text('Loading...'),
-      error: (context, error) => Text(error.message),
-      builder: (context, state, greeting) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(greeting.message),
-          if (state.isFetching) const Text('Refreshing...'),
-        ],
-      ),
-    );
-  }
-}
+```bash title="Terminal: build-time base URL"
+flutter run --dart-define=AXIOM_BASE_URL=http://10.0.2.2:8080
 ```
 
-`AxiomBuilder` manages the subscription and keeps previously rendered data
-while a refresh runs. Optional `transform` maps `T` to the UI type `R`, and
-`selector` limits rebuilds to the fields it returns. It is one option; you can
-also use the query directly:
+`AxiomSdk.initResult` reports the runtime versions (`runtimeInfo`), each
+contract's load status and trust level, and the start-up duration. A version
+mismatch between the runtime library and the Dart package fails start-up with
+`AxiomVersionMismatch`; upgrade both together. `AxiomSdk.fromRuntime(runtime)`
+wraps a runtime you initialized yourself, for tests or custom start-up.
+
+The response cache needs storage. Without `AxiomConfig.dbPath`, the SDK
+stores it in the app's application support directory on Android, iOS and
+macOS, and in `localStorage` on the web. Set `dbPath` to choose another
+directory for cached, recoverable data. The cache is not a credential store.
+
+## Queries
+
+```dart title="Dart excerpt: a query bound to a widget"
+AxiomBuilder<models.TaskList, models.TaskList>(
+  query: sdk.tasks.listTasks(),
+  loading: (context) => const CircularProgressIndicator(),
+  error: (context, error) => Text(error.message),
+  builder: (context, state, list) => Column(
+    children: [
+      for (final task in list.tasks) Text(task.title),
+      if (state.isFetching) const LinearProgressIndicator(),
+    ],
+  ),
+)
+```
+
+`AxiomBuilder` subscribes while mounted and keeps the last data while a
+refresh runs. `transform` maps `T` to the UI type `R`, and `selector` limits
+rebuilds to the values it returns. You can also use the query directly:
 
 | Member | Use |
 | --- | --- |
-| `query.stream` | `Stream<AxiomState<T>>` for BLoC, Provider or `StreamBuilder` |
-| `query.stream.unwrap()` | `Future<T>` that completes with the first data or throws the error |
+| `query.stream` | `Stream<AxiomState<T>>` for BLoC, Provider, Riverpod or `StreamBuilder` |
+| `query.stream.unwrap()` | `Future<T>` with the first data, or throws the `AxiomError` |
 | `onlyData()`, `onData(callback)` | Stream helpers for data events |
-| `query.refresh()` | Revalidate a cached query from the network |
+| `query.refresh()` | Revalidate from the network |
 | `query.prefetch()` | Load once without keeping a subscription |
-| `query.setHeader(name, value)` | Add a request header before the stream starts |
+| `query.cancel()` | Cancel the in-flight request |
+| `query.setHeader(name, value)` | Add a header before the stream starts |
 
-`AxiomState<T>` has `status` (`idle`, `loading`, `success` or `error`),
-`data`, `error`, `source` (`none`, `cache` or `network`), `isFetching`,
-`isMutating` and `isStreaming`, with `isLoading`, `hasData` and `hasError`
-getters. Identical queries share one request; argument order does not change
-the cache key.
+`AxiomState<T>` has `status` (`idle`, `loading`, `success`, `error`), `data`,
+`error`, `source` (`none`, `cache`, `network`), `isFetching`, `isMutating`
+and `isStreaming`, with `isLoading`, `hasData` and `hasError` getters.
+Identical queries share one request, and argument order does not change the
+cache key.
 
-<span id="execute-a-mutation" />
+### Per-call options
 
-## 5. Run a mutation
+```dart title="Dart excerpt: AxiomCallOptions"
+sdk.tasks.listTasks(
+  options: const AxiomCallOptions(
+    timeout: Duration(seconds: 5),
+    headers: {'x-request-source': 'pull-to-refresh'},
+    cacheMode: AxiomCacheMode.refresh,
+    validation: AxiomValidationPolicy.full,
+  ),
+);
+```
 
-```dart title="Mutation excerpt (a contract with create_task and body parameter task)"
+`timeout` cancels the call and reports `NetworkTimeout`. `headers` are merged
+into the request. `AxiomCacheMode.refresh` bypasses cached data for this call
+by sending `x-axiom-cache-mode: refresh`. `validation` overrides the global
+validation policy for this call.
+
+### Response validation
+
+The runtime validates every response against the contract before Dart sees
+it. With the default policy `auto`, bodies under 64 KiB are validated in full
+and bodies of 64 KiB or more on a sample: the envelope, fields outside lists,
+the real length of each list against its bounds, and the first and last items
+of large plain lists. A sampled check never rejects a body the full check
+accepts. `state.validation` reports `AxiomValidationMode.full`, `sampled`,
+`off` or `unknown` (the published Apple runtime 0.148.6 does not report it and
+always validates in full). Force full validation for the app with
+`AxiomConfig(validation: AxiomValidationPolicy.full)` or for one call with
+`AxiomCallOptions(validation: ...)`. Details:
+[Flutter performance](/sdks/flutter-performance#response-validation).
+
+## Mutations
+
+```dart title="Dart excerpt: a mutation bound to a button"
 AxiomMutationBuilder<models.Task, String>(
-  mutation: AxiomMutation((title) => sdk.tasks.createTask(task: models.NewTask(title: title))),
-  builder: (context, state, execute) => TextButton(
+  mutation: AxiomMutation(
+    (title) => sdk.tasks.createTask(title: title),
+  ),
+  builder: (context, state, execute) => FilledButton(
     onPressed: state.isMutating ? null : () => execute('Write docs'),
     child: Text(state.isMutating ? 'Saving...' : 'Add task'),
   ),
 )
 ```
 
-`AxiomMutation` wraps a function from your argument type to the generated
-call. Check the generated parameter names, and decide which queries to refresh
-after success, for example with `query.refresh()`.
+`AxiomMutation` wraps a function from your argument type to the generated call.
+Mutations are never cancelled implicitly; call `query.cancel()` if you need
+to. A mutation whose contract lists `invalidates` cache identities refreshes
+the matching cached queries in the runtime. To refresh other screens, see
+[Cache strategies and control](#cache-strategies-and-control).
 
-## 6. Handle errors
+## Streams
 
-`AxiomError` has `stage`, `category`, `code`, `message`, `retryable` and
-optional `details`. `code` is a sealed `AxiomErrorCode`, for example
-`ValidationError`, `NetworkTimeout`, `NetworkConnectionFailed`,
-`AuthTokenExpired`, `NotInitialized` or `HttpStatus(code)`. Builders receive
-the error in `error:`; `unwrap()` throws it.
+| Contract streaming | Generated | Notes |
+| --- | --- | --- |
+| `SseStreamDef` | `<name>()` as `AxiomQuery<T>` and `<name>Stream()` as `Stream<T>` | One typed value per event's `data:` payload |
+| `HttpStreamDef` (chunked, NDJSON) | Same as SSE | One typed value per frame |
+| `WebSocketDef` | `<name>Channel()` as `AxiomChannel<Receive, Send>` | Bidirectional |
 
-```dart title="Dart excerpt: retryable errors"
-error: (context, error) => Text(
-  error.retryable ? 'Connection problem. Try again.' : error.message,
-),
+```dart title="Dart excerpt: server-sent events"
+final sub = sdk.feed.ticksStream().listen((tick) => print(tick.value));
+// later
+await sub.cancel();
 ```
 
-See [Runtime errors](/reference/error-codes) for stages and codes.
+```dart title="Dart excerpt: WebSocket channel"
+final channel = sdk.chat.roomChannel();
+channel.stream.listen((state) {
+  if (state.data case final message?) print(message.text);
+});
+channel.send(models.Outgoing(text: 'hello'));
+// later
+channel.close();
+```
 
-## Authentication and shutdown
+The channel's `reconnect` parameter defaults to `AxiomReconnectPolicy.auto`
+(exponential back-off). Pass `AxiomReconnectPolicy.none` to disable it, or
+your own policy with `maxAttempts`, `initialDelay` and `maxDelay`. Cancelling
+the last subscription of a stream cancels the request.
 
-- Restore credentials from the platform's secure storage at startup and pass
-  them with `sdk.greetings.axiom.setAuthToken(methodName, token)`. Tokens are
-  held in memory only.
-- Contracts that declare a cookie session use the runtime's own cookie jar;
-  cookie values never reach Dart.
-- On logout, call `clearAuthToken(methodName)` and clear sensitive cached data.
-- Dispose stream subscriptions that you own outside the provided widgets.
-  Lifecycle APIs may change while this client is Alpha.
+On Android (and on iOS and macOS once the next Apple runtime ships), `wss://`
+connections trust the public root certificates bundled with the runtime, the
+same set HTTPS calls use, not the operating system's certificate store. A
+server whose certificate chains only to a private CA installed on the device
+is rejected.
+
+<span id="authentication-and-shutdown" />
+
+## Authentication
+
+Tokens are held in runtime memory only. Restore them from secure storage at
+start-up. The SDK sends the token as `Authorization: Bearer <token>`.
+
+Contracts built from an Acore backend carry no client auth metadata, so use a
+namespace token, the global token or an auth provider:
+
+| Scope | Call |
+| --- | --- |
+| Every call of a contract | `sdk.runtime.setNamespaceAuthToken(namespace: 'tasks', token: token)`, or `sdk.tasks.axiom.setNamespaceToken(token)` |
+| Every contract | `sdk.runtime.setGlobalAuthToken(token)`, `clearGlobalAuthToken()` |
+| Refresh on demand | `sdk.runtime.setAuthProvider((namespace, methodName) async => token)` |
+| One auth method | `sdk.tasks.axiom.setAuthToken(methodName, token)`, `clearAuthToken(methodName)`. Only for contracts that declare auth methods |
+
+```dart title="Dart excerpt: bearer token for every call"
+sdk.runtime.setGlobalAuthToken(accessToken);
+
+// Or refresh before calls that need a token:
+sdk.runtime.setAuthProvider((namespace, methodName) async {
+  return await myAuth.freshAccessToken(); // null means "no token"
+});
+```
+
+A per-method token wins over a namespace token, which wins over the global
+token. The auth provider is asked for a token when a call needs one; return
+`null` when the user is signed out. The generated `TasksModule.authMethods`
+lists the auth methods a contract declares, and is empty for contracts built
+from an Acore backend.
+
+Contracts with a cookie session use the runtime's cookie jar on native
+platforms; cookie values never reach Dart. On the web the browser owns
+cookies (see [Web](#web)).
+
+On logout, call `await sdk.runtime.resetSession()`. It cancels in-flight calls,
+clears the session-partitioned cache, active queries and every token set from
+Dart, and removes the auth provider. Contracts stay loaded.
+
+For managed sign-in (password, email code, social, MFA) with automatic token
+refresh, use [axiom_flutter_auth](/sdks/flutter-auth).
+
+## Cache strategies and control
+
+The contract chooses the caching of each `GET` endpoint with
+`cache(strategy: ..., ttl: ...)`:
+
+| Strategy | Behaviour |
+| --- | --- |
+| `networkOnly` | Always fetches; nothing is served from cache |
+| `cacheFirst` | Serves a fresh cached value; fetches when missing or expired |
+| `networkFirst` | Fetches; serves the cached value if the network fails |
+| `staleWhileRevalidate` | Serves the cached value at once (`source: cache`, `isFetching: true`) and refreshes it |
+
+Control the cache from Dart:
+
+| Call | Effect |
+| --- | --- |
+| `sdk.tasks.axiom.invalidateIdentity('task.item')` | Refetch active queries whose endpoint declares that `cacheIdentity` |
+| `sdk.tasks.axiom.invalidateAll()` | Refetch every active query of the contract |
+| `sdk.runtime.invalidate(namespace:, cacheIdentity:, endpointId:, args:)` | The general form of the two calls above |
+| `sdk.runtime.setQueryData(namespace:, endpointId:, args:, data:)` | Optimistic update; pushes `data` to listeners, not persisted |
+| `sdk.runtime.getCachedQueryData(namespace:, endpointId:, args:)` | Last value held in Dart, or `null` |
+| `sdk.runtime.clearCache([namespace])` | Drop cached data and refetch active queries |
+| `sdk.runtime.purgeCache([namespace])` | Drop cached data without refetching |
+| `AxiomCallOptions(cacheMode: AxiomCacheMode.refresh)` | Bypass the cache for one call |
+
+Use `TasksModule.endpointIds['listTasks']` for the `endpointId` arguments.
+
+## Cancellation and lifecycle
+
+- A query's request is cancelled when its last listener goes away, for example
+  when the `AxiomBuilder` is disposed. The last value stays in memory for the
+  next listener, which fetches again if the request was cancelled.
+- `query.cancel()` and `channel.close()` cancel explicitly. A cancelled call
+  completes with `Cancelled`, which is not reported to `onError`.
+- `await sdk.runtime.shutdown()` stops the runtime, for example on app exit.
+  It is safe to call twice and before start-up. Hot restart works: the next
+  `AxiomSdk.create()` starts again.
+
+## Errors and typed failures
+
+Every failed call produces an `AxiomError` with `stage`, `category`, `code`,
+`message`, `retryable` and optional `details`. `code` is a sealed
+`AxiomErrorCode`, for example `ValidationError`, `NetworkTimeout`,
+`NetworkConnectionFailed`, `AuthTokenExpired`, `NotInitialized`, `Cancelled`
+or `HttpStatus(code)`. Builders receive it in `error:`, and `unwrap()` throws
+it. See [Runtime errors](/reference/error-codes#dart-error-types) for the full
+list.
+
+A contract `failure` (for example a 409 with a body) becomes a typed Dart
+class. Match it with the generated helper:
+
+```dart title="Dart excerpt: typed failure"
+try {
+  await sdk.tasks.claim(name: 'docs').stream.unwrap();
+} on AxiomError catch (error) {
+  final text = error.whenClaim(
+    conflict: (failure) => 'Already claimed as ${failure.existingId}',
+    orElse: (other) => other.message,
+  );
+  showMessage(text);
+}
+```
+
+`error.contractFailure` returns the failure object or `null`, and
+`error.failureCode` and `error.failurePayload` give the raw values.
+
+For a global handler, listen to `sdk.runtime.onError`. Each `AxiomErrorEvent`
+has `error`, `namespace`, `endpointId` and `requestId`.
+
+## Signed and hash-locked contracts
+
+By default the generated client loads contracts unsigned, and the runtime
+logs a security warning in debug mode. To verify contracts:
+
+- Add `signature` and `public_key` to the contract's table in the app's
+  `AxiomDeps.toml` before you pull, or set `signature` and `publicKey` on
+  `AxiomContractConfig` yourself. A partial or invalid pair fails start-up; it
+  never falls back to unsigned mode.
+- With a signature, a public key and a `sha256` for every contract, the
+  generated config uses the hash-locked load and `requireSignedContracts` in
+  release builds only. Debug builds keep the normal load so that re-pulls work
+  during development.
+
+`AxiomSdk.initResult.contracts` reports `trust` (`unsigned`, `signed` or
+`locked`) for each contract.
+
+{/* VERIFY: signature and public_key keys in AxiomDeps.toml with CLI 0.156.0 were not exercised end to end on the docs machine. */}
+
+## Extensions
+
+On Android, iOS and macOS, `sdk.runtime.loadExtension(package)`,
+`invokeExtension(call)`, `extensionLifecycle(event)` and `extensionAudit()`
+run sandboxed AxiomCore extensions. A non-zero runtime status throws
+`AxiomExtensionException`. On the web the four methods throw
+`UnsupportedError`. See [Extensions](/extensions).
+
+On Android from 0.150.1, loading and invoking extensions needs the full
+runtime from the `axiom_flutter_extensions` package. Without it,
+`loadExtension` and `invokeExtension` throw `AxiomExtensionException` naming
+that package; `extensionLifecycle` and `extensionAudit` still succeed (the
+audit is empty). iOS and macOS always run the full runtime.
+
+## Runtime variants
+
+| Variant | Contains | Where |
+| --- | --- | --- |
+| Lean (default) | Everything on this page except executable extensions and the telemetry exporter | Android and web with `axiom_flutter` 0.150.1 |
+| Full | Lean plus executable extensions and the telemetry exporter | Android with `axiom_flutter_extensions`; iOS and macOS (AxiomRuntime 0.148.6) |
+
+```bash title="Terminal: Flutter project root (only for extensions on Android)"
+flutter pub add axiom_flutter_extensions:^0.150.1
+```
+
+No code is needed. The add-on ships `libaxiom_runtime_full.so`, which
+`axiom_flutter` loads in preference to the lean library, and its Gradle build
+removes the lean library from the app, so the APK carries one runtime. Calling
+`AxiomExtensions.ensureInitialized()` from
+`package:axiom_flutter_extensions/axiom_flutter_extensions.dart` before start-up
+fails early if the library was not packaged. Without the add-on, extension
+calls on Android throw `AxiomExtensionException` with "Executable extensions
+need the axiom_flutter_extensions package". To return to the 0.150.0
+behaviour (full runtime on Android), add the add-on; there is no full runtime
+for the web. Sizes per ABI and per variant are on
+[Flutter app size](/sdks/flutter-app-size).
+
+## Observability
+
+- The runtime sends `traceparent` and `tracestate` on every call. Allow both
+  headers in your backend's CORS policy for web builds.
+- `AxiomConfig(debug: true)` logs each call and response.
+- `sdk.runtime.onError` is a single place to report errors to your crash or
+  analytics tool.
+
+## Web
+
+- The wasm runtime is loaded from the package assets, so
+  `flutter run -d chrome`, release builds, `--base-href` sub-paths and dart2wasm
+  (`flutter build web --wasm`) work unchanged.
+- Minimum Content Security Policy: `script-src 'self' 'wasm-unsafe-eval'`.
+  Build with `--no-web-resources-cdn` to serve CanvasKit from your origin, or
+  also allow `https://www.gstatic.com`. A restricted `connect-src` must include
+  your origin and every backend URL.
+- **CORS.** Calls are ordinary `fetch` requests from your page's origin.
+  Allow every origin you serve from, port included (pass `--web-port` to
+  `flutter run`). The SDK sends `accept`, `traceparent` and `tracestate` on
+  every call, so allow at least `accept`, `content-type`,
+  `x-axiom-request-id`, `x-axiom-cache-mode`, `traceparent` and `tracestate`,
+  plus `authorization`, your API key header and any header you pass in
+  `AxiomCallOptions.headers`. A missing header makes the browser's preflight
+  fail with 403 and the app shows no data. A rejected origin shows up as a
+  network error, not an HTTP status.
+- Cookie sessions need `credentials: true` and an explicit origin.
+- Browsers cannot set `Authorization` on a WebSocket handshake, so a WebSocket
+  endpoint behind a bearer guard cannot be reached from the web. With CLI
+  0.156.0, a global `cors(...)` policy also makes `axiom run` refuse WebSocket
+  upgrades.
+- The response cache uses the page's `localStorage` (per origin, shared by
+  tabs) and falls back to memory when it is unavailable. `dbPath` is ignored.
+- **Fast start (opt-in).** Build with
+  `--dart-define=AXIOM_WEB_FAST_START=true` to let `AxiomSdk.create()` return
+  before the wasm runtime is up. Only unsigned contracts in namespaces without
+  auth qualify, validated endpoints still wait, and a later contract or
+  runtime failure fails every queued call. See
+  [Web fast start](/sdks/flutter-performance#web-fast-start-opt-in).
+
+## Performance
+
+Each call crosses from Dart into the native or wasm runtime. How a call flows,
+response validation, the cache layers and decoding are explained on
+[Flutter performance](/sdks/flutter-performance). Measured results, the method
+and the machines are on [Flutter benchmarks](/sdks/flutter-benchmarks), and
+app size on [Flutter app size](/sdks/flutter-app-size). Measure release
+builds of your own app before you rely on a number.
 
 ## Platform limits
 
-- **Contract signatures.** The generated `AxiomSdk.create()` loads contracts
-  without a signature, so they run in unsigned local mode, and the runtime
-  prints a security warning when `debug` is on. `AxiomRuntime.loadContract` and `startup` accept
-  `signature` and `publicKey`. A partial or invalid pair fails and never falls
-  back to unsigned mode.
-- **Android, Linux and Windows** have no published runtime library (see
-  [Platforms](#platforms)).
-- **`--framework dart`** is accepted by `axiom pull`, but it does not add
-  packages or copy the contract asset, and this guide does not cover it.
+- Linux and Windows have no runtime library.
+- Android: no 32-bit `x86`; API 24 or newer.
+- Android: executable extensions need `axiom_flutter_extensions` from 0.150.1.
+- Web: no extensions; WebSocket auth limits above; with dart2js, `Int64`
+  values above 2^53 lose precision because JavaScript numbers are doubles
+  (dart2wasm and native builds are not affected).
+- iOS and macOS: WebSocket channels need the next AxiomRuntime release; with
+  the pinned 0.148.6 runtime a channel fails with an error that names the
+  cause. Android and web are not affected.
+- An empty body (`204 No Content`) on an endpoint that declares a typed
+  response is rejected by the current runtime. The fix ships with the next
+  runtime release; until then, return a body from that endpoint.
+- `--framework dart` is accepted by `axiom pull`, but it does not add packages
+  or copy the contract asset, and this page does not cover it.
 - Test release builds on each platform, not only debug and hot reload.
 
 ## Next steps
 
-- [Client SDKs](/sdks) for `axiom pull` options
+- [Flutter quickstart](/getting-started/quickstart-flutter)
+- [Managed sign-in for Flutter](/sdks/flutter-auth)
+- [Flutter app size](/sdks/flutter-app-size) and [Flutter performance](/sdks/flutter-performance)
+- [Migrate from Dio and Retrofit](/guides/migrate-from-dio-retrofit)
 - [The contract runtime](/core-concepts/the-generic-runtime)
 - [Artifact trust](/core-concepts/trust-and-security)

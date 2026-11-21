@@ -113,13 +113,47 @@ workflow.
 | `npm ETARGET` during `axiom pull` | The automatic `atmx-cli` companion version is not published | Pin `atmx-cli` (for example 0.146.7) in the project before `axiom pull` |
 | Generated client code does not compile | Hand-edited generated files, a wrong framework, or a moving channel | Regenerate into a clean directory with an explicit `--framework`, pin a release version, and compile the app before committing |
 | `axiom pull` cannot find the contract | More than one source form, or no access to a private project | Use exactly one source form; sign in and confirm project membership |
-| Flutter runtime does not start | An `assetPath` is not in the Flutter bundle, native libraries are missing, `dbPath` is not writable, or widgets query before `init` | Declare every generated asset, add the native runtime for the platform and architecture, use a writable `dbPath` (or omit it to isolate cache problems), initialize first, and test emulator and release builds |
+| Flutter runtime does not start | See [Flutter](#flutter) | |
 | Swift integration behaves differently | Swift distribution is **Experimental** | A local XCFramework build does not establish a supported Swift package integration |
 | An Acore UI host is stuck after a crash | Stale delivery records | `axiom ui host recover --target TARGET` restarts the host and discards stale records. It does not fix invalid source, missing assets, or a failed platform toolchain |
 
 To diagnose an Acore UI target, run `axiom ui doctor --target ios --json`,
 `axiom ui host status --target ios`, and `axiom ui test main.acore --target ios`
 (replace `ios` with your target).
+
+## Flutter
+
+These rows apply to `axiom_flutter` 0.150.1 and Axiom CLI 0.156.0. The
+[Flutter quickstart](/getting-started/quickstart-flutter#troubleshooting) has
+the same fixes in tutorial order.
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `AxiomSdk.create()` throws, or `initResult.ok` is false | A contract asset is not in the bundle, a signature comes without its public key, or a contract failed to load | Read `initResult.error` and `initResult.contracts`. Run `axiom pull` again, check that every `assets/axiom/<name>.axiom` is listed in `pubspec.yaml`, and supply signature and public key together (or neither in local development) |
+| `AxiomVersionMismatch` at start-up | The native or wasm runtime and the Dart package come from different releases | Upgrade `axiom_flutter` and `axiom_flutter_generator` together, then run `flutter clean` and rebuild |
+| Calls fail with `NotInitialized` | Code calls the SDK before `AxiomSdk.create()` completes, for example when `create()` is not awaited before `runApp` | Await `AxiomSdk.create()` in `main` before `runApp`, or show a start-up screen until it completes |
+| `ParseError("Unexpected token: Colon")` from `axiom check` or `axiom build` | No `AxiomDeps.toml` next to the backend source | Create one with `type = "backend"`, `targets = ["server"]` and `audiences = ["web"]` |
+| `axiom check` says it cannot read `axiom.acore` | Without an argument it looks for `axiom.acore` | Pass the file, for example `axiom check main.acore` |
+| `axiom pull` stops with `dart pub get failed` | A dependency cannot be resolved, or `dart` on `PATH` is not a working SDK | Run `flutter pub get` in the app to see the error. Put Flutter's `bin` first on `PATH` |
+| `axiom pull` added `axiom_flutter` 0.147.5 | CLI 0.156.0 adds that version when the app has none | Run `flutter pub add axiom_flutter:^0.150.1 dev:axiom_flutter_generator:^0.150.1`, then pull again |
+| Android: `could not load libaxiom_runtime.so` | A 32-bit `x86` emulator image, or an `axiom_flutter` version without Android support | Use an `x86_64` or `arm64` image and `axiom_flutter` 0.150.0 or later |
+| Android: Gradle fails with `Unsupported class file major version` or asks for a newer Java | The Android build runs on a JDK other than 17 | Install JDK 17 and point Flutter at it with `flutter config --jdk-dir <path>`, then `flutter doctor -v` |
+| Android: a `wss://` WebSocket fails with a certificate error, HTTPS to the same host works in the browser | Since 0.150.1 native WebSocket TLS trusts the runtime's bundled public root certificates, not the device store, so a private CA installed on the device is not trusted | Use a certificate from a public CA for the WebSocket host |
+| Android: an extension call throws an error that names `axiom_flutter_extensions` | From 0.150.1 `axiom_flutter` bundles the lean runtime without executable extensions | Add `axiom_flutter_extensions:^0.150.1`; see [Flutter app size](/sdks/flutter-app-size#lean-by-default-extensions-as-an-add-on) |
+| Android: build fails with a `minSdkVersion` error | The runtime needs API 24 | Set `minSdk = 24` in `android/app/build.gradle.kts` |
+| Android: every call fails with a connection error | `127.0.0.1` is the emulator itself, cleartext HTTP is blocked, or the internet permission is missing | Use `http://10.0.2.2:<port>`, allow cleartext for `10.0.2.2` in a debug network security config, and add `android.permission.INTERNET` |
+| iOS or macOS: pod install asks for a higher deployment target | The plugin needs iOS 13 and macOS 11 | Raise the target in the Podfile and in Xcode |
+| iOS or macOS: `AxiomRuntime checksum mismatch` | A cached or wrong runtime framework | Update to the current `axiom_flutter`, run `pod repo update` and `flutter clean`, and rebuild |
+| macOS: every call fails with a connection error | The sandbox blocks outgoing connections | Add `com.apple.security.network.client` to both entitlement files |
+| Web: every call fails with a network error, curl works | The page origin is not allowed by CORS | Run with a fixed `--web-port` and add that origin, port included, to `cors(origins: [...])` |
+| Web: the app shows no data and the preflight (`OPTIONS`) gets 403 | The `cors(...)` headers list misses a header the SDK sends on every call | Allow `accept`, `content-type`, `x-axiom-request-id`, `x-axiom-cache-mode`, `traceparent` and `tracestate`, plus `authorization` or your API key header when used |
+| Web: the runtime does not load with a Content Security Policy | WebAssembly compilation is blocked | Allow `script-src 'self' 'wasm-unsafe-eval'`, and build with `--no-web-resources-cdn` or allow `https://www.gstatic.com` |
+| Web release build: `Null check operator used on a null value` in your own code | A dart2js bug in Dart 3.8.0 / Flutter 3.32.0, not an SDK bug: any `async` function literally named `result` crashes in release web builds (the compiler's internal `$async$result` name shadows the awaited value) | Rename the function |
+| Web: after a rebuild the browser still runs the previous app | Flutter's service worker serves the cached build | Hard-reload, or test each build in a fresh browser profile (Chrome `--user-data-dir=<new dir>`) |
+| Web (dart2js): a 64-bit id changes its last digits | JavaScript numbers lose precision above 2^53 | Use `String` for 64-bit ids, or build with `--wasm`; native builds are not affected |
+| iOS or macOS: a WebSocket channel fails at once | The pinned AxiomRuntime 0.148.6 lacks the WebSocket fix | Wait for the next AxiomRuntime release; Android and web are not affected |
+| A `204 No Content` endpoint fails with a decode error | The current runtime rejects an empty body when the endpoint declares a typed response | Return a body until the next runtime release |
+| Web: WebSocket upgrade refused with 403 | A browser cannot send `Authorization` on the handshake, or a global `cors(...)` policy (CLI 0.156.0) | Use a cookie session or another token transport, and see [Web](/sdks/flutter#web) |
 
 ## Database
 

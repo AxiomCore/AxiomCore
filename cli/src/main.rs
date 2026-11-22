@@ -1876,6 +1876,14 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     renamed_command_or_exit(&cli.command);
     confirmation_preflight(&cli.command);
+    // PERF p-int: development and test commands run managed guests in
+    // `live+verify` (unless AXIOM_MANAGED_ROUNDS names a mode), before any
+    // host starts; production hosts (`serve`, deployments) stay `live`.
+    if selects_development_managed_rounds(&cli.command)
+        && std::env::var_os(MANAGED_ROUNDS_ENV).is_none_or(|value| value.is_empty())
+    {
+        std::env::set_var(MANAGED_ROUNDS_ENV, DEVELOPMENT_MANAGED_ROUNDS);
+    }
     let start_time = Instant::now();
     // Mode/input errors must precede cloud credentials, registration and I/O.
     match &*cli.command {
@@ -3897,6 +3905,34 @@ pub async fn handle_inspect(file_path: &Path) -> anyhow::Result<()> {
     }
 
     tui.exit().map_err(|e| anyhow::anyhow!(e))
+}
+
+/// PERF p-int: the variable the managed kernel reads for its round mode, and
+/// the mode development commands select (an explicit value is kept). The
+/// test runner selects the same (`axiom_test_runner` `managed_rounds`, branch
+/// `p/p-int`); the CLI does not depend on it so that it builds against either.
+const MANAGED_ROUNDS_ENV: &str = "AXIOM_MANAGED_ROUNDS";
+const DEVELOPMENT_MANAGED_ROUNDS: &str = "live+verify";
+
+/// PERF p-int: the development commands (`acore run`, `acore test`) that
+/// select `AXIOM_MANAGED_ROUNDS=live+verify` for the hosts they start.
+fn selects_development_managed_rounds(command: &Commands) -> bool {
+    matches!(command, Commands::Run { .. } | Commands::Test { .. })
+}
+
+#[cfg(test)]
+mod p_int_managed_rounds_tests {
+    use super::*;
+
+    #[test]
+    fn run_and_test_select_live_verify_and_serve_does_not() {
+        let parse = |args: &[&str]| Cli::try_parse_from(args).unwrap();
+        assert!(selects_development_managed_rounds(&parse(&["acore", "test"]).command));
+        assert!(selects_development_managed_rounds(&parse(&["acore", "run", "app.acore"]).command));
+        assert!(!selects_development_managed_rounds(&parse(&["acore", "serve"]).command));
+        assert_eq!(DEVELOPMENT_MANAGED_ROUNDS, "live+verify");
+        assert_eq!(MANAGED_ROUNDS_ENV, "AXIOM_MANAGED_ROUNDS");
+    }
 }
 
 #[cfg(test)]

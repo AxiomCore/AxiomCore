@@ -718,6 +718,7 @@ pub async fn handle_source_release(
     };
     fs::write(&workflow, toml::to_string(&workflow_manifest)?)?;
     verify_extension_workflow(&workflow)?;
+    let precompiled = precompile_for_this_host(&executable.sdk.language, &build.module);
     if print_report {
         println!(
             "{}",
@@ -728,11 +729,46 @@ pub async fn handle_source_release(
                 "moduleSha256": build.module_sha256,
                 "workflow": workflow,
                 "generatedRoot": release_root,
+                "precompiled": precompiled,
                 "status": "signed-and-verified",
             }))?
         );
     }
     Ok(())
+}
+
+/// p-wt: build-time Wasmtime precompile of the released module into this
+/// host's artifact cache (contract d12 §5/§6: the artifact is native code,
+/// authenticated with this host's key in a host-owned directory, so it is
+/// made here and never shipped with the package; a server host precompiles
+/// at deploy with `axiom-wasmtime-precompile --host`). Managed (TypeScript,
+/// Python) modules go to the managed cache, Rust modules to the kernel cache
+/// with the default kernel policy every product host loads with. Best
+/// effort: a failure is reported and the module runs on Wasmi.
+fn precompile_for_this_host(language: &str, module: &Path) -> serde_json::Value {
+    use axiom_extension_kernel::{host_engine::precompile_for_host, HostEngineConfig};
+    let resolved = match HostEngineConfig::from_env() {
+        Ok(config) => config.resolve(),
+        Err(error) => return serde_json::json!({ "engine": "wasmi", "error": error.message }),
+    };
+    let managed = matches!(language, "typescript" | "python");
+    let result = fs::read(module)
+        .map_err(|error| error.to_string())
+        .and_then(|bytes| precompile_for_host(&resolved, &bytes, managed).map_err(|error| error.message));
+    match result {
+        Ok(Some(report)) => serde_json::json!({
+            "engine": "wasmtime",
+            "cache": if managed { "managed" } else { "kernel" },
+            "moduleSha256": report.module_sha256,
+            "alreadyCached": report.already_cached,
+            "compileMs": report.compile_ms,
+        }),
+        Ok(None) => serde_json::json!({ "engine": "wasmi", "reason": resolved.note }),
+        Err(message) => {
+            eprintln!("warning: the module was not precompiled for Wasmtime on this host ({message}); it runs on Wasmi");
+            serde_json::json!({ "engine": "wasmi", "error": message })
+        }
+    }
 }
 
 fn managed_signing_key(path: &Path) -> Result<SigningKey> {

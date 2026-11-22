@@ -71,6 +71,7 @@ axiom extensions <COMMAND>
 | [`diff`](#axiom-extensions-diff) | Diff two authority locks and enforce approval of increases. |
 | [`test`](#axiom-extensions-test) | Run offline release conformance checks. |
 | [`run`](#axiom-extensions-run) | Emit or execute the verified host handoff. |
+| [`replay`](#axiom-extensions-replay) | Re-run a dev replay tape against the current build (extension SDK 0.1.5 releases). |
 
 ### Shared inputs
 
@@ -268,6 +269,14 @@ Release files go to `<out>/release/<alias>/`. Locally generated owner-only
 signing keys go to `<out>/keys/<alias>/`; keep them out of source control. An
 extension with dependencies needs those modules released separately first.
 
+When the workflow file already lists other extensions, the release keeps them:
+the file then names one package manifest and lock for all its extensions,
+`<out>/release/<workflow name>.packages.toml` and `.packages.lock`. Release
+every extension of one workflow file with the same `--out` and `--application`;
+a different application is refused. The file's targets become the targets
+every listed extension supports, and the release prints
+`AXIOM_EXTENSION_WORKFLOW_TARGETS_NARROWED` when that drops one.
+
 ```bash title="Terminal"
 axiom extensions source-release checkout --deps AxiomDeps.toml --application example.checkout
 ```
@@ -445,6 +454,11 @@ axiom extensions run [OPTIONS] <ALIAS>
 | `--input` | JSON | `null` | ABI input for `--export`. ABI v1 rejects floating-point values. |
 | `--state` | path | none | Deterministic UI or store fixture for a server reference invocation. Guest code never receives a native state reference. |
 | `--audit-out` | path | none | Also write canonical, redacted, correlated execution evidence to this path. |
+| `--snapshot` | `SCOPE=FILE` | none | SDK 0.1.5 releases. UI snapshot handed to the guest, repeatable. The file holds `{"revision": n, "read": [fields], "value": {...}}`: the guest sees the `read` fields and the reference host holds `value`, so proposed patches are committed and audited. |
+| `--scenario` | path | none | SDK 0.1.5 releases. Scenario file `{"alias", "scenarios": [{"name", "export", "input", "ui"}]}`; supplies the export, input and snapshot. Conflicts with `--export` and `--input`. A scenario made from a replay tape runs against the tape. |
+| `--scenario-name` | name | none | Scenario to run when the file has several. |
+| `--deadline-ms` | milliseconds | `1000` | SDK 0.1.5 releases. Invocation deadline; also raises the reference host's deadline ceiling. The package's signed `deadlineMs` still applies. |
+| `--record-tape` | directory | none | SDK 0.1.5 releases. Record a dev replay tape of the invocation into this directory. Development builds of the CLI only. |
 
 ```bash title="Terminal"
 axiom extensions run pricing --target web
@@ -452,6 +466,28 @@ axiom extensions run pricing --export quote --input '{"sku":"A1"}'
 ```
 
 Frontend exports run inside the application with `axiom run <app>.acore --target android|ios|web`.
+
+### axiom extensions replay
+
+Re-run a dev replay tape against the current verified build, through the real
+kernel and broker, with every host call answered from the tape. No real host
+call, network, state or secret is used. Exits 0 when the run is identical and
+fails with `AXIOM_EXTENSION_REPLAY_DIFFERS`, naming the first difference,
+otherwise. Available in CLI releases that accept extension SDK 0.1.5; see
+[Test and debug extensions](/extensions/testing).
+
+```text title="Usage"
+axiom extensions replay [OPTIONS] <TAPE>
+```
+
+| Option | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `<TAPE>` | path | required | A tape recorded by a development host (`*.axtape.json`). |
+| `--manifest` | path | `AxiomExtensions.toml` | Release workflow file. |
+| `--alias` | alias | the tape's extension | Extension to replay against. |
+| `--target` | target | `server` | Target host. |
+| `--to-scenario` | path | none | Write the tape as a scenario for `axiom extensions run --scenario` instead of replaying it. |
+| `--deadline-ms` | milliseconds | `1000` | Invocation deadline. |
 
 ## Related pages
 

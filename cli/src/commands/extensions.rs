@@ -26,7 +26,7 @@ use axiom_lib::{
         TargetPolicy, APPLICATION_GRANT_SCHEMA, TARGET_POLICY_SCHEMA,
     },
     extension_binding::generate_extension_binding,
-    extension_source::resolve_extension_sources,
+    extension_source::{resolve_extension_sources, resolve_extension_sources_allow_pending_exports},
     extension_workflow::{
         diff_extension_authority, extension_graph, inspect_extension,
         load_verified_extension_target, require_extension_diff_approval, verify_extension_workflow,
@@ -79,7 +79,7 @@ pub async fn handle_interface(
     out: Option<PathBuf>,
     json: bool,
 ) -> Result<()> {
-    let sources = resolve_extension_sources(&deps)?;
+    let sources = axiom_lib::extension_source::resolve_extension_sources_for(&deps, &alias)?;
     let source = sources
         .get(&alias)
         .with_context(|| format!("AxiomDeps.toml has no extension `{alias}`"))?;
@@ -321,7 +321,7 @@ pub async fn handle_migrate_rust(
     check: bool,
     json: bool,
 ) -> Result<()> {
-    let sources = resolve_extension_sources(&deps)?;
+    let sources = axiom_lib::extension_source::resolve_extension_sources_for(&deps, &alias)?;
     let extension = sources
         .get(&alias)
         .with_context(|| format!("AxiomDeps.toml has no extension `{alias}`"))?;
@@ -469,14 +469,17 @@ pub async fn handle_source_release(
     if workflow.parent() != Some(project_root) {
         bail!("source release workflow must be written at the AxiomDeps.toml project root");
     }
-    let sources = resolve_extension_sources(&deps)?;
-    let source = sources
+    // An extension that omits `exports` derives them at build time (X7c): it
+    // resolves with pending exports before the build, and strictly after the
+    // build recorded them in `.axiom/AxiomDeps.lock` (P4).
+    let pending = resolve_extension_sources_allow_pending_exports(&deps)?;
+    let pending_source = pending
         .get(&alias)
         .with_context(|| format!("AxiomDeps.toml has no extension `{alias}`"))?;
-    if !source.dependencies.is_empty() {
+    if !pending_source.dependencies.is_empty() {
         bail!("source release currently requires dependency modules to be released separately before `{alias}`");
     }
-    let target = *source
+    let target = *pending_source
         .targets
         .first()
         .context("source extension declares no targets")?;
@@ -487,6 +490,10 @@ pub async fn handle_source_release(
         target,
         clean,
     })?;
+    let sources = axiom_lib::extension_source::resolve_extension_sources_for(&deps, &alias)?;
+    let source = sources
+        .get(&alias)
+        .with_context(|| format!("AxiomDeps.toml has no extension `{alias}`"))?;
     let package_bytes = fs::read(&build.package)?;
     let DecodedAxiomPackage::Package(package) = decode_axiom_package(&package_bytes)? else {
         bail!("source build produced a legacy package");
@@ -519,28 +526,89 @@ pub async fn handle_source_release(
     let package_digest = Sha256::digest(&package_bytes);
     let package_signature = BASE64.encode(package_key.sign(package_digest.as_slice()).to_bytes());
     let package_public_key = BASE64.encode(package_key.verifying_key().to_bytes());
-    let package_manifest = PackageDependencyManifest {
-        format: PACKAGE_MANIFEST_FORMAT.into(),
-        targets: source.targets.clone(),
-        extensions: Default::default(),
-        packages: std::collections::BTreeMap::from([(
-            alias.clone(),
-            PackageReference {
-                artifact: PathBuf::from(&package_name),
-                name: package.package.name.clone(),
-                kind: PackageKind::Extension,
-                version: package.package.version.clone(),
-                dependencies: Vec::new(),
-                module_artifact: Some(PathBuf::from(&module_name)),
-                signature: Some(package_signature),
-                public_key: Some(package_public_key),
-            },
-        )]),
+    let reference = PackageReference {
+        artifact: PathBuf::from(&package_name),
+        name: package.package.name.clone(),
+        kind: PackageKind::Extension,
+        version: package.package.version.clone(),
+        dependencies: Vec::new(),
+        module_artifact: Some(PathBuf::from(&module_name)),
+        signature: Some(package_signature),
+        public_key: Some(package_public_key),
     };
-    let package_manifest_path = release_root.join("AxiomDeps.toml");
+    // w3-x (w3-e finding 6): `ui run`/`ui build` read one workflow file, so a
+    // release keeps the other aliases the file already lists. A file with no
+    // other alias is written exactly as before (per-alias package manifest);
+    // otherwise one package manifest and lock per workflow file under
+    // `<out>/release` list every alias of the file.
+    let merge = axiom_lib::extension_workflow::source_release_merge(
+        &workflow,
+        &PackageIdentity { name: application.clone(), version: application_version.clone() },
+        &alias,
+        &output_root.join("release"),
+    )?;
+    let (package_manifest, package_root, package_manifest_path, package_lock_path) = if merge.entries.is_empty() {
+        (
+            PackageDependencyManifest {
+                format: PACKAGE_MANIFEST_FORMAT.into(),
+                targets: source.targets.clone(),
+                extensions: Default::default(),
+                packages: std::collections::BTreeMap::from([(alias.clone(), reference)]),
+            },
+            release_root.clone(),
+            release_root.join("AxiomDeps.toml"),
+            release_root.join("AxiomPackages.lock"),
+        )
+    } else {
+        let mut reference = reference;
+        reference.artifact = PathBuf::from(&alias).join(&package_name);
+        reference.module_artifact = Some(PathBuf::from(&alias).join(&module_name));
+        let mut packages = merge.packages.clone();
+        packages.insert(alias.clone(), reference);
+        let targets: Vec<PackageTarget> =
+            merge.targets.iter().copied().filter(|target| source.targets.contains(target)).collect();
+        let dropped: std::collections::BTreeSet<&'static str> = merge
+            .targets
+            .iter()
+            .chain(&source.targets)
+            .filter(|target| !targets.contains(target))
+            .map(|target| target_name(*target))
+            .collect();
+        if targets.is_empty() {
+            bail!(
+                "AXIOM_EXTENSION_WORKFLOW_TARGETS_DISJOINT: `{alias}` shares no target with the extensions already in {} ({}); pass --workflow with another file",
+                workflow.display(),
+                merge.entries.keys().cloned().collect::<Vec<_>>().join(", ")
+            );
+        }
+        if !dropped.is_empty() {
+            eprintln!(
+                "warning: {} now lists {} for the targets every one of its extensions supports; it no longer covers {} [AXIOM_EXTENSION_WORKFLOW_TARGETS_NARROWED]",
+                workflow.display(),
+                packages.keys().cloned().collect::<Vec<_>>().join(", "),
+                dropped.into_iter().collect::<Vec<_>>().join(", ")
+            );
+        }
+        let stem = workflow
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .context("workflow file name is not UTF-8")?
+            .to_string();
+        let root = output_root.join("release");
+        (
+            PackageDependencyManifest {
+                format: PACKAGE_MANIFEST_FORMAT.into(),
+                targets,
+                extensions: Default::default(),
+                packages,
+            },
+            root.clone(),
+            root.join(format!("{stem}.packages.toml")),
+            root.join(format!("{stem}.packages.lock")),
+        )
+    };
     fs::write(&package_manifest_path, toml::to_string(&package_manifest)?)?;
-    let package_lock = resolve_package_dependencies(&release_root, &package_manifest)?;
-    let package_lock_path = release_root.join("AxiomPackages.lock");
+    let package_lock = resolve_package_dependencies(&package_root, &package_manifest)?;
     write_package_lock(&package_lock_path, &package_lock)?;
 
     let application = PackageIdentity {
@@ -625,7 +693,7 @@ pub async fn handle_source_release(
         application,
         package_manifest: relative_from(project_root, &package_manifest_path)?,
         package_lock: relative_from(project_root, &package_lock_path)?,
-        extensions: std::collections::BTreeMap::from([(
+        extensions: merge.entries.clone().into_iter().chain([(
             alias.clone(),
             ExtensionWorkflowEntry {
                 authority_lock: relative_from(project_root, &authority_path)?,
@@ -636,9 +704,9 @@ pub async fn handle_source_release(
                 dependencies: Vec::new(),
                 runtime: RuntimeIdentities {
                     engine: match executable.sdk.language.as_str() {
-                        "typescript" => "javy@9.1.0+wasmi@2.0.0",
-                        "python" => "axiom-python-aot-javy@0.1.0+javy@9.1.0+wasmi@2.0.0",
-                        _ => "wasmi@2.0.0",
+                        "typescript" => "javy@9.1.0+wasmi@2.0.2",
+                        "python" => "axiom-python-aot-javy@0.1.0+javy@9.1.0+wasmi@2.0.2",
+                        _ => "wasmi@2.0.2",
                     }
                     .into(),
                     broker: "axiom-extension-broker@0.1.0".into(),
@@ -646,7 +714,7 @@ pub async fn handle_source_release(
                     translator: None,
                 },
             },
-        )]),
+        )]).collect(),
     };
     fs::write(&workflow, toml::to_string(&workflow_manifest)?)?;
     verify_extension_workflow(&workflow)?;
@@ -847,6 +915,155 @@ pub async fn handle_test(manifest: PathBuf) -> Result<()> {
     Ok(())
 }
 
+/// UI inputs of `axiom extensions run` (w1-p D8): `--snapshot` and
+/// `--scenario` (the X7 golden-harness scenario format).
+#[derive(Debug, Clone)]
+pub struct RunUiOptions {
+    pub snapshots: Vec<String>,
+    pub scenario: Option<PathBuf>,
+    pub scenario_name: Option<String>,
+    /// Invocation deadline (default 1000 ms).
+    pub deadline_ms: u64,
+    /// X9d: record a dev replay tape of the invocation into this directory
+    /// (dev builds of the CLI only, see `x9d-replay-tape.md`).
+    pub record_tape: Option<PathBuf>,
+}
+
+impl Default for RunUiOptions {
+    fn default() -> Self {
+        Self { snapshots: Vec::new(), scenario: None, scenario_name: None, deadline_ms: 1_000, record_tape: None }
+    }
+}
+
+/// One UI snapshot: what the guest reads and what the host holds.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RunUiSnapshot {
+    #[serde(default)]
+    scope: Option<String>,
+    #[serde(default = "default_snapshot_revision")]
+    revision: u64,
+    read: Vec<String>,
+    value: serde_json::Map<String, serde_json::Value>,
+}
+
+fn default_snapshot_revision() -> u64 {
+    1
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RunScenarioSuite {
+    alias: String,
+    scenarios: Vec<RunScenario>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RunScenario {
+    name: String,
+    export: String,
+    #[serde(default)]
+    input: serde_json::Value,
+    #[serde(default)]
+    ui: Option<RunUiSnapshot>,
+    /// X9d: a scenario made from a dev replay tape (`axiom extensions replay
+    /// --to-scenario`). When present the run is tape-backed: the recorded
+    /// ABI input and snapshots, host replies from the tape (no real host
+    /// call), and the outcome must equal the recorded one.
+    #[serde(default)]
+    replay: Option<serde_json::Value>,
+}
+
+/// The export, input and UI snapshots one run uses, and the evidence digests
+/// for the audit (the snapshot values themselves are never exported).
+#[derive(Debug)]
+struct RunInputs {
+    export: Option<String>,
+    input: String,
+    snapshots: Vec<(String, RunUiSnapshot, String)>,
+    scenario: Option<serde_json::Value>,
+    /// X9d: the verified tape of a replay scenario.
+    replay: Option<Box<axiom_extension_broker::ReplayTape>>,
+}
+
+fn run_inputs(alias: &str, export: Option<String>, input: String, ui: &RunUiOptions) -> Result<RunInputs> {
+    let mut inputs = RunInputs { export, input, snapshots: Vec::new(), scenario: None, replay: None };
+    if let Some(path) = &ui.scenario {
+        let bytes = fs::read(path).with_context(|| format!("AXIOM_EXTENSION_REFERENCE_HOST: read {}", path.display()))?;
+        let suite: RunScenarioSuite = serde_json::from_slice(&bytes)
+            .with_context(|| format!("AXIOM_EXTENSION_REFERENCE_HOST: parse scenario file {}", path.display()))?;
+        if suite.alias != alias {
+            bail!("AXIOM_EXTENSION_REFERENCE_HOST: scenario file {} is for extension `{}`, not `{alias}`", path.display(), suite.alias);
+        }
+        let names = suite.scenarios.iter().map(|scenario| scenario.name.clone()).collect::<Vec<_>>();
+        let scenario = match &ui.scenario_name {
+            Some(name) => suite.scenarios.into_iter().find(|scenario| &scenario.name == name),
+            None if suite.scenarios.len() == 1 => suite.scenarios.into_iter().next(),
+            None => bail!("AXIOM_EXTENSION_REFERENCE_HOST: {} has several scenarios; choose one with --scenario-name ({})", path.display(), names.join(", ")),
+        }
+        .with_context(|| format!("AXIOM_EXTENSION_REFERENCE_HOST: no scenario `{}` in {} ({})", ui.scenario_name.as_deref().unwrap_or(""), path.display(), names.join(", ")))?;
+        inputs.scenario = Some(serde_json::json!({
+            "fileSha256": hex::encode(Sha256::digest(&bytes)),
+            "name": scenario.name,
+        }));
+        if let Some(tape) = scenario.replay {
+            let tape = axiom_extension_broker::ReplayTape::from_bytes(&serde_json::to_vec(&tape)?)
+                .with_context(|| format!("AXIOM_EXTENSION_REPLAY_TAPE: scenario `{}` in {}", scenario.name, path.display()))?;
+            if tape.invocation.export != scenario.export {
+                bail!("AXIOM_EXTENSION_REPLAY_TAPE: scenario `{}` names export `{}` but its tape recorded `{}`", scenario.name, scenario.export, tape.invocation.export);
+            }
+            inputs.replay = Some(Box::new(tape));
+        }
+        inputs.export = Some(scenario.export);
+        inputs.input = serde_json::to_string(&scenario.input)?;
+        if let Some(snapshot) = scenario.ui {
+            let scope = snapshot.scope.clone().context("AXIOM_EXTENSION_REFERENCE_HOST: a scenario `ui` names its `scope`")?;
+            let digest = hex::encode(Sha256::digest(serde_jcs::to_vec(&serde_json::json!({"revision": snapshot.revision, "read": snapshot.read, "value": snapshot.value}))?));
+            inputs.snapshots.push((scope, snapshot, digest));
+        }
+    }
+    for argument in &ui.snapshots {
+        let (scope, path) = argument
+            .split_once('=')
+            .filter(|(scope, path)| !scope.is_empty() && !path.is_empty())
+            .with_context(|| format!("AXIOM_EXTENSION_REFERENCE_HOST: --snapshot expects <scope>=<file.json>, got `{argument}`"))?;
+        let scope = scope.strip_prefix("ui:").unwrap_or(scope).to_string();
+        let bytes = fs::read(path).with_context(|| format!("AXIOM_EXTENSION_REFERENCE_HOST: read snapshot {path}"))?;
+        let snapshot: RunUiSnapshot = serde_json::from_slice(&bytes)
+            .with_context(|| format!("AXIOM_EXTENSION_REFERENCE_HOST: parse snapshot {path} (expected {{\"revision\", \"read\", \"value\"}})"))?;
+        if snapshot.scope.as_ref().is_some_and(|named| named != &scope) {
+            bail!("AXIOM_EXTENSION_REFERENCE_HOST: snapshot {path} names scope `{}`, not `{scope}`", snapshot.scope.as_deref().unwrap_or(""));
+        }
+        inputs.snapshots.push((scope, snapshot, hex::encode(Sha256::digest(&bytes))));
+    }
+    let mut seen = BTreeSet::new();
+    for (scope, snapshot, _) in &inputs.snapshots {
+        if !seen.insert(scope.clone()) {
+            bail!("AXIOM_EXTENSION_REFERENCE_HOST: UI scope `{scope}` has more than one snapshot");
+        }
+        for field in &snapshot.read {
+            if !snapshot.value.contains_key(field) {
+                bail!("AXIOM_EXTENSION_REFERENCE_HOST: snapshot of `{scope}` reads `{field}`, which its `value` lacks");
+            }
+        }
+    }
+    Ok(inputs)
+}
+
+/// The guest-visible snapshot: the `read` fields only (the host redacts to
+/// effective read paths in the same way).
+fn guest_snapshot(scope: &str, snapshot: &RunUiSnapshot) -> Result<axiom_extension_abi::Snapshot> {
+    let mut fields = snapshot
+        .read
+        .iter()
+        .map(|name| Ok(Field { name: name.clone(), value: json_to_value(snapshot.value[name].clone())? }))
+        .collect::<Result<Vec<_>>>()?;
+    fields.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(axiom_extension_abi::Snapshot { resource: format!("ui:{scope}"), revision: snapshot.revision, value: Value::Record(fields) })
+}
+
+#[allow(clippy::too_many_arguments)]
 pub async fn handle_run(
     manifest: PathBuf,
     alias: String,
@@ -855,7 +1072,12 @@ pub async fn handle_run(
     input: String,
     state: Option<PathBuf>,
     audit_out: Option<PathBuf>,
+    ui: RunUiOptions,
 ) -> Result<()> {
+    let RunInputs { export, input, snapshots: ui_snapshots, scenario, replay } = run_inputs(&alias, export, input, &ui)?;
+    if export.is_none() && !ui_snapshots.is_empty() {
+        bail!("AXIOM_EXTENSION_REFERENCE_HOST: --snapshot needs --export (or --scenario)");
+    }
     let report = inspect_extension(&manifest, &alias)?;
     let target = parse_target(&target)?;
     let authority = report
@@ -887,64 +1109,36 @@ pub async fn handle_run(
     let loaded = load_verified_extension_target(&manifest, &alias, target)?;
     let authority_lock_sha256 = hex::encode(Sha256::digest(&loaded.authority_lock_bytes));
     let package_lock_sha256 = hex::encode(Sha256::digest(&loaded.package_lock_bytes));
-    let DecodedAxiomPackage::Package(package) = decode_axiom_package(&loaded.package_bytes)? else {
-        bail!("AXIOM_EXTENSION_REFERENCE_HOST: legacy extension packages cannot execute");
-    };
-    let PackageContents::Extension(ExtensionPackagePayload::V2(executable)) = &package.contents
-    else {
-        bail!("AXIOM_EXTENSION_REFERENCE_HOST: selected package is not axiom-extension/v2");
-    };
-    let authority_lock = decode_authority_lock(&loaded.authority_lock_bytes)?;
-    let effective = axiom_lib::extension_authority::EffectiveTargetAuthority {
-        permissions: loaded.effective.permissions.clone(),
-        budgets: loaded.effective.budgets.clone(),
-    };
     let services = Arc::new(DeterministicHost::default());
     let state_fixture_sha256 = state.as_ref().map(|path| file_sha256(path)).transpose()?;
     if let Some(path) = state.as_ref() {
         seed_reference_state(&services, &path)?;
     }
-    let kernel = SandboxKernel::new(KernelPolicy::default())?;
-    let authorized = AuthorizedModule::verify_brokered(
-        &loaded.application,
-        &package.package,
-        executable,
-        &package.targets,
-        &authority_lock,
-        target,
-        &loaded.module_bytes,
-        &KernelPolicy::default(),
-        false,
-    )?;
-    let host = match executable.sdk.language.as_str() {
-        "typescript" => TargetExtensionHost::load_typescript(
-            HostProfile::backend(),
-            authorized,
-            &effective,
-            Arc::clone(&services),
-            1,
-            executable.limits.max_effects,
-            executable.limits.max_stream_batch,
-        )?,
-        "python" => TargetExtensionHost::load_python(
-            HostProfile::backend(),
-            authorized,
-            &effective,
-            Arc::clone(&services),
-            1,
-            executable.limits.max_effects,
-            executable.limits.max_stream_batch,
-        )?,
-        _ => TargetExtensionHost::load(
-            HostProfile::backend(),
-            &kernel,
-            authorized,
-            &effective,
-            Arc::clone(&services),
-            1,
-            executable.limits.max_effects,
-            executable.limits.max_stream_batch,
-        )?,
+    let mut guest_snapshots = Vec::new();
+    for (scope, snapshot, _) in &ui_snapshots {
+        services
+            .state_store()
+            .define_ui(scope, json_to_value(serde_json::Value::Object(snapshot.value.clone()))?, Vec::new())
+            .with_context(|| format!("AXIOM_EXTENSION_REFERENCE_HOST: define UI scope `{scope}` (also seeded by --state?)"))?;
+        guest_snapshots.push(guest_snapshot(scope, snapshot)?);
+    }
+    // A scenario recorded from a replay tape runs tape-backed (X9d).
+    if let Some(tape) = replay {
+        return super::extension_replay::run_tape_scenario(&loaded, target, *tape, ui.deadline_ms).await;
+    }
+    let ReferenceHost { host, kernel: _kernel, sdk, .. } = load_reference_host(&loaded, target, Arc::clone(&services), ui.deadline_ms)?;
+    let recorder = match &ui.record_tape {
+        Some(directory) => Some(
+            host.enable_dev_replay_tape(axiom_extension_host::DevReplayTapeOptions {
+                directory: directory.clone(),
+                sensitive: axiom_extension_broker::SensitivePolicy::Refuse,
+                sdk: Some(sdk),
+                alias: Some(alias.clone()),
+                allow_release_build_recording_of_real_user_data: false,
+            })
+            .context("AXIOM_EXTENSION_REPLAY_TAPE: --record-tape")?,
+        ),
+        None => None,
     };
     let export = export.expect("checked above");
     let input_json: serde_json::Value = serde_json::from_str(&input)
@@ -956,8 +1150,8 @@ pub async fn handle_run(
             Invocation {
                 export: export.clone(),
                 input,
-                snapshots: Vec::new(),
-                deadline_unix_ms: now_unix_ms().saturating_add(1_000),
+                snapshots: guest_snapshots,
+                deadline_unix_ms: now_unix_ms().saturating_add(ui.deadline_ms),
             },
             InvocationContext::default(),
         )
@@ -1025,6 +1219,35 @@ pub async fn handle_run(
             },
         },
     });
+    // w1-p D8: digests only, like the input and the state fixture; absent
+    // when unused, so audits of runs without UI inputs are unchanged.
+    let mut audit = audit;
+    if !ui_snapshots.is_empty() {
+        audit["execution"]["uiSnapshots"] = serde_json::json!(ui_snapshots
+            .iter()
+            .map(|(scope, snapshot, sha256)| serde_json::json!({
+                "scope": scope, "revision": snapshot.revision, "sha256": sha256,
+            }))
+            .collect::<Vec<_>>());
+    }
+    if let Some(scenario) = scenario {
+        audit["execution"]["scenario"] = scenario;
+    }
+    if ui.deadline_ms != RunUiOptions::default().deadline_ms {
+        audit["execution"]["deadlineMs"] = ui.deadline_ms.into();
+    }
+    // X9d: where the dev replay tape went (absent without --record-tape).
+    if let (Some(recorder), Some(directory)) = (&recorder, &ui.record_tape) {
+        audit["execution"]["replayTape"] = match recorder.last_outcome() {
+            Some(axiom_extension_broker::RecordOutcome::Written { file, bytes }) => {
+                serde_json::json!({"status": "written", "file": directory.join(file), "bytes": bytes})
+            }
+            Some(axiom_extension_broker::RecordOutcome::Refused(error)) => {
+                serde_json::json!({"status": "refused", "error": error.to_string()})
+            }
+            other => serde_json::json!({"status": format!("{other:?}")}),
+        };
+    }
     if let Some(path) = audit_out {
         let bytes = serde_jcs::to_vec(&audit)?;
         fs::write(&path, bytes)
@@ -1094,7 +1317,90 @@ fn seed_reference_state(host: &DeterministicHost, path: &std::path::Path) -> Res
     Ok(())
 }
 
-fn now_unix_ms() -> u64 {
+/// The verified server reference host for `loaded` over `services` (shared by
+/// `axiom extensions run` and the X9d tape-backed replay).
+pub(crate) struct ReferenceHost<H: axiom_extension_broker::HostServices> {
+    pub host: TargetExtensionHost<H>,
+    /// Keeps the Wasmi kernel of a core-Wasm guest alive with its host.
+    pub kernel: SandboxKernel,
+    /// `<language>@<sdk version>` of the package.
+    pub sdk: String,
+    pub module_sha256: String,
+}
+
+pub(crate) fn load_reference_host<H: axiom_extension_broker::HostServices>(
+    loaded: &axiom_lib::extension_workflow::LoadedExtensionTarget,
+    target: PackageTarget,
+    services: Arc<H>,
+    deadline_ms: u64,
+) -> Result<ReferenceHost<H>> {
+    let DecodedAxiomPackage::Package(package) = decode_axiom_package(&loaded.package_bytes)? else {
+        bail!("AXIOM_EXTENSION_REFERENCE_HOST: legacy extension packages cannot execute");
+    };
+    let PackageContents::Extension(ExtensionPackagePayload::V2(executable)) = &package.contents
+    else {
+        bail!("AXIOM_EXTENSION_REFERENCE_HOST: selected package is not axiom-extension/v2");
+    };
+    let authority_lock = decode_authority_lock(&loaded.authority_lock_bytes)?;
+    let effective = axiom_lib::extension_authority::EffectiveTargetAuthority {
+        permissions: loaded.effective.permissions.clone(),
+        budgets: loaded.effective.budgets.clone(),
+    };
+    // The reference host's policy deadline is the ceiling of the package's
+    // `limits.deadlineMs` (effective = min of the two). `--deadline-ms`
+    // raises it for this run (w3-b; the default run is unchanged).
+    let policy = KernelPolicy { deadline_ms: KernelPolicy::default().deadline_ms.max(deadline_ms), ..KernelPolicy::default() };
+    let kernel = SandboxKernel::new(policy.clone())?;
+    let authorized = AuthorizedModule::verify_brokered(
+        &loaded.application,
+        &package.package,
+        executable,
+        &package.targets,
+        &authority_lock,
+        target,
+        &loaded.module_bytes,
+        &policy,
+        false,
+    )?;
+    let host = match executable.sdk.language.as_str() {
+        "typescript" => TargetExtensionHost::load_typescript(
+            HostProfile::backend(),
+            authorized,
+            &effective,
+            Arc::clone(&services),
+            1,
+            executable.limits.max_effects,
+            executable.limits.max_stream_batch,
+        )?,
+        "python" => TargetExtensionHost::load_python(
+            HostProfile::backend(),
+            authorized,
+            &effective,
+            Arc::clone(&services),
+            1,
+            executable.limits.max_effects,
+            executable.limits.max_stream_batch,
+        )?,
+        _ => TargetExtensionHost::load(
+            HostProfile::backend(),
+            &kernel,
+            authorized,
+            &effective,
+            Arc::clone(&services),
+            1,
+            executable.limits.max_effects,
+            executable.limits.max_stream_batch,
+        )?,
+    };
+    Ok(ReferenceHost {
+        host,
+        kernel,
+        sdk: format!("{}@{}", executable.sdk.language, executable.sdk.version),
+        module_sha256: executable.module.sha256.clone(),
+    })
+}
+
+pub(crate) fn now_unix_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -1136,7 +1442,7 @@ fn json_to_value(value: serde_json::Value) -> Result<Value> {
     })
 }
 
-fn value_to_json(value: Value) -> serde_json::Value {
+pub(crate) fn value_to_json(value: Value) -> serde_json::Value {
     match value {
         Value::Null => serde_json::Value::Null,
         Value::Bool(value) => value.into(),
@@ -1162,7 +1468,7 @@ fn value_to_json(value: Value) -> serde_json::Value {
     }
 }
 
-fn parse_target(value: &str) -> Result<PackageTarget> {
+pub(crate) fn parse_target(value: &str) -> Result<PackageTarget> {
     match value {
         "android" => Ok(PackageTarget::Android),
         "ios" => Ok(PackageTarget::Ios),
@@ -1175,6 +1481,45 @@ fn parse_target(value: &str) -> Result<PackageTarget> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// w1-p D8: `--snapshot` and `--scenario` (golden-harness format).
+    #[test]
+    fn d8_run_ui_inputs_from_snapshots_and_scenarios() {
+        let dir = tempfile::tempdir().unwrap();
+        let scenario = dir.path().join("risk.json");
+        fs::write(&scenario, serde_json::json!({"alias": "risk", "scenarios": [
+            {"name": "healthy", "export": "assess", "input": {"total": 20},
+             "ui": {"scope": "forecast", "revision": 3, "read": ["label"], "value": {"label": "x", "hidden": 1}}},
+            {"name": "plain", "export": "assess", "input": null}
+        ]}).to_string()).unwrap();
+        let options = |name: Option<&str>| RunUiOptions { snapshots: vec![], scenario: Some(scenario.clone()), scenario_name: name.map(str::to_string), ..Default::default() };
+        let inputs = run_inputs("risk", None, "null".into(), &options(Some("healthy"))).unwrap();
+        assert_eq!(inputs.export.as_deref(), Some("assess"));
+        assert_eq!(inputs.input, r#"{"total":20}"#);
+        assert_eq!(inputs.snapshots.len(), 1);
+        let (scope, snapshot, _) = &inputs.snapshots[0];
+        assert_eq!(scope, "forecast");
+        // The guest sees only the read fields.
+        let guest = guest_snapshot(scope, snapshot).unwrap();
+        assert_eq!(guest.resource, "ui:forecast");
+        assert_eq!(guest.revision, 3);
+        assert_eq!(guest.value, Value::Record(vec![Field { name: "label".into(), value: Value::String("x".into()) }]));
+        assert_eq!(inputs.scenario.unwrap()["name"], "healthy");
+        assert!(run_inputs("risk", None, "null".into(), &options(None)).unwrap_err().to_string().contains("--scenario-name"));
+        assert!(run_inputs("risk", None, "null".into(), &options(Some("missing"))).is_err());
+        assert!(run_inputs("pricing", None, "null".into(), &options(Some("plain"))).unwrap_err().to_string().contains("not `pricing`"));
+        // --snapshot <scope>=<file>
+        let file = dir.path().join("cart.json");
+        fs::write(&file, r#"{"revision": 2, "read": ["subtotal"], "value": {"subtotal": 5, "total": 5}}"#).unwrap();
+        let snapshot = |argument: String| RunUiOptions { snapshots: vec![argument], ..Default::default() };
+        let inputs = run_inputs("pricing", Some("apply".into()), "1".into(), &snapshot(format!("ui:cart={}", file.display()))).unwrap();
+        assert_eq!(inputs.snapshots[0].0, "cart");
+        assert_eq!(inputs.snapshots[0].1.revision, 2);
+        assert!(run_inputs("pricing", None, "1".into(), &snapshot("cart".into())).is_err());
+        assert!(run_inputs("pricing", None, "1".into(), &RunUiOptions { snapshots: vec![format!("cart={}", file.display()), format!("cart={}", file.display())], ..Default::default() }).unwrap_err().to_string().contains("more than one"));
+        fs::write(&file, r#"{"read": ["missing"], "value": {}}"#).unwrap();
+        assert!(run_inputs("pricing", None, "1".into(), &snapshot(format!("cart={}", file.display()))).unwrap_err().to_string().contains("lacks"));
+    }
 
     #[test]
     fn target_names_are_closed() {

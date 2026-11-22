@@ -577,6 +577,11 @@ axiom inspect query [OPTIONS] <QUERY_FILE> [PATH]
 | `[PATH]` | path | `.` | Workspace to analyze. |
 | `--format` | `human`, `json`, `jsonl` | `json` | Output format. |
 
+The extension effect operations `effect-impact` and `effect-touches` are
+answered from the same graph the language server builds for the project at
+`PATH`: a directory with `AxiomDeps.toml` (its `main.acore` is the entry), or
+one of the project's files.
+
 ## Security and authority
 
 ### axiom inspect security

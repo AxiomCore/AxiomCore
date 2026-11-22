@@ -2357,6 +2357,7 @@ pub async fn handle_build_with_packages(
     package_lock: Option<PathBuf>,
 ) -> Result<()> {
     let target = parse_target(&target)?;
+    prepare_derived_extension_exports(&source, target)?;
     let result = if let Some(package_lock) = package_lock {
         let text = read_ui_source(&source)?;
         let result = axiom_ui::compile_ui_source_with_package_lock_at_path(
@@ -2755,7 +2756,50 @@ fn compile_path(source: &Path, lock: PathBuf, target: UiTarget) -> Result<UiComp
     Ok(result)
 }
 
+/// X7c build seam (w1-d2 item 5): an extension whose `AxiomDeps.toml` table
+/// omits both `exports` and `interface` gets its exports from the guest at
+/// build time. Before Acore that binds it is compiled, build (or reuse the
+/// cached build of) every such extension whose exports are not yet recorded
+/// in `AxiomDeps.lock`, or whose entry is stale; the build records them.
+fn prepare_derived_extension_exports(source: &Path, target: UiTarget) -> Result<()> {
+    let root = source
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let deps = root.join("AxiomDeps.toml");
+    if !deps.is_file() {
+        return Ok(());
+    }
+    let Ok(manifest) = axiom_lib::extension_source::read_extension_source_manifest(&deps) else {
+        // Not an extension manifest; the UI compiler reports its own errors.
+        return Ok(());
+    };
+    let derived = axiom_lib::extension_source::derive_extension_exports(&deps).unwrap_or_default();
+    let package = package_target(target);
+    for (alias, reference) in &manifest.extensions {
+        if !reference.exports.is_empty()
+            || reference.interface.is_some()
+            || derived.contains_key(alias)
+            || !reference.targets.contains(&package)
+        {
+            continue;
+        }
+        build_source_extension(&SourceBuildOptions {
+            deps: deps.clone(),
+            alias: alias.clone(),
+            output_root: PathBuf::from(".axiom/extensions"),
+            target: package,
+            clean: false,
+        })
+        .with_context(|| {
+            format!("AXIOM_EXTENSION_SOURCE_BUILD: build `{alias}` to derive its exports (AxiomDeps.toml lists neither `exports` nor `interface`)")
+        })?;
+    }
+    Ok(())
+}
+
 fn compile_path_unchecked(source: &Path, lock: PathBuf, target: UiTarget) -> Result<UiCompilation> {
+    prepare_derived_extension_exports(source, target)?;
     let lock = if lock == Path::new(".axiom/axiom.ui.lock.json") {
         axiom_lib::project_state::ui_lock(&axiom_lib::project_state::root(source))
     } else {
@@ -2844,10 +2888,20 @@ fn print_diagnostics(source: &Path, diagnostics: &[axiom_ui::UiDiagnostic]) {
             .as_deref()
             .map(|path| source.parent().unwrap_or_else(|| Path::new(".")).join(path))
             .unwrap_or_else(|| source.to_path_buf());
+        // w1-p D2: `file:line:column` for people; `--json` output keeps the
+        // byte spans. An offset that does not fit the file (unreadable, or a
+        // span outside it) is printed as before, `file:@byte`.
+        let location = std::fs::read_to_string(&diagnostic_source)
+            .ok()
+            .and_then(|text| line_column(&text, diagnostic.span.start))
+            .map_or_else(
+                || format!("@{}", diagnostic.span.start),
+                |(line, column)| format!("{line}:{column}"),
+            );
         eprintln!(
             "{}:{}:{}: {} {}",
             diagnostic_source.display(),
-            diagnostic.span.start,
+            location,
             diagnostic.code,
             match diagnostic.severity {
                 axiom_ui::UiDiagnosticSeverity::Error => "error",
@@ -2856,6 +2910,18 @@ fn print_diagnostics(source: &Path, diagnostics: &[axiom_ui::UiDiagnostic]) {
             diagnostic.message
         );
     }
+}
+
+/// 1-based line and column (in characters) of a byte offset, or `None` when
+/// the offset is past the end or not on a character boundary.
+pub(crate) fn line_column(text: &str, offset: usize) -> Option<(usize, usize)> {
+    if offset > text.len() || !text.is_char_boundary(offset) {
+        return None;
+    }
+    let before = &text[..offset];
+    let line = before.matches('\n').count() + 1;
+    let column = before.rsplit('\n').next().unwrap_or("").chars().count() + 1;
+    Some((line, column))
 }
 
 fn report_reload(event: &HotReloadEvent) {
@@ -3870,16 +3936,17 @@ fn development_runtime_config_value(
         .filter(|value| !value.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
     loop {
-        let candidate = directory.join(".axiom/inspector/live-connection.json");
-        if candidate.is_file() {
-            let connection: axiom_lib::live_inspection::InspectorConnection =
-                serde_json::from_slice(&std::fs::read(&candidate)?)
-                    .with_context(|| format!("parse {}", candidate.display()))?;
-            connection.validate()?;
+        // w3-d2: the one connection check (no symlink, owner-only file,
+        // strictly loopback endpoint); the endpoint embedded is rebuilt from
+        // the parsed loopback address.
+        if let Some(connection) =
+            axiom_lib::live_inspection::find_project_connection(directory)?
+        {
+            let endpoint = connection.loopback_endpoint()?.origin();
             config["inspector"] = serde_json::json!({
                 "format": "axiom-inspector-target/v1",
                 "enabled": true,
-                "endpoint": connection.endpoint,
+                "endpoint": endpoint,
                 "token": connection.token,
                 "graphRevision": connection.graph_revision,
                 "target": target.as_str(),
@@ -5953,6 +6020,19 @@ all compiler output in memory.
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// w1-p D2: human diagnostics print `file:line:column`.
+    #[test]
+    fn d2_diagnostic_locations_are_line_and_column() {
+        let text = "module a\n  action é = x\nwrites";
+        assert_eq!(line_column(text, 0), Some((1, 1)));
+        assert_eq!(line_column(text, 9), Some((2, 1)));
+        assert_eq!(line_column(text, text.find('=').unwrap()), Some((2, 12)));
+        assert_eq!(line_column(text, text.find("writes").unwrap()), Some((3, 1)));
+        assert_eq!(line_column(text, text.len()), Some((3, 7)));
+        assert_eq!(line_column(text, text.len() + 1), None);
+        assert_eq!(line_column(text, text.find('é').unwrap() + 1), None);
+    }
 
     #[test]
     fn default_package_lock_discovery_and_watch_paths_survive_migration() {

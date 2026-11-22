@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::{bail, Context, Result};
 use axiom_lib::{
-    extension_source::resolve_extension_sources,
+    extension_source::resolve_extension_sources_allow_pending_exports,
     ui_contract::{
         read_manifest, resolve_manifest, verify_lock, write_lock, UiContractLock, UI_LOCK_FORMAT,
     },
@@ -124,6 +124,7 @@ pub async fn handle_backend(
                     host: host.parse().context("mock host must be an IP address")?,
                     port,
                     debug,
+                    inspect_ownership: false,
                 },
             })
             .await
@@ -147,6 +148,7 @@ pub async fn handle_backend(
                         .context("backend --host must be an IP address")?,
                     port,
                     debug,
+                    inspect_ownership: false,
                 },
             })
             .await
@@ -443,7 +445,9 @@ pub fn frontend_dependency_paths(source: &Path) -> Result<Vec<PathBuf>> {
     let deps = root.join("AxiomDeps.toml");
     if deps.is_file() && manifest_has_extensions(&deps)? {
         paths.push(deps.clone());
-        for extension in resolve_extension_sources(&deps)?.values() {
+        // Watched inputs only: an extension whose exports are not derived yet
+        // still has sources to watch (P4).
+        for extension in resolve_extension_sources_allow_pending_exports(&deps)?.values() {
             paths.push(extension.source.clone());
             paths.extend(extension.shared_sources.iter().cloned());
         }
@@ -574,7 +578,15 @@ async fn prepare_extensions(root: &Path, source: &Path, frozen: bool) -> Result<
         }
         return crate::commands::extensions::handle_verify(workflow).await;
     }
-    let extensions = resolve_extension_sources(&deps)?;
+    // Each release below builds its extension, which derives and records
+    // omitted `exports` (or refreshes a stale entry) before binding (P4).
+    let extensions = resolve_extension_sources_allow_pending_exports(&deps)?;
+    if let Some(summary) = fs::read_to_string(&deps)
+        .ok()
+        .and_then(|text| crate::commands::dependencies::deprecation_summary(&deps, &text))
+    {
+        eprintln!("{summary}");
+    }
     let application = development_application(&deps, source)?;
     for alias in extensions.keys() {
         crate::commands::extensions::handle_source_release(

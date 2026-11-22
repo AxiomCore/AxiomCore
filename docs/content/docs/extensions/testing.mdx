@@ -1,0 +1,289 @@
+---
+title: Test and debug extensions
+description: Run one export against UI snapshots and scenarios, record a dev replay tape, replay it against a changed build, turn it into a scenario, and keep tapes private.
+pageType: guide
+---
+
+<StatusNote status="experimental" title="Requires extension SDK 0.1.5">
+  `--snapshot`, `--scenario`, `--record-tape` and `axiom extensions replay`
+  ship with CLI releases that accept extension SDK 0.1.5. Recording works only
+  in development builds.
+</StatusNote>
+
+This guide runs one export of a released extension in the server reference
+host, records what happened as a **replay tape**, and replays the tape after a
+change to check that the extension still behaves the same. It uses the
+`pricing` extension and its `apply_discount` export from
+[`extension-authoring-samples`](https://github.com/AxiomCore/examples/tree/main/extension-authoring-samples).
+
+Prerequisites: the extension is released with `axiom extensions source-release`
+and targets `server`. Run every command from the directory that holds
+`AxiomDeps.toml` and `AxiomExtensions.toml`. `source-release` adds the
+extension it released to the workflow file and keeps the extensions the file
+already lists, so releasing each extension in turn gives one
+`AxiomExtensions.toml` for all of them.
+
+## Run an export with UI state
+
+`--snapshot <scope>=<file>` gives the guest a UI snapshot and lets the
+reference host commit the patches the export proposes:
+
+```json title="scenarios/cart.json"
+{"revision": 1, "read": ["subtotal_cents"], "value": {"subtotal_cents": 12000, "discount_cents": 0, "total_cents": 12000}}
+```
+
+The guest sees only the `read` fields. The host holds the whole `value`, so it
+can apply and audit the patch.
+
+```bash title="Terminal"
+axiom extensions run pricing --export apply_discount --input 12000 --snapshot cart=scenarios/cart.json
+```
+
+The command prints an `axiom-extension-audit-export/v1` document. The
+outcome holds the export's result, and the state evidence shows the committed
+patch:
+
+```json title="Output (excerpt)"
+{
+  "format": "axiom-extension-audit-export/v1",
+  "outcome": {
+    "error": null,
+    "eventCount": 0,
+    "output": {
+      "discount_cents": 1200,
+      "total_cents": 10800
+    },
+    "patchCount": 0,
+    "status": "completed",
+    "transactionCount": 0
+  },
+  "evidence": {
+    "state": {
+      "records": [
+        {
+          "decision": "committed",
+          "paths": [
+            "discount_cents",
+            "total_cents"
+          ],
+          "resources": [
+            "ui:cart"
+          ],
+          "revisions": [
+            {
+              "resource": "ui:cart",
+              "revision": 2
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
+```
+
+## Run named scenarios
+
+A scenario file keeps inputs and snapshots together so you can run them
+repeatedly:
+
+```json title="scenarios/apply.json"
+{
+  "alias": "pricing",
+  "scenarios": [
+    {
+      "name": "ten-percent",
+      "export": "apply_discount",
+      "input": 12000,
+      "ui": {"scope": "cart", "revision": 1, "read": ["subtotal_cents"], "value": {"subtotal_cents": 12000, "discount_cents": 0, "total_cents": 12000}}
+    },
+    {
+      "name": "capped",
+      "export": "apply_discount",
+      "input": 40000,
+      "ui": {"scope": "cart", "revision": 1, "read": ["subtotal_cents"], "value": {"subtotal_cents": 40000, "discount_cents": 0, "total_cents": 40000}}
+    }
+  ]
+}
+```
+
+```bash title="Terminal"
+axiom extensions run pricing --scenario scenarios/apply.json --scenario-name capped
+```
+
+The `capped` scenario hits the $25 cap: the outcome is
+`{"discount_cents": 2500, "total_cents": 37500}`.
+
+Choose one scenario with `--scenario-name` when the file has several.
+`--scenario` cannot be combined with `--export` or `--input`.
+
+## Record a replay tape
+
+A replay tape is a local file that holds everything one invocation needed:
+the input, the snapshots the guest received, every plan it yielded with the
+host's results, every host exchange and the final result. With a tape, the
+guest can run again with no real host.
+
+```bash title="Terminal"
+axiom extensions run pricing --export apply_discount --input 12000 --snapshot cart=scenarios/cart.json --record-tape tapes
+```
+
+The run prints the same report as before and writes one tape per invocation,
+named `<sequence>-<random>-<extension>-<export>.axtape.json`:
+
+```text title="tapes/"
+000001-3f9a1c0e5b7d2a64-local_pricing-apply_discount.axtape.json
+```
+
+The whole name identifies a tape and is never reused. The sequence only
+orders one run's tapes: two runs recording into the same directory at the
+same time can repeat a sequence number, so do not rely on it being unique.
+
+### Recording is for development only
+
+A tape is recorded only when all of these hold:
+
+- the host was built with dev replay tape support. Production hosts are not;
+  the Axiom CLI is, because it is a developer tool;
+- recording is switched on explicitly (`--record-tape` in the CLI);
+- the host is a development build. A release build refuses to record
+  (`AXIOM_EXTENSION_REPLAY_TAPE_PRODUCTION`), because a release build is what
+  runs in production, where inputs and host results are real user data.
+
+Recording never changes an invocation. A refused recording is reported; it is
+never an invocation error.
+
+### What a tape never contains
+
+- Secret values. A secret appears as its opaque handle, and a network call
+  carries only the granted secret name.
+- Host context: capability scope, principal, roles, session data, trace IDs.
+- Request IDs, audit IDs, wall-clock deadlines and paths of your machine.
+- Credentials and identity context the host supplies. An invocation that
+  received a network reply or error, secure random bytes, or the
+  authentication or session context writes **no tape**
+  (`AXIOM_EXTENSION_REPLAY_TAPE_SENSITIVE`). There is no option to redact
+  such values instead: no redaction can find every copy a guest makes of
+  them. To record such an extension, give it a fake host whose replies are
+  test data.
+
+### What a tape does contain
+
+A tape is a development artifact and contains application data by design:
+the input, the snapshots, the plans, and the replies of contract, state,
+store, storage, file and queue calls, recorded exactly. If a development
+host answers a contract call with the caller's identity (a "current user"
+contract, for example), that value is on the tape. Every tape says this in
+its `header.notice`. Keep tapes local and treat them like the data they hold.
+
+Tape files are created with mode `0600` in a directory with mode `0700`, and
+are limited to 32 MiB. The same invocation always produces the same bytes. A
+tape carries a SHA-256 digest that readers check, which catches accidental
+edits. It is not a signature: anyone can edit a tape and recompute it. A tape
+gives a guest no authority; replay runs under the current build's authority.
+
+## Replay a tape against the current build
+
+```bash title="Terminal"
+axiom extensions replay tapes/000001-3f9a1c0e5b7d2a64-local_pricing-apply_discount.axtape.json
+```
+
+```json title="Output"
+{
+  "abi": "1.1",
+  "alias": "pricing",
+  "budgetsChanged": false,
+  "difference": null,
+  "export": "apply_discount",
+  "format": "axiom-extension-replay-report/v1",
+  "identical": true,
+  "moduleChanged": false,
+  "recorded": {
+    "moduleSha256": "bf30aab683521e18966fb83b0b0eadff12fd2ffd931601734c42f45bea72d7d1",
+    "sdk": "rust@0.1.5",
+    "status": "completed",
+    "yields": 0
+  },
+  "replayed": {
+    "error": null,
+    "moduleSha256": "bf30aab683521e18966fb83b0b0eadff12fd2ffd931601734c42f45bea72d7d1",
+    "sdk": "rust@0.1.5",
+    "status": "completed",
+    "yields": 0
+  },
+  "unmatchedHostCalls": [],
+  "unusedHostReplies": 0
+}
+```
+
+`axiom extensions replay` runs the **current** verified build through the real
+kernel and broker with a tape-backed host: every host call is answered from
+the tape, matched by content, and nothing real is called. It exits 0 when the
+run is identical. Otherwise it fails with `AXIOM_EXTENSION_REPLAY_DIFFERS` and
+names the first difference: a plan that differs in some round, a yield where
+the tape completed, or a different result.
+
+For example, change the discount in `logic/pricing.rs` from 10 to 15 percent,
+release again and replay the same tape. The report says `"identical": false`,
+`"moduleChanged": true` and `"difference": {"at": "result", ...}`, lists the
+commit the tape cannot answer under `unmatchedHostCalls`, and the command
+ends with:
+
+```text title="Output (end, shortened)"
+Error: AXIOM_EXTENSION_REPLAY_DIFFERS: result: recorded {"output":{"Record":[{"name":"discount_cents","value":{"Unsigned":1200}},...]},...} but replay produced {"output":{"Record":[{"name":"discount_cents","value":{"Unsigned":1800}},...]},...}
+```
+
+For a plan difference the message names the round and the call, in the form
+`round <n>, call <i>: recorded <operation>(<input>) but the guest yielded <operation>(<input>)`.
+
+The report also says whether the module or the budgets changed since the
+recording (`moduleChanged`, `budgetsChanged`) and lists host calls the tape
+could not answer and recorded replies nobody asked for. A narrower grant or a
+changed budget can legitimately change the outcome.
+
+### Turn a tape into a scenario
+
+```bash title="Terminal"
+axiom extensions replay tapes/000001-3f9a1c0e5b7d2a64-local_pricing-apply_discount.axtape.json --to-scenario scenarios/replay.json
+axiom extensions run pricing --scenario scenarios/replay.json
+```
+
+The first command writes the scenario file (mode `0600`) and prints the
+command that runs it. The second prints an
+`axiom-extension-scenario-replay/v1` report with `"identical": true` and the
+recorded output, `{"discount_cents": 1200, "total_cents": 10800}`.
+
+The scenario embeds the sealed tape. `axiom extensions run --scenario` checks
+its digest and runs it tape-backed, exactly like `replay`, and fails with
+`AXIOM_EXTENSION_REPLAY_DIFFERS` when the recorded outcome is not reproduced.
+The scenario's `input` is a readable view; the run uses the tape's exact
+input. A tape that says `"replayable": false` (written by an older dev
+recorder that redacted values) cannot be replayed or become a scenario.
+Commit such scenarios to keep
+a recorded behavior as a regression test.
+
+### Replay in a language test
+
+The SDKs can also replay a tape in-process, without the CLI:
+
+| Language | API |
+| --- | --- |
+| Rust | `TestHost::from_tape(bytes)?.replay(extension)` with the SDK feature `replay-tape` |
+| TypeScript | `replayTape(extension, tape)` from `@axiomcore/extension-sdk/replay` (Node.js) |
+| Python | `load_tape` and `replay_compiled` in `axiom_extension_sdk.replay`; needs Node.js, `esbuild` and the TypeScript SDK, like every Python extension test that runs compiled code |
+
+Each one fails with a message that names the first difference.
+
+## Inspect ownership
+
+<StatusNote status="coming-soon" title="Not available yet">
+  A command to inspect live scopes and the handles each one owns is planned
+  and not part of this release. [Extension security model](/extensions/security-model#scopes-and-handles)
+  describes the ownership rules it will show.
+</StatusNote>
+
+## Next steps
+
+- [Async exports and effect rounds](/extensions/async-rounds) for how rounds are replayed
+- [axiom extensions](/tooling/cli-extensions) for every flag
+- [What an extension can do](/extensions/effect-summaries) for audit records

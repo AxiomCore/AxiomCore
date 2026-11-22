@@ -1203,11 +1203,49 @@ enum ExtensionsAction {
         #[arg(long, default_value = "AxiomExtensions.toml")]
         manifest: PathBuf,
     },
-    /// Explain one extension identity, provenance, and authority
+    /// Explain one extension identity, provenance, and authority; with
+    /// --ownership, show the live scope tree of a running development host
     Inspect {
-        alias: String,
+        /// The extension to explain (required without --ownership)
+        #[arg(required_unless_present_any = ["ownership", "schema"])]
+        alias: Option<String>,
         #[arg(long, default_value = "AxiomExtensions.toml")]
         manifest: PathBuf,
+        /// X10b: the live ownership tree (scopes, handles, budgets, usage)
+        /// read from the running Inspector's development channel
+        #[arg(long)]
+        ownership: bool,
+        /// Stable JSON (`axiom-extension-ownership/v1`) instead of the tree
+        #[arg(long, requires = "ownership")]
+        json: bool,
+        /// Poll and redraw (with --json: one report per line)
+        #[arg(long, requires = "ownership")]
+        watch: bool,
+        /// Print the JSON schema of the ownership report and exit
+        #[arg(long)]
+        schema: bool,
+        /// Only this extension (alias); the positional alias is used when given
+        #[arg(long, requires = "ownership")]
+        extension: Option<String>,
+        /// Only this scope id and its descendants
+        #[arg(long, requires = "ownership")]
+        scope: Option<u64>,
+        /// Continue after a previous report (`more: --cursor ...`)
+        #[arg(long, requires = "ownership")]
+        cursor: Option<String>,
+        /// Scopes per report (1-1000, default 200)
+        #[arg(long, requires = "ownership")]
+        limit: Option<usize>,
+        /// Inspector connection file (default: .axiom/inspector/live-connection.json
+        /// in this directory or an ancestor)
+        #[arg(long, requires = "ownership")]
+        connection: Option<PathBuf>,
+        /// --watch poll interval in milliseconds
+        #[arg(long, default_value_t = 1_000, requires = "watch")]
+        interval_ms: u64,
+        /// --watch: stop after this many reports
+        #[arg(long, requires = "watch")]
+        count: Option<u64>,
     },
     /// Show requested, granted, and target-effective authority
     Permissions {
@@ -1254,6 +1292,59 @@ enum ExtensionsAction {
         /// explicit path in addition to the readable terminal report.
         #[arg(long)]
         audit_out: Option<PathBuf>,
+        /// UI snapshot handed to the guest, `<scope>=<file.json>` (repeatable).
+        /// The file holds `{"revision": n, "read": [fields], "value": {...}}`;
+        /// the guest sees the `read` fields, and the reference host holds
+        /// `value`, so proposed patches are committed and audited.
+        #[arg(long = "snapshot", value_name = "SCOPE=FILE")]
+        snapshots: Vec<String>,
+        /// Scenario file in the X7 golden-harness format (`{"alias", "scenarios":
+        /// [{"name", "export", "input", "ui"}]}`); supplies --export, --input
+        /// and the snapshot of the scenario chosen with --scenario-name.
+        #[arg(long, conflicts_with_all = ["export", "input"])]
+        scenario: Option<PathBuf>,
+        /// Scenario to run from --scenario (optional when it has one).
+        #[arg(long, requires = "scenario")]
+        scenario_name: Option<String>,
+        /// Invocation deadline in milliseconds (debug builds of the managed
+        /// engines can need more than the default). It also raises the
+        /// reference host's deadline ceiling; the package's signed
+        /// `limits.deadlineMs` (`[extensions.<alias>.budgets] deadlineMs`)
+        /// still applies
+        #[arg(long, default_value_t = 1_000)]
+        deadline_ms: u64,
+        /// Record a dev replay tape of the invocation into this directory
+        /// (dev builds of the CLI only; see `axiom extensions replay`)
+        #[arg(long)]
+        record_tape: Option<PathBuf>,
+    },
+    /// Re-run a dev replay tape against the current build through the real
+    /// kernel and broker with a tape-backed host (no real host calls); exit 0
+    /// when identical, otherwise name the first difference (X9d)
+    Replay {
+        /// A tape recorded by a dev host (`*.axtape.json`)
+        tape: PathBuf,
+        #[arg(long, default_value = "AxiomExtensions.toml")]
+        manifest: PathBuf,
+        /// Extension alias (default: the one the tape recorded)
+        #[arg(long)]
+        alias: Option<String>,
+        #[arg(long, default_value = "server")]
+        target: String,
+        /// Write the tape as a scenario for `axiom extensions run --scenario`
+        /// instead of replaying it
+        #[arg(long)]
+        to_scenario: Option<PathBuf>,
+        /// Replay against a different build of the same extension (module,
+        /// interface, package ABI, negotiated ABI or SDK differ): the
+        /// regression-testing use. Without it such a tape is refused
+        /// (AXIOM_EXTENSION_REPLAY_IDENTITY). A tape of another application
+        /// or extension is always refused.
+        #[arg(long)]
+        allow_identity_mismatch: bool,
+        /// Invocation deadline in milliseconds
+        #[arg(long, default_value_t = 1_000)]
+        deadline_ms: u64,
     },
 }
 
@@ -1265,6 +1356,45 @@ enum DependenciesAction {
         deps: PathBuf,
         #[arg(long)]
         json: bool,
+        /// Review against an earlier AxiomDeps.toml: explain why the canonical
+        /// digest changed (for example "exports now derived")
+        #[arg(long)]
+        against: Option<PathBuf>,
+        /// Also report, per extension, the permissions its static effect
+        /// summary needs (built here from source): missing, unused, not
+        /// derivable. A missing permission fails the check
+        #[arg(long)]
+        from_summary: bool,
+        /// Source-build output root used with --from-summary
+        #[arg(long, default_value = ".axiom/extensions")]
+        out: PathBuf,
+    },
+    /// Generate a permission request from what the extension's code can do
+    /// (its static effect summary, built here from source) and show the
+    /// semantic diff against AxiomDeps.toml. A proposal: the grant and lock
+    /// change only through the existing approval step. Exits non-zero when
+    /// the manifest lacks a permission a known effect needs
+    Request {
+        /// One extension alias (default: every extension)
+        alias: Option<String>,
+        #[arg(long, default_value = "AxiomDeps.toml")]
+        deps: PathBuf,
+        /// Generate from the static effect summary (the only source today)
+        #[arg(long)]
+        from_summary: bool,
+        /// Update the extension permissions in AxiomDeps.toml (not the grant
+        /// or the lock)
+        #[arg(long)]
+        write: bool,
+        /// Permission spelling for the proposal and --write
+        #[arg(long, value_enum, default_value = "preserve")]
+        format: commands::dependencies_request::RequestFormatArg,
+        /// Machine-readable output (array of axiom-extension-permission-request/v1)
+        #[arg(long)]
+        json: bool,
+        /// Source-build output root
+        #[arg(long, default_value = ".axiom/extensions")]
+        out: PathBuf,
     },
     /// Canonically format a v2 manifest
     Format {
@@ -1276,6 +1406,11 @@ enum DependenciesAction {
         /// Replace the manifest after successful validation
         #[arg(long)]
         write: bool,
+        /// How extension permissions are spelled: `long` (`resources`,
+        /// `ui-state.<scope>`), `shorthand` (`network.<op>`, `secrets`,
+        /// `ui.<scope>` where they apply), or `preserve` the file's choice
+        #[arg(long, value_enum, default_value = "preserve")]
+        permissions: commands::dependencies::PermissionsArg,
     },
     /// Convert a supported v1 manifest to the strict v2 schema
     Migrate {
@@ -1306,8 +1441,9 @@ enum DependenciesAction {
     Resolve {
         #[arg(long, default_value = "AxiomDeps.toml")]
         deps: PathBuf,
-        #[arg(long, default_value = ".axiom/AxiomDeps.lock")]
-        lock: PathBuf,
+        /// Lock to write [default: `.axiom/AxiomDeps.lock` beside `--deps`]
+        #[arg(long)]
+        lock: Option<PathBuf>,
         #[arg(long)]
         cache: Option<PathBuf>,
         #[arg(long, default_value = ".axiom/dependencies")]
@@ -2506,8 +2642,45 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             ExtensionsAction::Verify { manifest } => {
                 commands::extensions::handle_verify(manifest.clone()).await
             }
-            ExtensionsAction::Inspect { alias, manifest } => {
-                commands::extensions::handle_inspect(manifest.clone(), alias.clone()).await
+            ExtensionsAction::Inspect {
+                alias,
+                manifest,
+                ownership,
+                json,
+                watch,
+                schema,
+                extension,
+                scope,
+                cursor,
+                limit,
+                connection,
+                interval_ms,
+                count,
+            } => {
+                if *ownership || *schema {
+                    let code = commands::extensions_inspect::handle_ownership(
+                        commands::extensions_inspect::OwnershipOptions {
+                            json: *json,
+                            watch: *watch,
+                            schema: *schema,
+                            extension: extension.clone().or_else(|| alias.clone()),
+                            scope: *scope,
+                            cursor: cursor.clone(),
+                            limit: *limit,
+                            connection: connection.clone(),
+                            interval_ms: *interval_ms,
+                            count: *count,
+                        },
+                    )
+                    .await;
+                    if code != 0 {
+                        std::process::exit(code);
+                    }
+                    Ok(())
+                } else {
+                    let alias = alias.clone().expect("clap requires the alias without --ownership");
+                    commands::extensions::handle_inspect(manifest.clone(), alias).await
+                }
             }
             ExtensionsAction::Permissions { alias, manifest } => {
                 commands::extensions::handle_permissions(manifest.clone(), alias.clone()).await
@@ -2534,6 +2707,11 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                 input,
                 state,
                 audit_out,
+                snapshots,
+                scenario,
+                scenario_name,
+                deadline_ms,
+                record_tape,
             } => {
                 commands::extensions::handle_run(
                     manifest.clone(),
@@ -2543,16 +2721,38 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
                     input.clone(),
                     state.clone(),
                     audit_out.clone(),
+                    commands::extensions::RunUiOptions {
+                        snapshots: snapshots.clone(),
+                        scenario: scenario.clone(),
+                        scenario_name: scenario_name.clone(),
+                        deadline_ms: *deadline_ms,
+                        record_tape: record_tape.clone(),
+                    },
+                )
+                .await
+            }
+            ExtensionsAction::Replay { tape, manifest, alias, target, to_scenario, deadline_ms, allow_identity_mismatch } => {
+                commands::extension_replay::handle_replay(
+                    tape.clone(),
+                    manifest.clone(),
+                    alias.clone(),
+                    target.clone(),
+                    to_scenario.clone(),
+                    *deadline_ms,
+                    *allow_identity_mismatch,
                 )
                 .await
             }
         },
         Commands::Dependencies { action } => match action {
-            DependenciesAction::Check { deps, json } => {
-                commands::dependencies::handle_check(deps.clone(), *json).await
+            DependenciesAction::Check { deps, json, against, from_summary, out } => {
+                commands::dependencies::handle_check_with(deps.clone(), *json, against.clone(), from_summary.then(|| out.clone())).await
             }
-            DependenciesAction::Format { deps, check, write } => {
-                commands::dependencies::handle_format(deps.clone(), *check, *write).await
+            DependenciesAction::Request { alias, deps, from_summary, write, format, json, out } => {
+                commands::dependencies_request::handle_request(deps.clone(), alias.clone(), *from_summary, *write, *format, *json, out.clone()).await
+            }
+            DependenciesAction::Format { deps, check, write, permissions } => {
+                commands::dependencies::handle_format(deps.clone(), *check, *write, *permissions).await
             }
             DependenciesAction::Migrate { deps, out, write } => {
                 commands::dependencies::handle_migrate(deps.clone(), out.clone(), *write).await
@@ -2575,7 +2775,13 @@ async fn execute_command(command: &Commands) -> anyhow::Result<()> {
             } => {
                 commands::dependencies::handle_resolve(
                     deps.clone(),
-                    lock.clone(),
+                    lock.clone().unwrap_or_else(|| {
+                        axiom_lib::project_state::deps_lock(
+                            deps.parent()
+                                .filter(|parent| !parent.as_os_str().is_empty())
+                                .unwrap_or_else(|| std::path::Path::new(".")),
+                        )
+                    }),
                     cache.clone(),
                     workspace_view.clone(),
                     *locked,

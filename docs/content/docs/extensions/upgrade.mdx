@@ -1,0 +1,116 @@
+---
+title: Upgrade an existing extension project
+description: What changes for an existing extension project when you move to extension SDK 0.1.5, which new warnings, hints and refusals to expect, and which optional migrations are available.
+pageType: guide
+---
+
+<StatusNote status="experimental" title="Applies to extension SDK 0.1.5">
+  This page lists what changes when you build an existing project with an
+  Axiom CLI release that ships extension SDK 0.1.5. Executable extensions are
+  Experimental; pin the CLI and SDK versions you test with.
+</StatusNote>
+
+**A project that changes nothing keeps working.** Existing `AxiomDeps.toml`
+files, `use extension ... from ... export ...` declarations, long-form
+permissions, sync exports, positional `outcome(i)` reads and the old generated
+names all still build and run. Modules without async exports stay on extension
+ABI 1.0 and exchange exactly the same messages as before. This page tells you
+what you will see, what is now refused, and what you can adopt when you
+choose.
+
+## Before you start
+
+1. Pin the new SDK in each project that builds extensions:
+
+   | Language | SDK versions the CLI accepts | Notes |
+   | --- | --- | --- |
+   | Rust | `axiom-extension-sdk` 0.1.0 to 0.1.5 | A selected `interface` needs 0.1.5 |
+   | TypeScript | `@axiomcore/extension-sdk` 0.1.0, 0.1.1, 0.1.2, 0.1.3 or 0.1.5 | There is no 0.1.4 |
+   | Python | `axiom-extension-sdk` 0.1.0, 0.1.1, 0.1.3 or 0.1.5 | Also install `@axiomcore/extension-sdk`: Python extensions run on the TypeScript extension runtime |
+
+   Tickets, async exports, `Cents` and `Percentage` in TypeScript and Python,
+   and the idiomatic generated names need 0.1.5.
+2. Rebuild and re-release every extension:
+
+   ```bash title="Terminal"
+   axiom dependencies check
+   axiom extensions source-release pricing --application example.checkout
+   axiom extensions verify
+   ```
+
+3. Compare the new authority lock with the previous one. Nothing on this page
+   raises authority on its own, so the diff should show no permission
+   increase:
+
+   ```bash title="Terminal"
+   axiom extensions diff before/authority.lock.json after/authority.lock.json
+   ```
+
+## What changes without any edit
+
+| Change | Effect | What to do |
+| --- | --- | --- |
+| Rust module hashes change once | Rust source builds no longer depend on where the project, SDK or build output sit on disk, and a crates.io SDK is pinned to its exact version. The module digest, and so the package, the locks and their signatures, change once. Authority does not change. | Re-release and commit the new release files. |
+| Build caches are rebuilt once | Cache keys include the new build policy. | None. The first build takes longer. |
+| Engine identity is `wasmi@2.0.2` | New releases record `wasmi@2.0.2` (TypeScript `javy@9.1.0+wasmi@2.0.2`). Configurations signed with `wasmi@2.0.0` identities are still accepted, deprecated. | Re-release to record the new identity. |
+| The dependency lock lives in `.axiom/AxiomDeps.lock` | A lock at the old `AxiomDeps.lock` location is moved there on the first build and still read. | Commit `.axiom/AxiomDeps.lock`. |
+| Group branches refused before dispatch are audited | A refused branch of an effect group now leaves a `denied` or `revoked` audit record. Results are unchanged. | None. |
+| A write grant revoked before the commit stops the commit | The commit fails with `Revoked` instead of succeeding. | None. This is a security fix. |
+
+## New warnings and hints
+
+None of these fail a build.
+
+| Report | When | Fix |
+| --- | --- | --- |
+| `AUI087` warning | A `use extension X from "a" export "e"` declaration | Run the editor code action **Migrate to `use extension pricing`** ([how](/extensions/declare-and-call#migrate-a-legacy-declaration)) |
+| `AUI085` warning | An action has a `writes` clause and a called extension may write a field it does not list | Add the field, or narrow the extension's write permissions |
+| `AXIOM_DEPS_PERMISSIONS_SHORTHAND` hint | Long-form permissions the shorthand can spell (`dependencies check`, `axiom run`) | Optional: rewrite with the shorthand |
+| `AXIOM_EXTENSION_EXPORTS_DERIVABLE` hint | An explicit `exports` list equals what the Rust or Python guest compiles to | Optional: remove the list |
+| `warning: <file>:<line>:<column>: ... [deprecated]` | The guest uses a deprecated SDK item, such as `outcome(i)` | Use tickets ([how](/extensions/typed-effects#read-results-with-tickets)) |
+| `warning: extension <alias>: generated bindings: ...` | Two generated names in a selected interface collide and one gets a `_` suffix | Rename the interface item if you prefer another name |
+| `warning[AXIOM_ASYNC_MAX_ROUNDS]` | A module has async exports and keeps the default `maxRounds = 1` | Set `[extensions.<alias>.budgets] maxRounds` |
+
+## New refusals
+
+These inputs built before and now fail with a named error. Each one closes a
+way to get an ambiguous or location-dependent result.
+
+| Error | Cause | Fix |
+| --- | --- | --- |
+| `AXIOM_PERMISSION_INVALID_ORIGIN`, `AXIOM_PERMISSION_OBFUSCATED_ORIGIN` | A network origin that is not in canonical form, in either permission spelling | Write the origin the message names, for example `https://payments.example.test` without a trailing slash ([rules](/extensions/declare-and-call#canonical-origins)) |
+| `AXIOM_PYTHON_PACKAGE_INIT_UNLISTED` | A Python extension imports from a directory that has an `__init__.py` the extension's source set does not include | Add the file to `sharedSources`, or remove it to use a namespace package |
+| `AXIOM_EXTENSION_EXPORTS_STALE` | The export list recorded in `.axiom/AxiomDeps.lock` no longer matches the guest sources | Build again; the build records the current list |
+| `AXIOM_EXTENSION_EXPORTS_LOCK_MISMATCH` | `--locked` resolution or a `--frozen` run finds a stale or edited export list | Build without `--locked`, review the lock change and commit it |
+| `AXIOM_RUST_PATH_DEPENDENCY_OUTSIDE_PROJECT` | A Rust extension depends on a crate by path outside the project | Move the crate into the project, or declare a reviewed registry package in `AxiomDeps.toml`. The extension SDK itself may be pinned by path. |
+| `cannot import name ... from axiom_extension_sdk` | A Python extension imports a name the SDK does not provide | Import only SDK names; the message lists them. Before, this failed when the module started. |
+| `AXIOM_AUTHORITY_MAX_ROUNDS` | `maxRounds` outside 1 to 16 | Use a value in range |
+
+## Optional migrations
+
+Adopt these one at a time. Each keeps the authority the extension already has.
+
+- **Name the extension once.** Replace `use extension X from "a" export "e"`
+  with `use extension a` using the editor code action. The binding is
+  identical. See [Declare and call an extension](/extensions/declare-and-call).
+- **Drop derivable exports.** Remove `exports` from Rust and Python
+  extensions; TypeScript extensions keep it.
+- **Use the permission shorthand.** `ui.cart = { read = [...], write = [...] }`,
+  `network.<operation>`, `secrets`. Canonical manifests and locks stay
+  byte-identical.
+- **Declare writes.** Add a `writes` clause to actions whose extension patches
+  state the action does not show.
+- **Read results with tickets** instead of `outcome(i)`, and use the new
+  generated names. See [Typed effects, tickets and numbers](/extensions/typed-effects).
+- **Use `Cents` and `Percentage`** for money and rates in TypeScript and Python.
+- **Write async exports** for several dependent host results. This is the only
+  change that makes a module an ABI 1.1 module; request `maxRounds`, and for
+  Python a longer `deadlineMs`. See [Async exports and effect rounds](/extensions/async-rounds).
+- **Generate permission requests** from static effect summaries with
+  `axiom dependencies request --from-summary`. See
+  [What an extension can do](/extensions/effect-summaries).
+
+## Next steps
+
+- [Test and debug extensions](/extensions/testing) to compare behavior before and after the upgrade
+- [Extension security model](/extensions/security-model) for the build sandboxes and reproducible modules

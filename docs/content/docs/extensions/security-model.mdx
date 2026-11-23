@@ -175,9 +175,44 @@ once; see [Upgrade an existing project](/extensions/upgrade).
 
 ## Engine
 
-Native hosts run extension modules on the Wasmi 2.0.2 interpreter, with fuel
-metering, bounded memory, no WASI for core modules and no start function.
-TypeScript and Python modules run Javy 9.1.0 on the same engine.
+Extension modules run on the Wasmi 2.0.2 interpreter, with fuel metering,
+bounded memory, no WASI for core modules and no start function. TypeScript
+and Python modules run Javy 9.1.0 on the same engine.
+
+On Linux and macOS, the server, the desktop runtime and the CLI also run
+modules as precompiled native code on Wasmtime, with fuel metering, the same
+memory, deadline and permission limits, and the same results. They do so only for a
+module whose precompiled artifact is in this machine's artifact cache; every
+other module runs on the interpreter. A host never compiles a module when it
+loads it. iOS, Android and the web always use the interpreter.
+
+The artifact cache has its own trust rules:
+
+- An artifact is native code. It is made on the machine that runs it, by
+  `axiom extensions source-release` or by `axiom-wasmtime-precompile --host`
+  at deploy, and it is never shipped inside a package.
+- Each artifact is authenticated with this machine's 32-byte key
+  (`artifact.key` in the cache root, created with mode `0600`, or the file
+  named by `AXIOM_EXTENSION_ARTIFACT_KEY_FILE`). An artifact that fails the
+  check is not used.
+- The cache directories must be owned by the host's user, and no directory on
+  the path may be writable by group or others. Otherwise the host uses the
+  interpreter and prints one warning. A home or cache directory on an external
+  volume whose root is group-writable therefore runs on the interpreter.
+- `AXIOM_EXTENSION_ENGINE=wasmi` forces the interpreter, and
+  `AXIOM_EXTENSION_ARTIFACT_DIR=off` disables the cache. Any other engine
+  value than `auto`, `wasmi` or `wasmtime` makes extension loading fail closed.
+
+See [Extension performance](/extensions/performance#precompile-on-servers-and-desktops)
+for the cache locations and how to precompile.
+
+**Web read cap.** On the web host, a contract reply larger than 1 MiB, or
+than 8 × the remaining read budget plus 1 KiB if that is larger, is stopped
+while it is read and refused as `Exhausted`, so a hostile or broken contract
+cannot make the page buffer an unbounded reply. Smaller replies are treated
+exactly as on native hosts. A web Worker that hit its deadline, was
+cancelled or broke the protocol is replaced on the next call, with a
+`worker-replaced` audit record.
 
 Wasmi 2.0.0 and 2.0.1 had interpreter translation bugs that could return
 wrong values or stop the host while it loaded a module. 2.0.2 fixes them.

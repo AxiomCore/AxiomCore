@@ -1,0 +1,156 @@
+---
+title: Extension performance
+description: What an extension call costs in Rust, TypeScript and Python on the interpreter and on precompiled native code, what the runtime does to keep calls fast, and how to write, precompile and measure fast extensions.
+pageType: concept
+---
+
+<StatusNote status="experimental" title="Measured on a Linux test machine">
+  The figures on this page come from one Linux machine. Figures for macOS,
+  iOS and Android are not published yet. Measure release builds of your own
+  extension on the machines and devices you support.
+</StatusNote>
+
+An extension call runs sandboxed WebAssembly. What one call costs depends on
+the language of the extension, the engine that runs it, and how many effect
+rounds the export needs. This page gives measured costs, explains what the
+runtime does to keep them low, and lists what you can do as an author.
+
+## What a call costs
+
+Measured on 23 November 2026 on a 4-vCPU Linux container with release
+builds. Wall time is the median (p50) of five interleaved runs. Fuel is the
+interpreter's deterministic instruction count; it is the same on every
+machine and on both engines.
+
+| Call | Fuel | Interpreter (Wasmi), p50 | Precompiled native code (Wasmtime), p50 |
+| --- | --- | --- | --- |
+| Rust kernel call, small echo export | 39,883 per exchange | 55.5 µs | 22.2 µs |
+| Rust async export, 1 effect round | 201,711 | 329.5 µs | 177.9 µs |
+| Rust async export, 4 effect rounds | 999,153 | 1.01 ms | 412.7 µs |
+| TypeScript, empty export with the SDK | 8.55 M | 1.07 ms | 175.5 µs |
+| TypeScript, sync pricing export | 18.13 M | 2.19 ms | 239.8 µs |
+| TypeScript async export, 1 effect round | 60.82 M | 5.43 ms | 1.42 ms |
+| TypeScript async export, 4 effect rounds | 186.07 M | 14.18 ms | 2.78 ms |
+| Python, empty export with the SDK | 29.24 M | 2.27 ms | 294.9 µs |
+| Python, sync pricing export | 220.23 M | 10.01 ms | 959.9 µs |
+| Python async export, 1 effect round | 191.04 M | 10.79 ms | 2.09 ms |
+| Python async export, 4 effect rounds | 479.59 M | 25.58 ms | 4.05 ms |
+
+The same calls before this release, measured in the same runs:
+
+| Call | Fuel before | Interpreter before | Precompiled before |
+| --- | --- | --- | --- |
+| TypeScript, sync pricing export | 26.91 M | 3.84 ms | 527.7 µs |
+| TypeScript async export, 4 effect rounds | 674.19 M | 58.98 ms | 9.18 ms |
+| Python, sync pricing export | 1.649 G | 97.38 ms | 9.51 ms |
+| Python async export, 4 effect rounds | 8.750 G | 559.10 ms | 58.24 ms |
+
+Rust calls cost the same as before. Results, effect order and audit records
+are identical.
+
+Loading a module costs more than calling it. The first load of a TypeScript
+or Python module in a process took about 45 to 47 ms on the interpreter and
+about 60 to 65 ms on precompiled code on the same machine; a later load of
+the same module took about 1.5 to 2.4 ms on the interpreter. Hosts load a
+module once and keep it.
+
+## What the runtime does to keep calls fast
+
+**A snapshot at build time.** A TypeScript or Python module is built with a
+snapshot of its evaluated top level: the SDK, the Python runtime and your
+module's top-level code. Every call starts from that snapshot instead of
+evaluating the bundle again. Each call still gets a fresh instance, so no
+state survives from one invocation to the next. See
+[Build an extension](/extensions/build#build-time-snapshot).
+
+**The instance is kept across async rounds.** A TypeScript or Python async
+export keeps its instance while it waits for host results, and continues
+from the `await` instead of running again from the top. The cost of an
+invocation grows linearly with its rounds. Rust async exports still replay,
+and their per-round cost is small. See
+[Async exports and effect rounds](/extensions/async-rounds#how-it-works-rounds-and-replay).
+
+**Precompiled native code on servers and desktops.** On Linux and macOS, the
+server, the desktop runtime and the CLI run a module on Wasmtime when this
+machine's artifact cache holds a precompiled copy of it, and on the Wasmi
+interpreter otherwise. A module is never compiled when it loads. iOS, Android
+and the web always use the interpreter. See
+[Security model](/extensions/security-model#engine).
+
+## Write fast extensions
+
+- **Await independent calls together.** Calls awaited together run in one
+  effect round; each sequential `await` costs a round. Use `Promise.all`,
+  `gather(...)` or `try_join!`. The build warns with
+  `warning[AXIOM_EFFECT_SEQUENTIAL_AWAIT]` when two independent contract
+  reads are awaited one after the other. See
+  [Batch calls that do not depend on each other](/extensions/async-rounds#batch-calls-that-do-not-depend-on-each-other).
+- **Keep the module top level free of host calls.** Do not log, read the
+  clock, use randomness, read the environment or call host operations at the
+  top level of the module. Define functions and constants there and do the
+  work inside an export. Otherwise the build cannot take the snapshot, prints
+  `warning: managed pre-initialisation skipped`, and every call pays for
+  evaluating the module again.
+- **Choose the language for the hot path.** Rust is the cheapest. TypeScript
+  costs about 1 to 2.2 ms per sync call on the interpreter. Python runs on the
+  TypeScript runtime and costs several times more per call on the
+  interpreter, mostly in your own code. Python is fine on servers with
+  precompiled code; for a hot path on phones, prefer TypeScript or Rust.
+- **Plan for the interpreter.** It is used on iOS, Android and the web
+  fallback, and on a server or desktop for any module without a precompiled
+  artifact. Size `deadlineMs` for the slowest device you support.
+
+## Precompile on servers and desktops
+
+`axiom extensions source-release` precompiles the module it releases into
+this machine's artifact cache. Its JSON report has a `precompiled` field
+with `"engine": "wasmtime"` when that worked. A failure is a warning, and the
+module then runs on the interpreter.
+
+On a server, precompile at deploy with the server's precompile tool, as the
+server's user and before the server starts. Pass the released module files;
+add `--managed` for TypeScript and Python modules:
+
+```bash title="Terminal (server host)"
+axiom-wasmtime-precompile --host pricing.wasm
+axiom-wasmtime-precompile --host --managed pricing_ts.wasm pricing_py.wasm
+```
+
+It prints one JSON line per module and exits non-zero if any module failed.
+
+A module precompiled after it was first loaded switches to native code at
+its next load, so precompile before start to keep one engine per run.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `AXIOM_EXTENSION_ENGINE` | `auto` | `auto` uses precompiled code where an artifact exists; `wasmi` always uses the interpreter; `wasmtime` asks for native code, still only from precompiled artifacts. Any other value makes extension loading fail closed. |
+| `AXIOM_EXTENSION_ARTIFACT_DIR` | `$XDG_CACHE_HOME/axiom/extension-engine` or `~/.cache/axiom/extension-engine` on Linux; `~/Library/Caches/axiom/extension-engine` on macOS | Root of the artifact cache. `off` disables it, and with it native code. On Windows, native code is used only when this is set. |
+| `AXIOM_EXTENSION_ARTIFACT_KEY_FILE` | `artifact.key` in the cache root, created on first use with mode `0600` | This machine's integrity key for its artifacts |
+
+Artifacts are native code authenticated with this machine's key. They are
+made on the machine that runs them and are never shipped inside a package.
+The cache refuses a directory that another user could write (any directory on
+its path writable by group or others), and the host then uses the
+interpreter. See [Security model](/extensions/security-model#engine) for the
+trust rules.
+
+## Measure your own extension
+
+- Run one export in the server reference host and keep the report:
+  `axiom extensions run pricing --target server --export apply_discount --input 12000`.
+  Repeat it to see the spread; the first call in a process includes the
+  module load.
+- Record a replay tape with `--record-tape`. Its `usage` section records the
+  rounds, host calls and bytes read and written, and for async exports the
+  fuel of each round. Fuel is deterministic, so compare it between two
+  builds of your extension instead of wall time. See
+  [Test and debug extensions](/extensions/testing#record-a-replay-tape).
+- Measure wall time on release builds on the devices you support. Shared CI
+  runners are too noisy for wall-time thresholds; see
+  [Benchmarks](/reference/benchmarks) for how to publish a fair comparison.
+
+## Next steps
+
+- [Async exports and effect rounds](/extensions/async-rounds) for rounds, budgets and determinism
+- [Build an extension](/extensions/build) for the release workflow
+- [Security model](/extensions/security-model) for the engine and the artifact cache

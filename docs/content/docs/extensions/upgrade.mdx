@@ -54,6 +54,11 @@ choose.
 | Build caches are rebuilt once | Cache keys include the new build policy. | None. The first build takes longer. |
 | Engine identity is `wasmi@2.0.2` | New releases record `wasmi@2.0.2` (TypeScript `javy@9.1.0+wasmi@2.0.2`). Configurations signed with `wasmi@2.0.0` identities are still accepted, deprecated. | Re-release to record the new identity. |
 | The dependency lock lives in `.axiom/AxiomDeps.lock` | A lock at the old `AxiomDeps.lock` location is moved there on the first build and still read. | Commit `.axiom/AxiomDeps.lock`. |
+| TypeScript and Python module hashes change on rebuild | Modules now carry a build-time snapshot of their top level, and async modules a new SDK runner. Every rebuilt TypeScript and Python module has new bytes and a new hash, and is larger (Python by about 0.8 to 1.3 MB). Rust **async** modules rebuilt with the new SDK change too; Rust sync modules do not. Authority does not change. | Re-release and commit the new release files. |
+| Locks record `managedPreinit` | Locks of modules built with the snapshot carry the new field. A CLI from an earlier release refuses such a lock. | Upgrade the CLI on every machine and CI job that reads the locks. |
+| Async TypeScript and Python exports keep their instance | Rounds resume at the `await` instead of replaying. Results, plans and audit records are unchanged; `axiom run` and `axiom test` also check each resumed round on the replay path. | None. See [Async exports](/extensions/async-rounds#typescript-and-python-keep-the-instance). |
+| `cx.round()` is the round in which the code first ran | A read before an await returns the same value on every path. | Rebuild to get the new value; see [Determinism](/extensions/async-rounds#determinism). |
+| Servers, desktops and the CLI run precompiled native code | On Linux and macOS a module with a precompiled artifact in this machine's cache runs on Wasmtime; others run on Wasmi as before. Building the server, the desktop runtime or the CLI from source with default features needs rustc 1.97 or newer; this release is verified with rustc 1.100.0. | Precompile servers at deploy ([how](/extensions/performance#precompile-on-servers-and-desktops)). |
 | Group branches refused before dispatch are audited | A refused branch of an effect group now leaves a `denied` or `revoked` audit record. Results are unchanged. | None. |
 | A write grant revoked before the commit stops the commit | The commit fails with `Revoked` instead of succeeding. | None. This is a security fix. |
 
@@ -70,6 +75,8 @@ None of these fail a build.
 | `warning: <file>:<line>:<column>: ... [deprecated]` | The guest uses a deprecated SDK item, such as `outcome(i)` | Use tickets ([how](/extensions/typed-effects#read-results-with-tickets)) |
 | `warning: extension <alias>: generated bindings: ...` | Two generated names in a selected interface collide and one gets a `_` suffix | Rename the interface item if you prefer another name |
 | `warning[AXIOM_ASYNC_MAX_ROUNDS]` | A module has async exports and keeps the default `maxRounds = 1` | Set `[extensions.<alias>.budgets] maxRounds` |
+| `warning[AXIOM_EFFECT_SEQUENTIAL_AWAIT]` | A TypeScript or Python export awaits two independent contract queries one after the other | Await them together ([how](/extensions/effect-summaries#the-build-check)) |
+| `warning: managed pre-initialisation skipped; ...` | The module's top level calls a host import, throws or exceeds the build's limits, so the build keeps the plain module | Move that work into an export ([how](/extensions/build#build-time-snapshot)) |
 
 ## New refusals
 

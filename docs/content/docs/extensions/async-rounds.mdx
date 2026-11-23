@@ -56,8 +56,25 @@ It also explains the rules on this page:
   [Determinism](#determinism)).
 - Effects run once. A call answered in round 1 is answered from the tape in
   every later run; the host does not repeat it.
-- The cost of an invocation grows with the number of rounds, because every run
-  repeats the earlier steps (see [Cost and limits](#cost-and-limits)).
+- On the replay path, the cost of an invocation grows with the number of
+  rounds, because every run repeats the earlier steps (see
+  [Cost and limits](#cost-and-limits)).
+
+### TypeScript and Python keep the instance
+
+On native hosts, a TypeScript or Python async export does not start again from
+the top at each round. The host keeps the invocation's instance while it waits
+for the round's results, then resumes the export at the `await` with only the
+newest results. Rounds therefore no longer repeat earlier work, and an
+invocation's cost grows linearly with its rounds.
+
+The model above still defines what is valid, and the host can fall back to it
+at any time: Rust exports, the web host, and an invocation that arrives while
+many others are already suspended in the same process all run on the replay
+path. Both paths give the same results, plans, effect order and audit
+records, so write every export as if it could be replayed. Each invocation
+still starts from a fresh instance; nothing survives from one invocation to
+the next.
 
 ## A three-round example
 
@@ -258,9 +275,13 @@ rules:
 
 - Get time, randomness and state only through host operations. They are on the
   tape, so every run sees the same values.
-- Do not branch on the round number (`cx.round()`) or on state kept in
-  globals or statics before an await. The round number is for diagnostics
-  only.
+- Do not branch on state kept in globals or statics before an await.
+- `cx.round()` (Rust `Cx::round`) returns the round in which the reading
+  code first ran: 1 before the first await, 2 after the first round's
+  results, and so on. A value read before an await stays the same on every
+  path, so it is safe to read anywhere. Extensions built with an SDK before
+  this definition return the current request's round on the replay path
+  until they are rebuilt.
 - Do not await anything that is not a host operation. A timer, a channel or a
   hand-made promise fails the invocation with `InvalidInput`.
 - There is no racing combinator. In TypeScript, `Promise.race` and
@@ -269,7 +290,7 @@ rules:
 
 The engines also remove ambient sources of variation. In TypeScript,
 `Date.now()` and `new Date()` are always 0 and `Math.random()` returns a fixed
-sequence; module state starts fresh every run. In Python, every clock returns
+sequence; module state starts fresh for every invocation. In Python, every clock returns
 0 and `random` is seeded with 0 unless you seed it.
 
 **What happens on divergence.** If a run produces a plan whose hash differs
@@ -278,6 +299,16 @@ from the tape, the invocation fails with `Protocol` and the message
 If the export completes before replaying every recorded round, it fails with
 `non-deterministic guest: the export completed after replaying <k> of <n> effect rounds`.
 Nothing commits in either case.
+
+**The determinism check in development.** `axiom run`, `axiom test` and
+debug builds of the hosts run TypeScript and Python async exports in a
+checking mode: every resumed round runs on the kept instance and again on the
+replay path, and the answers must agree. A disagreement fails the invocation
+with `Protocol` and the message
+`non-deterministic guest: round <k> answers differently when replayed than on the live path (live+verify)`,
+and nothing commits. Production hosts and `axiom serve` do not run the
+check. The check costs about one extra replay per resumed round, so
+development runs of async exports are slower than production.
 
 ## What is atomic and what is not
 
@@ -293,8 +324,9 @@ Nothing commits in either case.
 
 ## Cost and limits
 
-Each run repeats the earlier steps, so cost grows faster than linearly with the
-number of rounds.
+On the replay path, each run repeats the earlier steps, so cost grows faster
+than linearly with the number of rounds. TypeScript and Python exports on
+native hosts keep their instance, so their cost grows linearly.
 
 **Budgets across rounds.** The host gives one invocation a single fuel budget
 of `fuel per invocation × (maxRounds + 1)`; each round uses what the earlier
@@ -303,25 +335,25 @@ and write byte budgets are **not** scaled by `maxRounds` and are shared by all
 rounds.
 
 **On the web.** Multi-round (ABI 1.1) extensions in Rust, TypeScript and
-Python also run on the web target. The browser has no fuel metering, so there
-the guest's CPU is limited by the invocation deadline (`deadlineMs`) instead of
-fuel: one deadline covers every round and the host work between rounds, and it
-is not scaled by `maxRounds`. When it passes, the invocation fails with
-`AXIOM_EXTENSION_DEADLINE_EXCEEDED` and nothing commits. Choose `deadlineMs`
-for the slowest browser you support.
+Python also run on the web target, on the replay path. The browser has no fuel
+metering, so there the guest's CPU is limited by the invocation deadline
+(`deadlineMs`) instead of fuel: one deadline covers every round and the host
+work between rounds, and it is not scaled by `maxRounds`. When it passes, the
+invocation fails with `AXIOM_EXTENSION_DEADLINE_EXCEEDED` and nothing commits.
+Choose `deadlineMs` for the slowest browser you support.
 
-Measured costs per language under the default policy (release builds,
-1,000 ms deadline, 64 memory pages):
+Measured fuel per language under the default policy (1,000 ms deadline,
+64 memory pages). Fuel is deterministic and the same on every machine:
 
 | | Rust | TypeScript | Python |
 | --- | --- | --- | --- |
-| First run | About 60,000 to 72,000 fuel | About 49 M managed fuel, 6 to 7 ms | About 1.47 G managed fuel, 0.10 to 0.25 s (the Python runtime starts every run) |
-| Each replayed round | About 20,000 to 30,000 fuel for a small guest | About 13 M managed fuel | About 32 M managed fuel |
+| Export that completes without awaiting | About 60,000 to 72,000 fuel | About 30 M managed fuel | About 106 M managed fuel |
+| Each further round | About 20,000 to 30,000 fuel for a small guest, plus a replay of the earlier rounds | About 27.5 M managed fuel | About 47 M managed fuel |
 | Memory | Bounded by the module | No growth per round | No growth per round |
-| What limits rounds | `maxRounds` | `maxRounds` | The deadline |
-| Most yields that commit under the defaults | 16 | 16 | About 7 |
+| 16 yields | 4,738,970 fuel in the test guest below | 478,879,319 fuel | 872,565,341 fuel, 2.91 % of the default budget |
+| Most yields that commit under the defaults | 16 | 16 | 16 |
 
-Rust fuel for N sequential awaits in one test guest (fuel is deterministic):
+Rust fuel for N sequential awaits in one test guest:
 
 | Yields | Runs | Total guest fuel |
 | --- | --- | --- |
@@ -335,15 +367,13 @@ Rust fuel for N sequential awaits in one test guest (fuel is deterministic):
 All of these fit the default budget (1 M fuel per invocation, times
 `maxRounds + 1`).
 
-**Async Python and the deadline.** Every Python run starts the Python
-runtime, so a Python async export spends most of its time starting up. Under
-the default 1,000 ms deadline, measured on a quiet machine, 1 to 2 yields
-committed reliably, 4 yields in 4 of 5 runs and 8 yields in 1 of 5. Under CPU
-load, even one yield committed in only 1 of 5 runs. A 16-yield Python export
-needs about 4 s on a quiet machine and about 10 s under load. If a Python
-export awaits more than once or twice, raise `deadlineMs` and test under
-realistic load. TypeScript committed 16 yields in every quiet run and in 2 of
-5 runs under load.
+**Async Python and the deadline.** Before the instance was kept, every Python
+round started the Python runtime again, and a 16-yield Python export failed
+with `DeadlineExceeded` under the defaults. It now uses about 3 % of the
+default fuel budget. On the web, and on any path that
+replays, Python rounds still restart, so test Python async exports there with
+the `deadlineMs` you request. See [Extension performance](/extensions/performance)
+for measured wall times.
 
 Wall-clock numbers depend on the machine; fuel does not. Measure your own
 export before you choose `deadlineMs`.

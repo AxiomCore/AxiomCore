@@ -382,6 +382,25 @@ result. It prints a JSON report whose `status` is `signed-and-verified`.
 If the extension's `dependencies` field lists other extensions, release those
 first; `source-release` refuses to build it otherwise.
 
+<span id="build-time-snapshot" />
+
+**Build-time snapshot.** A TypeScript or Python module is built with a
+snapshot of its evaluated top level (the SDK, the Python runtime and your
+module's top-level code), so a call starts from the snapshot instead of
+evaluating the bundle again. The snapshot makes modules larger: Python
+modules grow by about 0.8 to 1.3 MB (to about 2.4 to 3.1 MB) and TypeScript
+modules by about 40 to 160 KB. The 4 MiB module limit is unchanged. If the
+top level calls a host import (console output, the clock, randomness, the
+environment or input), throws, or does not finish within the build's
+limits, the build keeps the plain module and prints a warning that starts
+with `warning: managed pre-initialisation skipped` and names the reason. The
+module still works; each call then evaluates the top level again. Move that
+work into an export to get the snapshot back.
+
+On Linux and macOS, `source-release` also precompiles the module into this
+machine's artifact cache for native code, and reports it in the `precompiled`
+field of its JSON output. See [Extension performance](/extensions/performance#precompile-on-servers-and-desktops).
+
 </Step>
 <Step>
 

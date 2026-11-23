@@ -98,6 +98,19 @@ The analysers recognise the whole SDK. The money helpers (`Cents`,
 `try_join_all`, `Promise.all`, `Promise.allSettled`, `gather`, including
 `gather(..., return_exceptions=True)`) keep a summary `static` or `inferred`.
 
+The build also warns when a TypeScript or Python export awaits two contract
+queries one after the other although the second one's input does not use the
+first one's result:
+
+```text title="Build output"
+warning[AXIOM_EFFECT_SEQUENTIAL_AWAIT]: extension `<alias>`: <file>:<line> and <file>:<line> (in `<function>`): the contract queries `<a>` and `<b>` are awaited one after the other, so each costs its own effect round (a full guest round trip), although the second one's input does not use the first one's result. Fix: await them together with <combinator> ...
+```
+
+Each sequential `await` costs its own effect round. Await the two together
+(`Promise.all` or `gather(...)`) so both run in one round. The warning never
+fails the build, never changes the summary, and the build does not rewrite
+your code.
+
 ## Generated permission requests
 
 `axiom dependencies request --from-summary` proposes the

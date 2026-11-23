@@ -36,8 +36,9 @@ Windows installs `acore-lsp.exe`. Use the printed absolute path in VS Code User
 editor to launch the absolute CLI path with `lsp`. Re-run the installer after CLI
 updates. Apple Silicon macOS is validated; other host acceptance remains pending.
 
-Build this sibling workspace with `cargo build --locked --manifest-path
-cli/Cargo.toml` from the AxiomCore repository. The local `scripts/laxiom` wrapper
+Build this sibling workspace with `cargo +1.100.0 build --locked --manifest-path
+cli/Cargo.toml` from the AxiomCore repository (Rust 1.100.0: the CLI links the
+Wasmtime 50 extension engine, which needs rustc 1.97 or newer). The local `scripts/laxiom` wrapper
 selects the newest debug/release executable, or `AXIOM_LOCAL_CLI_BIN` when set.
 It uses a loopback control plane for Cloud commands; public `axiom` uses its normal
 Cloud configuration. Install the wrapper with `scripts/install-laxiom`.

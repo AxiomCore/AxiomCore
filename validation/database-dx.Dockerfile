@@ -1,6 +1,7 @@
 FROM postgres:17-bookworm AS pg17
 FROM postgres:18-bookworm AS pg18
-FROM rust:1.93-bookworm
+# Rust 1.100.0: this image compiles the CLI, which links Wasmtime 50 (rustc >= 1.97).
+FROM rust:1.100.0-bookworm
 RUN apt-get update -qq && apt-get install -y -qq libsqlite3-0 libssl-dev pkg-config clang python3 libicu72 libldap-2.5-0 liblz4-1 libzstd1 liburing2 && rm -rf /var/lib/apt/lists/*
 COPY --from=pg17 /usr/lib/postgresql/17 /usr/lib/postgresql/17
 COPY --from=pg17 /usr/share/postgresql/17 /usr/share/postgresql/17

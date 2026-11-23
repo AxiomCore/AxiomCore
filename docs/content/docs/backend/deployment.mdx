@@ -183,7 +183,8 @@ context's `input/` directory), for an upload or a CI build.
   becomes a Linux image. `/app/release.json` binds the runtime, target,
   requirements, launch template and full file inventory. Modified, extra,
   symlinked or unbound files fail verification.
-- **Toolchain.** Rust 1.93.0 and digest-pinned Debian images. Cross-compilation
+- **Toolchain.** Rust 1.100.0 (the server links the Wasmtime 50 extension
+  engine, which needs rustc 1.97 or newer) and digest-pinned Debian images. Cross-compilation
   uses a signed Debian archive at a fixed snapshot and the matching Rust
   standard library target. Runtime packaging and requests run on the selected
   Linux architecture. amd64 evidence comes from emulation on an arm64 Linux VM;
@@ -279,7 +280,7 @@ results say nothing about hosted CPU, billing, network, deployment or rollback.
 
 | Setting | Value |
 | --- | --- |
-| Rust | 1.93.0, `wasm32-unknown-unknown`, locked dependencies |
+| Rust | 1.93.0, `wasm32-unknown-unknown`, locked dependencies (the Worker core is a WebAssembly guest; a CLI built from source needs 1.100.0) |
 | Wrangler / workerd | 4.132.0 / 1.20260915.1 |
 | Compatibility date | `2026-09-15`, no compatibility flags |
 | Request and JSON response | 1 MiB each; UTF-8 strict JSON, at most 16,384 values per document |
